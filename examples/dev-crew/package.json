@@ -1,0 +1,10 @@
+{
+  "name": "@lacrew/example-dev-crew",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "node -e \"console.log('[@lacrew/example-dev-crew] Mocked scaffold — nothing to build')\"",
+    "lint": "node -e \"process.exit(0)\""
+  }
+}
