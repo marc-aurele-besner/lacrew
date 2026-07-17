@@ -1,0 +1,12 @@
+{
+  "name": "@lacrew/docs",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "dev": "node ./scripts/build.mjs --watch",
+    "clean": "rm -rf dist",
+    "lint": "node -e \"process.exit(0)\""
+  }
+}
