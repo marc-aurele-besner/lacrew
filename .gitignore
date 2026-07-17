@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+build/
+.turbo/
+out/
+coverage/
+*.tsbuildinfo
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+contracts/lib/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
