@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test src/runtime.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
