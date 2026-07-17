@@ -33,3 +33,6 @@ contracts/lib/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Local runtime state (deployments, indexer store)
+.lacrew/
