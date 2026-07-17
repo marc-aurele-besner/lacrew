@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "@lacrew/core": "workspace:*",
-    "@lacrew/sdk": "workspace:*"
+    "@lacrew/sdk": "workspace:*",
+    "viem": "^2.55.2"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

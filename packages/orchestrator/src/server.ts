@@ -1,13 +1,13 @@
 /**
  * Minimal HTTP surface for local self-host demos.
- * Mocked: Node http only; no auth, no multi-tenant isolation.
+ * Mocked by default; onchain when ANVIL_RPC + PRIVATE_KEY are set.
  * TODO: Move to Hono/Fastify + auth + BullMQ workers.
  */
 
 import { createServer } from "node:http";
-import { CrewRuntime } from "./runtime.js";
+import { createRuntimeFromEnv } from "./runtime.js";
 
-const runtime = new CrewRuntime();
+const runtime = createRuntimeFromEnv();
 const port = Number(process.env.PORT ?? 8788);
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
@@ -39,7 +39,13 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/health") {
-      send(res, 200, { ok: true, service: "lacrew-orchestrator", mocked: true });
+      send(res, 200, {
+        ok: true,
+        service: "lacrew-orchestrator",
+        mocked: runtime.mode === "mock",
+        mode: runtime.mode,
+        chainId: runtime.chainId,
+      });
       return;
     }
 
@@ -66,7 +72,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/org") {
-      send(res, 200, { nodes: await runtime.getClient().getOrgTree() });
+      send(res, 200, {
+        nodes: await runtime.getClient().getOrgTree(),
+        mode: runtime.mode,
+        chainId: runtime.chainId,
+      });
       return;
     }
 
@@ -93,5 +103,8 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, () => {
   // eslint-disable-next-line no-console
-  console.log(`[@lacrew/orchestrator] Mocked server listening on :${port}`);
+  console.log(
+    `[@lacrew/orchestrator] ${runtime.mode} server listening on :${port}` +
+      (runtime.chainId != null ? ` (chain ${runtime.chainId})` : ""),
+  );
 });

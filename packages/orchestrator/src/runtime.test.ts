@@ -9,4 +9,9 @@ describe("CrewRuntime", () => {
     assert.ok(Array.isArray(pending));
     assert.ok(pending.length >= 1);
   });
+
+  it("defaults to mock mode without ANVIL env", () => {
+    const runtime = new CrewRuntime();
+    assert.equal(runtime.mode, "mock");
+  });
 });

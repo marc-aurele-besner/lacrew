@@ -121,6 +121,9 @@ importers:
       '@lacrew/sdk':
         specifier: workspace:*
         version: link:../sdk
+      viem:
+        specifier: ^2.55.2
+        version: 2.55.2(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
