@@ -42,7 +42,8 @@ export class PgBossQueue implements QueueProvider {
   async stop(): Promise<void> {
     this.ready = false;
     if (this.boss) {
-      await this.boss.stop({ graceful: true, timeout: 5_000 });
+      // Non-graceful: avoid hanging when another process also owns workers on this DB.
+      await this.boss.stop({ graceful: false, timeout: 2_000 });
       this.boss = null;
     }
   }

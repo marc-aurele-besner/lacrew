@@ -13,6 +13,8 @@
     "dev": "turbo run dev --filter=@lacrew/orchestrator",
     "dev:indexer": "pnpm --filter @lacrew/indexer dev",
     "dev:all": "turbo run dev --filter=@lacrew/orchestrator --filter=@lacrew/indexer",
+    "db:up": "docker compose up -d",
+    "db:migrate": "pnpm --filter @lacrew/db db:migrate",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yml}\"",
