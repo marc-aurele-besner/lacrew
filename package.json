@@ -10,7 +10,9 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=@lacrew/orchestrator",
+    "dev:indexer": "pnpm --filter @lacrew/indexer dev",
+    "dev:all": "turbo run dev --filter=@lacrew/orchestrator --filter=@lacrew/indexer",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yml}\"",

@@ -41,6 +41,7 @@ export class EventWatcher {
   private readonly storePath: string;
   private store: IndexerStore;
   private unwatchers: Array<() => void> = [];
+  private lastErrorAt = 0;
 
   constructor(options: WatcherOptions) {
     const chainId = options.chainId ?? 31337;
@@ -55,7 +56,11 @@ export class EventWatcher {
     const common = {
       address: this.router,
       onError: (err: Error) => {
-        console.error("[@lacrew/indexer] watch error", err.message);
+        const now = Date.now();
+        // Avoid flooding the terminal when RPC flaps.
+        if (now - this.lastErrorAt < 15_000) return;
+        this.lastErrorAt = now;
+        console.error("[@lacrew/indexer] watch error:", err.message.split("\n")[0]);
       },
     };
 
