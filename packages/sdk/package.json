@@ -1,0 +1,28 @@
+{
+  "name": "@lacrew/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "clean": "rm -rf dist",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@lacrew/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
