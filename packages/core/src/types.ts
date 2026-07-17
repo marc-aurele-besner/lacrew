@@ -56,4 +56,9 @@ export interface ChainAddresses {
   mockUSDC?: `0x${string}`;
   policyStack?: `0x${string}`;
   whitelistPolicy?: `0x${string}`;
+  /** Org node accounts seeded by DeployMockOrg. */
+  humanRoot?: `0x${string}`;
+  manager?: `0x${string}`;
+  worker?: `0x${string}`;
+  x402Target?: `0x${string}`;
 }

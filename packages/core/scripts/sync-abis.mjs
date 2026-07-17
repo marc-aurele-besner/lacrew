@@ -123,6 +123,40 @@ function writeDeploymentsJson(addresses) {
   );
 }
 
+/** Prefer forge script JSON (includes org node accounts); fall back to broadcast CREATEs. */
+function loadDeployments() {
+  const contractsAnvil = join(repoRoot, "contracts/deployments/31337.json");
+  if (existsSync(contractsAnvil)) {
+    const data = JSON.parse(readFileSync(contractsAnvil, "utf8"));
+    if (data.orgRegistry && data.manager) {
+      return data;
+    }
+    // Script may have been overwritten by an older sync — merge broadcast + known Anvil nodes.
+    const fromBroadcast = extractDeploymentsFromBroadcast();
+    if (fromBroadcast) {
+      return {
+        ...fromBroadcast,
+        humanRoot: data.humanRoot ?? "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        manager: data.manager ?? "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        worker: data.worker ?? "0xCcBcac53a38c585bA0caf2270dd2d906f14dac88",
+        x402Target: data.x402Target ?? "0xC7240d92d1bd7114fB3eeaDC9934d11AaCebe27a",
+      };
+    }
+    return data;
+  }
+  const fromBroadcast = extractDeploymentsFromBroadcast();
+  if (fromBroadcast) {
+    return {
+      ...fromBroadcast,
+      humanRoot: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      manager: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      worker: "0xCcBcac53a38c585bA0caf2270dd2d906f14dac88",
+      x402Target: "0xC7240d92d1bd7114fB3eeaDC9934d11AaCebe27a",
+    };
+  }
+  return null;
+}
+
 function writeDeploymentsTs() {
   mkdirSync(deploymentsDir, { recursive: true });
   const files = ["anvil.json", "31337.json", "84532.json"];
@@ -192,18 +226,10 @@ function main() {
   writeAbisTs(abis);
 
   ensurePlaceholderDeployments();
-  const fromBroadcast = extractDeploymentsFromBroadcast();
-  if (fromBroadcast) {
-    writeDeploymentsJson(fromBroadcast);
-    console.log(`Wrote deployments for chain ${fromBroadcast.chainId} from forge broadcast`);
-  }
-
-  // Prefer contracts/deployments written by forge script if present.
-  const contractsAnvil = join(repoRoot, "contracts/deployments/31337.json");
-  if (existsSync(contractsAnvil)) {
-    const data = JSON.parse(readFileSync(contractsAnvil, "utf8"));
-    writeDeploymentsJson(data);
-    console.log("Synced contracts/deployments/31337.json → packages/core/deployments");
+  const deployments = loadDeployments();
+  if (deployments) {
+    writeDeploymentsJson(deployments);
+    console.log(`Synced deployments for chain ${deployments.chainId}`);
   }
 
   writeDeploymentsTs();
