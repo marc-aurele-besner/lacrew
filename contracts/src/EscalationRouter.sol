@@ -25,12 +25,14 @@ contract EscalationRouter {
     mapping(uint256 => Intent) public intents;
 
     event IntentCreated(uint256 indexed intentId, address indexed agent, address awaitingApprover);
+    event IntentEscalated(uint256 indexed intentId, address indexed from, address indexed to);
     event IntentResolved(uint256 indexed intentId, bool approved);
 
     error IntentNotFound(uint256 intentId);
     error IntentAlreadyResolved(uint256 intentId);
     error NotAwaitingApprover(address caller);
     error UnexpectedVerdict(Verdict verdict);
+    error NoApprover(address agent);
 
     /// TODO: Support stacked policy modules per node instead of a single global policy.
     constructor(address orgRegistry_, address policy_) {
@@ -58,6 +60,8 @@ contract EscalationRouter {
         }
 
         IOrgRegistry.Node memory node = orgRegistry.getNode(agent);
+        if (node.parent == address(0)) revert NoApprover(agent);
+
         intentId = nextIntentId++;
         intents[intentId] = Intent({
             agent: agent,
@@ -73,16 +77,51 @@ contract EscalationRouter {
     }
 
     /// @notice Parent approves or rejects a pending intent.
-    /// @dev Mocked: approval does not recurse or re-check parent policy bounds.
-    /// TODO: Re-run policy at approver; recurse upward or execute on final ALLOW.
+    /// @dev On approve, re-checks policy as the approver: ALLOW finalizes, ESCALATE climbs, DENY rejects.
     function resolve(uint256 intentId, bool approved) external {
         Intent storage intent = intents[intentId];
         if (intent.agent == address(0)) revert IntentNotFound(intentId);
         if (intent.resolved) revert IntentAlreadyResolved(intentId);
         if (msg.sender != intent.awaitingApprover) revert NotAwaitingApprover(msg.sender);
 
-        intent.resolved = true;
-        intent.approved = approved;
-        emit IntentResolved(intentId, approved);
+        if (!approved) {
+            intent.resolved = true;
+            intent.approved = false;
+            emit IntentResolved(intentId, false);
+            return;
+        }
+
+        // Re-evaluate as if the approver were the acting agent (purchase-order authority).
+        Verdict verdict = policy.check(msg.sender, intent.target, intent.value, intent.data);
+
+        if (verdict == Verdict.DENY) {
+            intent.resolved = true;
+            intent.approved = false;
+            emit IntentResolved(intentId, false);
+            return;
+        }
+
+        if (verdict == Verdict.ALLOW) {
+            intent.resolved = true;
+            intent.approved = true;
+            emit IntentResolved(intentId, true);
+            return;
+        }
+
+        // ESCALATE — climb to the approver's parent (ultimately the human root).
+        IOrgRegistry.Node memory approver = orgRegistry.getNode(msg.sender);
+        if (approver.parent == address(0) || approver.kind == IOrgRegistry.NodeKind.HumanRoot) {
+            // Root reserved authority: human passkey approval finalizes high-tier overages.
+            // Mocked: treat root approval as final ALLOW.
+            intent.resolved = true;
+            intent.approved = true;
+            emit IntentResolved(intentId, true);
+            return;
+        }
+
+        address nextApprover = approver.parent;
+        address previous = intent.awaitingApprover;
+        intent.awaitingApprover = nextApprover;
+        emit IntentEscalated(intentId, previous, nextApprover);
     }
 }

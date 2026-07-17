@@ -30,4 +30,11 @@ Worker proposes action
 
 ## Current scaffolding
 
-The mocked `EscalationRouter` stores intents and lets the immediate parent resolve. Recursion and on-execution ALLOW paths are still TODO.
+`EscalationRouter.resolve` re-checks policy as the approver:
+
+1. Reject → closed
+2. Approver `ALLOW` → finalized
+3. Approver `ESCALATE` → `awaitingApprover` climbs to the parent (`IntentEscalated`)
+4. Human root approval finalizes even when still over soft caps (mocked root authority)
+
+Per-agent caps live on `SpendCapPolicy.setAgentCap`. On-execution ALLOW (session key / smart account) is still TODO.
