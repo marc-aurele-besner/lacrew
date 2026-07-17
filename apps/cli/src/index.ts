@@ -51,11 +51,14 @@ function createClient(args: string[]) {
   const addresses = getAddresses(chainId);
   const pk = process.env.PRIVATE_KEY as `0x${string}` | undefined;
   const account = pk ? privateKeyToAccount(pk) : undefined;
+  const managerPk = process.env.MANAGER_PRIVATE_KEY as `0x${string}` | undefined;
+  const resolverAccount = managerPk ? privateKeyToAccount(managerPk) : undefined;
   const indexerPath = process.env.INDEXER_PATH;
 
   return createOnchainClient({
     transport: http(rpcUrl),
     account,
+    resolverAccount,
     chainId,
     addresses,
     indexerPath,

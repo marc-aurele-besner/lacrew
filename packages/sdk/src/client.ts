@@ -37,6 +37,8 @@ export type ResolveResult = {
   intent: Intent;
   /** true when the intent climbed to a higher approver instead of closing. */
   escalated: boolean;
+  /** Present when the write hit chain (createOnchainClient). */
+  txHash?: `0x${string}`;
 };
 
 export class LacrewClient {
@@ -99,7 +101,7 @@ export class LacrewClient {
     target: `0x${string}`;
     value: bigint;
     data?: `0x${string}`;
-  }): Promise<{ intentId: string; verdict: Verdict }> {
+  }): Promise<{ intentId: string; verdict: Verdict; txHash?: `0x${string}` }> {
     if (!this.useMock) {
       throw new Error("Onchain propose is not implemented yet");
     }

@@ -34,9 +34,11 @@ const TIER_MAP: Record<GovernanceTier, number> = {
   low: 0,
   high: 1,
 };
+
 export type OnchainResolveResult = {
   intent: Intent;
   escalated: boolean;
+  txHash: `0x${string}`;
 };
 
 const KIND_MAP: Record<number, OrgNode["kind"]> = {
@@ -53,8 +55,13 @@ const VERDICT_MAP: Record<number, Verdict> = {
 
 export type OnchainClientOptions = {
   transport: Transport;
-  /** Wallet account for writes; reads work without it. */
+  /** Wallet account for writes (propose); reads work without it. */
   account?: Account;
+  /**
+   * Optional second account for resolve (e.g. Anvil manager).
+   * Falls back to `account` when omitted.
+   */
+  resolverAccount?: Account;
   chain?: Chain;
   chainId?: number;
   addresses?: ChainAddresses;
@@ -65,6 +72,7 @@ export type OnchainClientOptions = {
 export class OnchainLacrewClient {
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient | null;
+  readonly resolverWalletClient: WalletClient | null;
   readonly addresses: ChainAddresses;
   readonly chainId: number;
   private readonly indexerPath?: string;
@@ -84,6 +92,13 @@ export class OnchainLacrewClient {
           chain: options.chain,
         })
       : null;
+    this.resolverWalletClient = options.resolverAccount
+      ? createWalletClient({
+          account: options.resolverAccount,
+          transport: options.transport,
+          chain: options.chain,
+        })
+      : this.walletClient;
   }
 
   async getOrgTree(): Promise<OrgNode[]> {
@@ -164,9 +179,20 @@ export class OnchainLacrewClient {
     return out;
   }
 
+  /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */
   async getPendingIntents(): Promise<Intent[]> {
-    const store = await this.readIndexer();
-    return (store?.pendingIntents ?? []).filter((i) => !i.resolved);
+    const next = (await this.publicClient.readContract({
+      address: this.addresses.escalationRouter,
+      abi: escalationRouterAbi,
+      functionName: "nextIntentId",
+    })) as bigint;
+
+    const out: Intent[] = [];
+    for (let id = 1n; id < next; id++) {
+      const intent = await this.readIntent(id);
+      if (!intent.resolved) out.push(intent);
+    }
+    return out;
   }
 
   async getAuditTrail(): Promise<ProtocolEvent[]> {
@@ -179,7 +205,7 @@ export class OnchainLacrewClient {
     target: `0x${string}`;
     value: bigint;
     data?: Hex;
-  }): Promise<{ intentId: string; verdict: Verdict }> {
+  }): Promise<{ intentId: string; verdict: Verdict; txHash: `0x${string}` }> {
     const wallet = this.requireWallet();
     const { request, result } = await this.publicClient.simulateContract({
       address: this.addresses.escalationRouter,
@@ -197,6 +223,7 @@ export class OnchainLacrewClient {
     return {
       intentId: intentIdRaw.toString(),
       verdict: VERDICT_MAP[Number(verdictRaw)] ?? "ESCALATE",
+      txHash: hash,
     };
   }
 
@@ -205,7 +232,7 @@ export class OnchainLacrewClient {
     approved: boolean,
     _approver?: `0x${string}`,
   ): Promise<OnchainResolveResult> {
-    const wallet = this.requireWallet();
+    const wallet = this.requireResolverWallet();
     const id = BigInt(intentId);
     const hash = await wallet.writeContract({
       address: this.addresses.escalationRouter,
@@ -220,6 +247,7 @@ export class OnchainLacrewClient {
     return {
       intent,
       escalated: !intent.resolved && intent.awaitingApprover !== null,
+      txHash: hash,
     };
   }
 
@@ -291,6 +319,15 @@ export class OnchainLacrewClient {
       throw new Error("Onchain writes require an account (createOnchainClient({ account }))");
     }
     return this.walletClient;
+  }
+
+  private requireResolverWallet(): WalletClient {
+    if (!this.resolverWalletClient?.account) {
+      throw new Error(
+        "Onchain resolve requires an account (createOnchainClient({ account }) or resolverAccount)",
+      );
+    }
+    return this.resolverWalletClient;
   }
 
   private async readIntent(id: bigint): Promise<Intent> {
