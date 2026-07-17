@@ -52,4 +52,8 @@ export interface ChainAddresses {
   escalationRouter: `0x${string}`;
   governanceModule: `0x${string}`;
   spendCapPolicy: `0x${string}`;
+  /** Optional extras present after DeployMockOrg. */
+  mockUSDC?: `0x${string}`;
+  policyStack?: `0x${string}`;
+  whitelistPolicy?: `0x${string}`;
 }
