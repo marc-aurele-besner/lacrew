@@ -265,6 +265,57 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "gov": {
+      const cleaned = [...rest];
+      const rpcIdx = cleaned.indexOf("--rpc");
+      if (rpcIdx >= 0) cleaned.splice(rpcIdx, 2);
+      const sub = cleaned[0];
+      if (sub === "propose") {
+        const tier = cleaned[1];
+        const target = cleaned[2];
+        const data = (cleaned[3] ?? "0x") as `0x${string}`;
+        if (tier !== "low" && tier !== "high" || !target) {
+          console.error("Usage: lacrew gov propose <low|high> <target> [dataHex] [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeGovernance" in client)) {
+          console.error("Governance propose requires a client with proposeGovernance");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeGovernance: Function }).proposeGovernance({
+            tier,
+            target: target as `0x${string}`,
+            data,
+          }),
+        );
+        return;
+      }
+      if (sub === "vote" || sub === "veto" || sub === "execute") {
+        const id = cleaned[1];
+        if (!id) {
+          console.error(`Usage: lacrew gov ${sub} <proposalId> [--rpc]`);
+          process.exitCode = 1;
+          return;
+        }
+        if (sub === "vote") {
+          const support = cleaned[2] !== "no";
+          await (client as { voteGovernance: Function }).voteGovernance(id, support);
+        } else if (sub === "veto") {
+          await (client as { vetoGovernance: Function }).vetoGovernance(id);
+        } else {
+          await (client as { executeGovernance: Function }).executeGovernance(id);
+        }
+        printJson({ ok: true, proposalId: id, action: sub });
+        return;
+      }
+      console.error("Usage: lacrew gov <propose|vote|veto|execute> …");
+      process.exitCode = 1;
+      return;
+    }
+
     case "help":
     default:
       console.log(`LaCrew CLI
@@ -282,6 +333,10 @@ Commands:
   propose <a> <t> <v>       Propose an intent
   approve <id> [approver]   Approve a pending intent
   deny <id> [approver]      Deny a pending intent
+  gov propose <low|high> <target> [data]  Constitutional proposal
+  gov vote <id> [yes|no]    Vote on a proposal (onchain --rpc)
+  gov veto <id>             Human-root veto (high tier, --rpc)
+  gov execute <id>          Execute after quorum/timelock (--rpc)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

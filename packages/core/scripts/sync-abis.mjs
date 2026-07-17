@@ -34,6 +34,16 @@ const CONTRACTS = [
   },
   { name: "PolicyStack", file: "PolicyStack.sol/PolicyStack.json", exportName: "policyStackAbi" },
   { name: "MockUSDC", file: "MockUSDC.sol/MockUSDC.json", exportName: "mockUsdcAbi" },
+  {
+    name: "RateLimitPolicy",
+    file: "RateLimitPolicy.sol/RateLimitPolicy.json",
+    exportName: "rateLimitPolicyAbi",
+  },
+  {
+    name: "TimeWindowPolicy",
+    file: "TimeWindowPolicy.sol/TimeWindowPolicy.json",
+    exportName: "timeWindowPolicyAbi",
+  },
 ];
 
 function loadAbi(relPath) {

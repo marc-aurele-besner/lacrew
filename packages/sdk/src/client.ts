@@ -11,6 +11,7 @@ import {
   mockPendingIntents,
   mockSessionKeys,
   type Allowance,
+  type GovernanceTier,
   type Intent,
   type OrgNode,
   type ProtocolEvent,
@@ -244,6 +245,32 @@ export class LacrewClient {
       throw new Error("Onchain session reads are not implemented yet");
     }
     return mockSessionKeys;
+  }
+
+  /**
+   * Mocked governance: records a ProposalCreated audit event only.
+   * Use createOnchainClient for real propose/vote/execute.
+   */
+  async proposeGovernance(input: {
+    tier: GovernanceTier;
+    target: `0x${string}`;
+    data?: `0x${string}`;
+  }): Promise<{ proposalId: string }> {
+    if (!this.useMock) {
+      throw new Error("Onchain governance requires createOnchainClient");
+    }
+    const proposalId = `proposal-mock-${this.audit.length + 1}`;
+    this.audit.push({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId,
+        tier: input.tier,
+        target: input.target,
+        data: input.data ?? "0x",
+      },
+    });
+    return { proposalId };
   }
 }
 

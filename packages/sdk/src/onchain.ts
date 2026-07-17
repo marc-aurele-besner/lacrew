@@ -19,14 +19,21 @@ import {
   orgRegistryAbi,
   treasuryAbi,
   escalationRouterAbi,
+  governanceModuleAbi,
   type Allowance,
   type ChainAddresses,
+  type GovernanceTier,
   type Intent,
   type OrgNode,
   type ProtocolEvent,
   type SessionKey,
   type Verdict,
 } from "@lacrew/core";
+
+const TIER_MAP: Record<GovernanceTier, number> = {
+  low: 0,
+  high: 1,
+};
 export type OnchainResolveResult = {
   intent: Intent;
   escalated: boolean;
@@ -219,6 +226,64 @@ export class OnchainLacrewClient {
   async getSessions(): Promise<SessionKey[]> {
     // TODO: Session-key module onchain.
     return [];
+  }
+
+  /** Propose a constitutional action (target + calldata). */
+  async proposeGovernance(input: {
+    tier: GovernanceTier;
+    target: `0x${string}`;
+    data: Hex;
+  }): Promise<{ proposalId: string }> {
+    const wallet = this.requireWallet();
+    const { request, result } = await this.publicClient.simulateContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "propose",
+      args: [TIER_MAP[input.tier], input.target, input.data],
+      account: wallet.account!,
+    });
+    const hash = await wallet.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { proposalId: (result as bigint).toString() };
+  }
+
+  async voteGovernance(proposalId: string, support: boolean): Promise<void> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "vote",
+      args: [BigInt(proposalId), support],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+  }
+
+  async vetoGovernance(proposalId: string): Promise<void> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "veto",
+      args: [BigInt(proposalId)],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+  }
+
+  async executeGovernance(proposalId: string): Promise<void> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "execute",
+      args: [BigInt(proposalId)],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
   }
 
   private requireWallet(): WalletClient {
