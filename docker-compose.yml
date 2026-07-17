@@ -1,0 +1,17 @@
+# Local Postgres for @lacrew/db + pg-boss (Neon-compatible DATABASE_URL).
+# Redis is not required for Phase 0–1.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lacrew
+      POSTGRES_PASSWORD: lacrew
+      POSTGRES_DB: lacrew
+    ports:
+      - "5432:5432"
+    volumes:
+      - lacrew_pg:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  lacrew_pg:

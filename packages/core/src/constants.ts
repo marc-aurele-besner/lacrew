@@ -48,7 +48,13 @@ export function getAddresses(chainId: number): ChainAddresses {
   };
 }
 
-/** @deprecated Prefer getAddresses(84532). Kept for older imports. */
+/** Ethereum Sepolia — first public testnet. */
+export const SEPOLIA_CHAIN_ID = 11155111;
+
+/** @deprecated Prefer getAddresses(SEPOLIA_CHAIN_ID). Kept for older imports. */
+export const SEPOLIA_ADDRESSES: ChainAddresses = getAddresses(SEPOLIA_CHAIN_ID);
+
+/** @deprecated Prefer getAddresses(84532). Optional later Base Sepolia slot. */
 export const BASE_SEPOLIA_ADDRESSES: ChainAddresses = getAddresses(84532);
 
 /** Anvil / Foundry default chain. */

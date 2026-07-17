@@ -21,7 +21,7 @@ forge test
 | `src/policies/` | Policy modules (spend cap, …) |
 | `src/mocks/` | MockUSDC for Anvil / testnets |
 | `src/*.sol` | OrgRegistry, Treasury, EscalationRouter, GovernanceModule |
-| `script/` | Deploy scripts (Anvil / Base Sepolia / Base) |
+| `script/` | Deploy scripts (Anvil / Ethereum Sepolia / Base) |
 | `test/` | Foundry tests |
 
 Implementations are scaffolding with `Mocked` / `TODO` markers — not production-ready.

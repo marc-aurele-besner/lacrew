@@ -24,6 +24,6 @@ Still scaffolding: every address = 1 vote, quorum = 2 yes. Role-weighted seats a
 
 ## Current scaffolding gaps
 
-- No role-weighted voting
-- Router / policy `setTreasury` / `setRateRecorder` still loosely gated
+- No role-weighted voting (demo quorum uses root + manager keys)
 - Session-key / passkey root binding not onchain yet
+- Epoch streaming is on-demand (`runNextEpoch` / `POST /epoch`); `QueueProvider` + pg-boss can schedule epochs when `DATABASE_URL` is set

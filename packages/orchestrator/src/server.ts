@@ -1,14 +1,19 @@
 /**
  * Minimal HTTP surface for local self-host demos.
  * Mocked by default; onchain when ANVIL_RPC + PRIVATE_KEY are set.
- * TODO: Move to Hono/Fastify + auth + BullMQ workers.
+ * TODO: Move to Hono/Fastify + auth.
+ * Queue: QueueProvider — pg-boss when DATABASE_URL set, else in-memory.
  */
 
 import { createServer } from "node:http";
+import { checkDbReady, getDatabaseUrl } from "@lacrew/db";
 import { createRuntimeFromEnv } from "./runtime.js";
+import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 
 const runtime = createRuntimeFromEnv();
 const port = Number(process.env.PORT ?? 8788);
+let queue: QueueProvider = createQueueFromEnv();
+let dbReady = false;
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -45,12 +50,34 @@ const server = createServer(async (req, res) => {
         mocked: runtime.mode === "mock",
         mode: runtime.mode,
         chainId: runtime.chainId,
+        db: { configured: Boolean(getDatabaseUrl()), ready: dbReady },
+        queue: queue.status(),
       });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/boot") {
       send(res, 200, { session: await runtime.boot() });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/sessions") {
+      send(res, 200, {
+        sessions: await runtime.listSessions(),
+        mode: runtime.mode,
+        chainId: runtime.chainId,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/sessions/revoke") {
+      const body = (await readBody(req)) as { sessionId?: string };
+      if (!body.sessionId) {
+        send(res, 400, { error: "sessionId_required" });
+        return;
+      }
+      const result = await runtime.revokeSessionById(body.sessionId);
+      send(res, 200, { ...result, mode: runtime.mode });
       return;
     }
 
@@ -95,16 +122,113 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/governance/proposals") {
+      send(res, 200, {
+        proposals: await runtime.listProposals(),
+        mode: runtime.mode,
+        chainId: runtime.chainId,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/propose-hire") {
+      const body = (await readBody(req)) as {
+        label?: string;
+        kind?: "manager_agent" | "worker_agent";
+        parent?: `0x${string}`;
+        tier?: "low" | "high";
+      };
+      if (!body.label?.trim()) {
+        send(res, 400, { error: "label_required" });
+        return;
+      }
+      const result = await runtime.proposeHire({
+        label: body.label.trim(),
+        kind: body.kind,
+        parent: body.parent,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/vote") {
+      const body = (await readBody(req)) as { proposalId?: string; support?: boolean };
+      if (!body.proposalId || typeof body.support !== "boolean") {
+        send(res, 400, { error: "proposalId_and_support_required" });
+        return;
+      }
+      const result = await runtime.voteGovernance(body.proposalId, body.support);
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/veto") {
+      const body = (await readBody(req)) as { proposalId?: string };
+      if (!body.proposalId) {
+        send(res, 400, { error: "proposalId_required" });
+        return;
+      }
+      const result = await runtime.vetoGovernance(body.proposalId);
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/execute") {
+      const body = (await readBody(req)) as { proposalId?: string };
+      if (!body.proposalId) {
+        send(res, 400, { error: "proposalId_required" });
+        return;
+      }
+      const result = await runtime.executeGovernance(body.proposalId);
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/epoch") {
+      send(res, 200, {
+        currentEpoch: await runtime.getCurrentEpoch(),
+        mode: runtime.mode,
+        chainId: runtime.chainId,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/epoch") {
+      const result = await runtime.runEpoch();
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
     send(res, 404, { error: "not_found" });
   } catch (err) {
     send(res, 500, { error: err instanceof Error ? err.message : "unknown" });
   }
 });
 
-server.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(
-    `[@lacrew/orchestrator] ${runtime.mode} server listening on :${port}` +
-      (runtime.chainId != null ? ` (chain ${runtime.chainId})` : ""),
-  );
+async function main(): Promise<void> {
+  dbReady = await checkDbReady();
+  await queue.start({
+    onEpoch: async () => runtime.runEpoch(),
+    onTick: async () => runtime.tick(),
+  });
+
+  if (queue.name === "pg-boss") {
+    const cron = process.env.EPOCH_CRON ?? "0 * * * *";
+    await queue.scheduleEpoch(cron);
+  }
+
+  server.listen(port, () => {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[@lacrew/orchestrator] ${runtime.mode} server listening on :${port}` +
+        (runtime.chainId != null ? ` (chain ${runtime.chainId})` : "") +
+        ` queue=${queue.status().provider} db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}`,
+    );
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
 });

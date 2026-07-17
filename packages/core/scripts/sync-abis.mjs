@@ -44,6 +44,16 @@ const CONTRACTS = [
     file: "TimeWindowPolicy.sol/TimeWindowPolicy.json",
     exportName: "timeWindowPolicyAbi",
   },
+  {
+    name: "EpochStreamer",
+    file: "EpochStreamer.sol/EpochStreamer.json",
+    exportName: "epochStreamerAbi",
+  },
+  {
+    name: "SessionRegistry",
+    file: "SessionRegistry.sol/SessionRegistry.json",
+    exportName: "sessionRegistryAbi",
+  },
 ];
 
 function loadAbi(relPath) {
@@ -77,7 +87,7 @@ function extractDeploymentsFromBroadcast() {
   if (!existsSync(broadcastRoot)) return null;
 
   // Prefer latest run for anvil (31337).
-  const chainIds = ["31337", "84532"];
+  const chainIds = ["31337", "11155111", "84532"];
   for (const chainId of chainIds) {
     const latest = join(broadcastRoot, chainId, "run-latest.json");
     if (!existsSync(latest)) continue;
@@ -100,6 +110,8 @@ function extractDeploymentsFromBroadcast() {
       spendCapPolicy: byName.SpendCapPolicy,
       policyStack: byName.PolicyStack,
       whitelistPolicy: byName.WhitelistPolicy,
+      epochStreamer: byName.EpochStreamer,
+      sessionRegistry: byName.SessionRegistry,
     };
   }
   return null;
@@ -159,7 +171,7 @@ function loadDeployments() {
 
 function writeDeploymentsTs() {
   mkdirSync(deploymentsDir, { recursive: true });
-  const files = ["anvil.json", "31337.json", "84532.json"];
+  const files = ["anvil.json", "31337.json", "11155111.json", "84532.json"];
   const entries = [];
 
   for (const file of files) {

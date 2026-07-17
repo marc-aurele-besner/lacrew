@@ -11,6 +11,8 @@ import {RateLimitPolicy} from "../src/policies/RateLimitPolicy.sol";
 import {PolicyStack} from "../src/policies/PolicyStack.sol";
 import {EscalationRouter} from "../src/EscalationRouter.sol";
 import {GovernanceModule} from "../src/GovernanceModule.sol";
+import {EpochStreamer} from "../src/EpochStreamer.sol";
+import {SessionRegistry} from "../src/SessionRegistry.sol";
 import {IOrgRegistry} from "../src/interfaces/IOrgRegistry.sol";
 import {IPolicyModule} from "../src/interfaces/IPolicyModule.sol";
 
@@ -73,8 +75,16 @@ contract DeployMockOrg is Script {
         // Stream enough for manager-approved overages (policy cap stays 50; balance can be higher).
         treasury.streamAllowance(worker, 200 * USDC, 1);
 
+        // Payroll job: human root operates epoch streams after governor is bound.
+        EpochStreamer epochStreamer = new EpochStreamer(address(treasury), humanRoot);
+        epochStreamer.setGrant(worker, 200 * USDC);
+        treasury.setStreamer(address(epochStreamer));
+
+        SessionRegistry sessionRegistry = new SessionRegistry(humanRoot);
+
         registry.setGovernor(address(gov));
         treasury.setGovernor(address(gov));
+        router.setGovernor(address(gov));
 
         vm.stopBroadcast();
 
@@ -87,6 +97,8 @@ contract DeployMockOrg is Script {
             spendCap,
             stack,
             whitelist,
+            epochStreamer,
+            sessionRegistry,
             humanRoot,
             manager,
             worker,
@@ -103,6 +115,8 @@ contract DeployMockOrg is Script {
         SpendCapPolicy spendCap,
         PolicyStack stack,
         WhitelistPolicy whitelist,
+        EpochStreamer epochStreamer,
+        SessionRegistry sessionRegistry,
         address humanRoot,
         address manager,
         address worker,
@@ -137,6 +151,12 @@ contract DeployMockOrg is Script {
             '  "whitelistPolicy": "',
             vm.toString(address(whitelist)),
             '",\n',
+            '  "epochStreamer": "',
+            vm.toString(address(epochStreamer)),
+            '",\n',
+            '  "sessionRegistry": "',
+            vm.toString(address(sessionRegistry)),
+            '",\n',
             '  "humanRoot": "',
             vm.toString(humanRoot),
             '",\n',
@@ -159,6 +179,8 @@ contract DeployMockOrg is Script {
         console2.log("Treasury", address(treasury));
         console2.log("EscalationRouter", address(router));
         console2.log("GovernanceModule", address(gov));
+        console2.log("EpochStreamer", address(epochStreamer));
+        console2.log("SessionRegistry", address(sessionRegistry));
         console2.log("humanRoot", humanRoot);
         console2.log("manager", manager);
         console2.log("worker", worker);

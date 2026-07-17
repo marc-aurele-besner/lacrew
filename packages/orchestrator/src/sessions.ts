@@ -1,11 +1,13 @@
 /**
  * Session key lifecycle helpers.
- * Mocked: issues opaque key ids with TTL; never holds real private keys.
- * TODO: Integrate ERC-4337 session key modules (ZeroDev / Rhinestone / etc.).
+ * Off-chain: generates a real ephemeral secp256k1 key (never logged).
+ * On-chain: SessionRegistry stores key address + expiry; root/issuer can revoke.
+ * TODO: Replace with ERC-4337 session modules (ZeroDev / Rhinestone) in F1.3.
  */
 
 import { DEFAULT_SESSION_TTL_MS, type SessionKey } from "@lacrew/core";
-import { randomUUID } from "node:crypto";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { keccak256, toBytes } from "viem";
 
 export interface IssueSessionInput {
   agent: `0x${string}`;
@@ -13,22 +15,61 @@ export interface IssueSessionInput {
   ttlMs?: number;
 }
 
-export function issueSession(input: IssueSessionInput): SessionKey {
+export interface IssuedSession extends SessionKey {
+  /** Ephemeral private key — keep in-process only; never persist or log. */
+  privateKey: `0x${string}`;
+  scopesHash: `0x${string}`;
+  expiresAtSec: number;
+}
+
+export function scopesHash(scopes: string[]): `0x${string}` {
+  return keccak256(toBytes(scopes.slice().sort().join("|")));
+}
+
+/** Create an ephemeral key pair + metadata (not yet registered onchain). */
+export function createEphemeralSession(input: IssueSessionInput): IssuedSession {
   const ttl = input.ttlMs ?? DEFAULT_SESSION_TTL_MS;
+  const scopes = input.scopes ?? ["propose:intent", "spend:whitelist"];
+  const privateKey = generatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  const expiresAt = Date.now() + ttl;
   return {
     agent: input.agent,
-    keyId: `sess_${randomUUID()}`,
-    expiresAt: Date.now() + ttl,
-    scopes: input.scopes ?? ["propose:intent"],
+    keyId: "pending",
+    keyAddress: account.address,
+    expiresAt,
+    expiresAtSec: Math.floor(expiresAt / 1000),
+    scopes,
+    scopesHash: scopesHash(scopes),
+    privateKey,
+    revoked: false,
   };
 }
 
+/** Mock path: opaque UUID without a real key (offline demos). */
+export function issueMockSession(input: IssueSessionInput): SessionKey {
+  const ttl = input.ttlMs ?? DEFAULT_SESSION_TTL_MS;
+  const scopes = input.scopes ?? ["propose:intent"];
+  return {
+    agent: input.agent,
+    keyId: `sess_mock_${Date.now().toString(36)}`,
+    expiresAt: Date.now() + ttl,
+    scopes,
+    revoked: false,
+  };
+}
+
+/** @deprecated Prefer createEphemeralSession + onchain register, or issueMockSession. */
+export function issueSession(input: IssueSessionInput): SessionKey {
+  return issueMockSession(input);
+}
+
 export function isSessionExpired(session: SessionKey, now = Date.now()): boolean {
+  if (session.revoked) return true;
   return now >= session.expiresAt;
 }
 
-/** Mocked revocation: returns a new record flag only. */
-// TODO: Call onchain session revoke from the human root / account module.
+/** Local revoke marker (pair with onchain SessionRegistry.revoke). */
 export function revokeSession(session: SessionKey): SessionKey {
-  return { ...session, expiresAt: Date.now() - 1, scopes: [] };
+  return { ...session, expiresAt: Date.now() - 1, scopes: [], revoked: true };
 }

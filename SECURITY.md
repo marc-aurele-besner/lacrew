@@ -8,12 +8,13 @@ This repository is **pre-audit** Phase 0/1 scaffolding. Treat all deployments as
 
 | Control | Code status |
 | --- | --- |
-| Policy stack (DENY / ESCALATE / ALLOW) | Implemented |
+| Policy stack (DENY / ESCALATE / ALLOW) | Implemented (+ fuzz: first-DENY-wins) |
 | Escalation climb + ALLOW spend execution | Implemented (EOA/router path; not ERC-4337 yet) |
+| Treasury conservation | Invariant suite (reserved ≤ balance; sum allowances) |
 | Governance execute → OrgRegistry / Treasury | Implemented (1-vote-per-address; hardcoded quorum) |
-| High-tier timelock + human veto | Implemented (scaffolding constants) |
-| Session keys / passkeys / ERC-4337 | **Not implemented** — orchestrator uses mock UUIDs |
-| Professional audit / Slither gate | Slither in CI when available; no formal audit yet |
+| High-tier timelock + human veto | Implemented (+ fuzz: unbypassable timelock / veto) |
+| Session keys | `SessionRegistry` ephemeral EOAs (issue/revoke/TTL); not ERC-4337; session key does not yet sign proposes |
+| Professional audit / Slither gate | Slither in CI (`fail-on: high`); no formal audit yet |
 
 Docs that describe session-key scoping or AA roots are **design targets**, not current guarantees.
 
@@ -22,7 +23,7 @@ Docs that describe session-key scoping or AA roots are **design targets**, not c
 | Threat | Intended bound |
 | --- | --- |
 | Compromised agent | Remaining streamed allowance on whitelisted targets; escalations climb the tree |
-| Compromised orchestrator | Should only leak short-lived session keys (not built yet) — never treasury custody |
+| Compromised orchestrator | Should only leak short-lived session keys — never treasury custody |
 | Compromised quorum | High-tier timelock + human-root veto |
 | Compromised root | Out of protocol scope; use hardware / multi-human roots |
 
@@ -38,6 +39,6 @@ We aim to acknowledge within **72 hours**. Do not open a public issue for fund-d
 
 ## Safe testing
 
-- Prefer Anvil / Base Sepolia with throwaway keys
+- Prefer Anvil / Ethereum Sepolia with throwaway keys
 - Never send mainnet funds to undeployed or unaudited addresses
 - Published addresses will live in `packages/core/deployments/` and on `lacrew.xyz/protocol` once live

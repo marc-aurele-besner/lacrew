@@ -2,14 +2,14 @@
 
 Users do not buy composability. They buy **"my agents cannot rug me."**
 
-> **Honesty check:** session keys, passkeys, and ERC-4337 are **not implemented yet**. Orchestrator compromise today is not bounded by onchain session modules — see root [`SECURITY.md`](https://github.com/marc-aurele-besner/lacrew/blob/main/SECURITY.md).
+> **Honesty check:** ERC-4337 / passkey AA are **not** implemented yet. Phase 0 ships `SessionRegistry` (ephemeral EOA address + TTL + root revoke). Propose/resolve still use root/manager keys — session keys do not yet sign intents. See root [`SECURITY.md`](https://github.com/marc-aurele-besner/lacrew/blob/main/SECURITY.md).
 
 ## Threat → intended bound
 
 | Threat | Intended blast radius | Code today |
 | --- | --- | --- |
 | Compromised agent | Remaining streamed allowance on whitelisted targets; escalations climb | Policy + router + treasury spend path |
-| Compromised orchestrator | Scoped expiring session keys only | **Mock UUID sessions** — AA/session modules TODO |
+| Compromised orchestrator | Scoped expiring session keys only | `SessionRegistry` + ephemeral EOAs (issue/revoke/TTL); AA modules still TODO; session key not yet the propose signer |
 | Compromised quorum | High-tier timelock + human veto | Timelock + `veto` on `GovernanceModule` |
 | Compromised root | Out of protocol scope | Multi-human roots first-class (design) |
 

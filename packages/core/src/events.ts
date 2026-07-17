@@ -8,6 +8,8 @@ export type ProtocolEventType =
   | "AllowanceStreamed"
   | "AllowanceSpent"
   | "ProposalCreated"
+  | "ProposalVoted"
+  | "ProposalVetoed"
   | "ProposalExecuted"
   | "SessionIssued"
   | "SessionRevoked";

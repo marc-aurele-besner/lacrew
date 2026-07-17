@@ -113,18 +113,16 @@ function cmdDeploy(args: string[]): void {
     process.env.PRIVATE_KEY ??
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-  if (!anvil && !process.env.BASE_SEPOLIA_RPC_URL && !hasFlag(args, "--rpc")) {
+  const sepoliaRpc = process.env.SEPOLIA_RPC_URL ?? process.env.BASE_SEPOLIA_RPC_URL;
+  if (!anvil && !sepoliaRpc && !hasFlag(args, "--rpc")) {
     console.error("Usage: lacrew deploy --anvil");
     console.error("       lacrew deploy --rpc <url>  (needs PRIVATE_KEY)");
-    console.error("Base Sepolia: set BASE_SEPOLIA_RPC_URL + PRIVATE_KEY");
+    console.error("Ethereum Sepolia: set SEPOLIA_RPC_URL + PRIVATE_KEY (+ CHAIN_ID=11155111)");
     process.exitCode = 1;
     return;
   }
 
-  const broadcastRpc =
-    !anvil && process.env.BASE_SEPOLIA_RPC_URL
-      ? process.env.BASE_SEPOLIA_RPC_URL
-      : rpcUrl;
+  const broadcastRpc = !anvil && sepoliaRpc ? sepoliaRpc : rpcUrl;
 
   console.log(`Deploying MockOrg via forge script → ${broadcastRpc}`);
   const forge = spawnSync(
@@ -208,7 +206,40 @@ async function main(): Promise<void> {
     }
 
     case "sessions": {
-      printJson(await client.getSessions());
+      if ("getSessions" in client) {
+        printJson(await client.getSessions());
+      } else {
+        printJson([]);
+      }
+      return;
+    }
+
+    case "session-revoke": {
+      const cleaned = [...rest];
+      const rpcIdx = cleaned.indexOf("--rpc");
+      if (rpcIdx >= 0) cleaned.splice(rpcIdx, 2);
+      const sessionId = cleaned[0];
+      if (!sessionId) {
+        console.error("Usage: lacrew session-revoke <sessionId> [--rpc]");
+        process.exitCode = 1;
+        return;
+      }
+      if (!("revokeSession" in client)) {
+        console.error("session-revoke requires onchain client (--rpc + PRIVATE_KEY)");
+        process.exitCode = 1;
+        return;
+      }
+      printJson(await (client as { revokeSession: (id: string) => Promise<unknown> }).revokeSession(sessionId));
+      return;
+    }
+
+    case "epoch": {
+      if (!("runEpoch" in client)) {
+        console.error("epoch requires onchain client (--rpc + PRIVATE_KEY)");
+        process.exitCode = 1;
+        return;
+      }
+      printJson(await (client as { runEpoch: () => Promise<unknown> }).runEpoch());
       return;
     }
 
@@ -331,7 +362,9 @@ Commands:
   allowances [--rpc]        Print allowances
   intents [--rpc]           List pending escalations
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
-  sessions                  List session keys (mock)
+  sessions [--rpc]          List session keys (onchain SessionRegistry when --rpc)
+  session-revoke <id> [--rpc]  Revoke a session (root/issuer key)
+  epoch [--rpc]             Run next payroll epoch (EpochStreamer)
   tick                      Run one mocked worker tick
   propose <a> <t> <v>       Propose an intent
   approve <id> [approver]   Approve a pending intent
@@ -345,7 +378,8 @@ Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint
   PRIVATE_KEY               Deployer / writer key
   INDEXER_PATH              Local indexer JSON for audit/pending
-  BASE_SEPOLIA_RPC_URL      Optional testnet deploy path
+  SEPOLIA_RPC_URL           Ethereum Sepolia deploy (first testnet)
+  DATABASE_URL              Neon or Docker Postgres (pg-boss / @lacrew/db)
 `);
   }
 }

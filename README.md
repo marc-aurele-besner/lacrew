@@ -13,7 +13,8 @@ LaCrew is an open source protocol and platform for organizing AI agents the way 
 | `contracts/` | Solidity contracts (Foundry): OrgRegistry, Treasury, EscalationRouter, GovernanceModule, PolicyModules |
 | `packages/core` | Shared TypeScript types, ABIs, constants |
 | `packages/sdk` | Typed client for org state, intents, escalations, sessions |
-| `packages/orchestrator` | Agent runtime: scheduling, session keys, intent proposal |
+| `packages/db` | Drizzle + Postgres (Neon or Docker) |
+| `packages/orchestrator` | Agent runtime: pg-boss queue, session keys, intent proposal |
 | `packages/adapters/*` | Wallet and agent-framework adapters |
 | `apps/cli` | Scaffold an org, run a crew locally, self-host |
 | `apps/docs` | Protocol docs (docs.lacrew.xyz) |

@@ -6,6 +6,9 @@
 import {
   createPublicClient,
   createWalletClient,
+  encodeFunctionData,
+  keccak256,
+  toBytes,
   type Account,
   type Chain,
   type Hex,
@@ -20,8 +23,12 @@ import {
   treasuryAbi,
   escalationRouterAbi,
   governanceModuleAbi,
+  epochStreamerAbi,
+  sessionRegistryAbi,
   type Allowance,
   type ChainAddresses,
+  type GovernanceProposal,
+  type GovernanceProposalState,
   type GovernanceTier,
   type Intent,
   type OrgNode,
@@ -33,6 +40,24 @@ import {
 const TIER_MAP: Record<GovernanceTier, number> = {
   low: 0,
   high: 1,
+};
+
+const TIER_FROM: Record<number, GovernanceTier> = {
+  0: "low",
+  1: "high",
+};
+
+const STATE_FROM: Record<number, GovernanceProposalState> = {
+  0: "active",
+  1: "executed",
+  2: "vetoed",
+  3: "defeated",
+};
+
+const NODE_KIND_MAP: Record<OrgNode["kind"], number> = {
+  human_root: 0,
+  manager_agent: 1,
+  worker_agent: 2,
 };
 
 export type OnchainResolveResult = {
@@ -251,9 +276,175 @@ export class OnchainLacrewClient {
     };
   }
 
-  async getSessions(): Promise<SessionKey[]> {
-    // TODO: Session-key module onchain.
-    return [];
+  async getSessions(agent?: `0x${string}`): Promise<SessionKey[]> {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) return [];
+
+    const agents: `0x${string}`[] = agent
+      ? [agent]
+      : ((await this.getOrgTree()).map((n) => n.account) as `0x${string}`[]);
+
+    const out: SessionKey[] = [];
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    for (const a of agents) {
+      const ids = (await this.publicClient.readContract({
+        address: addr,
+        abi: sessionRegistryAbi,
+        functionName: "sessionsOf",
+        args: [a],
+      })) as readonly bigint[];
+
+      for (const id of ids) {
+        const row = (await this.publicClient.readContract({
+          address: addr,
+          abi: sessionRegistryAbi,
+          functionName: "sessions",
+          args: [id],
+        })) as readonly [
+          `0x${string}`,
+          `0x${string}`,
+          number | bigint,
+          `0x${string}`,
+          boolean,
+          boolean,
+        ];
+        const [, key, expiresAtRaw, , revoked, exists] = row;
+        if (!exists) continue;
+        const expiresAtSec = Number(expiresAtRaw);
+        out.push({
+          agent: a,
+          keyId: id.toString(),
+          keyAddress: key,
+          expiresAt: expiresAtSec * 1000,
+          scopes: [],
+          revoked: revoked || expiresAtSec <= nowSec,
+        });
+      }
+    }
+    return out.sort((x, y) => y.expiresAt - x.expiresAt);
+  }
+
+  /** Register an ephemeral key on SessionRegistry (caller = root or issuer). */
+  async issueSession(input: {
+    agent: `0x${string}`;
+    key: `0x${string}`;
+    expiresAtSec: number;
+    scopesHash: `0x${string}`;
+  }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const wallet = this.requireWallet();
+    const { request, result } = await this.publicClient.simulateContract({
+      address: addr,
+      abi: sessionRegistryAbi,
+      functionName: "issue",
+      args: [input.agent, input.key, BigInt(input.expiresAtSec), input.scopesHash],
+      account: wallet.account!,
+    });
+    const hash = await wallet.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { sessionId: (result as bigint).toString(), txHash: hash };
+  }
+
+  async revokeSession(sessionId: string): Promise<{ txHash: `0x${string}` }> {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: addr,
+      abi: sessionRegistryAbi,
+      functionName: "revoke",
+      args: [BigInt(sessionId)],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
+  }
+
+  /** Current payroll epoch from EpochStreamer (0 if not deployed). */
+  async getCurrentEpoch(): Promise<number> {
+    const addr = this.addresses.epochStreamer;
+    if (!addr) return 0;
+    const epoch = (await this.publicClient.readContract({
+      address: addr,
+      abi: epochStreamerAbi,
+      functionName: "currentEpoch",
+    })) as bigint;
+    return Number(epoch);
+  }
+
+  /**
+   * Run the next payroll epoch via EpochStreamer (operator = wallet account).
+   * Streams configured grants into node allowances.
+   */
+  async runEpoch(): Promise<{ epoch: number; txHash: `0x${string}` }> {
+    const addr = this.addresses.epochStreamer;
+    if (!addr) {
+      throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
+    }
+    const wallet = this.requireWallet();
+    const { request, result } = await this.publicClient.simulateContract({
+      address: addr,
+      abi: epochStreamerAbi,
+      functionName: "runNextEpoch",
+      account: wallet.account!,
+    });
+    const hash = await wallet.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { epoch: Number(result as bigint), txHash: hash };
+  }
+
+  /** Read all proposals (1 .. nextProposalId-1). */
+  async getProposals(): Promise<GovernanceProposal[]> {
+    const next = (await this.publicClient.readContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "nextProposalId",
+    })) as bigint;
+    const out: GovernanceProposal[] = [];
+    for (let id = 1n; id < next; id++) {
+      out.push(await this.readProposal(id));
+    }
+    return out;
+  }
+
+  async getProposal(proposalId: string): Promise<GovernanceProposal> {
+    return this.readProposal(BigInt(proposalId));
+  }
+
+  /**
+   * Propose hiring a node via OrgRegistry.addNode (low tier by default).
+   * Generates a deterministic demo address from `label` when `account` omitted.
+   */
+  async proposeHire(input: {
+    label: string;
+    kind?: OrgNode["kind"];
+    parent?: `0x${string}`;
+    account?: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const kind = input.kind ?? "worker_agent";
+    const parent =
+      input.parent ??
+      this.addresses.manager ??
+      this.addresses.humanRoot ??
+      ("0x0000000000000000000000000000000000000000" as `0x${string}`);
+    const account =
+      input.account ??
+      (`0x${keccak256(toBytes(`lacrew.hire:${input.label}`)).slice(26)}` as `0x${string}`);
+    const data = encodeFunctionData({
+      abi: orgRegistryAbi,
+      functionName: "addNode",
+      args: [account, NODE_KIND_MAP[kind], parent],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "low",
+      target: this.addresses.orgRegistry,
+      data,
+    });
+    return { ...result, account };
   }
 
   /** Propose a constitutional action (target + calldata). */
@@ -261,7 +452,7 @@ export class OnchainLacrewClient {
     tier: GovernanceTier;
     target: `0x${string}`;
     data: Hex;
-  }): Promise<{ proposalId: string }> {
+  }): Promise<{ proposalId: string; txHash: `0x${string}` }> {
     const wallet = this.requireWallet();
     const { request, result } = await this.publicClient.simulateContract({
       address: this.addresses.governanceModule,
@@ -272,11 +463,19 @@ export class OnchainLacrewClient {
     });
     const hash = await wallet.writeContract(request);
     await this.publicClient.waitForTransactionReceipt({ hash });
-    return { proposalId: (result as bigint).toString() };
+    return { proposalId: (result as bigint).toString(), txHash: hash };
   }
 
-  async voteGovernance(proposalId: string, support: boolean): Promise<void> {
-    const wallet = this.requireWallet();
+  /**
+   * Cast a yes/no vote.
+   * When `useResolver` is true, signs with resolverAccount (demo second voter for quorum).
+   */
+  async voteGovernance(
+    proposalId: string,
+    support: boolean,
+    opts?: { useResolver?: boolean },
+  ): Promise<{ txHash: `0x${string}` }> {
+    const wallet = opts?.useResolver ? this.requireResolverWallet() : this.requireWallet();
     const hash = await wallet.writeContract({
       address: this.addresses.governanceModule,
       abi: governanceModuleAbi,
@@ -286,9 +485,10 @@ export class OnchainLacrewClient {
       chain: wallet.chain,
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
   }
 
-  async vetoGovernance(proposalId: string): Promise<void> {
+  async vetoGovernance(proposalId: string): Promise<{ txHash: `0x${string}` }> {
     const wallet = this.requireWallet();
     const hash = await wallet.writeContract({
       address: this.addresses.governanceModule,
@@ -299,9 +499,10 @@ export class OnchainLacrewClient {
       chain: wallet.chain,
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
   }
 
-  async executeGovernance(proposalId: string): Promise<void> {
+  async executeGovernance(proposalId: string): Promise<{ txHash: `0x${string}` }> {
     const wallet = this.requireWallet();
     const hash = await wallet.writeContract({
       address: this.addresses.governanceModule,
@@ -312,6 +513,40 @@ export class OnchainLacrewClient {
       chain: wallet.chain,
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
+  }
+
+  private async readProposal(id: bigint): Promise<GovernanceProposal> {
+    const row = (await this.publicClient.readContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "proposals",
+      args: [id],
+    })) as readonly [
+      `0x${string}`,
+      number,
+      `0x${string}`,
+      `0x${string}`,
+      Hex,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      number,
+    ];
+    return {
+      id: id.toString(),
+      proposer: row[0],
+      tier: TIER_FROM[row[1]] ?? "low",
+      target: row[2],
+      actionHash: row[3],
+      data: row[4],
+      yesVotes: Number(row[5]),
+      noVotes: Number(row[6]),
+      deadline: Number(row[7]),
+      eta: Number(row[8]),
+      state: STATE_FROM[row[9]] ?? "active",
+    };
   }
 
   private requireWallet(): WalletClient {

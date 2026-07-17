@@ -24,6 +24,8 @@ contract EscalationRouter {
     IPolicyModule public policy;
     ITreasurySpender public treasury;
     IRateRecorder public rateRecorder;
+    /// @notice GovernanceModule (or bootstrap) for setTreasury / setRateRecorder.
+    address public governor;
 
     uint256 public nextIntentId = 1;
     mapping(uint256 => Intent) public intents;
@@ -39,6 +41,7 @@ contract EscalationRouter {
     );
     event TreasuryUpdated(address indexed treasury);
     event RateRecorderUpdated(address indexed rateRecorder);
+    event GovernorUpdated(address indexed governor);
 
     error IntentNotFound(uint256 intentId);
     error IntentAlreadyResolved(uint256 intentId);
@@ -46,6 +49,8 @@ contract EscalationRouter {
     error UnexpectedVerdict(Verdict verdict);
     error NoApprover(address agent);
     error InactiveAgent(address agent);
+    error NotAuthorized(address caller);
+    error ZeroAddress();
 
     /// TODO: Support stacked policy modules per node instead of a single global policy.
     constructor(address orgRegistry_, address policy_) {
@@ -53,15 +58,24 @@ contract EscalationRouter {
         policy = IPolicyModule(policy_);
     }
 
-    /// @notice Wire treasury for ALLOW execution. Permissionless until governance owns the org.
-    /// TODO: Gate to GovernanceModule.
+    /// @notice Bind constitutional authority. First set is bootstrap; then only governor.
+    function setGovernor(address governor_) external {
+        if (governor_ == address(0)) revert ZeroAddress();
+        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
+        governor = governor_;
+        emit GovernorUpdated(governor_);
+    }
+
+    /// @notice Wire treasury for ALLOW execution.
     function setTreasury(address treasury_) external {
+        _onlyGovernorOrBootstrap();
         treasury = ITreasurySpender(treasury_);
         emit TreasuryUpdated(treasury_);
     }
 
-    /// @notice Wire rate-limit recorder. Permissionless until governance owns the org.
+    /// @notice Wire rate-limit recorder.
     function setRateRecorder(address rateRecorder_) external {
+        _onlyGovernorOrBootstrap();
         rateRecorder = IRateRecorder(rateRecorder_);
         emit RateRecorderUpdated(rateRecorder_);
     }
@@ -173,5 +187,9 @@ contract EscalationRouter {
         if (address(rateRecorder) != address(0)) {
             rateRecorder.record(agent);
         }
+    }
+
+    function _onlyGovernorOrBootstrap() private view {
+        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
     }
 }

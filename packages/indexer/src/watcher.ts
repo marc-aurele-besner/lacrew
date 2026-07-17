@@ -1,6 +1,7 @@
 /**
  * Lightweight in-process event watcher for local demos.
- * TODO: Replace with Ponder + Postgres in Phase 1.
+ * Watches escalation + governance + treasury + session events into a JSON store.
+ * TODO: Replace with Ponder + Neon/Docker Postgres in Phase 1.
  */
 
 import {
@@ -13,6 +14,7 @@ import {
 import {
   getAddresses,
   escalationRouterAbi,
+  type ChainAddresses,
   type Intent,
   type ProtocolEvent,
 } from "@lacrew/core";
@@ -30,6 +32,24 @@ const intentResolved = parseAbiItem(
 const actionExecuted = parseAbiItem(
   "event ActionExecuted(address indexed agent, address indexed target, uint256 value, bool callOk)",
 );
+const proposalCreated = parseAbiItem(
+  "event ProposalCreated(uint256 indexed proposalId, address indexed proposer, uint8 tier, address target, bytes32 actionHash)",
+);
+const proposalExecuted = parseAbiItem(
+  "event ProposalExecuted(uint256 indexed proposalId)",
+);
+const proposalVetoed = parseAbiItem(
+  "event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer)",
+);
+const allowanceStreamed = parseAbiItem(
+  "event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch)",
+);
+const sessionIssued = parseAbiItem(
+  "event SessionIssued(uint256 indexed sessionId, address indexed agent, address indexed key, uint64 expiresAt, bytes32 scopesHash)",
+);
+const sessionRevoked = parseAbiItem(
+  "event SessionRevoked(uint256 indexed sessionId, address indexed by)",
+);
 
 export type WatcherOptions = {
   rpcUrl: string;
@@ -38,8 +58,13 @@ export type WatcherOptions = {
   routerAddress?: `0x${string}`;
 };
 
+type WatchCommon = {
+  onError: (err: Error) => void;
+};
+
 export class EventWatcher {
   private readonly client: PublicClient;
+  private readonly addresses: ChainAddresses;
   private readonly router: `0x${string}`;
   private readonly storePath: string;
   private store: IndexerStore;
@@ -48,29 +73,48 @@ export class EventWatcher {
 
   constructor(options: WatcherOptions) {
     const chainId = options.chainId ?? 31337;
-    const addresses = getAddresses(chainId);
-    this.router = options.routerAddress ?? addresses.escalationRouter;
+    this.addresses = getAddresses(chainId);
+    this.router = options.routerAddress ?? this.addresses.escalationRouter;
     this.storePath = options.storePath;
     this.store = loadStore(options.storePath);
     this.client = createPublicClient({ transport: http(options.rpcUrl) });
   }
 
   start(): void {
-    const common = {
-      address: this.router,
+    const common: WatchCommon = {
       onError: (err: Error) => {
         const now = Date.now();
-        // Avoid flooding the terminal when RPC flaps.
         if (now - this.lastErrorAt < 15_000) return;
         this.lastErrorAt = now;
         console.error("[@lacrew/indexer] watch error:", err.message.split("\n")[0]);
       },
     };
 
+    this.watchRouter(common);
+    this.watchGovernance(common);
+    this.watchTreasury(common);
+    this.watchSessions(common);
+
+    console.log(
+      `[@lacrew/indexer] watching router/gov/treasury/sessions → ${this.storePath}`,
+    );
+  }
+
+  stop(): void {
+    for (const u of this.unwatchers) u();
+    this.unwatchers = [];
+  }
+
+  getStore(): IndexerStore {
+    return this.store;
+  }
+
+  private watchRouter(common: WatchCommon): void {
     this.unwatchers.push(
       this.client.watchEvent({
-        ...common,
+        address: this.router,
         event: intentCreated,
+        ...common,
         onLogs: (logs) => {
           for (const log of logs) {
             const intentId = (log.args.intentId as bigint).toString();
@@ -89,8 +133,9 @@ export class EventWatcher {
 
     this.unwatchers.push(
       this.client.watchEvent({
-        ...common,
+        address: this.router,
         event: intentEscalated,
+        ...common,
         onLogs: (logs) => {
           for (const log of logs) {
             const intentId = (log.args.intentId as bigint).toString();
@@ -111,8 +156,9 @@ export class EventWatcher {
 
     this.unwatchers.push(
       this.client.watchEvent({
-        ...common,
+        address: this.router,
         event: intentResolved,
+        ...common,
         onLogs: (logs) => {
           for (const log of logs) {
             const intentId = (log.args.intentId as bigint).toString();
@@ -136,22 +182,48 @@ export class EventWatcher {
 
     this.unwatchers.push(
       this.client.watchEvent({
-        ...common,
+        address: this.router,
         event: actionExecuted,
+        ...common,
         onLogs: (logs) => {
           for (const log of logs) {
-            const agent = log.args.agent as `0x${string}`;
-            const target = log.args.target as `0x${string}`;
-            const value = (log.args.value as bigint).toString();
-            const callOk = Boolean(log.args.callOk);
             this.pushAudit({
               type: "ActionExecuted",
               at: new Date().toISOString(),
               payload: {
-                agent,
-                target,
-                value,
-                callOk,
+                agent: log.args.agent as string,
+                target: log.args.target as string,
+                value: (log.args.value as bigint).toString(),
+                callOk: Boolean(log.args.callOk),
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
+    );
+  }
+
+  private watchGovernance(common: WatchCommon): void {
+    const gov = this.addresses.governanceModule;
+    if (!gov || gov.endsWith("0000")) return;
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: gov,
+        event: proposalCreated,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "ProposalCreated",
+              at: new Date().toISOString(),
+              payload: {
+                proposalId: (log.args.proposalId as bigint).toString(),
+                proposer: log.args.proposer as string,
+                tier: Number(log.args.tier),
+                target: log.args.target as string,
+                actionHash: log.args.actionHash as string,
                 txHash: log.transactionHash,
               },
             });
@@ -160,18 +232,122 @@ export class EventWatcher {
       }),
     );
 
-    console.log(
-      `[@lacrew/indexer] watching ${this.router} → ${this.storePath}`,
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: gov,
+        event: proposalExecuted,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "ProposalExecuted",
+              at: new Date().toISOString(),
+              payload: {
+                proposalId: (log.args.proposalId as bigint).toString(),
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
+    );
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: gov,
+        event: proposalVetoed,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "ProposalVetoed",
+              at: new Date().toISOString(),
+              payload: {
+                proposalId: (log.args.proposalId as bigint).toString(),
+                vetoer: log.args.vetoer as string,
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
     );
   }
 
-  stop(): void {
-    for (const u of this.unwatchers) u();
-    this.unwatchers = [];
+  private watchTreasury(common: WatchCommon): void {
+    const treasury = this.addresses.treasury;
+    if (!treasury || treasury.endsWith("0000")) return;
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: treasury,
+        event: allowanceStreamed,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "AllowanceStreamed",
+              at: new Date().toISOString(),
+              payload: {
+                node: log.args.node as string,
+                amount: (log.args.amount as bigint).toString(),
+                epoch: Number(log.args.epoch),
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
+    );
   }
 
-  getStore(): IndexerStore {
-    return this.store;
+  private watchSessions(common: WatchCommon): void {
+    const sessions = this.addresses.sessionRegistry;
+    if (!sessions) return;
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: sessions,
+        event: sessionIssued,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "SessionIssued",
+              at: new Date().toISOString(),
+              payload: {
+                keyId: (log.args.sessionId as bigint).toString(),
+                agent: log.args.agent as string,
+                keyAddress: log.args.key as string,
+                expiresAt: Number(log.args.expiresAt) * 1000,
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
+    );
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        address: sessions,
+        event: sessionRevoked,
+        ...common,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            this.pushAudit({
+              type: "SessionRevoked",
+              at: new Date().toISOString(),
+              payload: {
+                keyId: (log.args.sessionId as bigint).toString(),
+                by: log.args.by as string,
+                txHash: log.transactionHash,
+              },
+            });
+          }
+        },
+      }),
+    );
   }
 
   private pushAudit(event: ProtocolEvent): void {

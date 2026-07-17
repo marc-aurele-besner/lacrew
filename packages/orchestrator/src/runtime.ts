@@ -3,7 +3,8 @@
  * Defaults to mock SDK; when ANVIL_RPC + PRIVATE_KEY are set, uses createOnchainClient.
  * Onchain mode keeps a local audit ring from propose/resolve receipts so /audit
  * works without a separate indexer process.
- * TODO: BullMQ + Redis scheduling, OpenRouter model calls, MCP tool protocol.
+ * TODO: OpenRouter model calls, MCP tool protocol.
+ * Queue: QueueProvider (pg-boss when DATABASE_URL set; BullMQ later).
  */
 
 import {
@@ -19,13 +20,15 @@ import {
   getAddresses,
   MOCK_MANAGER,
   MOCK_WORKER,
+  type GovernanceProposal,
+  type GovernanceTier,
   type Intent,
   type ProtocolEvent,
   type SessionKey,
 } from "@lacrew/core";
 import { http, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { issueSession, isSessionExpired, revokeSession } from "./sessions.js";
+import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 
 export type RuntimeMode = "mock" | "onchain";
 
@@ -111,11 +114,48 @@ export class CrewRuntime {
     return this.client;
   }
 
-  /** Boot (or rotate) a session key for the worker. */
+  /** Boot (or rotate) a session key for the worker. Onchain: ephemeral key + SessionRegistry. */
   async boot(): Promise<SessionKey> {
     if (this.session && !isSessionExpired(this.session)) {
       return this.session;
     }
+
+    if (isOnchainClient(this.client) && this.addressesHasSessions()) {
+      const ephemeral = createEphemeralSession({
+        agent: this.workerAgent,
+        scopes: ["spend:whitelist", "propose:intent"],
+      });
+      const { sessionId, txHash } = await this.client.issueSession({
+        agent: ephemeral.agent,
+        key: ephemeral.keyAddress!,
+        expiresAtSec: ephemeral.expiresAtSec,
+        scopesHash: ephemeral.scopesHash,
+      });
+      this.session = {
+        agent: ephemeral.agent,
+        keyId: sessionId,
+        keyAddress: ephemeral.keyAddress,
+        expiresAt: ephemeral.expiresAt,
+        scopes: ephemeral.scopes,
+        revoked: false,
+      };
+      // Keep private key only on the runtime instance, never in audit payloads.
+      (this as { _sessionPk?: `0x${string}` })._sessionPk = ephemeral.privateKey;
+
+      this.pushAudit({
+        type: "SessionIssued",
+        at: new Date().toISOString(),
+        payload: {
+          agent: this.session.agent,
+          keyId: this.session.keyId,
+          keyAddress: this.session.keyAddress,
+          expiresAt: this.session.expiresAt,
+          txHash,
+        },
+      });
+      return this.session;
+    }
+
     this.session = issueSession({
       agent: this.workerAgent,
       scopes: ["spend:whitelist", "propose:intent"],
@@ -130,6 +170,44 @@ export class CrewRuntime {
       },
     });
     return this.session;
+  }
+
+  private addressesHasSessions(): boolean {
+    return Boolean(
+      isOnchainClient(this.client) && this.client.addresses.sessionRegistry,
+    );
+  }
+
+  async listSessions(): Promise<SessionKey[]> {
+    if (isOnchainClient(this.client)) {
+      return this.client.getSessions();
+    }
+    return this.client.getSessions();
+  }
+
+  async revokeSessionById(sessionId: string): Promise<{ txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      if (this.session?.keyId === sessionId) {
+        this.session = revokeSession(this.session);
+      }
+      this.pushAudit({
+        type: "SessionRevoked",
+        at: new Date().toISOString(),
+        payload: { keyId: sessionId, mocked: true },
+      });
+      return {};
+    }
+    const { txHash } = await this.client.revokeSession(sessionId);
+    if (this.session?.keyId === sessionId) {
+      this.session = revokeSession(this.session);
+      delete (this as { _sessionPk?: `0x${string}` })._sessionPk;
+    }
+    this.pushAudit({
+      type: "SessionRevoked",
+      at: new Date().toISOString(),
+      payload: { keyId: sessionId, txHash },
+    });
+    return { txHash };
   }
 
   /**
@@ -244,6 +322,143 @@ export class CrewRuntime {
 
     if (txHash) await this.ingestReceiptLogs(txHash);
     return result;
+  }
+
+  /** List onchain governance proposals (empty in mock mode). */
+  async listProposals(): Promise<GovernanceProposal[]> {
+    if (!isOnchainClient(this.client)) return [];
+    return this.client.getProposals();
+  }
+
+  /**
+   * Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode.
+   * Onchain only.
+   */
+  async proposeHire(input: {
+    label: string;
+    kind?: "manager_agent" | "worker_agent";
+    parent?: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{
+    proposalId: string;
+    account: `0x${string}`;
+    txHash?: `0x${string}`;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeHire requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
+    }
+    const result = await this.client.proposeHire(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        label: input.label,
+        kind: input.kind ?? "worker_agent",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  /**
+   * Vote on a proposal. In onchain demos with MANAGER_PRIVATE_KEY set and
+   * support=true, also casts a second yes from the manager so QUORUM_YES=2 is reachable.
+   */
+  async voteGovernance(
+    proposalId: string,
+    support: boolean,
+  ): Promise<{ txHashes: `0x${string}`[]; proposal: GovernanceProposal }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("voteGovernance requires onchain mode");
+    }
+    const txHashes: `0x${string}`[] = [];
+    const first = await this.client.voteGovernance(proposalId, support);
+    txHashes.push(first.txHash);
+
+    // Demo scaffolding: second Anvil signer helps meet hardcoded quorum of 2.
+    if (
+      support &&
+      this.client.resolverWalletClient?.account &&
+      this.client.walletClient?.account &&
+      this.client.resolverWalletClient.account.address.toLowerCase() !==
+        this.client.walletClient.account.address.toLowerCase()
+    ) {
+      try {
+        const second = await this.client.voteGovernance(proposalId, true, { useResolver: true });
+        txHashes.push(second.txHash);
+      } catch {
+        // Already voted or same effective voter — ignore.
+      }
+    }
+
+    const proposal = await this.client.getProposal(proposalId);
+    this.pushAudit({
+      type: "ProposalVoted",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId,
+        support,
+        yesVotes: proposal.yesVotes,
+        noVotes: proposal.noVotes,
+        txHash: txHashes[txHashes.length - 1],
+      },
+    });
+    return { txHashes, proposal };
+  }
+
+  async vetoGovernance(proposalId: string): Promise<{ txHash: `0x${string}`; proposal: GovernanceProposal }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("vetoGovernance requires onchain mode");
+    }
+    const { txHash } = await this.client.vetoGovernance(proposalId);
+    const proposal = await this.client.getProposal(proposalId);
+    this.pushAudit({
+      type: "ProposalVetoed",
+      at: new Date().toISOString(),
+      payload: { proposalId, txHash },
+    });
+    return { txHash, proposal };
+  }
+
+  async executeGovernance(
+    proposalId: string,
+  ): Promise<{ txHash: `0x${string}`; proposal: GovernanceProposal }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("executeGovernance requires onchain mode");
+    }
+    const { txHash } = await this.client.executeGovernance(proposalId);
+    const proposal = await this.client.getProposal(proposalId);
+    this.pushAudit({
+      type: "ProposalExecuted",
+      at: new Date().toISOString(),
+      payload: { proposalId, txHash, state: proposal.state },
+    });
+    return { txHash, proposal };
+  }
+
+  /** Run the next payroll epoch (EpochStreamer → Treasury.streamAllowance). */
+  async runEpoch(): Promise<{ epoch: number; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("runEpoch requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
+    }
+    const result = await this.client.runEpoch();
+    this.pushAudit({
+      type: "AllowanceStreamed",
+      at: new Date().toISOString(),
+      payload: {
+        epoch: result.epoch,
+        txHash: result.txHash,
+        via: "EpochStreamer",
+      },
+    });
+    return result;
+  }
+
+  async getCurrentEpoch(): Promise<number> {
+    if (!isOnchainClient(this.client)) return 0;
+    return this.client.getCurrentEpoch();
   }
 
   private pushAudit(event: ProtocolEvent): void {

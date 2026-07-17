@@ -8,10 +8,11 @@ Sibling private repo: `lacrew.xyz` (hosted cloud). Anything users must trust to 
 
 | Layer | Tech |
 | --- | --- |
-| Contracts | Solidity 0.8.x, Foundry, OpenZeppelin, Base (Sepolia → mainnet) |
+| Contracts | Solidity 0.8.x, Foundry, OpenZeppelin; Ethereum Sepolia → Base mainnet |
 | Packages | TypeScript, pnpm workspaces, Turborepo |
 | Chain | viem |
-| Orchestrator | Node 22+, Hono/Fastify, BullMQ, Drizzle/Postgres |
+| Data | Neon or Docker Postgres + Drizzle (`@lacrew/db`) |
+| Orchestrator | Node 22+, Hono/Fastify, QueueProvider + pg-boss (BullMQ later) |
 | Docs | Fumadocs (planned) |
 
 ## Commands
