@@ -12,6 +12,10 @@ Mocked content scaffold. The real docs site (Fumadocs) is not wired yet.
 
 - [Protocol overview](./protocol/overview.md)
 - [IPolicyModule](./protocol/policy-module.md)
+- [Escalation flow](./protocol/escalation.md)
+- [Governance](./protocol/governance.md)
+- [Security model](./protocol/security.md)
+- [Self-hosting](./self-host.md)
 
 ## TODO
 
