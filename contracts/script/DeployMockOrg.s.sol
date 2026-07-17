@@ -29,6 +29,12 @@ contract DeployMockOrg is Script {
         whitelist.setAllowed(address(uint160(uint256(keccak256("lacrew.x402")))), true);
 
         SpendCapPolicy spendCap = new SpendCapPolicy(50 ether);
+        // Mocked demo tree: root -> manager -> worker
+        address manager = address(uint160(uint256(keccak256("lacrew.manager"))));
+        address worker = address(uint160(uint256(keccak256("lacrew.worker"))));
+        spendCap.setAgentCap(manager, 200 ether);
+        spendCap.setAgentCap(humanRoot, type(uint256).max);
+
         IPolicyModule[] memory modules = new IPolicyModule[](2);
         modules[0] = whitelist;
         modules[1] = spendCap;
@@ -37,9 +43,6 @@ contract DeployMockOrg is Script {
         EscalationRouter router = new EscalationRouter(address(registry), address(stack));
         GovernanceModule gov = new GovernanceModule();
 
-        // Mocked demo tree: root -> manager -> worker
-        address manager = address(uint160(uint256(keccak256("lacrew.manager"))));
-        address worker = address(uint160(uint256(keccak256("lacrew.worker"))));
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, humanRoot);
         registry.addNode(worker, IOrgRegistry.NodeKind.WorkerAgent, manager);
         treasury.streamAllowance(worker, 50 ether, 1);

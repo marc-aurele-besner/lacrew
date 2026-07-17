@@ -5,22 +5,29 @@ import {Test} from "forge-std/Test.sol";
 import {SpendCapPolicy} from "../src/policies/SpendCapPolicy.sol";
 import {Verdict} from "../src/interfaces/IPolicyModule.sol";
 
-/// @dev Minimal forge-std-free assertions if forge-std is not installed yet.
-/// TODO: `forge install foundry-rs/forge-std` and switch fully to forge-std Test helpers.
 contract SpendCapPolicyTest is Test {
     SpendCapPolicy internal policy;
+    address internal agent = makeAddr("agent");
 
     function setUp() public {
         policy = new SpendCapPolicy(100 ether);
     }
 
     function test_allowsUnderCap() public view {
-        Verdict v = policy.check(address(1), address(2), 50 ether, "");
+        Verdict v = policy.check(agent, address(2), 50 ether, "");
         assertEq(uint8(v), uint8(Verdict.ALLOW));
     }
 
     function test_escalatesOverCap() public view {
-        Verdict v = policy.check(address(1), address(2), 101 ether, "");
+        Verdict v = policy.check(agent, address(2), 101 ether, "");
         assertEq(uint8(v), uint8(Verdict.ESCALATE));
+    }
+
+    function test_perAgentOverride() public {
+        policy.setAgentCap(agent, 200 ether);
+        Verdict under = policy.check(agent, address(2), 150 ether, "");
+        assertEq(uint8(under), uint8(Verdict.ALLOW));
+        Verdict over = policy.check(agent, address(2), 201 ether, "");
+        assertEq(uint8(over), uint8(Verdict.ESCALATE));
     }
 }
