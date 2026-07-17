@@ -14,15 +14,20 @@ interface IPolicyModule {
 }
 ```
 
-Standard modules planned:
+Standard modules (reference contracts):
 
-- Spend cap
-- Contract whitelist
-- Rate limit
-- Time window
-- Custom logic (third-party)
+| Module | Verdict behavior |
+| --- | --- |
+| `SpendCapPolicy` | ESCALATE over per-agent / default cap |
+| `WhitelistPolicy` | DENY non-whitelisted targets |
+| `RateLimitPolicy` | ESCALATE when window count ≥ max (router calls `record`) |
+| `TimeWindowPolicy` | DENY outside daily UTC window |
+| Custom | Third-party `IPolicyModule` implementations |
+
+`PolicyStack` composes modules: **first DENY wins**; any ESCALATE is sticky; else ALLOW.
 
 ## TODO
 
+- TODO: Per-node policy stacks (router still uses one global stack)
 - TODO: Spec module registry + upgrade path via GovernanceModule
 - TODO: Publish ABI + abitype package for off-chain preflight

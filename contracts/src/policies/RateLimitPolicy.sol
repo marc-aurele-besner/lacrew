@@ -2,13 +2,16 @@
 pragma solidity ^0.8.28;
 
 import {IPolicyModule, Verdict} from "../interfaces/IPolicyModule.sol";
+import {IRateRecorder} from "../interfaces/IRateRecorder.sol";
 
 /// @title RateLimitPolicy
 /// @notice Escalates when an agent exceeds `maxActions` within `windowSeconds`.
-/// @dev Mocked: in-contract counters; not production-hardened against time manipulation.
-contract RateLimitPolicy is IPolicyModule {
+contract RateLimitPolicy is IPolicyModule, IRateRecorder {
     uint256 public immutable maxActions;
     uint256 public immutable windowSeconds;
+
+    address public recorder;
+    bool public recorderLocked;
 
     struct Window {
         uint64 windowStart;
@@ -17,15 +20,21 @@ contract RateLimitPolicy is IPolicyModule {
 
     mapping(address => Window) public windows;
 
-    /// TODO: Move velocity signals to off-chain guardian for soft alerts; keep hard caps here.
+    error NotRecorder(address caller);
+
     constructor(uint256 maxActions_, uint256 windowSeconds_) {
         maxActions = maxActions_;
         windowSeconds = windowSeconds_;
     }
 
+    /// @notice Bind who may call `record` (typically EscalationRouter). Lock after set.
+    function setRecorder(address recorder_) external {
+        if (recorderLocked) revert NotRecorder(msg.sender);
+        recorder = recorder_;
+        recorderLocked = true;
+    }
+
     /// @inheritdoc IPolicyModule
-    /// @dev view-only check uses current stored count; callers that want mutation need a separate hook.
-    /// Mocked: this module is view and does not increment — EscalationRouter would need a record() path.
     function check(
         address agent,
         address,
@@ -40,9 +49,10 @@ contract RateLimitPolicy is IPolicyModule {
         return Verdict.ALLOW;
     }
 
-    /// @notice Record an attempted action for rate accounting.
-    /// @dev Mocked: permissionless; TODO: restrict to EscalationRouter.
+    /// @inheritdoc IRateRecorder
     function record(address agent) external {
+        if (recorder != address(0) && msg.sender != recorder) revert NotRecorder(msg.sender);
+
         Window storage w = windows[agent];
         if (w.windowStart == 0 || block.timestamp >= uint256(w.windowStart) + windowSeconds) {
             w.windowStart = uint64(block.timestamp);
