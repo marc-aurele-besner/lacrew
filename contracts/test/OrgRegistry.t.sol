@@ -24,8 +24,10 @@ contract OrgRegistryTest is Test {
         address manager = makeAddr("manager");
         address worker = makeAddr("worker");
 
+        vm.startPrank(root);
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, root);
         registry.addNode(worker, IOrgRegistry.NodeKind.WorkerAgent, manager);
+        vm.stopPrank();
 
         address[] memory rootChildren = registry.getChildren(root);
         assertEq(rootChildren.length, 1);
@@ -39,9 +41,17 @@ contract OrgRegistryTest is Test {
         assertEq(w.parent, manager);
     }
 
+    function test_rejectsStrangerAdd() public {
+        address manager = makeAddr("manager");
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.NotAuthorized.selector, address(this)));
+        registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, root);
+    }
+
     function test_rejectsDuplicateNode() public {
         address manager = makeAddr("manager");
+        vm.prank(root);
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, root);
+        vm.prank(root);
         vm.expectRevert(abi.encodeWithSelector(OrgRegistry.NodeAlreadyExists.selector, manager));
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, root);
     }
@@ -49,6 +59,7 @@ contract OrgRegistryTest is Test {
     function test_rejectsUnknownParent() public {
         address manager = makeAddr("manager");
         address ghost = makeAddr("ghost");
+        vm.prank(root);
         vm.expectRevert(abi.encodeWithSelector(OrgRegistry.InvalidParent.selector, ghost));
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, ghost);
     }

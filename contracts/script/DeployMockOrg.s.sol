@@ -7,6 +7,7 @@ import {Treasury} from "../src/Treasury.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 import {SpendCapPolicy} from "../src/policies/SpendCapPolicy.sol";
 import {WhitelistPolicy} from "../src/policies/WhitelistPolicy.sol";
+import {RateLimitPolicy} from "../src/policies/RateLimitPolicy.sol";
 import {PolicyStack} from "../src/policies/PolicyStack.sol";
 import {EscalationRouter} from "../src/EscalationRouter.sol";
 import {GovernanceModule} from "../src/GovernanceModule.sol";
@@ -14,7 +15,7 @@ import {IOrgRegistry} from "../src/interfaces/IOrgRegistry.sol";
 import {IPolicyModule} from "../src/interfaces/IPolicyModule.sol";
 
 /// @notice Deploys a reference org stack for Anvil / Base Sepolia scaffolding.
-/// @dev Mints MockUSDC, funds Treasury, wires router as spender.
+/// @dev Deployer key must equal HUMAN_ROOT (default) so bootstrap addNode succeeds.
 contract DeployMockOrg is Script {
     uint256 internal constant USDC = 1e6;
 
@@ -29,6 +30,8 @@ contract DeployMockOrg is Script {
 
         MockUSDC usdc = new MockUSDC();
         OrgRegistry registry = new OrgRegistry(humanRoot);
+        GovernanceModule gov = new GovernanceModule(humanRoot);
+
         WhitelistPolicy whitelist = new WhitelistPolicy();
         whitelist.setAllowed(address(uint160(uint256(keccak256("lacrew.x402")))), true);
 
@@ -36,31 +39,22 @@ contract DeployMockOrg is Script {
         spendCap.setAgentCap(manager, 200 * USDC);
         spendCap.setAgentCap(humanRoot, type(uint256).max);
 
-        IPolicyModule[] memory modules = new IPolicyModule[](2);
+        RateLimitPolicy rateLimit = new RateLimitPolicy(10, 1 hours);
+
+        IPolicyModule[] memory modules = new IPolicyModule[](3);
         modules[0] = whitelist;
         modules[1] = spendCap;
+        modules[2] = rateLimit;
         PolicyStack stack = new PolicyStack(modules);
 
         EscalationRouter router = new EscalationRouter(address(registry), address(stack));
         Treasury treasury = new Treasury(address(registry), address(usdc), address(router));
-        GovernanceModule gov = new GovernanceModule();
 
-        _seedOrg(registry, treasury, usdc, humanRoot, manager, worker, fundAmount);
+        router.setTreasury(address(treasury));
+        router.setRateRecorder(address(rateLimit));
+        rateLimit.setRecorder(address(router));
 
-        vm.stopBroadcast();
-
-        _writeDeployments(usdc, registry, treasury, router, gov, spendCap, stack, whitelist);
-    }
-
-    function _seedOrg(
-        OrgRegistry registry,
-        Treasury treasury,
-        MockUSDC usdc,
-        address humanRoot,
-        address manager,
-        address worker,
-        uint256 fundAmount
-    ) private {
+        require(msg.sender == humanRoot, "deployer must be HUMAN_ROOT");
         registry.addNode(manager, IOrgRegistry.NodeKind.ManagerAgent, humanRoot);
         registry.addNode(worker, IOrgRegistry.NodeKind.WorkerAgent, manager);
 
@@ -68,6 +62,13 @@ contract DeployMockOrg is Script {
         usdc.approve(address(treasury), fundAmount);
         treasury.deposit(fundAmount);
         treasury.streamAllowance(worker, 50 * USDC, 1);
+
+        registry.setGovernor(address(gov));
+        treasury.setGovernor(address(gov));
+
+        vm.stopBroadcast();
+
+        _writeDeployments(usdc, registry, treasury, router, gov, spendCap, stack, whitelist);
     }
 
     function _writeDeployments(

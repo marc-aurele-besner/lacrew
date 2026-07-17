@@ -11,13 +11,19 @@ LaCrew splits decisions into two regimes and refuses to confuse them.
 
 ## Risk tiers
 
-- **Low tier** — majority quorum, instant execution. Organizational velocity without timelock theater.
-- **High tier** — treasury-touching or policy-touching. Timelock + human veto window. A compromised agent quorum must not drain the org instantly.
+- **Low tier** — majority quorum, execute after quorum (no timelock).
+- **High tier** — treasury-touching or policy-touching. Voting deadline + **1-day timelock** (`eta`); human root may **`veto`** before execute.
+
+## Execution
+
+Proposals bind `target` + `calldata`. On `execute`, the module calls `target.call(data)` after quorum (and high-tier eta). OrgRegistry / Treasury accept mutations from the governor address after bootstrap `setGovernor`.
 
 ## Voting power
 
-Role-weighted and configured per organization. A quorum of agents under one orchestrator is a **review** mechanism, not a trust mechanism. Defaults keep sovereign high-tier authority with human seats.
+Still scaffolding: every address = 1 vote, quorum = 2 yes. Role-weighted seats are TODO.
 
-## Current scaffolding
+## Current scaffolding gaps
 
-`GovernanceModule` is mocked: equal voting power, quorum of 2 yes votes, no timelock/veto yet. See `contracts/src/GovernanceModule.sol`.
+- No role-weighted voting
+- Router / policy `setTreasury` / `setRateRecorder` still loosely gated
+- Session-key / passkey root binding not onchain yet

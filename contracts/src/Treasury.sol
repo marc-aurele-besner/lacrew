@@ -3,21 +3,29 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ITreasurySpender} from "./interfaces/ITreasurySpender.sol";
 
 /// @title Treasury
 /// @notice Holds org ERC-20 funds and streams allowances downward on epoch schedules.
 /// @dev Token stays in this contract until spent; `allowanceBalance` is working-capital bookkeeping.
-contract Treasury {
+contract Treasury is ITreasurySpender {
     using SafeERC20 for IERC20;
 
     address public immutable orgRegistry;
     IERC20 public immutable token;
 
     address public spender;
+    /// @notice GovernanceModule (or bootstrap root) for setSpender / stream authorization.
+    address public governor;
+    /// @notice Optional epoch job that may call `streamAllowance`.
+    address public streamer;
+
     uint256 public totalReserved;
     mapping(address => uint256) public allowanceBalance;
 
     event SpenderUpdated(address indexed spender);
+    event GovernorUpdated(address indexed governor);
+    event StreamerUpdated(address indexed streamer);
     event Deposited(address indexed from, uint256 amount);
     event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch);
     event AllowanceSpent(address indexed node, uint256 amount, address indexed to);
@@ -25,6 +33,7 @@ contract Treasury {
     error InsufficientAllowance(address node, uint256 requested, uint256 available);
     error InsufficientTreasury(uint256 requested, uint256 available);
     error NotSpender(address caller);
+    error NotAuthorized(address caller);
     error ZeroAddress();
 
     constructor(address orgRegistry_, address token_, address spender_) {
@@ -34,9 +43,26 @@ contract Treasury {
         spender = spender_;
     }
 
+    function setGovernor(address governor_) external {
+        if (governor_ == address(0)) revert ZeroAddress();
+        if (governor != address(0)) {
+            if (msg.sender != governor) revert NotAuthorized(msg.sender);
+        }
+        // Bootstrap: first set is permissionless so DeployMockOrg / tests can wire gov.
+        // Once set, only governor may rotate.
+        governor = governor_;
+        emit GovernorUpdated(governor_);
+    }
+
+    function setStreamer(address streamer_) external {
+        _onlyGovernorOrBootstrap();
+        streamer = streamer_;
+        emit StreamerUpdated(streamer_);
+    }
+
     /// @notice Update who may call `spendAllowance` (typically EscalationRouter).
-    /// @dev Mocked: permissionless for scaffolding; TODO: gate to GovernanceModule / root.
     function setSpender(address spender_) external {
+        _onlyGovernorOrBootstrap();
         if (spender_ == address(0)) revert ZeroAddress();
         spender = spender_;
         emit SpenderUpdated(spender_);
@@ -48,9 +74,11 @@ contract Treasury {
         emit Deposited(msg.sender, amount);
     }
 
-    /// @notice Allocate `amount` of unreserved treasury balance to `node` for an epoch.
-    /// @dev Mocked: anyone may stream; TODO: Restrict to epoch job / authorized streamer.
+    /// @notice Allocate unreserved treasury balance to `node` for an epoch.
     function streamAllowance(address node, uint256 amount, uint64 epoch) external {
+        if (governor != address(0) || streamer != address(0)) {
+            if (msg.sender != governor && msg.sender != streamer) revert NotAuthorized(msg.sender);
+        }
         uint256 liquid = liquidBalance();
         if (liquid < amount) revert InsufficientTreasury(amount, liquid);
 
@@ -59,7 +87,7 @@ contract Treasury {
         emit AllowanceStreamed(node, amount, epoch);
     }
 
-    /// @notice Debit `node` allowance and transfer tokens to `to`. Only `spender` may call.
+    /// @inheritdoc ITreasurySpender
     function spendAllowance(address node, uint256 amount, address to) external {
         if (msg.sender != spender) revert NotSpender(msg.sender);
         if (to == address(0)) revert ZeroAddress();
@@ -75,6 +103,10 @@ contract Treasury {
     function liquidBalance() public view returns (uint256) {
         uint256 bal = token.balanceOf(address(this));
         return bal > totalReserved ? bal - totalReserved : 0;
+    }
+
+    function _onlyGovernorOrBootstrap() private view {
+        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
     }
 
     function _spend(address node, uint256 amount, address to) private {
