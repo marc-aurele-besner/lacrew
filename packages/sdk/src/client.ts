@@ -250,3 +250,10 @@ export class LacrewClient {
 export function createLacrewClient(options?: LacrewClientOptions): LacrewClient {
   return new LacrewClient(options);
 }
+
+export {
+  createOnchainClient,
+  type OnchainClientOptions,
+  type OnchainLacrewClient,
+  type OnchainResolveResult,
+} from "./onchain.js";

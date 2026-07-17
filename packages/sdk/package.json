@@ -14,12 +14,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/policy.test.ts src/client.test.ts",
+    "test": "node --import tsx --test src/policy.test.ts src/client.test.ts src/onchain.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@lacrew/core": "workspace:*"
+    "@lacrew/core": "workspace:*",
+    "viem": "^2.55.2"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
