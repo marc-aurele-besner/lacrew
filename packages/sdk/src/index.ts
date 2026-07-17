@@ -1,4 +1,9 @@
-export { LacrewClient, createLacrewClient, type LacrewClientOptions } from "./client.js";
+export {
+  LacrewClient,
+  createLacrewClient,
+  type LacrewClientOptions,
+  type ResolveResult,
+} from "./client.js";
 export {
   checkClientPolicy,
   defaultMockPolicy,

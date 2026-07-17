@@ -38,9 +38,9 @@ export const mockAllowances: Allowance[] = [
   {
     node: MOCK_MANAGER,
     token: MOCK_TOKEN,
-    balance: 500n * 10n ** 6n,
+    balance: 200n * 10n ** 6n,
     epoch: 1,
-    cap: 500n * 10n ** 6n,
+    cap: 200n * 10n ** 6n,
   },
   {
     node: MOCK_WORKER,

@@ -2,6 +2,7 @@
 
 export type ProtocolEventType =
   | "IntentCreated"
+  | "IntentEscalated"
   | "IntentResolved"
   | "AllowanceStreamed"
   | "AllowanceSpent"

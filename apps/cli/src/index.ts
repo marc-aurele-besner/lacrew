@@ -74,22 +74,24 @@ async function main(): Promise<void> {
     case "approve": {
       const intentId = rest[0];
       if (!intentId) {
-        console.error("Usage: lacrew approve <intentId>");
+        console.error("Usage: lacrew approve <intentId> [approver]");
         process.exitCode = 1;
         return;
       }
-      printJson(await client.resolveIntent(intentId, true));
+      const approver = rest[1] as `0x${string}` | undefined;
+      printJson(await client.resolveIntent(intentId, true, approver));
       return;
     }
 
     case "deny": {
       const intentId = rest[0];
       if (!intentId) {
-        console.error("Usage: lacrew deny <intentId>");
+        console.error("Usage: lacrew deny <intentId> [approver]");
         process.exitCode = 1;
         return;
       }
-      printJson(await client.resolveIntent(intentId, false));
+      const approver = rest[1] as `0x${string}` | undefined;
+      printJson(await client.resolveIntent(intentId, false, approver));
       return;
     }
 
@@ -106,8 +108,8 @@ Commands:
   sessions                List mocked session keys
   tick                    Run one mocked worker tick (over-budget propose)
   propose <a> <t> <v>     Propose an intent (value as decimal string)
-  approve <id>            Approve a pending intent
-  deny <id>               Deny a pending intent
+  approve <id> [approver] Approve (may climb tree if over approver cap)
+  deny <id> [approver]    Deny a pending intent
 
 TODO: lacrew init / deploy / self-host commands
 `);

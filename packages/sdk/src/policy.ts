@@ -16,8 +16,10 @@ export interface ClientPolicyConfig {
 export const defaultMockPolicy: ClientPolicyConfig = {
   whitelist: ["0x4444444444444444444444444444444444444444"],
   caps: {
+    // Worker / manager / root caps (synthetic USDC units).
     "0x3333333333333333333333333333333333333333": 50n * 10n ** 6n,
-    "0x2222222222222222222222222222222222222222": 500n * 10n ** 6n,
+    "0x2222222222222222222222222222222222222222": 200n * 10n ** 6n,
+    "0x1111111111111111111111111111111111111111": 10n ** 18n,
   },
 };
 

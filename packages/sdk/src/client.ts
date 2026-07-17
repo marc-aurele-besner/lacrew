@@ -32,6 +32,12 @@ export interface LacrewClientOptions {
   policy?: ClientPolicyConfig;
 }
 
+export type ResolveResult = {
+  intent: Intent;
+  /** true when the intent climbed to a higher approver instead of closing. */
+  escalated: boolean;
+};
+
 export class LacrewClient {
   private readonly useMock: boolean;
   private readonly policy: ClientPolicyConfig;
@@ -145,23 +151,90 @@ export class LacrewClient {
 
   /**
    * Approve or reject a pending intent.
-   * TODO: Call EscalationRouter.resolve; recurse when parent policy requires it.
+   * Mirrors onchain EscalationRouter: re-check policy as the approver; climb on ESCALATE.
+   * TODO: Call EscalationRouter.resolve onchain.
    */
-  async resolveIntent(intentId: string, approved: boolean): Promise<Intent> {
+  async resolveIntent(
+    intentId: string,
+    approved: boolean,
+    approver?: `0x${string}`,
+  ): Promise<ResolveResult> {
     if (!this.useMock) {
       throw new Error("Onchain resolve is not implemented yet");
     }
     const intent = this.intents.find((i) => i.id === intentId);
     if (!intent) throw new Error(`Intent not found: ${intentId}`);
     if (intent.resolved) throw new Error(`Intent already resolved: ${intentId}`);
-    intent.resolved = true;
-    intent.approved = approved;
-    this.audit.push({
-      type: "IntentResolved",
-      at: new Date().toISOString(),
-      payload: { intentId, approved },
+
+    const actingApprover = (approver ?? intent.awaitingApprover) as `0x${string}` | null;
+    if (!actingApprover) throw new Error(`No awaiting approver for ${intentId}`);
+
+    if (!approved) {
+      intent.resolved = true;
+      intent.approved = false;
+      this.audit.push({
+        type: "IntentResolved",
+        at: new Date().toISOString(),
+        payload: { intentId, approved: false },
+      });
+      return { intent, escalated: false };
+    }
+
+    const verdict = checkClientPolicy(this.policy, {
+      agent: actingApprover,
+      target: intent.target,
+      value: intent.value,
     });
-    return intent;
+
+    if (verdict === "DENY") {
+      intent.resolved = true;
+      intent.approved = false;
+      this.audit.push({
+        type: "IntentResolved",
+        at: new Date().toISOString(),
+        payload: { intentId, approved: false, reason: "approver_deny" },
+      });
+      return { intent, escalated: false };
+    }
+
+    if (verdict === "ALLOW") {
+      intent.resolved = true;
+      intent.approved = true;
+      this.audit.push({
+        type: "IntentResolved",
+        at: new Date().toISOString(),
+        payload: { intentId, approved: true },
+      });
+      return { intent, escalated: false };
+    }
+
+    // ESCALATE — climb to the approver's parent.
+    const approverNode = mockOrgNodes.find(
+      (n) => n.account.toLowerCase() === actingApprover.toLowerCase(),
+    );
+    if (!approverNode?.parent || approverNode.kind === "human_root") {
+      intent.resolved = true;
+      intent.approved = true;
+      this.audit.push({
+        type: "IntentResolved",
+        at: new Date().toISOString(),
+        payload: { intentId, approved: true, reason: "root_finalize" },
+      });
+      return { intent, escalated: false };
+    }
+
+    const previous = intent.awaitingApprover;
+    intent.awaitingApprover = approverNode.parent;
+    this.audit.push({
+      type: "IntentEscalated",
+      at: new Date().toISOString(),
+      payload: {
+        intentId,
+        from: previous,
+        to: approverNode.parent,
+      },
+    });
+    return { intent, escalated: true };
   }
 
   /** Active session keys for agents. */
