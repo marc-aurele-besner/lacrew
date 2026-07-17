@@ -6,31 +6,44 @@
 
 import {
   mockAllowances,
+  mockAuditTrail,
   mockOrgNodes,
   mockPendingIntents,
   mockSessionKeys,
   type Allowance,
   type Intent,
   type OrgNode,
+  type ProtocolEvent,
   type SessionKey,
   type Verdict,
 } from "@lacrew/core";
+import {
+  checkClientPolicy,
+  defaultMockPolicy,
+  type ClientPolicyConfig,
+} from "./policy.js";
 
 export interface LacrewClientOptions {
   /** Reserved for future RPC / address config. */
   chainId?: number;
   /** When true (default), use Mocked demo data. */
   useMock?: boolean;
+  /** Override client-side policy preflight. */
+  policy?: ClientPolicyConfig;
 }
 
 export class LacrewClient {
   private readonly useMock: boolean;
+  private readonly policy: ClientPolicyConfig;
   private intents: Intent[];
+  private audit: ProtocolEvent[];
 
   constructor(options: LacrewClientOptions = {}) {
     this.useMock = options.useMock ?? true;
+    this.policy = options.policy ?? defaultMockPolicy;
     // Mocked: clone demo intents so approve mutations stay in-process.
     this.intents = mockPendingIntents.map((i) => ({ ...i }));
+    this.audit = mockAuditTrail.map((e) => ({ ...e, payload: { ...e.payload } }));
   }
 
   /** List org nodes. */
@@ -61,8 +74,17 @@ export class LacrewClient {
     return this.intents.filter((i) => !i.resolved);
   }
 
+  /** Mocked event-sourced audit trail. */
+  async getAuditTrail(): Promise<ProtocolEvent[]> {
+    if (!this.useMock) {
+      // TODO: Query Ponder/Postgres event index.
+      throw new Error("Onchain audit trail is not implemented yet");
+    }
+    return this.audit;
+  }
+
   /**
-   * Propose an intent. Mocked: over-cap values escalate into local state.
+   * Propose an intent. Mocked: whitelist + spend-cap stack via checkClientPolicy.
    * TODO: Call EscalationRouter.propose onchain.
    */
   async proposeIntent(input: {
@@ -75,11 +97,21 @@ export class LacrewClient {
       throw new Error("Onchain propose is not implemented yet");
     }
 
-    const allowances = await this.getAllowances(input.agent);
-    const cap = allowances[0]?.cap ?? 0n;
-    const verdict: Verdict = input.value <= cap ? "ALLOW" : "ESCALATE";
+    const verdict = checkClientPolicy(this.policy, input);
+    if (verdict === "DENY") {
+      throw new Error("Policy DENY: target not whitelisted or otherwise forbidden");
+    }
 
     if (verdict === "ALLOW") {
+      this.audit.push({
+        type: "AllowanceSpent",
+        at: new Date().toISOString(),
+        payload: {
+          agent: input.agent,
+          target: input.target,
+          value: input.value.toString(),
+        },
+      });
       return { intentId: "0", verdict };
     }
 
@@ -98,6 +130,16 @@ export class LacrewClient {
       verdict,
     };
     this.intents.push(intent);
+    this.audit.push({
+      type: "IntentCreated",
+      at: new Date().toISOString(),
+      payload: {
+        intentId: intent.id,
+        agent: intent.agent,
+        awaitingApprover: intent.awaitingApprover,
+        value: intent.value.toString(),
+      },
+    });
     return { intentId: intent.id, verdict };
   }
 
@@ -111,8 +153,14 @@ export class LacrewClient {
     }
     const intent = this.intents.find((i) => i.id === intentId);
     if (!intent) throw new Error(`Intent not found: ${intentId}`);
+    if (intent.resolved) throw new Error(`Intent already resolved: ${intentId}`);
     intent.resolved = true;
     intent.approved = approved;
+    this.audit.push({
+      type: "IntentResolved",
+      at: new Date().toISOString(),
+      payload: { intentId, approved },
+    });
     return intent;
   }
 
