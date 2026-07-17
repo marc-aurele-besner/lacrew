@@ -4,6 +4,7 @@ export type ProtocolEventType =
   | "IntentCreated"
   | "IntentEscalated"
   | "IntentResolved"
+  | "ActionExecuted"
   | "AllowanceStreamed"
   | "AllowanceSpent"
   | "ProposalCreated"

@@ -14,4 +14,16 @@ describe("CrewRuntime", () => {
     const runtime = new CrewRuntime();
     assert.equal(runtime.mode, "mock");
   });
+
+  it("records local audit on mock tick and resolve", async () => {
+    const runtime = new CrewRuntime();
+    const tick = await runtime.tick();
+    assert.equal(tick.verdict, "ESCALATE");
+    const afterTick = await runtime.audit();
+    assert.ok(afterTick.some((e) => e.type === "IntentCreated" || e.type === "SessionIssued"));
+
+    await runtime.resolve(tick.intentId, true);
+    const afterResolve = await runtime.audit();
+    assert.ok(afterResolve.some((e) => e.type === "IntentResolved"));
+  });
 });

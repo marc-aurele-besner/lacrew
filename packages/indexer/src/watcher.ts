@@ -27,6 +27,9 @@ const intentEscalated = parseAbiItem(
 const intentResolved = parseAbiItem(
   "event IntentResolved(uint256 indexed intentId, bool approved)",
 );
+const actionExecuted = parseAbiItem(
+  "event ActionExecuted(address indexed agent, address indexed target, uint256 value, bool callOk)",
+);
 
 export type WatcherOptions = {
   rpcUrl: string;
@@ -123,9 +126,35 @@ export class EventWatcher {
             this.pushAudit({
               type: "IntentResolved",
               at: new Date().toISOString(),
-              payload: { intentId, approved },
+              payload: { intentId, approved, txHash: log.transactionHash },
             });
             saveStore(this.storePath, this.store);
+          }
+        },
+      }),
+    );
+
+    this.unwatchers.push(
+      this.client.watchEvent({
+        ...common,
+        event: actionExecuted,
+        onLogs: (logs) => {
+          for (const log of logs) {
+            const agent = log.args.agent as `0x${string}`;
+            const target = log.args.target as `0x${string}`;
+            const value = (log.args.value as bigint).toString();
+            const callOk = Boolean(log.args.callOk);
+            this.pushAudit({
+              type: "ActionExecuted",
+              at: new Date().toISOString(),
+              payload: {
+                agent,
+                target,
+                value,
+                callOk,
+                txHash: log.transactionHash,
+              },
+            });
           }
         },
       }),
