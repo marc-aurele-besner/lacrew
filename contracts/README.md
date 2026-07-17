@@ -5,12 +5,13 @@ Foundry project for the onchain org chart, treasury, policies, escalation, and g
 ## Setup
 
 ```bash
-forge install
+forge install foundry-rs/forge-std --no-git
+forge install OpenZeppelin/openzeppelin-contracts@v5.3.0 --no-git
 forge build
 forge test
 ```
 
-`lib/` is gitignored; install forge-std (and later OpenZeppelin) locally via `forge install`.
+`lib/` is gitignored; install forge-std + OpenZeppelin locally via `forge install`.
 
 ## Layout
 
@@ -18,8 +19,9 @@ forge test
 | --- | --- |
 | `src/interfaces/` | Protocol standards (`IPolicyModule`, `IOrgRegistry`) |
 | `src/policies/` | Policy modules (spend cap, …) |
+| `src/mocks/` | MockUSDC for Anvil / testnets |
 | `src/*.sol` | OrgRegistry, Treasury, EscalationRouter, GovernanceModule |
-| `script/` | Deploy scripts (Base Sepolia / Base) |
+| `script/` | Deploy scripts (Anvil / Base Sepolia / Base) |
 | `test/` | Foundry tests |
 
 Implementations are scaffolding with `Mocked` / `TODO` markers — not production-ready.
