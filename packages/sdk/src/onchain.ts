@@ -25,6 +25,8 @@ import {
   governanceModuleAbi,
   epochStreamerAbi,
   sessionRegistryAbi,
+  spendCapPolicyAbi,
+  whitelistPolicyAbi,
   type Allowance,
   type ChainAddresses,
   type GovernanceProposal,
@@ -563,6 +565,67 @@ export class OnchainLacrewClient {
       data,
     });
     return { ...result, account: input.account };
+  }
+
+  /** Propose EscalationRouter.setNodePolicy (high tier — policy upgrade). */
+  async proposeSetNodePolicy(input: {
+    node: `0x${string}`;
+    policyModule: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; node: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: escalationRouterAbi,
+      functionName: "setNodePolicy",
+      args: [input.node, input.policyModule],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: this.addresses.escalationRouter,
+      data,
+    });
+    return { ...result, node: input.node };
+  }
+
+  /** Propose WhitelistPolicy.setAllowed (high tier). */
+  async proposeSetWhitelist(input: {
+    target: `0x${string}`;
+    allowed: boolean;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; target: `0x${string}`; txHash: `0x${string}` }> {
+    const addr = this.addresses.whitelistPolicy;
+    if (!addr) throw new Error("whitelistPolicy address missing");
+    const data = encodeFunctionData({
+      abi: whitelistPolicyAbi,
+      functionName: "setAllowed",
+      args: [input.target, input.allowed],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: addr,
+      data,
+    });
+    return { ...result, target: input.target };
+  }
+
+  /** Propose SpendCapPolicy.setAgentCap (high tier). */
+  async proposeSetAgentCap(input: {
+    agent: `0x${string}`;
+    cap: bigint;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; agent: `0x${string}`; txHash: `0x${string}` }> {
+    const addr = this.addresses.spendCapPolicy;
+    if (!addr) throw new Error("spendCapPolicy address missing");
+    const data = encodeFunctionData({
+      abi: spendCapPolicyAbi,
+      functionName: "setAgentCap",
+      args: [input.agent, input.cap],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: addr,
+      data,
+    });
+    return { ...result, agent: input.agent };
   }
 
   /** Propose a constitutional action (target + calldata). */

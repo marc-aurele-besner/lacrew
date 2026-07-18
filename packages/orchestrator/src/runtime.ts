@@ -477,6 +477,75 @@ export class CrewRuntime {
     return result;
   }
 
+  async proposeSetNodePolicy(input: {
+    node: `0x${string}`;
+    policyModule: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; node: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeSetNodePolicy requires onchain mode");
+    }
+    const result = await this.client.proposeSetNodePolicy(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        node: result.node,
+        policyModule: input.policyModule,
+        action: "setNodePolicy",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  async proposeSetWhitelist(input: {
+    target: `0x${string}`;
+    allowed: boolean;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; target: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeSetWhitelist requires onchain mode");
+    }
+    const result = await this.client.proposeSetWhitelist(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        target: result.target,
+        allowed: input.allowed,
+        action: "setWhitelist",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  async proposeSetAgentCap(input: {
+    agent: `0x${string}`;
+    cap: bigint;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; agent: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeSetAgentCap requires onchain mode");
+    }
+    const result = await this.client.proposeSetAgentCap(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        agent: result.agent,
+        cap: input.cap.toString(),
+        action: "setAgentCap",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
   /**
    * Vote on a proposal. With MANAGER_PRIVATE_KEY set and support=true, also casts
    * the manager seat (DeployMockOrg: root weight 1 + manager weight 1, quorum 2).

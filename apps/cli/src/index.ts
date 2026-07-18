@@ -440,6 +440,69 @@ async function main(): Promise<void> {
         );
         return;
       }
+      if (sub === "whitelist") {
+        const target = cleaned[1] as `0x${string}` | undefined;
+        const allowed = cleaned[2] !== "no" && cleaned[2] !== "false";
+        if (!target) {
+          console.error("Usage: lacrew gov whitelist <target> [yes|no] [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeSetWhitelist" in client)) {
+          console.error("gov whitelist requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeSetWhitelist: Function }).proposeSetWhitelist({
+            target,
+            allowed,
+          }),
+        );
+        return;
+      }
+      if (sub === "cap") {
+        const agent = cleaned[1] as `0x${string}` | undefined;
+        const capRaw = cleaned[2];
+        if (!agent || capRaw === undefined) {
+          console.error("Usage: lacrew gov cap <agent> <capWei> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeSetAgentCap" in client)) {
+          console.error("gov cap requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeSetAgentCap: Function }).proposeSetAgentCap({
+            agent,
+            cap: BigInt(capRaw),
+          }),
+        );
+        return;
+      }
+      if (sub === "policy") {
+        const node = cleaned[1] as `0x${string}` | undefined;
+        const policyModule = cleaned[2] as `0x${string}` | undefined;
+        if (!node || !policyModule) {
+          console.error("Usage: lacrew gov policy <node> <policyModule> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeSetNodePolicy" in client)) {
+          console.error("gov policy requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeSetNodePolicy: Function }).proposeSetNodePolicy({
+            node,
+            policyModule,
+          }),
+        );
+        return;
+      }
       if (sub === "vote" || sub === "veto" || sub === "execute") {
         const id = cleaned[1];
         if (!id) {
@@ -458,7 +521,9 @@ async function main(): Promise<void> {
         printJson({ ok: true, proposalId: id, action: sub });
         return;
       }
-      console.error("Usage: lacrew gov <propose|hire|fire|reparent|grant|vote|veto|execute> …");
+      console.error(
+        "Usage: lacrew gov <propose|hire|fire|reparent|grant|whitelist|cap|policy|vote|veto|execute> …",
+      );
       process.exitCode = 1;
       return;
     }
@@ -487,6 +552,9 @@ Commands:
   gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
   gov reparent <acct> <parent>  Propose OrgRegistry.reparent (--rpc)
   gov grant <acct> <amountWei>  Propose EpochStreamer.setGrant (high tier, --rpc)
+  gov whitelist <target> [yes|no]  Propose WhitelistPolicy.setAllowed (--rpc)
+  gov cap <agent> <capWei>  Propose SpendCapPolicy.setAgentCap (--rpc)
+  gov policy <node> <module>  Propose EscalationRouter.setNodePolicy (--rpc)
   gov vote <id> [yes|no]    Vote on a proposal (onchain --rpc)
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)

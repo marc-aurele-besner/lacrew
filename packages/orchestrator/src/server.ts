@@ -208,6 +208,64 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/governance/propose-set-node-policy") {
+      const body = (await readBody(req)) as {
+        node?: `0x${string}`;
+        policyModule?: `0x${string}`;
+        tier?: "low" | "high";
+      };
+      if (!body.node || !body.policyModule) {
+        send(res, 400, { error: "node_and_policyModule_required" });
+        return;
+      }
+      const result = await runtime.proposeSetNodePolicy({
+        node: body.node,
+        policyModule: body.policyModule,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/propose-set-whitelist") {
+      const body = (await readBody(req)) as {
+        target?: `0x${string}`;
+        allowed?: boolean;
+        tier?: "low" | "high";
+      };
+      if (!body.target || typeof body.allowed !== "boolean") {
+        send(res, 400, { error: "target_and_allowed_required" });
+        return;
+      }
+      const result = await runtime.proposeSetWhitelist({
+        target: body.target,
+        allowed: body.allowed,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/propose-set-agent-cap") {
+      const body = (await readBody(req)) as {
+        agent?: `0x${string}`;
+        cap?: string | number;
+        tier?: "low" | "high";
+      };
+      if (!body.agent || body.cap === undefined || body.cap === "") {
+        send(res, 400, { error: "agent_and_cap_required" });
+        return;
+      }
+      const cap = BigInt(body.cap);
+      const result = await runtime.proposeSetAgentCap({
+        agent: body.agent,
+        cap,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode, cap: cap.toString() });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/governance/vote") {
       const body = (await readBody(req)) as { proposalId?: string; support?: boolean };
       if (!body.proposalId || typeof body.support !== "boolean") {

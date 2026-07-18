@@ -32,6 +32,11 @@ const CONTRACTS = [
     file: "SpendCapPolicy.sol/SpendCapPolicy.json",
     exportName: "spendCapPolicyAbi",
   },
+  {
+    name: "WhitelistPolicy",
+    file: "WhitelistPolicy.sol/WhitelistPolicy.json",
+    exportName: "whitelistPolicyAbi",
+  },
   { name: "PolicyStack", file: "PolicyStack.sol/PolicyStack.json", exportName: "policyStackAbi" },
   { name: "MockUSDC", file: "MockUSDC.sol/MockUSDC.json", exportName: "mockUsdcAbi" },
   {

@@ -30,4 +30,20 @@ contract SpendCapPolicyTest is Test {
         Verdict over = policy.check(agent, address(2), 201 ether, "");
         assertEq(uint8(over), uint8(Verdict.ESCALATE));
     }
+
+    function test_strangerCannotSetAgentCap() public {
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(
+            abi.encodeWithSelector(SpendCapPolicy.NotAuthorized.selector, makeAddr("stranger"))
+        );
+        policy.setAgentCap(agent, 1 ether);
+    }
+
+    function test_governorCanSetAgentCap() public {
+        address gov = makeAddr("gov");
+        policy.setGovernor(gov);
+        vm.prank(gov);
+        policy.setAgentCap(agent, 250 ether);
+        assertEq(policy.capOf(agent), 250 ether);
+    }
 }
