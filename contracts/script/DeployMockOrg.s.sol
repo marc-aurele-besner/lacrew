@@ -8,6 +8,7 @@ import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 import {SpendCapPolicy} from "../src/policies/SpendCapPolicy.sol";
 import {WhitelistPolicy} from "../src/policies/WhitelistPolicy.sol";
 import {RateLimitPolicy} from "../src/policies/RateLimitPolicy.sol";
+import {TimeWindowPolicy} from "../src/policies/TimeWindowPolicy.sol";
 import {PolicyStack} from "../src/policies/PolicyStack.sol";
 import {EscalationRouter} from "../src/EscalationRouter.sol";
 import {GovernanceModule} from "../src/GovernanceModule.sol";
@@ -34,6 +35,7 @@ contract DeployMockOrg is Script {
         PolicyStack workerStack;
         PolicyStack managerStack;
         WhitelistPolicy whitelist;
+        TimeWindowPolicy timeWindow;
         EpochStreamer epochStreamer;
         SessionRegistry sessionRegistry;
         address humanRoot;
@@ -85,7 +87,13 @@ contract DeployMockOrg is Script {
         d.spendCap.setAgentCap(humanRoot, type(uint256).max);
 
         RateLimitPolicy rateLimit = new RateLimitPolicy(10, 1 hours);
-        d.workerStack = _workerStack(d.whitelist, d.spendCap, rateLimit);
+        // Default window is the full UTC day (always ALLOW) so demos work at any hour;
+        // set TIME_WINDOW_START / TIME_WINDOW_END (seconds since midnight UTC) to constrain.
+        d.timeWindow = new TimeWindowPolicy(
+            vm.envOr("TIME_WINDOW_START", uint256(0)),
+            vm.envOr("TIME_WINDOW_END", uint256(1 days))
+        );
+        d.workerStack = _workerStack(d.whitelist, d.spendCap, rateLimit, d.timeWindow);
         d.managerStack = _managerStack(d.whitelist, d.spendCap);
 
         d.router = new EscalationRouter(address(d.registry), address(d.workerStack));
@@ -131,12 +139,14 @@ contract DeployMockOrg is Script {
     function _workerStack(
         WhitelistPolicy whitelist,
         SpendCapPolicy spendCap,
-        RateLimitPolicy rateLimit
+        RateLimitPolicy rateLimit,
+        TimeWindowPolicy timeWindow
     ) private returns (PolicyStack) {
-        IPolicyModule[] memory modules = new IPolicyModule[](3);
-        modules[0] = whitelist;
-        modules[1] = spendCap;
-        modules[2] = rateLimit;
+        IPolicyModule[] memory modules = new IPolicyModule[](4);
+        modules[0] = timeWindow;
+        modules[1] = whitelist;
+        modules[2] = spendCap;
+        modules[3] = rateLimit;
         return new PolicyStack(modules);
     }
 
@@ -162,6 +172,7 @@ contract DeployMockOrg is Script {
         vm.serializeAddress(obj, "policyStack", address(d.workerStack));
         vm.serializeAddress(obj, "managerPolicyStack", address(d.managerStack));
         vm.serializeAddress(obj, "whitelistPolicy", address(d.whitelist));
+        vm.serializeAddress(obj, "timeWindowPolicy", address(d.timeWindow));
         vm.serializeAddress(obj, "epochStreamer", address(d.epochStreamer));
         vm.serializeAddress(obj, "sessionRegistry", address(d.sessionRegistry));
         vm.serializeAddress(obj, "humanRoot", d.humanRoot);

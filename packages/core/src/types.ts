@@ -95,6 +95,8 @@ export interface ChainAddresses {
   /** Manager-node stack (no rate limit); worker uses `policyStack`. */
   managerPolicyStack?: `0x${string}`;
   whitelistPolicy?: `0x${string}`;
+  /** Daily UTC window policy in the default worker stack (full-day = always open). */
+  timeWindowPolicy?: `0x${string}`;
   epochStreamer?: `0x${string}`;
   sessionRegistry?: `0x${string}`;
   /** Org node accounts seeded by DeployMockOrg. */
