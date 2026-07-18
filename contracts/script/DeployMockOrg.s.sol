@@ -113,6 +113,11 @@ contract DeployMockOrg is Script {
         d.sessionRegistry = new SessionRegistry(humanRoot);
         d.router.setSessionRegistry(address(d.sessionRegistry));
 
+        // Seats: human root + manager each weight 1; quorum 2 (demo dual-sign still works).
+        d.gov.setVotingPower(humanRoot, 1);
+        d.gov.setVotingPower(manager, 1);
+        d.gov.setQuorumYes(2);
+
         d.registry.setGovernor(address(d.gov));
         d.treasury.setGovernor(address(d.gov));
         d.router.setGovernor(address(d.gov));

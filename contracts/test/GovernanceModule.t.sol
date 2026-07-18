@@ -8,6 +8,8 @@ import {IOrgRegistry} from "../src/interfaces/IOrgRegistry.sol";
 
 contract GovernanceModuleTest is Test {
     address internal root = makeAddr("root");
+    address internal voter1 = makeAddr("voter1");
+    address internal voter2 = makeAddr("voter2");
     GovernanceModule internal gov;
     OrgRegistry internal registry;
 
@@ -16,6 +18,12 @@ contract GovernanceModuleTest is Test {
         gov = new GovernanceModule(root);
         vm.prank(root);
         registry.setGovernor(address(gov));
+
+        vm.startPrank(root);
+        gov.setVotingPower(voter1, 1);
+        gov.setVotingPower(voter2, 1);
+        gov.setQuorumYes(2);
+        vm.stopPrank();
     }
 
     function test_proposeVoteAndExecuteAddsNode() public {
@@ -27,9 +35,9 @@ contract GovernanceModuleTest is Test {
 
         uint256 id = gov.propose(GovernanceModule.Tier.Low, address(registry), data);
 
-        vm.prank(makeAddr("voter1"));
+        vm.prank(voter1);
         gov.vote(id, true);
-        vm.prank(makeAddr("voter2"));
+        vm.prank(voter2);
         gov.vote(id, true);
 
         gov.execute(id);
@@ -39,13 +47,45 @@ contract GovernanceModuleTest is Test {
         assertEq(uint8(node.kind), uint8(IOrgRegistry.NodeKind.WorkerAgent));
     }
 
+    function test_weightedVoteCanMeetQuorumAlone() public {
+        address heavy = makeAddr("heavy");
+        vm.prank(root);
+        gov.setVotingPower(heavy, 2);
+
+        address worker = makeAddr("solo-hire");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.Low, address(registry), data);
+
+        vm.prank(heavy);
+        gov.vote(id, true);
+        gov.execute(id);
+        assertEq(registry.getNode(worker).account, worker);
+    }
+
+    function test_noSeatCannotVote() public {
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (makeAddr("w"), IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.Low, address(registry), data);
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.NoVotingPower.selector, makeAddr("stranger"))
+        );
+        gov.vote(id, true);
+    }
+
     function test_executeRequiresQuorum() public {
         bytes memory data = abi.encodeCall(
             OrgRegistry.addNode,
             (makeAddr("w"), IOrgRegistry.NodeKind.WorkerAgent, root)
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
-        vm.prank(makeAddr("voter1"));
+        vm.prank(voter1);
         gov.vote(id, true);
 
         vm.expectRevert(abi.encodeWithSelector(GovernanceModule.QuorumNotMet.selector, id));
@@ -60,12 +100,11 @@ contract GovernanceModuleTest is Test {
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
 
-        vm.prank(makeAddr("voter1"));
+        vm.prank(voter1);
         gov.vote(id, true);
-        vm.prank(makeAddr("voter2"));
+        vm.prank(voter2);
         gov.vote(id, true);
 
-        // Before eta (deadline + 1 day) execute reverts.
         vm.expectRevert();
         gov.execute(id);
 
@@ -84,9 +123,9 @@ contract GovernanceModuleTest is Test {
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
 
-        vm.prank(makeAddr("voter1"));
+        vm.prank(voter1);
         gov.vote(id, true);
-        vm.prank(makeAddr("voter2"));
+        vm.prank(voter2);
         gov.vote(id, true);
 
         vm.warp(block.timestamp + 3 days + 1 days + 1);

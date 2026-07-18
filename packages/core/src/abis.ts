@@ -1287,19 +1287,6 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
-    "name": "QUORUM_YES",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "VOTING_PERIOD",
     "inputs": [],
     "outputs": [
@@ -1469,6 +1456,50 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
+    "name": "quorumYes",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setQuorumYes",
+    "inputs": [
+      {
+        "name": "quorumYes_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVotingPower",
+    "inputs": [
+      {
+        "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "power",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "veto",
     "inputs": [
       {
@@ -1497,6 +1528,25 @@ export const governanceModuleAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "votingPower",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -1582,6 +1632,19 @@ export const governanceModuleAbi = [
   },
   {
     "type": "event",
+    "name": "QuorumYesUpdated",
+    "inputs": [
+      {
+        "name": "quorumYes",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Voted",
     "inputs": [
       {
@@ -1601,6 +1664,31 @@ export const governanceModuleAbi = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "weight",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VotingPowerUpdated",
+    "inputs": [
+      {
+        "name": "voter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "power",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1625,6 +1713,17 @@ export const governanceModuleAbi = [
         "type": "uint256",
         "internalType": "uint256"
       },
+      {
+        "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoVotingPower",
+    "inputs": [
       {
         "name": "voter",
         "type": "address",
@@ -1684,6 +1783,11 @@ export const governanceModuleAbi = [
   {
     "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroQuorum",
     "inputs": []
   }
 ] as const;

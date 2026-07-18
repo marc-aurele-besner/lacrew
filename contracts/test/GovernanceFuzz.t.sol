@@ -12,11 +12,18 @@ contract GovernanceFuzzTest is Test {
     GovernanceModule internal gov;
     OrgRegistry internal registry;
 
+    address internal v1 = makeAddr("v1");
+    address internal v2 = makeAddr("v2");
+
     function setUp() public {
         registry = new OrgRegistry(root);
         gov = new GovernanceModule(root);
         vm.prank(root);
         registry.setGovernor(address(gov));
+        vm.startPrank(root);
+        gov.setVotingPower(v1, 1);
+        gov.setVotingPower(v2, 1);
+        vm.stopPrank();
         vm.warp(1_700_000_000);
     }
 
@@ -28,9 +35,9 @@ contract GovernanceFuzzTest is Test {
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
 
-        vm.prank(makeAddr("v1"));
+        vm.prank(v1);
         gov.vote(id, true);
-        vm.prank(makeAddr("v2"));
+        vm.prank(v2);
         gov.vote(id, true);
 
         (, , , , , , , uint256 deadline, uint256 eta, ) = gov.proposals(id);
@@ -52,9 +59,9 @@ contract GovernanceFuzzTest is Test {
             (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
-        vm.prank(makeAddr("v1"));
+        vm.prank(v1);
         gov.vote(id, true);
-        vm.prank(makeAddr("v2"));
+        vm.prank(v2);
         gov.vote(id, true);
 
         vm.prank(root);

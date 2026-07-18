@@ -407,8 +407,8 @@ export class CrewRuntime {
   }
 
   /**
-   * Vote on a proposal. In onchain demos with MANAGER_PRIVATE_KEY set and
-   * support=true, also casts a second yes from the manager so QUORUM_YES=2 is reachable.
+   * Vote on a proposal. With MANAGER_PRIVATE_KEY set and support=true, also casts
+   * the manager seat (DeployMockOrg: root weight 1 + manager weight 1, quorum 2).
    */
   async voteGovernance(
     proposalId: string,
@@ -421,7 +421,7 @@ export class CrewRuntime {
     const first = await this.client.voteGovernance(proposalId, support);
     txHashes.push(first.txHash);
 
-    // Demo scaffolding: second Anvil signer helps meet hardcoded quorum of 2.
+    // Second seated voter (manager) when available — real weight, not a free-for-all.
     if (
       support &&
       this.client.resolverWalletClient?.account &&
@@ -433,7 +433,7 @@ export class CrewRuntime {
         const second = await this.client.voteGovernance(proposalId, true, { useResolver: true });
         txHashes.push(second.txHash);
       } catch {
-        // Already voted or same effective voter — ignore.
+        // Already voted or no seat — ignore.
       }
     }
 
