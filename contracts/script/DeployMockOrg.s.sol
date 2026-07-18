@@ -113,10 +113,12 @@ contract DeployMockOrg is Script {
         d.sessionRegistry = new SessionRegistry(humanRoot);
         d.router.setSessionRegistry(address(d.sessionRegistry));
 
-        // Seats: human root + manager each weight 1; quorum 2 (demo dual-sign still works).
-        d.gov.setVotingPower(humanRoot, 1);
-        d.gov.setVotingPower(manager, 1);
+        // Human root decides high-tier final say; manager is review-only agent seat.
+        // Low-tier quorum 2 still requires root + manager dual-sign for hires.
+        d.gov.setVotingPower(humanRoot, 1, GovernanceModule.SeatRole.Human);
+        d.gov.setVotingPower(manager, 1, GovernanceModule.SeatRole.Agent);
         d.gov.setQuorumYes(2);
+        d.gov.setQuorumHumanYes(1);
 
         d.registry.setGovernor(address(d.gov));
         d.treasury.setGovernor(address(d.gov));

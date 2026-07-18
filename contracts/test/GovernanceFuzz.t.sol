@@ -21,8 +21,9 @@ contract GovernanceFuzzTest is Test {
         vm.prank(root);
         registry.setGovernor(address(gov));
         vm.startPrank(root);
-        gov.setVotingPower(v1, 1);
-        gov.setVotingPower(v2, 1);
+        gov.setVotingPower(v1, 1, GovernanceModule.SeatRole.Human);
+        gov.setVotingPower(v2, 1, GovernanceModule.SeatRole.Human);
+        gov.setQuorumHumanYes(1);
         vm.stopPrank();
         vm.warp(1_700_000_000);
     }
@@ -37,10 +38,8 @@ contract GovernanceFuzzTest is Test {
 
         vm.prank(v1);
         gov.vote(id, true);
-        vm.prank(v2);
-        gov.vote(id, true);
 
-        (, , , , , , , uint256 deadline, uint256 eta, ) = gov.proposals(id);
+        (, , , , , , , , uint256 deadline, uint256 eta, ) = gov.proposals(id);
         // Stay strictly before eta (and after some of voting period is fine).
         earlyWarp = bound(earlyWarp, 0, eta - block.timestamp - 1);
         vm.warp(block.timestamp + earlyWarp);
@@ -61,13 +60,11 @@ contract GovernanceFuzzTest is Test {
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
         vm.prank(v1);
         gov.vote(id, true);
-        vm.prank(v2);
-        gov.vote(id, true);
 
         vm.prank(root);
         gov.veto(id);
 
-        (, , , , , , , , uint256 eta, ) = gov.proposals(id);
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
         warpPastEta = bound(warpPastEta, eta, eta + 30 days);
         vm.warp(warpPastEta);
 

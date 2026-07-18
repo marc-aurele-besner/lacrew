@@ -1554,6 +1554,11 @@ export const governanceModuleAbi = [
         "internalType": "uint256"
       },
       {
+        "name": "yesHumanVotes",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
@@ -1602,6 +1607,19 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
+    "name": "quorumHumanYes",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "quorumYes",
     "inputs": [],
     "outputs": [
@@ -1612,6 +1630,38 @@ export const governanceModuleAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "seatRole",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum GovernanceModule.SeatRole"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setQuorumHumanYes",
+    "inputs": [
+      {
+        "name": "quorumHumanYes_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1639,6 +1689,11 @@ export const governanceModuleAbi = [
         "name": "power",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "enum GovernanceModule.SeatRole"
       }
     ],
     "outputs": [],
@@ -1778,6 +1833,19 @@ export const governanceModuleAbi = [
   },
   {
     "type": "event",
+    "name": "QuorumHumanYesUpdated",
+    "inputs": [
+      {
+        "name": "quorumHumanYes",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "QuorumYesUpdated",
     "inputs": [
       {
@@ -1835,6 +1903,12 @@ export const governanceModuleAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "role",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum GovernanceModule.SeatRole"
       }
     ],
     "anonymous": false
@@ -1863,6 +1937,17 @@ export const governanceModuleAbi = [
         "name": "voter",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidSeatRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "enum GovernanceModule.SeatRole"
       }
     ]
   },

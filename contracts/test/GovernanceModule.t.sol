@@ -10,6 +10,7 @@ contract GovernanceModuleTest is Test {
     address internal root = makeAddr("root");
     address internal voter1 = makeAddr("voter1");
     address internal voter2 = makeAddr("voter2");
+    address internal agent = makeAddr("agent-seat");
     GovernanceModule internal gov;
     OrgRegistry internal registry;
 
@@ -20,9 +21,11 @@ contract GovernanceModuleTest is Test {
         registry.setGovernor(address(gov));
 
         vm.startPrank(root);
-        gov.setVotingPower(voter1, 1);
-        gov.setVotingPower(voter2, 1);
+        gov.setVotingPower(voter1, 1, GovernanceModule.SeatRole.Human);
+        gov.setVotingPower(voter2, 1, GovernanceModule.SeatRole.Human);
+        gov.setVotingPower(agent, 1, GovernanceModule.SeatRole.Agent);
         gov.setQuorumYes(2);
+        gov.setQuorumHumanYes(1);
         vm.stopPrank();
     }
 
@@ -50,7 +53,7 @@ contract GovernanceModuleTest is Test {
     function test_weightedVoteCanMeetQuorumAlone() public {
         address heavy = makeAddr("heavy");
         vm.prank(root);
-        gov.setVotingPower(heavy, 2);
+        gov.setVotingPower(heavy, 2, GovernanceModule.SeatRole.Human);
 
         address worker = makeAddr("solo-hire");
         bytes memory data = abi.encodeCall(
@@ -85,11 +88,60 @@ contract GovernanceModuleTest is Test {
             (makeAddr("w"), IOrgRegistry.NodeKind.WorkerAgent, root)
         );
         uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
-        vm.prank(voter1);
+        // Agent review vote alone cannot satisfy high-tier human quorum.
+        vm.prank(agent);
         gov.vote(id, true);
 
         vm.expectRevert(abi.encodeWithSelector(GovernanceModule.QuorumNotMet.selector, id));
         gov.execute(id);
+    }
+
+    function test_agentYesCountsForLowTier() public {
+        address worker = makeAddr("agent-low");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.Low, address(registry), data);
+
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(agent);
+        gov.vote(id, true);
+
+        gov.execute(id);
+        assertEq(registry.getNode(worker).account, worker);
+    }
+
+    function test_highTierRequiresHumanQuorumDespiteAgentYes() public {
+        address worker = makeAddr("needs-human");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        vm.prank(agent);
+        gov.vote(id, true);
+        // Two agent-style votes still insufficient without human yes — bump agent power.
+        address agent2 = makeAddr("agent2");
+        vm.prank(root);
+        gov.setVotingPower(agent2, 5, GovernanceModule.SeatRole.Agent);
+        vm.prank(agent2);
+        gov.vote(id, true);
+
+        vm.warp(block.timestamp + 3 days + 1 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.QuorumNotMet.selector, id));
+        gov.execute(id);
+
+        // Human seat clears high-tier final say (fresh proposal needs its own timelock).
+        uint256 id2 = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+        vm.prank(voter1);
+        gov.vote(id2, true);
+        (, , , , , , , , , uint256 eta2, ) = gov.proposals(id2);
+        vm.warp(eta2 + 1);
+        gov.execute(id2);
+        assertEq(registry.getNode(worker).account, worker);
     }
 
     function test_highTierTimelockAndVeto() public {
@@ -102,8 +154,6 @@ contract GovernanceModuleTest is Test {
 
         vm.prank(voter1);
         gov.vote(id, true);
-        vm.prank(voter2);
-        gov.vote(id, true);
 
         vm.expectRevert();
         gov.execute(id);
@@ -111,7 +161,7 @@ contract GovernanceModuleTest is Test {
         vm.prank(root);
         gov.veto(id);
 
-        (, , , , , , , , , GovernanceModule.ProposalState state) = gov.proposals(id);
+        (, , , , , , , , , , GovernanceModule.ProposalState state) = gov.proposals(id);
         assertEq(uint8(state), uint8(GovernanceModule.ProposalState.Vetoed));
     }
 
@@ -125,8 +175,6 @@ contract GovernanceModuleTest is Test {
 
         vm.prank(voter1);
         gov.vote(id, true);
-        vm.prank(voter2);
-        gov.vote(id, true);
 
         vm.warp(block.timestamp + 3 days + 1 days + 1);
         gov.execute(id);
@@ -136,7 +184,6 @@ contract GovernanceModuleTest is Test {
     function test_executeRemoveNodeRewiresViaGovernance() public {
         address manager = makeAddr("mgr-fire");
         address worker = makeAddr("w-rewire");
-        // Bootstrap tree as root before governor exclusive path — still ok via gov add.
         bytes memory hireMgr = abi.encodeCall(
             OrgRegistry.addNode, (manager, IOrgRegistry.NodeKind.ManagerAgent, root)
         );
