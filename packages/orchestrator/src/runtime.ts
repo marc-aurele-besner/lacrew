@@ -10,6 +10,7 @@
 import {
   createLacrewClient,
   createOnchainClient,
+  simulateIntentAction,
   type LacrewClient,
   type OnchainLacrewClient,
   type ResolveResult,
@@ -315,7 +316,19 @@ export class CrewRuntime {
   }
 
   async listPending(): Promise<Intent[]> {
-    return this.client.getPendingIntents();
+    const intents = await this.client.getPendingIntents();
+    return intents.map((intent) => {
+      if (intent.simulation) return intent;
+      return {
+        ...intent,
+        simulation: simulateIntentAction({
+          agent: intent.agent,
+          target: intent.target,
+          value: intent.value,
+          verdict: intent.verdict,
+        }),
+      };
+    });
   }
 
   /** Merge local ring with indexer/mock client trail (local first, newest first). */

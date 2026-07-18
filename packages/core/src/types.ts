@@ -44,6 +44,14 @@ export interface Allowance {
   cap: bigint;
 }
 
+/** Human-readable preflight of the agent's intended action (PRD F1.16). */
+export type IntentSimulation = {
+  status: "ok" | "warning" | "revert";
+  gasEstimate: string;
+  assetChanges: Array<{ asset: string; delta: string; direction: "in" | "out" }>;
+  warnings: string[];
+};
+
 export interface Intent {
   id: string;
   agent: `0x${string}`;
@@ -54,6 +62,8 @@ export interface Intent {
   resolved: boolean;
   approved: boolean | null;
   verdict: Verdict;
+  /** Attached at propose time for approver UX (mock heuristic or viem sim). */
+  simulation?: IntentSimulation;
 }
 
 export interface SessionKey {

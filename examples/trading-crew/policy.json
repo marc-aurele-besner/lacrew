@@ -1,0 +1,47 @@
+{
+  "name": "trading-crew",
+  "description": "Scanner + executor + risk-manager sharing a USDC treasury with hard caps.",
+  "latencyBoundary": "No MEV/HFT through onchain approval — escalations are human-timescale.",
+  "org": {
+    "root": "human_root",
+    "nodes": [
+      { "id": "risk", "kind": "manager_agent", "label": "Risk manager", "reportsTo": "root" },
+      { "id": "scanner", "kind": "worker_agent", "label": "Scanner", "reportsTo": "risk" },
+      { "id": "executor", "kind": "worker_agent", "label": "Executor", "reportsTo": "risk" }
+    ]
+  },
+  "policies": {
+    "scanner": {
+      "spendCapUsdc": 5,
+      "whitelist": ["0x4444444444444444444444444444444444444444"]
+    },
+    "executor": {
+      "spendCapUsdc": 50,
+      "whitelist": ["0x4444444444444444444444444444444444444444"]
+    },
+    "risk": {
+      "spendCapUsdc": 200,
+      "whitelist": ["0x4444444444444444444444444444444444444444"]
+    }
+  },
+  "demoSpends": [
+    {
+      "label": "Executor within manager review band",
+      "agentRole": "executor",
+      "target": "0x4444444444444444444444444444444444444444",
+      "valueUsdc": 75
+    },
+    {
+      "label": "Scanner tiny research spend",
+      "agentRole": "scanner",
+      "target": "0x4444444444444444444444444444444444444444",
+      "valueUsdc": 3
+    }
+  ],
+  "mcpTools": [
+    "lacrew_get_org_tree",
+    "lacrew_propose_intent",
+    "lacrew_list_pending_intents",
+    "lacrew_approve_intent"
+  ]
+}

@@ -1,23 +1,39 @@
 # Example: trading crew
 
-Mocked starter template for a scanner → executor → risk-manager crew sharing a treasury with hard per-agent caps.
+Scanner → executor → risk-manager crew sharing a treasury with hard per-agent caps.
 
-## Shape (planned)
+## Shape
 
 ```
 Human root
- └── Treasury
-      ├── Risk manager  [approves escalations]
-      ├── Scanner       [read-only / tiny allowance]
+ └── Risk manager  [approves escalations]
+      ├── Scanner       [tiny allowance]
       └── Executor      [position-taking within cap]
 ```
 
+**Latency boundary:** no MEV / HFT through onchain approval — escalations are human-timescale.
+
+## Run (mock SDK)
+
+```bash
+pnpm --filter @lacrew/example-trading-crew start
+```
+
+Prints demo proposes + attached F1.16 simulations from `policy.json`.
+
+## Run against a live orchestrator
+
+```bash
+pnpm --filter @lacrew/orchestrator dev   # :8788
+ORCH_URL=http://127.0.0.1:8788 pnpm --filter @lacrew/example-trading-crew start
+```
+
+Uses `POST /mcp/call` (`lacrew_propose_intent`) then lists `/intents`.
+
+## Policy config
+
+See [`policy.json`](./policy.json) for org shape, spend caps, whitelist targets, and MCP tool list.
+
 ## Status
 
-Scaffold only. Uses `@lacrew/core` mock org data conceptually.
-
-## TODO
-
-- TODO: Wire example to `@lacrew/cli` and `@lacrew/orchestrator`
-- TODO: Document latency boundary (no MEV / HFT through onchain approval)
-- TODO: Add sample policy module config JSON
+Runnable against mock SDK and orchestrator HTTP. Onchain Anvil wiring still uses DeployMockOrg addresses (not this JSON directly).

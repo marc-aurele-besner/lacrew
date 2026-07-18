@@ -12,3 +12,4 @@ export {
   defaultMockPolicy,
   type ClientPolicyConfig,
 } from "./policy.js";
+export { simulateIntentAction, type SimulateIntentInput } from "./simulate.js";

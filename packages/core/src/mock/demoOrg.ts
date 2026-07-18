@@ -62,6 +62,12 @@ export const mockPendingIntents: Intent[] = [
     resolved: false,
     approved: null,
     verdict: "ESCALATE",
+    simulation: {
+      status: "warning",
+      gasEstimate: "142,310",
+      assetChanges: [{ asset: "USDC", delta: "-75.00", direction: "out" }],
+      warnings: ["Spend requires manager/root approval (cap or whitelist escalation)."],
+    },
   },
 ];
 

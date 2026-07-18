@@ -23,6 +23,7 @@ import {
   defaultMockPolicy,
   type ClientPolicyConfig,
 } from "./policy.js";
+import { simulateIntentAction } from "./simulate.js";
 
 export interface LacrewClientOptions {
   /** Reserved for future RPC / address config. */
@@ -139,6 +140,12 @@ export class LacrewClient {
       resolved: false,
       approved: null,
       verdict,
+      simulation: simulateIntentAction({
+        agent: input.agent,
+        target: input.target,
+        value: input.value,
+        verdict,
+      }),
     };
     this.intents.push(intent);
     this.audit.push({
