@@ -2,9 +2,9 @@
  * Agent runtime: schedule work, propose intents, listen for events.
  * Defaults to mock SDK; when ANVIL_RPC + PRIVATE_KEY are set, uses createOnchainClient.
  * Onchain mode keeps a local audit ring from propose/resolve receipts so /audit
- * works without a separate indexer process.
- * TODO: OpenRouter model calls, MCP tool protocol.
- * Queue: QueueProvider (pg-boss when DATABASE_URL set; BullMQ later).
+ * works without a separate indexer process; AuditStore persists it to Postgres.
+ * Model access via ModelProvider (memory/OpenRouter); MCP tools bind through
+ * createRuntimeMcpBackend. Queue: QueueProvider (pg-boss when DATABASE_URL set).
  */
 
 import {

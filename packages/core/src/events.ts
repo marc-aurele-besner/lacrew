@@ -23,8 +23,8 @@ export interface ProtocolEvent {
 }
 
 /**
- * Mocked audit trail for the demo org.
- * TODO: Replace with Ponder-indexed chain events.
+ * Mocked audit trail for the offline demo org. Live deployments read
+ * indexed chain events from Postgres (orchestrator_audit_events, F1.11).
  */
 export const mockAuditTrail: ProtocolEvent[] = [
   {

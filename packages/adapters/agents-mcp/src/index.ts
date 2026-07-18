@@ -76,6 +76,46 @@ export function listLacrewMcpTools(): McpToolDescriptor[] {
   ];
 }
 
+/**
+ * Backend that proxies tool calls to a running orchestrator's HTTP MCP
+ * surface — the stdio server uses this when ORCH_URL is set, so Cursor /
+ * Claude Desktop reach the live runtime (session-signed onchain calls)
+ * instead of a detached mock. Token pairs with LACREW_ORCH_TOKEN.
+ */
+export function createOrchHttpMcpBackend(baseUrl: string, token?: string): McpToolBackend {
+  const base = baseUrl.replace(/\/$/, "");
+  const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+    const res = await fetch(`${base}/mcp/call`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ name, arguments: args }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`orchestrator_mcp_${res.status}: ${detail.slice(0, 200)}`);
+    }
+    const body = (await res.json()) as { result?: unknown };
+    return body.result;
+  };
+
+  return {
+    getOrgTree: () => call("lacrew_get_org_tree", {}),
+    listPendingIntents: async () =>
+      (await call("lacrew_list_pending_intents", {})) as unknown[],
+    proposeIntent: (input) =>
+      call("lacrew_propose_intent", {
+        agent: input.agent,
+        target: input.target,
+        value: input.value.toString(),
+      }),
+    resolveIntent: (intentId, approved) =>
+      call("lacrew_approve_intent", { intentId, approved }),
+  };
+}
+
 /** Detached SDK client backend (mock demo data unless useMock: false). */
 export function createSdkMcpBackend(opts: { useMock?: boolean } = {}): McpToolBackend {
   const client = createLacrewClient({ useMock: opts.useMock ?? true });
