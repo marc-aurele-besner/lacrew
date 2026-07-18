@@ -2909,6 +2909,19 @@ export const epochStreamerAbi = [
   },
   {
     "type": "function",
+    "name": "governor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "grantAmount",
     "inputs": [
       {
@@ -2980,6 +2993,19 @@ export const epochStreamerAbi = [
   },
   {
     "type": "function",
+    "name": "setGovernor",
+    "inputs": [
+      {
+        "name": "governor_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setGrant",
     "inputs": [
       {
@@ -3043,6 +3069,19 @@ export const epochStreamerAbi = [
   },
   {
     "type": "event",
+    "name": "GovernorUpdated",
+    "inputs": [
+      {
+        "name": "governor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "GrantUpdated",
     "inputs": [
       {
@@ -3086,6 +3125,22 @@ export const epochStreamerAbi = [
         "name": "epoch",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GovernorAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorized",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

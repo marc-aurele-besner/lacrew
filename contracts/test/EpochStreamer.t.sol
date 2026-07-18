@@ -65,4 +65,19 @@ contract EpochStreamerTest is Test {
         vm.expectRevert(abi.encodeWithSelector(EpochStreamer.NotOperator.selector, address(this)));
         streamer.runNextEpoch();
     }
+
+    function test_governorCanSetGrant() public {
+        address gov = makeAddr("gov");
+        vm.prank(operator);
+        streamer.setGovernor(gov);
+
+        address newbie = makeAddr("newbie");
+        vm.prank(gov);
+        streamer.setGrant(newbie, 25 * ONE);
+        assertEq(streamer.grantAmount(newbie), 25 * ONE);
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(abi.encodeWithSelector(EpochStreamer.NotAuthorized.selector, makeAddr("stranger")));
+        streamer.setGrant(newbie, 1);
+    }
 }

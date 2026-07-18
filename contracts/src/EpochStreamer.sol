@@ -5,10 +5,13 @@ import {Treasury} from "./Treasury.sol";
 
 /// @title EpochStreamer
 /// @notice Payroll-style job: streams fixed grants to configured nodes once per epoch.
-/// @dev Authorized as Treasury.streamer. Operator is typically the human root (demo) or a cron key.
+/// @dev Authorized as Treasury.streamer. Operator runs epochs; grant schedule can also
+///      be mutated by `governor` (GovernanceModule) for constitutional budget changes.
 contract EpochStreamer {
     Treasury public immutable treasury;
     address public operator;
+    /// @notice When non-zero, may call `setGrant` (typically GovernanceModule).
+    address public governor;
 
     uint64 public currentEpoch;
     mapping(address => uint256) public grantAmount;
@@ -17,13 +20,16 @@ contract EpochStreamer {
     mapping(uint64 => bool) public epochCompleted;
 
     event OperatorUpdated(address indexed operator);
+    event GovernorUpdated(address indexed governor);
     event GrantUpdated(address indexed node, uint256 amount);
     event EpochRun(uint64 indexed epoch, uint256 recipientCount);
 
     error NotOperator(address caller);
+    error NotAuthorized(address caller);
     error EpochAlreadyRun(uint64 epoch);
     error ZeroAddress();
     error EmptySchedule();
+    error GovernorAlreadySet();
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator(msg.sender);
@@ -42,8 +48,17 @@ contract EpochStreamer {
         emit OperatorUpdated(operator_);
     }
 
+    /// @notice Bind constitutional authority for grant schedule. Callable once by operator.
+    function setGovernor(address governor_) external onlyOperator {
+        if (governor_ == address(0)) revert ZeroAddress();
+        if (governor != address(0)) revert GovernorAlreadySet();
+        governor = governor_;
+        emit GovernorUpdated(governor_);
+    }
+
     /// @notice Set (or clear with amount=0) the per-epoch grant for `node`.
-    function setGrant(address node, uint256 amount) external onlyOperator {
+    function setGrant(address node, uint256 amount) external {
+        if (msg.sender != operator && msg.sender != governor) revert NotAuthorized(msg.sender);
         if (node == address(0)) revert ZeroAddress();
         if (amount == 0) {
             if (_isRecipient[node]) {

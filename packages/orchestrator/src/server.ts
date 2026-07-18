@@ -188,6 +188,26 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/governance/propose-set-grant") {
+      const body = (await readBody(req)) as {
+        account?: `0x${string}`;
+        amount?: string | number;
+        tier?: "low" | "high";
+      };
+      if (!body.account || body.amount === undefined || body.amount === "") {
+        send(res, 400, { error: "account_and_amount_required" });
+        return;
+      }
+      const amount = BigInt(body.amount);
+      const result = await runtime.proposeSetGrant({
+        account: body.account,
+        amount,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode, amount: amount.toString() });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/governance/vote") {
       const body = (await readBody(req)) as { proposalId?: string; support?: boolean };
       if (!body.proposalId || typeof body.support !== "boolean") {

@@ -11,12 +11,12 @@ This repository is **pre-audit** Phase 0/1 scaffolding. Treat all deployments as
 | Policy stack (DENY / ESCALATE / ALLOW) | Implemented (+ fuzz: first-DENY-wins) |
 | Escalation climb + ALLOW spend execution | Implemented (EOA/router path; not ERC-4337 yet) |
 | Treasury conservation | Invariant suite (reserved ≤ balance; sum allowances) |
-| Governance execute → OrgRegistry / Treasury | Implemented (1-vote-per-address; hardcoded quorum) |
+| Governance execute → OrgRegistry / Treasury / EpochStreamer grants | Implemented (role-weighted seats; human high-tier quorum) |
 | High-tier timelock + human veto | Implemented (+ fuzz: unbypassable timelock / veto) |
-| Session keys | `SessionRegistry` ephemeral EOAs (issue/revoke/TTL); not ERC-4337; session key does not yet sign proposes |
+| Session keys | `SessionRegistry` ephemeral EOAs; `propose` gated by key + `maxValue` + optional target; not ERC-4337 |
 | Professional audit / Slither gate | Slither in CI (`fail-on: high`); no formal audit yet |
 
-Docs that describe session-key scoping or AA roots are **design targets**, not current guarantees.
+Docs that describe ERC-4337 / passkey AA roots are **design targets**, not current guarantees. Session scoping on `propose` is live on Anvil.
 
 ## Threat model (intended)
 

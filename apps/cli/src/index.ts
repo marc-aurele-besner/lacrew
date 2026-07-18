@@ -419,6 +419,27 @@ async function main(): Promise<void> {
         );
         return;
       }
+      if (sub === "grant") {
+        const account = cleaned[1] as `0x${string}` | undefined;
+        const amountRaw = cleaned[2];
+        if (!account || amountRaw === undefined) {
+          console.error("Usage: lacrew gov grant <account> <amountWei> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeSetGrant" in client)) {
+          console.error("gov grant requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeSetGrant: Function }).proposeSetGrant({
+            account,
+            amount: BigInt(amountRaw),
+          }),
+        );
+        return;
+      }
       if (sub === "vote" || sub === "veto" || sub === "execute") {
         const id = cleaned[1];
         if (!id) {
@@ -437,7 +458,7 @@ async function main(): Promise<void> {
         printJson({ ok: true, proposalId: id, action: sub });
         return;
       }
-      console.error("Usage: lacrew gov <propose|hire|fire|reparent|vote|veto|execute> …");
+      console.error("Usage: lacrew gov <propose|hire|fire|reparent|grant|vote|veto|execute> …");
       process.exitCode = 1;
       return;
     }
@@ -465,6 +486,7 @@ Commands:
   gov hire <label>          Propose OrgRegistry.addNode (--rpc)
   gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
   gov reparent <acct> <parent>  Propose OrgRegistry.reparent (--rpc)
+  gov grant <acct> <amountWei>  Propose EpochStreamer.setGrant (high tier, --rpc)
   gov vote <id> [yes|no]    Vote on a proposal (onchain --rpc)
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)

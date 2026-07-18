@@ -123,6 +123,7 @@ contract DeployMockOrg is Script {
         d.registry.setGovernor(address(d.gov));
         d.treasury.setGovernor(address(d.gov));
         d.router.setGovernor(address(d.gov));
+        d.epochStreamer.setGovernor(address(d.gov));
     }
 
     function _workerStack(

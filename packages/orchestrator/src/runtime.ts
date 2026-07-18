@@ -453,6 +453,30 @@ export class CrewRuntime {
     return result;
   }
 
+  /** Propose changing a node's per-epoch grant (high tier by default). */
+  async proposeSetGrant(input: {
+    account: `0x${string}`;
+    amount: bigint;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeSetGrant requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
+    }
+    const result = await this.client.proposeSetGrant(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        amount: input.amount.toString(),
+        action: "setGrant",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
   /**
    * Vote on a proposal. With MANAGER_PRIVATE_KEY set and support=true, also casts
    * the manager seat (DeployMockOrg: root weight 1 + manager weight 1, quorum 2).

@@ -539,6 +539,32 @@ export class OnchainLacrewClient {
     return { ...result, account: input.account };
   }
 
+  /**
+   * Propose changing a node's per-epoch grant (EpochStreamer.setGrant).
+   * Defaults to high tier — budget-touching / human final say.
+   */
+  async proposeSetGrant(input: {
+    account: `0x${string}`;
+    amount: bigint;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const addr = this.addresses.epochStreamer;
+    if (!addr) {
+      throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
+    }
+    const data = encodeFunctionData({
+      abi: epochStreamerAbi,
+      functionName: "setGrant",
+      args: [input.account, input.amount],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: addr,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
   /** Propose a constitutional action (target + calldata). */
   async proposeGovernance(input: {
     tier: GovernanceTier;
