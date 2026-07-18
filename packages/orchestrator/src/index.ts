@@ -1,5 +1,12 @@
 export { CrewRuntime, createRuntimeFromEnv, type CrewRuntimeOptions, type RuntimeMode } from "./runtime.js";
-export { issueSession, isSessionExpired, revokeSession, type IssueSessionInput } from "./sessions.js";
+export {
+  issueSession,
+  createEphemeralSession,
+  isSessionExpired,
+  revokeSession,
+  type IssueSessionInput,
+  type IssuedSession,
+} from "./sessions.js";
 export {
   createQueueFromEnv,
   InMemoryQueue,

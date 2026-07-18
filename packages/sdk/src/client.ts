@@ -101,6 +101,8 @@ export class LacrewClient {
     target: `0x${string}`;
     value: bigint;
     data?: `0x${string}`;
+    /** Ignored in mock mode (onchain client uses this as the session signer). */
+    account?: unknown;
   }): Promise<{ intentId: string; verdict: Verdict; txHash?: `0x${string}` }> {
     if (!this.useMock) {
       throw new Error("Onchain propose is not implemented yet");

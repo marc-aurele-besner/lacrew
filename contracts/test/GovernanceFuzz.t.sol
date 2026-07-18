@@ -75,7 +75,7 @@ contract GovernanceFuzzTest is Test {
         address key = makeAddr("key");
         uint64 exp = uint64(block.timestamp + ttl);
         vm.prank(root);
-        uint256 id = sessions.issue(worker, key, exp, bytes32(0));
+        uint256 id = sessions.issue(worker, key, exp, bytes32(0), type(uint256).max, address(0));
         assertTrue(sessions.isValid(id));
 
         vm.warp(uint256(exp) + 1);

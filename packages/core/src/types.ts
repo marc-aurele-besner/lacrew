@@ -62,6 +62,10 @@ export interface SessionKey {
   scopes: string[];
   /** Ephemeral EOA address registered onchain (when issued via SessionRegistry). */
   keyAddress?: `0x${string}`;
+  /** Onchain max propose value (decimal string); enforced by EscalationRouter. */
+  maxValue?: string;
+  /** Sole allowed target (`0x0…0` / omit = any policy-allowed target). */
+  allowedTarget?: `0x${string}`;
   /** true when revoked onchain or locally. */
   revoked?: boolean;
 }
@@ -76,6 +80,8 @@ export interface ChainAddresses {
   /** Optional extras present after DeployMockOrg. */
   mockUSDC?: `0x${string}`;
   policyStack?: `0x${string}`;
+  /** Manager-node stack (no rate limit); worker uses `policyStack`. */
+  managerPolicyStack?: `0x${string}`;
   whitelistPolicy?: `0x${string}`;
   epochStreamer?: `0x${string}`;
   sessionRegistry?: `0x${string}`;

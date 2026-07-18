@@ -5,12 +5,16 @@ pragma solidity ^0.8.28;
 /// @notice Onchain registry of scoped, expiring agent session keys.
 /// @dev Phase 0 bridge before ERC-4337 session modules (F1.3). Root issues and revokes;
 ///      orchestrator holds only the ephemeral private key off-chain.
+///      EscalationRouter enforces `maxValue` and optional `allowedTarget`
+///      (`address(0)` = any target that still passes policy).
 contract SessionRegistry {
     struct Session {
         address agent;
         address key;
         uint64 expiresAt;
         bytes32 scopesHash;
+        uint256 maxValue;
+        address allowedTarget;
         bool revoked;
         bool exists;
     }
@@ -31,7 +35,9 @@ contract SessionRegistry {
         address indexed agent,
         address indexed key,
         uint64 expiresAt,
-        bytes32 scopesHash
+        bytes32 scopesHash,
+        uint256 maxValue,
+        address allowedTarget
     );
     event SessionRevoked(uint256 indexed sessionId, address indexed by);
 
@@ -60,11 +66,15 @@ contract SessionRegistry {
     }
 
     /// @notice Register an ephemeral key for `agent` until `expiresAt` (unix seconds).
+    /// @param maxValue Max propose value (`type(uint256).max` = unlimited).
+    /// @param allowedTarget Sole allowed target (`address(0)` = any policy-allowed target).
     function issue(
         address agent,
         address key,
         uint64 expiresAt,
-        bytes32 scopesHash
+        bytes32 scopesHash,
+        uint256 maxValue,
+        address allowedTarget
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
@@ -82,13 +92,15 @@ contract SessionRegistry {
             key: key,
             expiresAt: expiresAt,
             scopesHash: scopesHash,
+            maxValue: maxValue,
+            allowedTarget: allowedTarget,
             revoked: false,
             exists: true
         });
         _byAgent[agent].push(sessionId);
         activeKeySession[agent][key] = sessionId;
 
-        emit SessionIssued(sessionId, agent, key, expiresAt, scopesHash);
+        emit SessionIssued(sessionId, agent, key, expiresAt, scopesHash, maxValue, allowedTarget);
     }
 
     /// @notice Root (or issuer) revokes a session. Product rule: prefer root-driven revoke.
@@ -113,6 +125,21 @@ contract SessionRegistry {
         uint256 id = activeKeySession[agent][key];
         if (id == 0) return false;
         return isValid(id);
+    }
+
+    /// @notice Limits for an active key. `valid` is false when missing/expired/revoked.
+    function keyLimits(address agent, address key)
+        external
+        view
+        returns (bool valid, uint256 maxValue, address allowedTarget, bytes32 scopesHash)
+    {
+        uint256 id = activeKeySession[agent][key];
+        if (id == 0) return (false, 0, address(0), bytes32(0));
+        Session storage s = sessions[id];
+        if (!s.exists || s.revoked || block.timestamp >= s.expiresAt) {
+            return (false, 0, address(0), bytes32(0));
+        }
+        return (true, s.maxValue, s.allowedTarget, s.scopesHash);
     }
 
     function sessionsOf(address agent) external view returns (uint256[] memory) {

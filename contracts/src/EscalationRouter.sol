@@ -5,10 +5,13 @@ import {IPolicyModule, Verdict} from "./interfaces/IPolicyModule.sol";
 import {IOrgRegistry} from "./interfaces/IOrgRegistry.sol";
 import {IRateRecorder} from "./interfaces/IRateRecorder.sol";
 import {ITreasurySpender} from "./interfaces/ITreasurySpender.sol";
+import {SessionRegistry} from "./SessionRegistry.sol";
 
 /// @title EscalationRouter
 /// @notice Creates pending intents when a policy returns ESCALATE; parents approve upward.
 /// @dev On ALLOW (propose or final resolve), optionally spends allowance and calls `target`.
+///      When `sessionRegistry` is set, `propose` must be signed by a valid session key for `agent`
+///      (or by `agent` itself for future AA EOAs).
 contract EscalationRouter {
     struct Intent {
         address agent;
@@ -21,14 +24,18 @@ contract EscalationRouter {
     }
 
     IOrgRegistry public immutable orgRegistry;
+    /// @notice Default policy stack when `policyOf[node]` is unset.
     IPolicyModule public policy;
     ITreasurySpender public treasury;
     IRateRecorder public rateRecorder;
+    SessionRegistry public sessionRegistry;
     /// @notice GovernanceModule (or bootstrap) for setTreasury / setRateRecorder.
     address public governor;
 
     uint256 public nextIntentId = 1;
     mapping(uint256 => Intent) public intents;
+    /// @notice Optional per-node policy stack override (falls back to `policy`).
+    mapping(address => IPolicyModule) public policyOf;
 
     event IntentCreated(uint256 indexed intentId, address indexed agent, address awaitingApprover);
     event IntentEscalated(uint256 indexed intentId, address indexed from, address indexed to);
@@ -41,6 +48,8 @@ contract EscalationRouter {
     );
     event TreasuryUpdated(address indexed treasury);
     event RateRecorderUpdated(address indexed rateRecorder);
+    event SessionRegistryUpdated(address indexed sessionRegistry);
+    event NodePolicyUpdated(address indexed node, address indexed policyModule);
     event GovernorUpdated(address indexed governor);
 
     error IntentNotFound(uint256 intentId);
@@ -50,9 +59,11 @@ contract EscalationRouter {
     error NoApprover(address agent);
     error InactiveAgent(address agent);
     error NotAuthorized(address caller);
+    error InvalidSession(address agent, address key);
+    error SessionValueExceeded(address agent, uint256 value, uint256 maxValue);
+    error SessionTargetDenied(address agent, address target, address allowedTarget);
     error ZeroAddress();
 
-    /// TODO: Support stacked policy modules per node instead of a single global policy.
     constructor(address orgRegistry_, address policy_) {
         orgRegistry = IOrgRegistry(orgRegistry_);
         policy = IPolicyModule(policy_);
@@ -80,6 +91,21 @@ contract EscalationRouter {
         emit RateRecorderUpdated(rateRecorder_);
     }
 
+    /// @notice Wire SessionRegistry so propose requires a valid session key.
+    function setSessionRegistry(address sessionRegistry_) external {
+        _onlyGovernorOrBootstrap();
+        sessionRegistry = SessionRegistry(sessionRegistry_);
+        emit SessionRegistryUpdated(sessionRegistry_);
+    }
+
+    /// @notice Bind a policy stack to a node. Pass address(0) to clear (use default `policy`).
+    function setNodePolicy(address node, address policyModule) external {
+        _onlyGovernorOrBootstrap();
+        if (node == address(0)) revert ZeroAddress();
+        policyOf[node] = IPolicyModule(policyModule);
+        emit NodePolicyUpdated(node, policyModule);
+    }
+
     /// @notice Propose an action; ALLOW executes spend+call, ESCALATE creates an intent, DENY reverts.
     function propose(
         address agent,
@@ -89,8 +115,9 @@ contract EscalationRouter {
     ) external returns (uint256 intentId, Verdict verdict) {
         IOrgRegistry.Node memory agentNode = orgRegistry.getNode(agent);
         if (!agentNode.active) revert InactiveAgent(agent);
+        _requireValidSession(agent, target, value);
 
-        verdict = policy.check(agent, target, value, data);
+        verdict = _policyFor(agent).check(agent, target, value, data);
 
         if (verdict == Verdict.DENY) {
             revert UnexpectedVerdict(verdict);
@@ -132,7 +159,8 @@ contract EscalationRouter {
             return;
         }
 
-        Verdict verdict = policy.check(msg.sender, intent.target, intent.value, intent.data);
+        Verdict verdict =
+            _policyFor(msg.sender).check(msg.sender, intent.target, intent.value, intent.data);
 
         if (verdict == Verdict.DENY) {
             intent.resolved = true;
@@ -187,6 +215,25 @@ contract EscalationRouter {
         if (address(rateRecorder) != address(0)) {
             rateRecorder.record(agent);
         }
+    }
+
+    /// @dev Unset registry = unit-test bootstrap. Otherwise: valid session + maxValue + target.
+    function _requireValidSession(address agent, address target, uint256 value) private view {
+        if (address(sessionRegistry) == address(0)) return;
+        if (msg.sender == agent) return;
+        (bool valid, uint256 maxValue, address allowedTarget,) =
+            sessionRegistry.keyLimits(agent, msg.sender);
+        if (!valid) revert InvalidSession(agent, msg.sender);
+        if (value > maxValue) revert SessionValueExceeded(agent, value, maxValue);
+        if (allowedTarget != address(0) && target != allowedTarget) {
+            revert SessionTargetDenied(agent, target, allowedTarget);
+        }
+    }
+
+    function _policyFor(address node) private view returns (IPolicyModule) {
+        IPolicyModule nodePolicy = policyOf[node];
+        if (address(nodePolicy) != address(0)) return nodePolicy;
+        return policy;
     }
 
     function _onlyGovernorOrBootstrap() private view {

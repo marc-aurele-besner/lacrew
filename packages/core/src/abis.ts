@@ -764,6 +764,25 @@ export const escalationRouterAbi = [
   },
   {
     "type": "function",
+    "name": "policyOf",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPolicyModule"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "propose",
     "inputs": [
       {
@@ -834,6 +853,19 @@ export const escalationRouterAbi = [
   },
   {
     "type": "function",
+    "name": "sessionRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract SessionRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setGovernor",
     "inputs": [
       {
@@ -847,10 +879,41 @@ export const escalationRouterAbi = [
   },
   {
     "type": "function",
+    "name": "setNodePolicy",
+    "inputs": [
+      {
+        "name": "node",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "policyModule",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRateRecorder",
     "inputs": [
       {
         "name": "rateRecorder_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setSessionRegistry",
+    "inputs": [
+      {
+        "name": "sessionRegistry_",
         "type": "address",
         "internalType": "address"
       }
@@ -999,10 +1062,42 @@ export const escalationRouterAbi = [
   },
   {
     "type": "event",
+    "name": "NodePolicyUpdated",
+    "inputs": [
+      {
+        "name": "node",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "policyModule",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RateRecorderUpdated",
     "inputs": [
       {
         "name": "rateRecorder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SessionRegistryUpdated",
+    "inputs": [
+      {
+        "name": "sessionRegistry",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1058,6 +1153,22 @@ export const escalationRouterAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidSession",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoApprover",
     "inputs": [
       {
@@ -1086,6 +1197,48 @@ export const escalationRouterAbi = [
         "name": "caller",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SessionTargetDenied",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "allowedTarget",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SessionValueExceeded",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -2734,6 +2887,16 @@ export const sessionRegistryAbi = [
         "name": "scopesHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowedTarget",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -2754,6 +2917,45 @@ export const sessionRegistryAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "keyLimits",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "valid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowedTarget",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "scopesHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -2814,6 +3016,16 @@ export const sessionRegistryAbi = [
         "name": "scopesHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowedTarget",
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "revoked",
@@ -2906,6 +3118,18 @@ export const sessionRegistryAbi = [
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowedTarget",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false

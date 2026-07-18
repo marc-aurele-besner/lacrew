@@ -37,4 +37,4 @@ Worker proposes action
 3. Approver `ESCALATE` → `awaitingApprover` climbs to the parent (`IntentEscalated`)
 4. Human root approval finalizes even when still over soft caps (mocked root authority)
 
-Per-agent caps live on `SpendCapPolicy.setAgentCap`. On-execution ALLOW (session key / smart account) is still TODO.
+Per-agent caps live on `SpendCapPolicy.setAgentCap`. `propose` must be signed by a valid `SessionRegistry` key (or the agent address). Structured scope checks and AA execution are still TODO.

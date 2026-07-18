@@ -45,7 +45,7 @@ const allowanceStreamed = parseAbiItem(
   "event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch)",
 );
 const sessionIssued = parseAbiItem(
-  "event SessionIssued(uint256 indexed sessionId, address indexed agent, address indexed key, uint64 expiresAt, bytes32 scopesHash)",
+  "event SessionIssued(uint256 indexed sessionId, address indexed agent, address indexed key, uint64 expiresAt, bytes32 scopesHash, uint256 maxValue, address allowedTarget)",
 );
 const sessionRevoked = parseAbiItem(
   "event SessionRevoked(uint256 indexed sessionId, address indexed by)",
@@ -320,6 +320,8 @@ export class EventWatcher {
                 agent: log.args.agent as string,
                 keyAddress: log.args.key as string,
                 expiresAt: Number(log.args.expiresAt) * 1000,
+                maxValue: (log.args.maxValue as bigint | undefined)?.toString(),
+                allowedTarget: log.args.allowedTarget as string | undefined,
                 txHash: log.transactionHash,
               },
             });

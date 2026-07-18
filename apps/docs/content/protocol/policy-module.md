@@ -26,8 +26,11 @@ Standard modules (reference contracts):
 
 `PolicyStack` composes modules: **first DENY wins**; any ESCALATE is sticky; else ALLOW.
 
+## Per-node stacks
+
+`EscalationRouter` keeps a default `policy` plus optional `policyOf[node]` overrides (`setNodePolicy`). Propose checks the agent's stack; resolve checks the approver's stack. DeployMockOrg wires a worker stack (whitelist + spend cap + rate limit) and a manager stack (whitelist + spend cap, no rate limit).
+
 ## TODO
 
-- TODO: Per-node policy stacks (router still uses one global stack)
 - TODO: Spec module registry + upgrade path via GovernanceModule
 - TODO: Publish ABI + abitype package for off-chain preflight

@@ -26,9 +26,14 @@ import {
   type ProtocolEvent,
   type SessionKey,
 } from "@lacrew/core";
-import { http, parseEventLogs, type Hex, type Log } from "viem";
+import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
+
+/** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
+const SESSION_GAS_STIPEND = parseEther("0.05");
+/** Default session maxValue: 200 USDC (matches DeployMockOrg worker stream; over policy cap → escalate). */
+const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 
 export type RuntimeMode = "mock" | "onchain";
 
@@ -125,18 +130,29 @@ export class CrewRuntime {
         agent: this.workerAgent,
         scopes: ["spend:whitelist", "propose:intent"],
       });
+      const maxValue = this.sessionMaxValue();
+      const allowedTarget = this.sessionAllowedTarget();
       const { sessionId, txHash } = await this.client.issueSession({
         agent: ephemeral.agent,
         key: ephemeral.keyAddress!,
         expiresAtSec: ephemeral.expiresAtSec,
         scopesHash: ephemeral.scopesHash,
+        maxValue,
+        allowedTarget,
       });
+      // Root sponsors gas so the session key can submit propose (Phase 0; AA/paymaster later).
+      const { txHash: fundTxHash } = await this.client.fundEth(
+        ephemeral.keyAddress!,
+        SESSION_GAS_STIPEND,
+      );
       this.session = {
         agent: ephemeral.agent,
         keyId: sessionId,
         keyAddress: ephemeral.keyAddress,
         expiresAt: ephemeral.expiresAt,
         scopes: ephemeral.scopes,
+        maxValue: maxValue.toString(),
+        allowedTarget,
         revoked: false,
       };
       // Keep private key only on the runtime instance, never in audit payloads.
@@ -150,7 +166,10 @@ export class CrewRuntime {
           keyId: this.session.keyId,
           keyAddress: this.session.keyAddress,
           expiresAt: this.session.expiresAt,
+          maxValue: this.session.maxValue,
+          allowedTarget: this.session.allowedTarget,
           txHash,
+          fundTxHash,
         },
       });
       return this.session;
@@ -176,6 +195,29 @@ export class CrewRuntime {
     return Boolean(
       isOnchainClient(this.client) && this.client.addresses.sessionRegistry,
     );
+  }
+
+  /** Ephemeral session account for onchain propose (never logged). */
+  private sessionSignerAccount() {
+    if (!this.addressesHasSessions()) return undefined;
+    const pk = (this as { _sessionPk?: `0x${string}` })._sessionPk;
+    if (!pk) {
+      throw new Error("Session private key missing; call boot() before tick()");
+    }
+    return privateKeyToAccount(pk);
+  }
+
+  private sessionMaxValue(): bigint {
+    const raw = process.env.SESSION_MAX_VALUE?.trim();
+    if (raw) return BigInt(raw);
+    return DEFAULT_SESSION_MAX_VALUE;
+  }
+
+  /** Pin session to spend target (demo default); override with SESSION_ALLOWED_TARGET=0x0 for any. */
+  private sessionAllowedTarget(): `0x${string}` {
+    const raw = process.env.SESSION_ALLOWED_TARGET?.trim();
+    if (raw) return raw as `0x${string}`;
+    return this.spendTarget;
   }
 
   async listSessions(): Promise<SessionKey[]> {
@@ -226,11 +268,13 @@ export class CrewRuntime {
       throw new Error("Session expired; call boot() to rotate");
     }
 
+    const sessionAccount = this.sessionSignerAccount();
     const result = await this.client.proposeIntent({
       agent: this.workerAgent,
       target: this.spendTarget,
       value,
       data: "0x",
+      ...(sessionAccount ? { account: sessionAccount } : {}),
     });
 
     const txHash = "txHash" in result ? result.txHash : undefined;

@@ -100,12 +100,16 @@ export class OnchainLacrewClient {
   readonly resolverWalletClient: WalletClient | null;
   readonly addresses: ChainAddresses;
   readonly chainId: number;
+  private readonly transport: Transport;
+  private readonly chain: Chain | undefined;
   private readonly indexerPath?: string;
 
   constructor(options: OnchainClientOptions) {
     this.chainId = options.chainId ?? options.addresses?.chainId ?? ANVIL_CHAIN_ID;
     this.addresses = options.addresses ?? getAddresses(this.chainId);
     this.indexerPath = options.indexerPath ?? process.env.INDEXER_PATH ?? process.env.INDEXER_URL;
+    this.transport = options.transport;
+    this.chain = options.chain;
     this.publicClient = createPublicClient({
       transport: options.transport,
       chain: options.chain,
@@ -225,19 +229,36 @@ export class OnchainLacrewClient {
     return store?.audit ?? [];
   }
 
+  /**
+   * Propose via EscalationRouter.
+   * When SessionRegistry is wired, `account` must be a valid session key for `agent`
+   * (or the agent address itself). Root wallet alone is not enough.
+   */
   async proposeIntent(input: {
     agent: `0x${string}`;
     target: `0x${string}`;
     value: bigint;
     data?: Hex;
+    /** Session-key (or agent) account that signs `propose`. Defaults to root wallet. */
+    account?: Account;
   }): Promise<{ intentId: string; verdict: Verdict; txHash: `0x${string}` }> {
-    const wallet = this.requireWallet();
+    const wallet = input.account
+      ? createWalletClient({
+          account: input.account,
+          transport: this.transport,
+          chain: this.chain,
+        })
+      : this.requireWallet();
+    const signer = wallet.account;
+    if (!signer) {
+      throw new Error("proposeIntent requires a signer account");
+    }
     const { request, result } = await this.publicClient.simulateContract({
       address: this.addresses.escalationRouter,
       abi: escalationRouterAbi,
       functionName: "propose",
       args: [input.agent, input.target, input.value, input.data ?? "0x"],
-      account: wallet.account!,
+      account: signer,
     });
     const hash = await wallet.writeContract(request);
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
@@ -306,10 +327,12 @@ export class OnchainLacrewClient {
           `0x${string}`,
           number | bigint,
           `0x${string}`,
+          bigint,
+          `0x${string}`,
           boolean,
           boolean,
         ];
-        const [, key, expiresAtRaw, , revoked, exists] = row;
+        const [, key, expiresAtRaw, , maxValue, allowedTarget, revoked, exists] = row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
         out.push({
@@ -318,11 +341,29 @@ export class OnchainLacrewClient {
           keyAddress: key,
           expiresAt: expiresAtSec * 1000,
           scopes: [],
+          maxValue: maxValue.toString(),
+          allowedTarget,
           revoked: revoked || expiresAtSec <= nowSec,
         });
       }
     }
     return out.sort((x, y) => y.expiresAt - x.expiresAt);
+  }
+
+  /** Send ETH from the root wallet (Phase 0 gas sponsorship for session keys). */
+  async fundEth(
+    to: `0x${string}`,
+    value: bigint,
+  ): Promise<{ txHash: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.sendTransaction({
+      to,
+      value,
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
   }
 
   /** Register an ephemeral key on SessionRegistry (caller = root or issuer). */
@@ -331,15 +372,29 @@ export class OnchainLacrewClient {
     key: `0x${string}`;
     expiresAtSec: number;
     scopesHash: `0x${string}`;
+    /** Max propose value; defaults to max uint256 (unlimited). */
+    maxValue?: bigint;
+    /** Sole allowed target; defaults to zero (any policy-allowed target). */
+    allowedTarget?: `0x${string}`;
   }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
     const addr = this.addresses.sessionRegistry;
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
     const wallet = this.requireWallet();
+    const maxValue = input.maxValue ?? 2n ** 256n - 1n;
+    const allowedTarget =
+      input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
     const { request, result } = await this.publicClient.simulateContract({
       address: addr,
       abi: sessionRegistryAbi,
       functionName: "issue",
-      args: [input.agent, input.key, BigInt(input.expiresAtSec), input.scopesHash],
+      args: [
+        input.agent,
+        input.key,
+        BigInt(input.expiresAtSec),
+        input.scopesHash,
+        maxValue,
+        allowedTarget,
+      ],
       account: wallet.account!,
     });
     const hash = await wallet.writeContract(request);

@@ -7,15 +7,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLacrewClient, createOnchainClient } from "@lacrew/sdk";
-import { CrewRuntime } from "@lacrew/orchestrator";
+import { createLacrewClient, createOnchainClient, type OnchainLacrewClient } from "@lacrew/sdk";
+import { CrewRuntime, createEphemeralSession } from "@lacrew/orchestrator";
 import {
   PROTOCOL_NAME,
   PROTOCOL_VERSION,
   getAddresses,
   ANVIL_CHAIN_ID,
 } from "@lacrew/core";
-import { http } from "viem";
+import { http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -257,11 +257,55 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
+      const agentAddr = agent as `0x${string}`;
+      const targetAddr = target as `0x${string}`;
+      const value = BigInt(valueRaw);
+
+      // Onchain + SessionRegistry: issue an ephemeral key and sign propose with it.
+      if (
+        "issueSession" in client &&
+        (client as OnchainLacrewClient).addresses?.sessionRegistry
+      ) {
+        const onchain = client as OnchainLacrewClient;
+        const ephemeral = createEphemeralSession({
+          agent: agentAddr,
+          scopes: ["spend:whitelist", "propose:intent"],
+        });
+        const maxValue = process.env.SESSION_MAX_VALUE
+          ? BigInt(process.env.SESSION_MAX_VALUE)
+          : 200n * 10n ** 6n;
+        const allowedTarget = (process.env.SESSION_ALLOWED_TARGET?.trim() ||
+          targetAddr) as `0x${string}`;
+        const { sessionId } = await onchain.issueSession({
+          agent: ephemeral.agent,
+          key: ephemeral.keyAddress!,
+          expiresAtSec: ephemeral.expiresAtSec,
+          scopesHash: ephemeral.scopesHash,
+          maxValue,
+          allowedTarget,
+        });
+        await onchain.fundEth(ephemeral.keyAddress!, parseEther("0.05"));
+        const sessionAccount = privateKeyToAccount(ephemeral.privateKey);
+        printJson({
+          sessionId,
+          keyAddress: ephemeral.keyAddress,
+          maxValue: maxValue.toString(),
+          allowedTarget,
+          ...(await onchain.proposeIntent({
+            agent: agentAddr,
+            target: targetAddr,
+            value,
+            account: sessionAccount,
+          })),
+        });
+        return;
+      }
+
       printJson(
         await client.proposeIntent({
-          agent: agent as `0x${string}`,
-          target: target as `0x${string}`,
-          value: BigInt(valueRaw),
+          agent: agentAddr,
+          target: targetAddr,
+          value,
         }),
       );
       return;
