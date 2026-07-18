@@ -271,15 +271,24 @@ export class CrewRuntime {
   }
 
   /**
-   * Propose a spend intent.
-   * Default 75 USDC exceeds the worker 50 USDC cap → ESCALATE to manager.
+   * Propose a spend intent for any agent/target (defaults: the crew worker →
+   * configured spend target). Session-signed onchain; the chain enforces that
+   * the session key actually belongs to `agent`.
    */
-  async tick(value = 75n * 10n ** 6n): Promise<{
+  async propose(input: {
+    agent?: `0x${string}`;
+    target?: `0x${string}`;
+    value: bigint;
+  }): Promise<{
     session: SessionKey;
     intentId: string;
     verdict: string;
     txHash?: `0x${string}`;
   }> {
+    const agent = input.agent ?? this.workerAgent;
+    const target = input.target ?? this.spendTarget;
+    const value = input.value;
+
     const session = await this.boot();
     if (isSessionExpired(session)) {
       this.session = revokeSession(session);
@@ -288,8 +297,8 @@ export class CrewRuntime {
 
     const sessionAccount = this.sessionSignerAccount();
     const result = await this.client.proposeIntent({
-      agent: this.workerAgent,
-      target: this.spendTarget,
+      agent,
+      target,
       value,
       data: "0x",
       ...(sessionAccount ? { account: sessionAccount } : {}),
@@ -301,8 +310,8 @@ export class CrewRuntime {
         type: "AllowanceSpent",
         at: new Date().toISOString(),
         payload: {
-          agent: this.workerAgent,
-          target: this.spendTarget,
+          agent,
+          target,
           value: value.toString(),
           txHash,
         },
@@ -313,8 +322,8 @@ export class CrewRuntime {
         at: new Date().toISOString(),
         payload: {
           intentId: result.intentId,
-          agent: this.workerAgent,
-          target: this.spendTarget,
+          agent,
+          target,
           value: value.toString(),
           awaitingApprover: this.managerAgent,
           txHash,
@@ -330,6 +339,19 @@ export class CrewRuntime {
       verdict: result.verdict,
       txHash,
     };
+  }
+
+  /**
+   * Demo heartbeat: propose the default crew spend.
+   * Default 75 USDC exceeds the worker 50 USDC cap → ESCALATE to manager.
+   */
+  async tick(value = 75n * 10n ** 6n): Promise<{
+    session: SessionKey;
+    intentId: string;
+    verdict: string;
+    txHash?: `0x${string}`;
+  }> {
+    return this.propose({ value });
   }
 
   async listPending(): Promise<Intent[]> {

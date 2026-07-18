@@ -1,7 +1,8 @@
 /**
  * MCP tool adapter for agent frameworks (PRD F1.9).
  * Exposes LaCrew tools over a minimal JSON-RPC stdio MCP server (no SDK vendor lock).
- * Runner still uses the SDK mock client until session-bound onchain calls land.
+ * Tools dispatch to an injected McpToolBackend (the orchestrator passes its live
+ * runtime); without one they fall back to a detached SDK mock client.
  */
 
 import { createInterface } from "node:readline";
@@ -11,6 +12,28 @@ export interface McpToolDescriptor {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Minimal surface the tools need. The orchestrator binds this to its
+ * CrewRuntime (session-signed onchain calls); tests can pass stubs.
+ */
+export interface McpToolBackend {
+  getOrgTree(): Promise<unknown>;
+  listPendingIntents(): Promise<unknown[]>;
+  proposeIntent(input: {
+    agent: `0x${string}`;
+    target: `0x${string}`;
+    value: bigint;
+  }): Promise<unknown>;
+  resolveIntent(intentId: string, approved: boolean): Promise<unknown>;
+}
+
+export interface RunMcpToolOptions {
+  /** Live backend; takes precedence over the SDK fallback. */
+  backend?: McpToolBackend;
+  /** SDK fallback flag when no backend is given (default true = mock). */
+  useMock?: boolean;
 }
 
 export function listLacrewMcpTools(): McpToolDescriptor[] {
@@ -53,30 +76,45 @@ export function listLacrewMcpTools(): McpToolDescriptor[] {
   ];
 }
 
-/** Tool runner backed by the SDK (mock by default; pass useMock: false when wired). */
+/** Detached SDK client backend (mock demo data unless useMock: false). */
+export function createSdkMcpBackend(opts: { useMock?: boolean } = {}): McpToolBackend {
+  const client = createLacrewClient({ useMock: opts.useMock ?? true });
+  return {
+    getOrgTree: () => client.getOrgTree(),
+    listPendingIntents: () => client.getPendingIntents(),
+    proposeIntent: (input) => client.proposeIntent(input),
+    resolveIntent: (intentId, approved) => client.resolveIntent(intentId, approved),
+  };
+}
+
+/** Tool runner; dispatches to opts.backend, else a detached SDK client. */
 export async function runMcpTool(
   name: string,
   args: Record<string, unknown>,
-  opts: { useMock?: boolean } = {},
+  opts: RunMcpToolOptions = {},
 ): Promise<unknown> {
-  const client = createLacrewClient({ useMock: opts.useMock ?? true });
+  const backend = opts.backend ?? createSdkMcpBackend({ useMock: opts.useMock });
 
   switch (name) {
     case "lacrew_get_org_tree":
-      return client.getOrgTree();
+      return backend.getOrgTree();
     case "lacrew_list_pending_intents": {
-      const intents = await client.getPendingIntents();
-      return intents.map((i) => ({ ...i, value: i.value.toString() }));
+      const intents = await backend.listPendingIntents();
+      return intents.map((i) =>
+        i && typeof i === "object" && "value" in i
+          ? { ...i, value: String((i as { value: unknown }).value) }
+          : i,
+      );
     }
     case "lacrew_propose_intent": {
-      return client.proposeIntent({
+      return backend.proposeIntent({
         agent: String(args.agent) as `0x${string}`,
         target: String(args.target) as `0x${string}`,
         value: BigInt(String(args.value ?? "0")),
       });
     }
     case "lacrew_approve_intent": {
-      return client.resolveIntent(String(args.intentId), Boolean(args.approved));
+      return backend.resolveIntent(String(args.intentId), Boolean(args.approved));
     }
     default:
       throw new Error(`Unknown MCP tool: ${name}`);
@@ -95,7 +133,7 @@ type JsonRpcRequest = {
  * Wire with: `node dist/stdio.js` or `pnpm --filter @lacrew/adapter-agents-mcp mcp`.
  */
 export async function startLacrewMcpStdioServer(
-  opts: { useMock?: boolean } = {},
+  opts: RunMcpToolOptions = {},
 ): Promise<void> {
   const write = (msg: unknown) => {
     process.stdout.write(`${JSON.stringify(msg)}\n`);
@@ -152,7 +190,16 @@ export async function startLacrewMcpStdioServer(
           jsonrpc: "2.0",
           id,
           result: {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  result,
+                  (_k, v) => (typeof v === "bigint" ? v.toString() : v),
+                  2,
+                ),
+              },
+            ],
           },
         });
         continue;

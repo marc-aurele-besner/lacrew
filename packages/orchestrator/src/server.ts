@@ -11,6 +11,7 @@ import { checkDbReady, getDatabaseUrl } from "@lacrew/db";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import { getOrchToken, isAuthorized } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
+import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
@@ -19,8 +20,9 @@ const runtime = createRuntimeFromEnv();
 const port = Number(process.env.PORT ?? 8788);
 let queue: QueueProvider = createQueueFromEnv();
 const model: ModelProvider = createModelProviderFromEnv();
-/** MCP HTTP uses SDK mock until tools bind to session-scoped onchain clients (F1.9). */
-const mcpUseMock = process.env.LACREW_MCP_MOCK !== "0";
+/** MCP HTTP binds to the live runtime; LACREW_MCP_MOCK=1 forces a detached SDK mock. */
+const mcpUseMock = process.env.LACREW_MCP_MOCK === "1";
+const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
 const authToken = getOrchToken();
 let dbReady = false;
 
@@ -115,6 +117,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       const result = await runMcpTool(body.name, body.arguments ?? {}, {
+        backend: mcpBackend,
         useMock: mcpUseMock,
       });
       send(res, 200, {
