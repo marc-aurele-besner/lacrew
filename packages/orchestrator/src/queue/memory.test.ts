@@ -10,8 +10,30 @@ describe("InMemoryQueue", () => {
     const id = await q.enqueue("epoch");
     assert.ok(id?.startsWith("mem_epoch_"));
     assert.equal(epochs, 1);
-    assert.deepEqual(q.status(), { provider: "memory", ready: true });
+    assert.deepEqual(q.status(), {
+      provider: "memory",
+      ready: true,
+      epochSchedule: null,
+    });
     await q.stop();
     assert.equal(q.status().ready, false);
+  });
+
+  it("schedules interval epochs when EPOCH_INTERVAL_MS is set", async () => {
+    const prev = process.env.EPOCH_INTERVAL_MS;
+    process.env.EPOCH_INTERVAL_MS = "20";
+    let epochs = 0;
+    const q = new InMemoryQueue();
+    try {
+      await q.start({ onEpoch: async () => { epochs += 1; } });
+      await q.scheduleEpoch("0 * * * *");
+      assert.equal(q.status().epochSchedule, "interval:20");
+      await new Promise((r) => setTimeout(r, 55));
+      assert.ok(epochs >= 2, `expected >=2 epoch ticks, got ${epochs}`);
+    } finally {
+      await q.stop();
+      if (prev === undefined) delete process.env.EPOCH_INTERVAL_MS;
+      else process.env.EPOCH_INTERVAL_MS = prev;
+    }
   });
 });

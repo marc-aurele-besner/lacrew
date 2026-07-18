@@ -222,10 +222,13 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/epoch") {
+      const q = queue.status();
       send(res, 200, {
         currentEpoch: await runtime.getCurrentEpoch(),
         mode: runtime.mode,
         chainId: runtime.chainId,
+        schedule: q.epochSchedule ?? null,
+        queue: q.provider,
       });
       return;
     }
@@ -249,17 +252,18 @@ async function main(): Promise<void> {
     onTick: async () => runtime.tick(),
   });
 
-  if (queue.name === "pg-boss") {
-    const cron = process.env.EPOCH_CRON ?? "0 * * * *";
-    await queue.scheduleEpoch(cron);
-  }
+  // pg-boss: EPOCH_CRON (default hourly). memory: EPOCH_INTERVAL_MS (>0) opt-in.
+  await queue.scheduleEpoch(process.env.EPOCH_CRON ?? "0 * * * *");
 
   server.listen(port, () => {
+    const q = queue.status();
     // eslint-disable-next-line no-console
     console.log(
       `[@lacrew/orchestrator] ${runtime.mode} server listening on :${port}` +
         (runtime.chainId != null ? ` (chain ${runtime.chainId})` : "") +
-        ` queue=${queue.status().provider} db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}`,
+        ` queue=${q.provider}` +
+        (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
+        ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}`,
     );
   });
 }

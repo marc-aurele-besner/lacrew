@@ -8,6 +8,8 @@ export type QueueJobName = "epoch" | "tick";
 export interface QueueStatus {
   provider: "memory" | "pg-boss";
   ready: boolean;
+  /** Active epoch schedule expression (cron or `interval:<ms>`). */
+  epochSchedule?: string | null;
 }
 
 export interface QueueHandlers {

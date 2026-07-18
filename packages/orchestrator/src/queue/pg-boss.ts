@@ -13,6 +13,7 @@ export class PgBossQueue implements QueueProvider {
   readonly name = "pg-boss" as const;
   private boss: PgBoss | null = null;
   private ready = false;
+  private epochSchedule: string | null = null;
 
   constructor(private readonly connectionString = getDatabaseUrl()) {}
 
@@ -56,9 +57,14 @@ export class PgBossQueue implements QueueProvider {
   async scheduleEpoch(cron: string): Promise<void> {
     if (!this.boss || !this.ready) throw new Error("PgBossQueue not started");
     await this.boss.schedule("epoch", cron, {});
+    this.epochSchedule = cron;
   }
 
   status(): QueueStatus {
-    return { provider: "pg-boss", ready: this.ready };
+    return {
+      provider: "pg-boss",
+      ready: this.ready,
+      epochSchedule: this.epochSchedule,
+    };
   }
 }
