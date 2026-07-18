@@ -244,9 +244,23 @@ async function main(): Promise<void> {
     }
 
     case "tick": {
-      // Mocked crew tick; onchain tick loop is TODO.
-      const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
-      printJson(await runtime.tick());
+      // Mock by default; --rpc (or ANVIL_RPC + PRIVATE_KEY) runs the session-signed onchain tick.
+      const client = createClient(rest);
+      const onchain = "publicClient" in client;
+      const chainId = Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID);
+      const addresses = getAddresses(chainId);
+      const runtime = onchain
+        ? new CrewRuntime({
+            client,
+            mode: "onchain",
+            chainId,
+            workerAgent: addresses.worker,
+            spendTarget: addresses.x402Target,
+            managerAgent: addresses.manager,
+          })
+        : new CrewRuntime({ client });
+      const valueRaw = flagValue(rest, "--value");
+      printJson(await runtime.tick(valueRaw ? BigInt(valueRaw) : undefined));
       return;
     }
 
