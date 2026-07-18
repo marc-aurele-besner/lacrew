@@ -1,6 +1,12 @@
 export { CrewRuntime, createRuntimeFromEnv, type CrewRuntimeOptions, type RuntimeMode } from "./runtime.js";
 export { getOrchToken, isAuthorized } from "./auth.js";
 export {
+  createAuditStoreFromEnv,
+  createMemoryAuditStore,
+  createPgAuditStore,
+  type AuditStore,
+} from "./auditStore.js";
+export {
   issueSession,
   createEphemeralSession,
   isSessionExpired,

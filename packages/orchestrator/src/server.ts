@@ -72,6 +72,7 @@ const server = createServer(async (req, res) => {
         model: { provider: model.name },
         mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
         auth: { required: Boolean(authToken) },
+        audit: { persisted: dbReady },
       });
       return;
     }
@@ -394,6 +395,12 @@ const server = createServer(async (req, res) => {
 
 async function main(): Promise<void> {
   dbReady = await checkDbReady();
+  if (dbReady) {
+    const replayed = await runtime.hydrateAudit();
+    if (replayed > 0) {
+      console.log(`[@lacrew/orchestrator] audit ring hydrated with ${replayed} persisted events`);
+    }
+  }
   await queue.start({
     onEpoch: async () => runtime.runEpoch(),
     onTick: async () => runtime.tick(),

@@ -30,6 +30,7 @@ import {
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
+import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 
 /** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
 const SESSION_GAS_STIPEND = parseEther("0.05");
@@ -47,6 +48,8 @@ export interface CrewRuntimeOptions {
   managerAgent?: `0x${string}`;
   mode?: RuntimeMode;
   chainId?: number;
+  /** Persistence for the audit ring; defaults to memory no-op. */
+  auditStore?: AuditStore;
 }
 
 function normalizePk(raw: string | undefined): `0x${string}` | undefined {
@@ -67,7 +70,7 @@ export function createRuntimeFromEnv(): CrewRuntime {
   const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
   const pk = normalizePk(process.env.PRIVATE_KEY);
   if (!rpc || !pk) {
-    return new CrewRuntime({ mode: "mock" });
+    return new CrewRuntime({ mode: "mock", auditStore: createAuditStoreFromEnv() });
   }
 
   const chainId = Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID);
@@ -92,6 +95,7 @@ export function createRuntimeFromEnv(): CrewRuntime {
     workerAgent: addresses.worker ?? MOCK_WORKER,
     spendTarget: addresses.x402Target ?? "0x4444444444444444444444444444444444444444",
     managerAgent: addresses.manager ?? MOCK_MANAGER,
+    auditStore: createAuditStoreFromEnv(),
   });
 }
 
@@ -105,6 +109,7 @@ export class CrewRuntime {
   private session: SessionKey | null = null;
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
+  private readonly auditStore: AuditStore;
 
   constructor(options: CrewRuntimeOptions = {}) {
     this.client = options.client ?? createLacrewClient({ useMock: true });
@@ -114,6 +119,18 @@ export class CrewRuntime {
     this.managerAgent = options.managerAgent ?? MOCK_MANAGER;
     this.mode = options.mode ?? "mock";
     this.chainId = options.chainId ?? null;
+    this.auditStore = options.auditStore ?? createMemoryAuditStore();
+  }
+
+  /** Replay persisted audit events into the local ring (call once on boot). */
+  async hydrateAudit(): Promise<number> {
+    const persisted = await this.auditStore.recent(AUDIT_RING_MAX);
+    if (persisted.length === 0) return 0;
+    this.localAudit.unshift(...persisted);
+    if (this.localAudit.length > AUDIT_RING_MAX) {
+      this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);
+    }
+    return persisted.length;
   }
 
   getClient(): LacrewClient | OnchainLacrewClient {
@@ -663,6 +680,8 @@ export class CrewRuntime {
     if (this.localAudit.length > AUDIT_RING_MAX) {
       this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);
     }
+    // Fire-and-forget; the store swallows its own errors.
+    void this.auditStore.append(event);
   }
 
   /** Parse EscalationRouter logs from a tx receipt into the local audit ring. */
