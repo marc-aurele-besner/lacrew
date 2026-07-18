@@ -400,6 +400,53 @@ export class CrewRuntime {
         account: result.account,
         label: input.label,
         kind: input.kind ?? "worker_agent",
+        action: "hire",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  /** Propose firing a node (OrgRegistry.removeNode — children rewire to parent). */
+  async proposeFire(input: {
+    account: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeFire requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
+    }
+    const result = await this.client.proposeFire(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        action: "fire",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  /** Propose reparenting a node under a new manager/root. */
+  async proposeReparent(input: {
+    account: `0x${string}`;
+    newParent: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("proposeReparent requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
+    }
+    const result = await this.client.proposeReparent(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        newParent: input.newParent,
+        action: "reparent",
         txHash: result.txHash,
       },
     });

@@ -132,4 +132,39 @@ contract GovernanceModuleTest is Test {
         gov.execute(id);
         assertEq(registry.getNode(worker).account, worker);
     }
+
+    function test_executeRemoveNodeRewiresViaGovernance() public {
+        address manager = makeAddr("mgr-fire");
+        address worker = makeAddr("w-rewire");
+        // Bootstrap tree as root before governor exclusive path — still ok via gov add.
+        bytes memory hireMgr = abi.encodeCall(
+            OrgRegistry.addNode, (manager, IOrgRegistry.NodeKind.ManagerAgent, root)
+        );
+        bytes memory hireWorker = abi.encodeCall(
+            OrgRegistry.addNode, (worker, IOrgRegistry.NodeKind.WorkerAgent, manager)
+        );
+        uint256 id1 = gov.propose(GovernanceModule.Tier.Low, address(registry), hireMgr);
+        vm.prank(voter1);
+        gov.vote(id1, true);
+        vm.prank(voter2);
+        gov.vote(id1, true);
+        gov.execute(id1);
+
+        uint256 id2 = gov.propose(GovernanceModule.Tier.Low, address(registry), hireWorker);
+        vm.prank(voter1);
+        gov.vote(id2, true);
+        vm.prank(voter2);
+        gov.vote(id2, true);
+        gov.execute(id2);
+
+        bytes memory fire = abi.encodeCall(OrgRegistry.removeNode, (manager));
+        uint256 id3 = gov.propose(GovernanceModule.Tier.Low, address(registry), fire);
+        vm.prank(voter1);
+        gov.vote(id3, true);
+        vm.prank(voter2);
+        gov.vote(id3, true);
+        gov.execute(id3);
+
+        assertEq(registry.getNode(worker).parent, root);
+    }
 }

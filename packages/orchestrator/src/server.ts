@@ -152,6 +152,42 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/governance/propose-fire") {
+      const body = (await readBody(req)) as {
+        account?: `0x${string}`;
+        tier?: "low" | "high";
+      };
+      if (!body.account) {
+        send(res, 400, { error: "account_required" });
+        return;
+      }
+      const result = await runtime.proposeFire({
+        account: body.account,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/governance/propose-reparent") {
+      const body = (await readBody(req)) as {
+        account?: `0x${string}`;
+        newParent?: `0x${string}`;
+        tier?: "low" | "high";
+      };
+      if (!body.account || !body.newParent) {
+        send(res, 400, { error: "account_and_newParent_required" });
+        return;
+      }
+      const result = await runtime.proposeReparent({
+        account: body.account,
+        newParent: body.newParent,
+        tier: body.tier,
+      });
+      send(res, 200, { ...result, mode: runtime.mode });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/governance/vote") {
       const body = (await readBody(req)) as { proposalId?: string; support?: boolean };
       if (!body.proposalId || typeof body.support !== "boolean") {

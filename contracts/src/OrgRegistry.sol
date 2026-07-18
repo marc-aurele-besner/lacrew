@@ -14,9 +14,16 @@ contract OrgRegistry is IOrgRegistry {
     /// @notice When non-zero, only this address may mutate the tree (GovernanceModule).
     address public governor;
 
+    event NodeAdded(address indexed account, NodeKind kind, address indexed parent);
+    event NodeRemoved(address indexed account, address indexed formerParent);
+    event NodeReparented(address indexed account, address indexed oldParent, address indexed newParent);
+    event NodeActiveUpdated(address indexed account, bool active);
+
     error NodeAlreadyExists(address account);
     error NodeNotFound(address account);
     error InvalidParent(address parent);
+    error CannotMutateRoot(address account);
+    error CyclicParent(address account, address newParent);
     error NotAuthorized(address caller);
     error GovernorAlreadySet();
     error ZeroAddress();
@@ -62,13 +69,79 @@ contract OrgRegistry is IOrgRegistry {
 
         _nodes[account] = Node({account: account, kind: kind, parent: parent, active: true});
         _children[parent].push(account);
+        emit NodeAdded(account, kind, parent);
     }
 
-    /// @notice Deactivate a node (fire). Children are not auto-rewired in v0.
+    /// @notice Soft-deactivate a node without removing it from the tree.
     function setActive(address account, bool active) external {
         _authorize();
         if (_nodes[account].account == address(0)) revert NodeNotFound(account);
+        if (account == root) revert CannotMutateRoot(account);
         _nodes[account].active = active;
+        emit NodeActiveUpdated(account, active);
+    }
+
+    /// @notice Fire/remove a node. Children are rewired to the removed node's parent.
+    function removeNode(address account) external {
+        _authorize();
+        Node memory node = _nodes[account];
+        if (node.account == address(0)) revert NodeNotFound(account);
+        if (account == root) revert CannotMutateRoot(account);
+
+        address parent = node.parent;
+        address[] storage kids = _children[account];
+        uint256 kidCount = kids.length;
+        for (uint256 i = 0; i < kidCount; i++) {
+            address child = kids[i];
+            _nodes[child].parent = parent;
+            _children[parent].push(child);
+        }
+        delete _children[account];
+
+        _removeFromParent(parent, account);
+        delete _nodes[account];
+        emit NodeRemoved(account, parent);
+    }
+
+    /// @notice Move `account` under `newParent`. Rejects cycles and root moves.
+    function reparent(address account, address newParent) external {
+        _authorize();
+        Node storage node = _nodes[account];
+        if (node.account == address(0)) revert NodeNotFound(account);
+        if (account == root) revert CannotMutateRoot(account);
+        if (_nodes[newParent].account == address(0)) revert InvalidParent(newParent);
+        if (newParent == account) revert CyclicParent(account, newParent);
+        if (_isAncestor(account, newParent)) revert CyclicParent(account, newParent);
+
+        address oldParent = node.parent;
+        if (oldParent == newParent) return;
+
+        _removeFromParent(oldParent, account);
+        node.parent = newParent;
+        _children[newParent].push(account);
+        emit NodeReparented(account, oldParent, newParent);
+    }
+
+    /// @dev True if `maybeAncestor` is on the path from `node` up to root.
+    function _isAncestor(address maybeAncestor, address node) private view returns (bool) {
+        address cursor = node;
+        while (cursor != address(0)) {
+            if (cursor == maybeAncestor) return true;
+            cursor = _nodes[cursor].parent;
+        }
+        return false;
+    }
+
+    function _removeFromParent(address parent, address child) private {
+        address[] storage siblings = _children[parent];
+        uint256 n = siblings.length;
+        for (uint256 i = 0; i < n; i++) {
+            if (siblings[i] == child) {
+                siblings[i] = siblings[n - 1];
+                siblings.pop();
+                return;
+            }
+        }
     }
 
     function _authorize() private view {

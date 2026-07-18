@@ -502,6 +502,43 @@ export class OnchainLacrewClient {
     return { ...result, account };
   }
 
+  /** Propose firing a node via OrgRegistry.removeNode (children rewire to parent). */
+  async proposeFire(input: {
+    account: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: orgRegistryAbi,
+      functionName: "removeNode",
+      args: [input.account],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "low",
+      target: this.addresses.orgRegistry,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
+  /** Propose moving a node under a new parent via OrgRegistry.reparent. */
+  async proposeReparent(input: {
+    account: `0x${string}`;
+    newParent: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: orgRegistryAbi,
+      functionName: "reparent",
+      args: [input.account, input.newParent],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "low",
+      target: this.addresses.orgRegistry,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
   /** Propose a constitutional action (target + calldata). */
   async proposeGovernance(input: {
     tier: GovernanceTier;

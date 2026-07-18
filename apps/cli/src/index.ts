@@ -371,6 +371,54 @@ async function main(): Promise<void> {
         );
         return;
       }
+      if (sub === "hire") {
+        const label = cleaned[1];
+        if (!label) {
+          console.error("Usage: lacrew gov hire <label> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeHire" in client)) {
+          console.error("gov hire requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(await (client as { proposeHire: Function }).proposeHire({ label }));
+        return;
+      }
+      if (sub === "fire") {
+        const account = cleaned[1] as `0x${string}` | undefined;
+        if (!account) {
+          console.error("Usage: lacrew gov fire <account> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeFire" in client)) {
+          console.error("gov fire requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(await (client as { proposeFire: Function }).proposeFire({ account }));
+        return;
+      }
+      if (sub === "reparent") {
+        const account = cleaned[1] as `0x${string}` | undefined;
+        const newParent = cleaned[2] as `0x${string}` | undefined;
+        if (!account || !newParent) {
+          console.error("Usage: lacrew gov reparent <account> <newParent> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeReparent" in client)) {
+          console.error("gov reparent requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeReparent: Function }).proposeReparent({ account, newParent }),
+        );
+        return;
+      }
       if (sub === "vote" || sub === "veto" || sub === "execute") {
         const id = cleaned[1];
         if (!id) {
@@ -389,7 +437,7 @@ async function main(): Promise<void> {
         printJson({ ok: true, proposalId: id, action: sub });
         return;
       }
-      console.error("Usage: lacrew gov <propose|vote|veto|execute> …");
+      console.error("Usage: lacrew gov <propose|hire|fire|reparent|vote|veto|execute> …");
       process.exitCode = 1;
       return;
     }
@@ -414,6 +462,9 @@ Commands:
   approve <id> [approver]   Approve a pending intent
   deny <id> [approver]      Deny a pending intent
   gov propose <low|high> <target> [data]  Constitutional proposal
+  gov hire <label>          Propose OrgRegistry.addNode (--rpc)
+  gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
+  gov reparent <acct> <parent>  Propose OrgRegistry.reparent (--rpc)
   gov vote <id> [yes|no]    Vote on a proposal (onchain --rpc)
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)
