@@ -713,6 +713,7 @@ export class OnchainLacrewClient {
       bigint,
       bigint,
       bigint,
+      bigint,
       number,
     ];
     return {
@@ -724,9 +725,10 @@ export class OnchainLacrewClient {
       data: row[4],
       yesVotes: Number(row[5]),
       noVotes: Number(row[6]),
-      deadline: Number(row[7]),
-      eta: Number(row[8]),
-      state: STATE_FROM[row[9]] ?? "active",
+      yesHumanVotes: Number(row[7]),
+      deadline: Number(row[8]),
+      eta: Number(row[9]),
+      state: STATE_FROM[row[10]] ?? "active",
     };
   }
 

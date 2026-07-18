@@ -18,6 +18,8 @@ export interface GovernanceProposal {
   data: `0x${string}`;
   yesVotes: number;
   noVotes: number;
+  /** Human-seat yes votes (high-tier quorum). */
+  yesHumanVotes?: number;
   deadline: number;
   eta: number;
   state: GovernanceProposalState;

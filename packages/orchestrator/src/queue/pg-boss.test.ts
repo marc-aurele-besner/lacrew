@@ -12,7 +12,9 @@ describe("PgBossQueue", () => {
 
     const q = new PgBossQueue();
     await q.start();
-    assert.deepEqual(q.status(), { provider: "pg-boss", ready: true });
+    const status = q.status();
+    assert.equal(status.provider, "pg-boss");
+    assert.equal(status.ready, true);
 
     const id = await q.enqueue("tick", { source: "test" });
     assert.ok(typeof id === "string" || id === null || id !== undefined);

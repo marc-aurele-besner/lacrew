@@ -9,10 +9,12 @@ import { createServer } from "node:http";
 import { checkDbReady, getDatabaseUrl } from "@lacrew/db";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
+import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 
 const runtime = createRuntimeFromEnv();
 const port = Number(process.env.PORT ?? 8788);
 let queue: QueueProvider = createQueueFromEnv();
+const model: ModelProvider = createModelProviderFromEnv();
 let dbReady = false;
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
@@ -52,7 +54,27 @@ const server = createServer(async (req, res) => {
         chainId: runtime.chainId,
         db: { configured: Boolean(getDatabaseUrl()), ready: dbReady },
         queue: queue.status(),
+        model: { provider: model.name },
       });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/model/complete") {
+      const body = (await readBody(req)) as {
+        system?: string;
+        prompt?: string;
+        model?: string;
+      };
+      if (!body.prompt?.trim()) {
+        send(res, 400, { error: "prompt_required" });
+        return;
+      }
+      const result = await model.complete({
+        system: body.system,
+        prompt: body.prompt,
+        model: body.model,
+      });
+      send(res, 200, { ...result, provider: model.name });
       return;
     }
 

@@ -16,3 +16,11 @@ export {
   type QueueJobName,
   type QueueStatus,
 } from "./queue/index.js";
+export {
+  createModelProviderFromEnv,
+  MemoryModelProvider,
+  OpenRouterModelProvider,
+  type ModelProvider,
+  type ModelCompleteInput,
+  type ModelCompleteResult,
+} from "./model/index.js";

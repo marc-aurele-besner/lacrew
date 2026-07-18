@@ -94,12 +94,70 @@ Or: `pnpm --filter @lacrew/cli exec tsx src/index.ts deploy` with `SEPOLIA_RPC_U
 
 Override addresses via `LACREW_ORG_REGISTRY`, `LACREW_TREASURY`, `LACREW_ESCALATION_ROUTER`, etc.
 
+## Session keys
+
+Onchain mode (`ANVIL_RPC` + `PRIVATE_KEY`) issues ephemeral EOAs via `SessionRegistry`:
+
+```bash
+# Boot provisions a worker session (gas stipend + maxValue scope)
+curl -s -X POST http://127.0.0.1:8788/boot | jq .
+
+# List / revoke
+curl -s http://127.0.0.1:8788/sessions | jq .
+curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
+  -H 'content-type: application/json' \
+  -d '{"sessionId":"…"}' | jq .
+```
+
+Compromise blast radius is the session's remaining `maxValue` on whitelisted targets until expiry or root/issuer revoke. Root keys never leave the operator's wallet.
+
+## Model provider
+
+Orchestrator model calls go through `ModelProvider` (never a hard-wired vendor SDK):
+
+```bash
+# Memory stub (default)
+curl -s -X POST http://127.0.0.1:8788/model/complete \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Summarize pending escalations"}' | jq .
+
+# OpenRouter when OPENROUTER_API_KEY is set — see .env.example
+curl -s http://127.0.0.1:8788/health | jq .model
+```
+
+## MCP tools
+
+```bash
+# JSON-RPC stdio server (Cursor / Claude Desktop compatible shape)
+pnpm --filter @lacrew/adapter-agents-mcp mcp
+
+# Vercel AI–shaped tool map (no `ai` SDK dep yet)
+# import { createLacrewVercelAiTools } from "@lacrew/adapter-agents-vercel-ai"
+```
+
+## Upgrade path
+
+1. Keep `DATABASE_URL` stable across releases — `@lacrew/db` and cloud tenancy migrations are additive SQL.
+2. After pulling: `pnpm install && pnpm build && pnpm db:migrate` (and `pnpm --filter @lacrew.xyz/tenancy db:migrate` when running the cloud API).
+3. Re-run `lacrew deploy --anvil` (or Sepolia) only when contract ABIs change; sync with `pnpm --filter @lacrew/core sync-abis`.
+4. Orchestrator HTTP is additive (`/health` fields grow; old clients ignore unknowns).
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `GET /health` → `mode: "mock"` | Set `ANVIL_RPC` + `PRIVATE_KEY`; ensure Anvil is up and `31337.json` exists |
+| `queue.provider` not `pg-boss` | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate |
+| `EADDRINUSE :8788` | Another orchestrator still running — kill the old process after `tsx` reloads |
+| Propose reverts / no session | `POST /boot` first; confirm SessionRegistry grants for the worker |
+| Cloud API `notification_prefs` missing | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate` |
+
 ## Cloud pairing (lacrew.xyz)
 
-Run the public orchestrator on `:8788`, then the private API on `:8789` and web on `:3000`. See the lacrew.xyz README for `file:` package wiring.
+Run the public orchestrator on `:8788`, then the private API on `:8789` and web on `:3000`. See the lacrew.xyz README for `file:` package wiring. The API applies tenancy SQL migrations on startup when `DATABASE_URL` is set.
 
 ## TODO
 
 - TODO: Publish `@lacrew/sdk` / `@lacrew/orchestrator` / `@lacrew/db` to npm
 - TODO: Full Ponder + Postgres indexer (Phase 1)
-- TODO: Production session-key setup, upgrade path, and troubleshooting
+- TODO: Docker image for the orchestrator (F2.9 / F2.16)
