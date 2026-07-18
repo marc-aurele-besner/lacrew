@@ -141,6 +141,24 @@ curl -s -X POST http://127.0.0.1:8788/mcp/call \
 # import { createLacrewVercelAiTools } from "@lacrew/adapter-agents-vercel-ai"
 ```
 
+## HTTP auth
+
+The orchestrator HTTP surface is open by default (fine for localhost demos). Set
+`LACREW_ORCH_TOKEN` to require `Authorization: Bearer <token>` on every route
+except `GET /health` (kept open for probes):
+
+```bash
+LACREW_ORCH_TOKEN=$(openssl rand -hex 24) pnpm --filter @lacrew/orchestrator dev
+
+curl -s http://127.0.0.1:8788/intents \
+  -H "authorization: Bearer $LACREW_ORCH_TOKEN" | jq .
+```
+
+`GET /health` reports `auth.required` so clients can detect the mode. The
+lacrew.xyz API forwards the same `LACREW_ORCH_TOKEN` env automatically; the
+example crews send it when `ORCH_TOKEN` is set. Always set the token when the
+port is reachable beyond localhost.
+
 ## Docker (orchestrator)
 
 ```bash
@@ -165,6 +183,7 @@ docker run --rm -p 8788:8788 lacrew-orchestrator
 | `queue.provider` not `pg-boss` | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate |
 | `EADDRINUSE :8788` | Another orchestrator still running — kill the old process after `tsx` reloads |
 | Propose reverts / no session | `POST /boot` first; confirm SessionRegistry grants for the worker |
+| `401 unauthorized` | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env) |
 | Cloud API `notification_prefs` missing | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate` |
 
 ## Cloud pairing (lacrew.xyz)

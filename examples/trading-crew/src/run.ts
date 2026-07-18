@@ -32,12 +32,17 @@ const ROLE_AGENTS: Record<string, `0x${string}`> = {
   risk: MOCK_MANAGER,
 };
 
+const orchHeaders: Record<string, string> = {
+  "content-type": "application/json",
+  ...(process.env.ORCH_TOKEN ? { authorization: `Bearer ${process.env.ORCH_TOKEN}` } : {}),
+};
+
 async function runViaOrch(base: string): Promise<void> {
   console.log(`[@lacrew/example-trading-crew] orch mode → ${base}`);
-  const health = await fetch(`${base}/health`).then((r) => r.json());
+  const health = await fetch(`${base}/health`, { headers: orchHeaders }).then((r) => r.json());
   console.log("health", health);
 
-  const tools = await fetch(`${base}/mcp/tools`).then((r) => r.json());
+  const tools = await fetch(`${base}/mcp/tools`, { headers: orchHeaders }).then((r) => r.json());
   console.log(
     "mcp tools",
     (tools as { tools?: Array<{ name: string }> }).tools?.map((t) => t.name),
@@ -48,7 +53,7 @@ async function runViaOrch(base: string): Promise<void> {
     const value = BigInt(spend.valueUsdc) * 10n ** 6n;
     const res = await fetch(`${base}/mcp/call`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: orchHeaders,
       body: JSON.stringify({
         name: "lacrew_propose_intent",
         arguments: { agent, target: spend.target, value: value.toString() },
@@ -59,7 +64,7 @@ async function runViaOrch(base: string): Promise<void> {
     console.log(JSON.stringify(body, null, 2));
   }
 
-  const pending = await fetch(`${base}/intents`).then((r) => r.json());
+  const pending = await fetch(`${base}/intents`, { headers: orchHeaders }).then((r) => r.json());
   console.log("\npending intents", JSON.stringify(pending, null, 2));
 }
 

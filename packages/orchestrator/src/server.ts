@@ -1,13 +1,15 @@
 /**
  * Minimal HTTP surface for local self-host demos.
  * Mocked by default; onchain when ANVIL_RPC + PRIVATE_KEY are set.
- * TODO: Move to Hono/Fastify + auth.
+ * Auth: bearer token on every route except GET /health when LACREW_ORCH_TOKEN is set.
+ * TODO: Move to Hono/Fastify.
  * Queue: QueueProvider — pg-boss when DATABASE_URL set, else in-memory.
  */
 
 import { createServer } from "node:http";
 import { checkDbReady, getDatabaseUrl } from "@lacrew/db";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
+import { getOrchToken, isAuthorized } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
@@ -19,6 +21,7 @@ let queue: QueueProvider = createQueueFromEnv();
 const model: ModelProvider = createModelProviderFromEnv();
 /** MCP HTTP uses SDK mock until tools bind to session-scoped onchain clients (F1.9). */
 const mcpUseMock = process.env.LACREW_MCP_MOCK !== "0";
+const authToken = getOrchToken();
 let dbReady = false;
 
 async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
@@ -43,9 +46,17 @@ const server = createServer(async (req, res) => {
     res.statusCode = 204;
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type");
+    res.setHeader("access-control-allow-headers", "content-type,authorization");
     res.end();
     return;
+  }
+
+  // Health stays open so pools/load balancers can probe without the token.
+  if (authToken && !(req.method === "GET" && url.pathname === "/health")) {
+    if (!isAuthorized(req.headers.authorization, authToken)) {
+      send(res, 401, { error: "unauthorized" });
+      return;
+    }
   }
 
   try {
@@ -60,6 +71,7 @@ const server = createServer(async (req, res) => {
         queue: queue.status(),
         model: { provider: model.name },
         mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
+        auth: { required: Boolean(authToken) },
       });
       return;
     }
@@ -402,6 +414,7 @@ async function main(): Promise<void> {
         ` queue=${q.provider}` +
         (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
         ` model=${model.name}` +
+        ` auth=${authToken ? "on" : "off"}` +
         ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}`,
     );
   });

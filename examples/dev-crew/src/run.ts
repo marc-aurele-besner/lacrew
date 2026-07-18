@@ -52,6 +52,11 @@ function mockX402Receipt(input: {
   };
 }
 
+const orchHeaders: Record<string, string> = {
+  "content-type": "application/json",
+  ...(process.env.ORCH_TOKEN ? { authorization: `Bearer ${process.env.ORCH_TOKEN}` } : {}),
+};
+
 async function runViaOrch(base: string): Promise<void> {
   console.log(`[@lacrew/example-dev-crew] orch mode → ${base}`);
   for (const spend of policy.demoSpends) {
@@ -59,7 +64,7 @@ async function runViaOrch(base: string): Promise<void> {
     const value = BigInt(spend.valueUsdc) * 10n ** 6n;
     const res = await fetch(`${base}/mcp/call`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: orchHeaders,
       body: JSON.stringify({
         name: "lacrew_propose_intent",
         arguments: { agent, target: spend.target, value: value.toString() },
