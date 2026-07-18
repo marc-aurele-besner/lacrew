@@ -15,7 +15,9 @@ Mocked content scaffold. The real docs site (Fumadocs) is not wired yet.
 - [Escalation flow](./protocol/escalation.md)
 - [Governance](./protocol/governance.md)
 - [Security model](./protocol/security.md)
+- [SDK reference](./sdk.md)
 - [Self-hosting](./self-host.md)
+- [Architecture review checklist](../../../docs/architecture-review.md) (non-custodial)
 
 ## TODO
 

@@ -162,6 +162,9 @@ importers:
 
   packages/orchestrator:
     dependencies:
+      '@lacrew/adapter-agents-mcp':
+        specifier: workspace:*
+        version: link:../adapters/agents-mcp
       '@lacrew/core':
         specifier: workspace:*
         version: link:../core

@@ -6,5 +6,10 @@
     "composite": true
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../core" }, { "path": "../sdk" }, { "path": "../db" }]
+  "references": [
+    { "path": "../core" },
+    { "path": "../sdk" },
+    { "path": "../db" },
+    { "path": "../adapters/agents-mcp" }
+  ]
 }

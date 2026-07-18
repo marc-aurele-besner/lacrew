@@ -131,8 +131,23 @@ curl -s http://127.0.0.1:8788/health | jq .model
 # JSON-RPC stdio server (Cursor / Claude Desktop compatible shape)
 pnpm --filter @lacrew/adapter-agents-mcp mcp
 
+# HTTP surface on the orchestrator (also proxied by lacrew.xyz API)
+curl -s http://127.0.0.1:8788/mcp/tools | jq .
+curl -s -X POST http://127.0.0.1:8788/mcp/call \
+  -H 'content-type: application/json' \
+  -d '{"name":"lacrew_get_org_tree","arguments":{}}' | jq .
+
 # Vercel AI–shaped tool map (no `ai` SDK dep yet)
 # import { createLacrewVercelAiTools } from "@lacrew/adapter-agents-vercel-ai"
+```
+
+## Docker (orchestrator)
+
+```bash
+# From lacrew repo root
+docker build -f packages/orchestrator/Dockerfile -t lacrew-orchestrator .
+docker run --rm -p 8788:8788 lacrew-orchestrator
+# Or via lacrew.xyz infra: docker compose --profile orch up -d
 ```
 
 ## Upgrade path

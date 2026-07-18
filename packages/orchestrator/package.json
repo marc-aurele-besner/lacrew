@@ -21,6 +21,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@lacrew/adapter-agents-mcp": "workspace:*",
     "@lacrew/core": "workspace:*",
     "@lacrew/db": "workspace:*",
     "@lacrew/sdk": "workspace:*",
