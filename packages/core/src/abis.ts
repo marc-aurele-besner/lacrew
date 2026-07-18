@@ -1975,6 +1975,17 @@ export const governanceModuleAbi = [
   },
   {
     "type": "error",
+    "name": "NotHumanSeat",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ProposalNotActive",
     "inputs": [
       {
