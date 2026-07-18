@@ -5,7 +5,8 @@ pragma solidity ^0.8.28;
 /// @notice Quorum voting for constitutional actions (hire/fire, budgets, policy upgrades).
 /// @dev Low tier: execute after all-seat quorum. High tier: human-seat quorum + timelock;
 ///      agent seats may vote as review authority but do not satisfy high-tier final say.
-///      Human root may veto high-tier proposals. Voting power is role-weighted per seat.
+///      Any funded Human seat (root included) may veto before execution — the human
+///      safety valve is shared, never delegated to agents. Power is role-weighted per seat.
 contract GovernanceModule {
     enum Tier {
         Low,
@@ -80,6 +81,7 @@ contract GovernanceModule {
     error QuorumNotMet(uint256 proposalId);
     error TimelockNotElapsed(uint256 proposalId, uint256 eta);
     error NotHumanRoot(address caller);
+    error NotHumanSeat(address caller);
     error ActionFailed(address target);
     error ZeroAddress();
     error ZeroQuorum();
@@ -169,9 +171,11 @@ contract GovernanceModule {
         emit Voted(proposalId, msg.sender, support, weight);
     }
 
-    /// @notice Human root veto for high-tier proposals before execution.
+    /// @notice Veto an active proposal before execution. Root always may; so may
+    ///         any funded Human seat — multi-human orgs share the safety valve.
     function veto(uint256 proposalId) external {
-        if (msg.sender != humanRoot) revert NotHumanRoot(msg.sender);
+        bool humanSeat = votingPower[msg.sender] > 0 && seatRole[msg.sender] == SeatRole.Human;
+        if (msg.sender != humanRoot && !humanSeat) revert NotHumanSeat(msg.sender);
         Proposal storage p = proposals[proposalId];
         if (p.state != ProposalState.Active) revert ProposalNotActive(proposalId);
         p.state = ProposalState.Vetoed;

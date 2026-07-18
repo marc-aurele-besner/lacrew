@@ -165,6 +165,53 @@ contract GovernanceModuleTest is Test {
         assertEq(uint8(state), uint8(GovernanceModule.ProposalState.Vetoed));
     }
 
+    function test_humanSeatCanVeto() public {
+        address worker = makeAddr("seat-vetoed");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        // voter2 is a funded Human seat but not the root.
+        vm.prank(voter2);
+        gov.veto(id);
+
+        (, , , , , , , , , , GovernanceModule.ProposalState state) = gov.proposals(id);
+        assertEq(uint8(state), uint8(GovernanceModule.ProposalState.Vetoed));
+    }
+
+    function test_agentSeatCannotVeto() public {
+        address worker = makeAddr("agent-veto-try");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        vm.prank(agent);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.NotHumanSeat.selector, agent)
+        );
+        gov.veto(id);
+    }
+
+    function test_strangerCannotVeto() public {
+        address worker = makeAddr("stranger-veto-try");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        address stranger = makeAddr("veto-stranger");
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.NotHumanSeat.selector, stranger)
+        );
+        gov.veto(id);
+    }
+
     function test_highTierExecutesAfterTimelock() public {
         address worker = makeAddr("late-worker");
         bytes memory data = abi.encodeCall(
