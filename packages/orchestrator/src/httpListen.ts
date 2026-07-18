@@ -1,7 +1,7 @@
 /**
  * Listen helpers that close cleanly on SIGINT/SIGTERM so tsx watch reloads
- * do not hit EADDRINUSE on the previous process's port.
- * Retries briefly — the old process often still holds the port for ~100–500ms.
+ * do not hit EADDRINUSE. Uses reusePort when available + retries while the
+ * previous process finishes closing.
  */
 
 import type { Server } from "node:http";
@@ -27,7 +27,8 @@ async function attemptListen(
     };
     server.once("error", onError);
     server.once("listening", onListen);
-    server.listen(port);
+    // reusePort helps overlapping watch reloads on supported platforms.
+    server.listen({ port, reusePort: true, exclusive: false });
   });
 }
 
@@ -37,8 +38,8 @@ export async function listenHttp(
   onListening: () => void,
   opts: { retries?: number; retryMs?: number } = {},
 ): Promise<void> {
-  const retries = opts.retries ?? 20;
-  const retryMs = opts.retryMs ?? 150;
+  const retries = opts.retries ?? 40;
+  const retryMs = opts.retryMs ?? 250;
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {
@@ -47,6 +48,24 @@ export async function listenHttp(
     } catch (err) {
       lastErr = err;
       const code = (err as NodeJS.ErrnoException).code;
+      // Some Node builds reject unknown listen options — retry without reusePort.
+      if (code === "ERR_INVALID_ARG_VALUE" || code === "ERR_INVALID_ARG_TYPE") {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (e: NodeJS.ErrnoException) => {
+            server.off("listening", onListen);
+            reject(e);
+          };
+          const onListen = () => {
+            server.off("error", onError);
+            onListening();
+            resolve();
+          };
+          server.once("error", onError);
+          server.once("listening", onListen);
+          server.listen(port);
+        });
+        return;
+      }
       if (code !== "EADDRINUSE" || i === retries - 1) {
         if (code === "EADDRINUSE") {
           console.error(
@@ -78,7 +97,7 @@ export function installShutdownHooks(
     }
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
-      setTimeout(resolve, 1_500).unref();
+      setTimeout(resolve, 2_500).unref();
     });
     try {
       await onStop?.();

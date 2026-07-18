@@ -45,7 +45,24 @@ importers:
 
   apps/docs: {}
 
-  examples/dev-crew: {}
+  examples/dev-crew:
+    dependencies:
+      '@lacrew/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@lacrew/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.21
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.4
+        version: 4.23.1
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
 
   examples/trading-crew:
     dependencies:
@@ -110,6 +127,28 @@ importers:
         specifier: workspace:*
         version: link:../../core
     devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  packages/adapters/wallet-reference:
+    dependencies:
+      '@lacrew/adapter-wallet-agentkit':
+        specifier: workspace:*
+        version: link:../wallet-agentkit
+      '@lacrew/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@lacrew/sdk':
+        specifier: workspace:*
+        version: link:../../sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.21
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.4
+        version: 4.23.1
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

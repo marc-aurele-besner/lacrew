@@ -1,0 +1,41 @@
+{
+  "name": "dev-crew",
+  "description": "Off-chain coding agents with onchain compute/API budgets.",
+  "latencyBoundary": "Work is async (PRs, reviews); spends escalate like purchase orders.",
+  "org": {
+    "root": "human_root",
+    "nodes": [
+      { "id": "manager", "kind": "manager_agent", "label": "Eng manager", "reportsTo": "root" },
+      { "id": "coder", "kind": "worker_agent", "label": "Coder", "reportsTo": "manager" },
+      { "id": "reviewer", "kind": "worker_agent", "label": "Reviewer", "reportsTo": "manager" },
+      { "id": "ops", "kind": "worker_agent", "label": "Ops", "reportsTo": "root" }
+    ]
+  },
+  "policies": {
+    "coder": { "spendCapUsdc": 25, "whitelist": ["0x4444444444444444444444444444444444444444"] },
+    "reviewer": { "spendCapUsdc": 10, "whitelist": ["0x4444444444444444444444444444444444444444"] },
+    "ops": { "spendCapUsdc": 100, "whitelist": ["0x4444444444444444444444444444444444444444"] },
+    "manager": { "spendCapUsdc": 250, "whitelist": ["0x4444444444444444444444444444444444444444"] }
+  },
+  "demoSpends": [
+    {
+      "label": "Coder API tokens (over cap → escalate)",
+      "agentRole": "coder",
+      "target": "0x4444444444444444444444444444444444444444",
+      "valueUsdc": 40
+    },
+    {
+      "label": "Ops compute bill (x402-style payout demo)",
+      "agentRole": "ops",
+      "target": "0x4444444444444444444444444444444444444444",
+      "valueUsdc": 15,
+      "x402": true
+    }
+  ],
+  "mcpTools": [
+    "lacrew_get_org_tree",
+    "lacrew_propose_intent",
+    "lacrew_list_pending_intents",
+    "lacrew_approve_intent"
+  ]
+}
