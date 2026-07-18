@@ -18,10 +18,11 @@
     "start": "node dist/cli.js",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/store.test.ts"
+    "test": "node --import tsx --test src/store.test.ts src/watcher.test.ts"
   },
   "dependencies": {
     "@lacrew/core": "workspace:*",
+    "@lacrew/db": "workspace:*",
     "viem": "^2.31.7"
   },
   "devDependencies": {

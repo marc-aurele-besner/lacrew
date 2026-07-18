@@ -28,7 +28,11 @@ pnpm --filter @lacrew/cli exec tsx src/index.ts org --rpc http://127.0.0.1:8545
 # Payroll epoch (streams configured grants via EpochStreamer; needs PRIVATE_KEY = human root)
 pnpm --filter @lacrew/cli exec tsx src/index.ts epoch --rpc http://127.0.0.1:8545
 
-# Optional: lightweight event indexer for audit / pending intents
+# Optional: lightweight event indexer for audit / pending intents.
+# With DATABASE_URL set it also writes orchestrator_audit_events (the stable
+# consumer schema) and backfills history from block 0 on start — idempotent,
+# deduped on (tx_hash, log_index). INDEXER_BACKFILL=0 disables backfill;
+# INDEXER_FROM_BLOCK sets the start block.
 pnpm --filter @lacrew/indexer dev
 # INDEXER_PATH=.lacrew/indexer.json lacrew audit --rpc
 ```

@@ -15,6 +15,13 @@
       "when": 1784373779770,
       "tag": "0001_sad_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784375204270,
+      "tag": "0002_spooky_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

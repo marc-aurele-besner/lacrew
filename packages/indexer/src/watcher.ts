@@ -1,14 +1,19 @@
 /**
  * Lightweight in-process event watcher for local demos.
- * Watches escalation + governance + treasury + session events into a JSON store.
- * TODO: Replace with Ponder + Neon/Docker Postgres in Phase 1.
+ * Streams escalation + governance + treasury + session events into a JSON
+ * store and, when DATABASE_URL is set, into Postgres
+ * (orchestrator_audit_events — the stable consumer schema, F1.11) with
+ * (tx_hash, log_index) dedup so backfills are idempotent.
+ * TODO: Replace the watch loop with Ponder once multi-chain reorg handling matters.
  */
 
 import {
   createPublicClient,
   http,
   parseAbiItem,
+  type AbiEvent,
   type Hex,
+  type Log,
   type PublicClient,
 } from "viem";
 import {
@@ -18,48 +23,157 @@ import {
   type Intent,
   type ProtocolEvent,
 } from "@lacrew/core";
+import {
+  createDb,
+  getDatabaseUrl,
+  insertChainAuditEvent,
+  type DbHandle,
+} from "@lacrew/db";
 import { loadStore, saveStore, type IndexerStore } from "./store.js";
 
-const intentCreated = parseAbiItem(
-  "event IntentCreated(uint256 indexed intentId, address indexed agent, address awaitingApprover)",
-);
-const intentEscalated = parseAbiItem(
-  "event IntentEscalated(uint256 indexed intentId, address indexed from, address indexed to)",
-);
-const intentResolved = parseAbiItem(
-  "event IntentResolved(uint256 indexed intentId, bool approved)",
-);
-const actionExecuted = parseAbiItem(
-  "event ActionExecuted(address indexed agent, address indexed target, uint256 value, bool callOk)",
-);
-const proposalCreated = parseAbiItem(
-  "event ProposalCreated(uint256 indexed proposalId, address indexed proposer, uint8 tier, address target, bytes32 actionHash)",
-);
-const proposalExecuted = parseAbiItem(
-  "event ProposalExecuted(uint256 indexed proposalId)",
-);
-const proposalVetoed = parseAbiItem(
-  "event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer)",
-);
-const allowanceStreamed = parseAbiItem(
-  "event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch)",
-);
-const sessionIssued = parseAbiItem(
-  "event SessionIssued(uint256 indexed sessionId, address indexed agent, address indexed key, uint64 expiresAt, bytes32 scopesHash, uint256 maxValue, address allowedTarget)",
-);
-const sessionRevoked = parseAbiItem(
-  "event SessionRevoked(uint256 indexed sessionId, address indexed by)",
-);
+const routerEvents = [
+  parseAbiItem(
+    "event IntentCreated(uint256 indexed intentId, address indexed agent, address awaitingApprover)",
+  ),
+  parseAbiItem(
+    "event IntentEscalated(uint256 indexed intentId, address indexed from, address indexed to)",
+  ),
+  parseAbiItem("event IntentResolved(uint256 indexed intentId, bool approved)"),
+  parseAbiItem(
+    "event ActionExecuted(address indexed agent, address indexed target, uint256 value, bool callOk)",
+  ),
+];
+const governanceEvents = [
+  parseAbiItem(
+    "event ProposalCreated(uint256 indexed proposalId, address indexed proposer, uint8 tier, address target, bytes32 actionHash)",
+  ),
+  parseAbiItem("event ProposalExecuted(uint256 indexed proposalId)"),
+  parseAbiItem("event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer)"),
+];
+const treasuryEvents = [
+  parseAbiItem("event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch)"),
+];
+const sessionEvents = [
+  parseAbiItem(
+    "event SessionIssued(uint256 indexed sessionId, address indexed agent, address indexed key, uint64 expiresAt, bytes32 scopesHash, uint256 maxValue, address allowedTarget)",
+  ),
+  parseAbiItem("event SessionRevoked(uint256 indexed sessionId, address indexed by)"),
+];
+
+type DecodedLog = Log & { eventName?: string; args?: Record<string, unknown> };
+
+/** Map a decoded contract log to the ProtocolEvent shape consumers read. */
+export function logToProtocolEvent(
+  eventName: string,
+  args: Record<string, unknown>,
+  txHash: string | null,
+  at: string,
+): ProtocolEvent | null {
+  switch (eventName) {
+    case "IntentCreated":
+      return {
+        type: "IntentCreated",
+        at,
+        payload: {
+          intentId: String(args.intentId),
+          agent: args.agent as string,
+          awaitingApprover: args.awaitingApprover as string,
+        },
+      };
+    case "IntentEscalated":
+      return {
+        type: "IntentEscalated",
+        at,
+        payload: {
+          intentId: String(args.intentId),
+          from: args.from as string,
+          to: args.to as string,
+        },
+      };
+    case "IntentResolved":
+      return {
+        type: "IntentResolved",
+        at,
+        payload: { intentId: String(args.intentId), approved: Boolean(args.approved), txHash },
+      };
+    case "ActionExecuted":
+      return {
+        type: "ActionExecuted",
+        at,
+        payload: {
+          agent: args.agent as string,
+          target: args.target as string,
+          value: String(args.value),
+          callOk: Boolean(args.callOk),
+          txHash,
+        },
+      };
+    case "ProposalCreated":
+      return {
+        type: "ProposalCreated",
+        at,
+        payload: {
+          proposalId: String(args.proposalId),
+          proposer: args.proposer as string,
+          tier: Number(args.tier),
+          target: args.target as string,
+          actionHash: args.actionHash as string,
+          txHash,
+        },
+      };
+    case "ProposalExecuted":
+      return {
+        type: "ProposalExecuted",
+        at,
+        payload: { proposalId: String(args.proposalId), txHash },
+      };
+    case "ProposalVetoed":
+      return {
+        type: "ProposalVetoed",
+        at,
+        payload: { proposalId: String(args.proposalId), vetoer: args.vetoer as string, txHash },
+      };
+    case "AllowanceStreamed":
+      return {
+        type: "AllowanceStreamed",
+        at,
+        payload: {
+          node: args.node as string,
+          amount: String(args.amount),
+          epoch: Number(args.epoch),
+          txHash,
+        },
+      };
+    case "SessionIssued":
+      return {
+        type: "SessionIssued",
+        at,
+        payload: {
+          keyId: String(args.sessionId),
+          agent: args.agent as string,
+          keyAddress: args.key as string,
+          expiresAt: Number(args.expiresAt) * 1000,
+          maxValue: args.maxValue === undefined ? undefined : String(args.maxValue),
+          allowedTarget: args.allowedTarget as string | undefined,
+          txHash,
+        },
+      };
+    case "SessionRevoked":
+      return {
+        type: "SessionRevoked",
+        at,
+        payload: { keyId: String(args.sessionId), by: args.by as string, txHash },
+      };
+    default:
+      return null;
+  }
+}
 
 export type WatcherOptions = {
   rpcUrl: string;
   chainId?: number;
   storePath: string;
   routerAddress?: `0x${string}`;
-};
-
-type WatchCommon = {
-  onError: (err: Error) => void;
 };
 
 export class EventWatcher {
@@ -70,6 +184,9 @@ export class EventWatcher {
   private store: IndexerStore;
   private unwatchers: Array<() => void> = [];
   private lastErrorAt = 0;
+  private readonly pgEnabled = Boolean(getDatabaseUrl());
+  private pg: DbHandle | undefined;
+  private readonly blockTimes = new Map<bigint, string>();
 
   constructor(options: WatcherOptions) {
     const chainId = options.chainId ?? 31337;
@@ -80,23 +197,74 @@ export class EventWatcher {
     this.client = createPublicClient({ transport: http(options.rpcUrl) });
   }
 
+  /** Contract → decoded-event sets this watcher covers. */
+  private contracts(): Array<{ address: `0x${string}`; events: AbiEvent[] }> {
+    const list: Array<{ address: `0x${string}`; events: AbiEvent[] }> = [
+      { address: this.router, events: routerEvents },
+    ];
+    const gov = this.addresses.governanceModule;
+    if (gov && !gov.endsWith("0000")) list.push({ address: gov, events: governanceEvents });
+    const treasury = this.addresses.treasury;
+    if (treasury && !treasury.endsWith("0000"))
+      list.push({ address: treasury, events: treasuryEvents });
+    const sessions = this.addresses.sessionRegistry;
+    if (sessions) list.push({ address: sessions, events: sessionEvents });
+    return list;
+  }
+
+  /**
+   * Index historical logs from `fromBlock` to latest. Idempotent: Postgres
+   * dedups on (tx_hash, log_index); the JSON audit is rewritten from scratch
+   * only when currently empty (otherwise left to live watch).
+   */
+  async backfill(fromBlock = 0n): Promise<number> {
+    const collected: DecodedLog[] = [];
+    for (const { address, events } of this.contracts()) {
+      const logs = await this.client.getLogs({
+        address,
+        events,
+        fromBlock,
+        toBlock: "latest",
+      });
+      collected.push(...(logs as DecodedLog[]));
+    }
+    collected.sort((a, b) => {
+      const byBlock = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
+      if (byBlock !== 0) return byBlock;
+      return (a.logIndex ?? 0) - (b.logIndex ?? 0);
+    });
+
+    const skipJsonAudit = this.store.audit.length > 0;
+    for (const log of collected) {
+      await this.processLog(log, { skipJsonAudit });
+    }
+    return collected.length;
+  }
+
   start(): void {
-    const common: WatchCommon = {
-      onError: (err: Error) => {
-        const now = Date.now();
-        if (now - this.lastErrorAt < 15_000) return;
-        this.lastErrorAt = now;
-        console.error("[@lacrew/indexer] watch error:", err.message.split("\n")[0]);
-      },
+    const onError = (err: Error) => {
+      const now = Date.now();
+      if (now - this.lastErrorAt < 15_000) return;
+      this.lastErrorAt = now;
+      console.error("[@lacrew/indexer] watch error:", err.message.split("\n")[0]);
     };
 
-    this.watchRouter(common);
-    this.watchGovernance(common);
-    this.watchTreasury(common);
-    this.watchSessions(common);
+    for (const { address, events } of this.contracts()) {
+      this.unwatchers.push(
+        this.client.watchEvent({
+          address,
+          events,
+          onError,
+          onLogs: (logs) => {
+            for (const log of logs as DecodedLog[]) void this.processLog(log);
+          },
+        }),
+      );
+    }
 
     console.log(
-      `[@lacrew/indexer] watching router/gov/treasury/sessions → ${this.storePath}`,
+      `[@lacrew/indexer] watching router/gov/treasury/sessions → ${this.storePath}` +
+        (this.pgEnabled ? " + postgres" : ""),
     );
   }
 
@@ -109,252 +277,70 @@ export class EventWatcher {
     return this.store;
   }
 
-  private watchRouter(common: WatchCommon): void {
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: this.router,
-        event: intentCreated,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            const intentId = (log.args.intentId as bigint).toString();
-            const agent = log.args.agent as `0x${string}`;
-            const awaiting = log.args.awaitingApprover as `0x${string}`;
-            void this.upsertFromChain(BigInt(intentId), agent, awaiting);
-            this.pushAudit({
-              type: "IntentCreated",
-              at: new Date().toISOString(),
-              payload: { intentId, agent, awaitingApprover: awaiting },
-            });
-          }
-        },
-      }),
-    );
+  /** Decode, apply store side effects, and fan out to JSON + Postgres sinks. */
+  private async processLog(
+    log: DecodedLog,
+    opts: { skipJsonAudit?: boolean } = {},
+  ): Promise<void> {
+    const eventName = log.eventName;
+    const args = log.args;
+    if (!eventName || !args) return;
 
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: this.router,
-        event: intentEscalated,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            const intentId = (log.args.intentId as bigint).toString();
-            const from = log.args.from as `0x${string}`;
-            const to = log.args.to as `0x${string}`;
-            const intent = this.store.pendingIntents.find((i) => i.id === intentId);
-            if (intent) intent.awaitingApprover = to;
-            this.pushAudit({
-              type: "IntentEscalated",
-              at: new Date().toISOString(),
-              payload: { intentId, from, to },
-            });
-            saveStore(this.storePath, this.store);
-          }
-        },
-      }),
-    );
+    const at = await this.blockTime(log.blockNumber);
+    const event = logToProtocolEvent(eventName, args, log.transactionHash, at);
+    if (!event) return;
 
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: this.router,
-        event: intentResolved,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            const intentId = (log.args.intentId as bigint).toString();
-            const approved = Boolean(log.args.approved);
-            const intent = this.store.pendingIntents.find((i) => i.id === intentId);
-            if (intent) {
-              intent.resolved = true;
-              intent.approved = approved;
-              intent.verdict = approved ? "ALLOW" : "DENY";
-            }
-            this.pushAudit({
-              type: "IntentResolved",
-              at: new Date().toISOString(),
-              payload: { intentId, approved, txHash: log.transactionHash },
-            });
-            saveStore(this.storePath, this.store);
-          }
-        },
-      }),
-    );
+    if (eventName === "IntentCreated") {
+      await this.upsertFromChain(
+        BigInt(String(args.intentId)),
+        args.agent as `0x${string}`,
+        args.awaitingApprover as `0x${string}`,
+      );
+    } else if (eventName === "IntentEscalated") {
+      const intent = this.store.pendingIntents.find((i) => i.id === String(args.intentId));
+      if (intent) intent.awaitingApprover = args.to as `0x${string}`;
+    } else if (eventName === "IntentResolved") {
+      const intent = this.store.pendingIntents.find((i) => i.id === String(args.intentId));
+      if (intent) {
+        intent.resolved = true;
+        intent.approved = Boolean(args.approved);
+        intent.verdict = args.approved ? "ALLOW" : "DENY";
+      }
+    }
 
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: this.router,
-        event: actionExecuted,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "ActionExecuted",
-              at: new Date().toISOString(),
-              payload: {
-                agent: log.args.agent as string,
-                target: log.args.target as string,
-                value: (log.args.value as bigint).toString(),
-                callOk: Boolean(log.args.callOk),
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-  }
-
-  private watchGovernance(common: WatchCommon): void {
-    const gov = this.addresses.governanceModule;
-    if (!gov || gov.endsWith("0000")) return;
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: gov,
-        event: proposalCreated,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "ProposalCreated",
-              at: new Date().toISOString(),
-              payload: {
-                proposalId: (log.args.proposalId as bigint).toString(),
-                proposer: log.args.proposer as string,
-                tier: Number(log.args.tier),
-                target: log.args.target as string,
-                actionHash: log.args.actionHash as string,
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: gov,
-        event: proposalExecuted,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "ProposalExecuted",
-              at: new Date().toISOString(),
-              payload: {
-                proposalId: (log.args.proposalId as bigint).toString(),
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: gov,
-        event: proposalVetoed,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "ProposalVetoed",
-              at: new Date().toISOString(),
-              payload: {
-                proposalId: (log.args.proposalId as bigint).toString(),
-                vetoer: log.args.vetoer as string,
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-  }
-
-  private watchTreasury(common: WatchCommon): void {
-    const treasury = this.addresses.treasury;
-    if (!treasury || treasury.endsWith("0000")) return;
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: treasury,
-        event: allowanceStreamed,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "AllowanceStreamed",
-              at: new Date().toISOString(),
-              payload: {
-                node: log.args.node as string,
-                amount: (log.args.amount as bigint).toString(),
-                epoch: Number(log.args.epoch),
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-  }
-
-  private watchSessions(common: WatchCommon): void {
-    const sessions = this.addresses.sessionRegistry;
-    if (!sessions) return;
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: sessions,
-        event: sessionIssued,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "SessionIssued",
-              at: new Date().toISOString(),
-              payload: {
-                keyId: (log.args.sessionId as bigint).toString(),
-                agent: log.args.agent as string,
-                keyAddress: log.args.key as string,
-                expiresAt: Number(log.args.expiresAt) * 1000,
-                maxValue: (log.args.maxValue as bigint | undefined)?.toString(),
-                allowedTarget: log.args.allowedTarget as string | undefined,
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-
-    this.unwatchers.push(
-      this.client.watchEvent({
-        address: sessions,
-        event: sessionRevoked,
-        ...common,
-        onLogs: (logs) => {
-          for (const log of logs) {
-            this.pushAudit({
-              type: "SessionRevoked",
-              at: new Date().toISOString(),
-              payload: {
-                keyId: (log.args.sessionId as bigint).toString(),
-                by: log.args.by as string,
-                txHash: log.transactionHash,
-              },
-            });
-          }
-        },
-      }),
-    );
-  }
-
-  private pushAudit(event: ProtocolEvent): void {
-    this.store.audit.push(event);
+    if (!opts.skipJsonAudit) this.store.audit.push(event);
     saveStore(this.storePath, this.store);
+
+    if (this.pgEnabled && log.transactionHash != null && log.logIndex != null) {
+      try {
+        this.pg ??= createDb();
+        await insertChainAuditEvent(this.pg, {
+          ...event,
+          txHash: log.transactionHash,
+          logIndex: log.logIndex,
+        });
+      } catch (err) {
+        console.error(
+          "[@lacrew/indexer] postgres insert failed:",
+          err instanceof Error ? err.message.split("\n")[0] : err,
+        );
+      }
+    }
+  }
+
+  /** Block timestamp → ISO, cached per block. */
+  private async blockTime(blockNumber: bigint | null): Promise<string> {
+    if (blockNumber == null) return new Date().toISOString();
+    const cached = this.blockTimes.get(blockNumber);
+    if (cached) return cached;
+    try {
+      const block = await this.client.getBlock({ blockNumber });
+      const iso = new Date(Number(block.timestamp) * 1000).toISOString();
+      this.blockTimes.set(blockNumber, iso);
+      return iso;
+    } catch {
+      return new Date().toISOString();
+    }
   }
 
   private async upsertFromChain(

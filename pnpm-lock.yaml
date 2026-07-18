@@ -202,6 +202,9 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../core
+      '@lacrew/db':
+        specifier: workspace:*
+        version: link:../db
       viem:
         specifier: ^2.31.7
         version: 2.55.2(typescript@5.9.3)

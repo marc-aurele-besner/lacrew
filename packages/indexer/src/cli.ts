@@ -53,6 +53,22 @@ async function waitForRpc(url: string): Promise<void> {
 await waitForRpc(rpcUrl);
 
 const watcher = new EventWatcher({ rpcUrl, storePath, chainId });
+
+// Historical backfill (idempotent: Postgres dedups on tx_hash+log_index).
+// INDEXER_BACKFILL=0 disables; INDEXER_FROM_BLOCK sets the start block.
+if (process.env.INDEXER_BACKFILL !== "0") {
+  const fromBlock = BigInt(process.env.INDEXER_FROM_BLOCK ?? "0");
+  try {
+    const count = await watcher.backfill(fromBlock);
+    console.log(`[@lacrew/indexer] backfilled ${count} logs from block ${fromBlock}`);
+  } catch (err) {
+    console.error(
+      "[@lacrew/indexer] backfill failed:",
+      err instanceof Error ? err.message.split("\n")[0] : err,
+    );
+  }
+}
+
 watcher.start();
 
 process.on("SIGINT", () => {
