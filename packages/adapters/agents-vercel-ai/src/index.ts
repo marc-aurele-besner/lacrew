@@ -4,7 +4,12 @@
  * 1:1 onto `tool({ description, parameters, execute })` when you wire the SDK.
  */
 
-import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
+import {
+  createOrchHttpMcpBackend,
+  listLacrewMcpTools,
+  runMcpTool,
+  type McpToolBackend,
+} from "@lacrew/adapter-agents-mcp";
 
 export type VercelAiToolDefinition = {
   description: string;
@@ -14,6 +19,13 @@ export type VercelAiToolDefinition = {
 };
 
 export type CreateLacrewVercelAiToolsOptions = {
+  /**
+   * Live backend for the tools — pass createRuntimeMcpBackend(runtime)
+   * in-process or an orchestrator URL string for the HTTP bridge
+   * (session-signed onchain calls). Omit for the detached SDK mock.
+   */
+  backend?: McpToolBackend | string;
+  /** SDK fallback flag when no backend is given (default true = mock). */
   useMock?: boolean;
 };
 
@@ -21,13 +33,17 @@ export type CreateLacrewVercelAiToolsOptions = {
 export function createLacrewVercelAiTools(
   opts: CreateLacrewVercelAiToolsOptions = {},
 ): Record<string, VercelAiToolDefinition> {
+  const backend =
+    typeof opts.backend === "string"
+      ? createOrchHttpMcpBackend(opts.backend, process.env.ORCH_TOKEN?.trim() || undefined)
+      : opts.backend;
   const useMock = opts.useMock ?? true;
   const out: Record<string, VercelAiToolDefinition> = {};
   for (const t of listLacrewMcpTools()) {
     out[t.name] = {
       description: t.description,
       parameters: t.inputSchema,
-      execute: (args) => runMcpTool(t.name, args, { useMock }),
+      execute: (args) => runMcpTool(t.name, args, { backend, useMock }),
     };
   }
   return out;
