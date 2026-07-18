@@ -12,8 +12,12 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "lacrew-mcp": "./dist/stdio.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "mcp": "tsx src/stdio.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
@@ -22,6 +26,8 @@
     "@lacrew/sdk": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   }
 }

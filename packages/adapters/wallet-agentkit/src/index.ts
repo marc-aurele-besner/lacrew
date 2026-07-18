@@ -1,10 +1,17 @@
 /**
- * Coinbase CDP / AgentKit wallet adapter.
- * Mocked: returns a stub wallet handle; no CDP SDK calls.
- * TODO: Wrap AgentKit account creation + session keys behind IPolicyModule checks.
+ * Coinbase CDP / AgentKit wallet adapter (PRD F1.8).
+ * Mocked: stub wallet handle; no CDP SDK calls.
+ * Conforms to WalletAdapter so GOAT / EIP-7702 / Safe can share the surface.
  */
 
 import type { Verdict } from "@lacrew/core";
+
+/** Shared adapter contract — feature code depends on this, not a vendor SDK. */
+export interface WalletAdapter {
+  readonly provider: string;
+  createWallet(label?: string): Promise<{ address: `0x${string}`; provider: string }>;
+  checkPolicy(input: AdapterCheckInput): Verdict | Promise<Verdict>;
+}
 
 export interface AgentKitWallet {
   address: `0x${string}`;
@@ -37,3 +44,9 @@ export function checkWithPolicy(input: AdapterCheckInput): Verdict {
   const cap = 100n * 10n ** 6n;
   return input.value <= cap ? "ALLOW" : "ESCALATE";
 }
+
+export const agentKitWalletAdapter: WalletAdapter = {
+  provider: "agentkit",
+  createWallet: createAgentKitWallet,
+  checkPolicy: checkWithPolicy,
+};
