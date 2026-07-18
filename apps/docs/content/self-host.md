@@ -33,6 +33,20 @@ pnpm --filter @lacrew/indexer dev
 # INDEXER_PATH=.lacrew/indexer.json lacrew audit --rpc
 ```
 
+### Divergent local chains (long-lived Anvil)
+
+Redeploying onto a used Anvil produces nonce-shifted addresses that no longer
+match the committed `31337.json`. Instead of committing local artifacts, pin
+the deployment in `.env` — `getAddresses()` lets every field be overridden via
+`LACREW_*` env vars:
+
+```bash
+pnpm --filter @lacrew/core addresses:env >> .env   # emits LACREW_* lines from contracts/deployments/31337.json
+git checkout -- contracts/deployments packages/core/deployments packages/core/src/deployments.generated.ts
+```
+
+Remove the override block from `.env` when you return to a fresh-Anvil deploy.
+
 ## Mock-only quick start (no chain)
 
 ```bash

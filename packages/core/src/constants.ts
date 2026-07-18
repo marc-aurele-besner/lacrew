@@ -20,9 +20,32 @@ function envAddress(key: string): `0x${string}` | undefined {
   return raw as `0x${string}`;
 }
 
+/** Env var name per overridable ChainAddresses field (LACREW_<SNAKE_CASE>). */
+export const ADDRESS_ENV_VARS = {
+  orgRegistry: "LACREW_ORG_REGISTRY",
+  treasury: "LACREW_TREASURY",
+  escalationRouter: "LACREW_ESCALATION_ROUTER",
+  governanceModule: "LACREW_GOVERNANCE_MODULE",
+  spendCapPolicy: "LACREW_SPEND_CAP_POLICY",
+  mockUSDC: "LACREW_MOCK_USDC",
+  policyStack: "LACREW_POLICY_STACK",
+  managerPolicyStack: "LACREW_MANAGER_POLICY_STACK",
+  whitelistPolicy: "LACREW_WHITELIST_POLICY",
+  timeWindowPolicy: "LACREW_TIME_WINDOW_POLICY",
+  epochStreamer: "LACREW_EPOCH_STREAMER",
+  sessionRegistry: "LACREW_SESSION_REGISTRY",
+  humanRoot: "LACREW_HUMAN_ROOT",
+  manager: "LACREW_MANAGER",
+  worker: "LACREW_WORKER",
+  x402Target: "LACREW_X402_TARGET",
+} as const satisfies Record<Exclude<keyof ChainAddresses, "chainId">, string>;
+
 /**
  * Resolve contract addresses for a chain.
- * Precedence: env overrides → packages/core/deployments → placeholders.
+ * Precedence: env overrides (every field, see ADDRESS_ENV_VARS) →
+ * packages/core/deployments → placeholders. A local deployment (e.g. a
+ * long-lived Anvil whose nonces diverge from the committed JSON) can be
+ * fully described in .env without touching tracked files.
  */
 export function getAddresses(chainId: number): ChainAddresses {
   const base = DEPLOYMENTS[chainId] ?? {
@@ -34,18 +57,14 @@ export function getAddresses(chainId: number): ChainAddresses {
     spendCapPolicy: ZERO,
   };
 
-  return {
-    ...base,
-    chainId,
-    orgRegistry: envAddress("LACREW_ORG_REGISTRY") ?? base.orgRegistry,
-    treasury: envAddress("LACREW_TREASURY") ?? base.treasury,
-    escalationRouter: envAddress("LACREW_ESCALATION_ROUTER") ?? base.escalationRouter,
-    governanceModule: envAddress("LACREW_GOVERNANCE_MODULE") ?? base.governanceModule,
-    spendCapPolicy: envAddress("LACREW_SPEND_CAP_POLICY") ?? base.spendCapPolicy,
-    mockUSDC: envAddress("LACREW_MOCK_USDC") ?? base.mockUSDC,
-    policyStack: envAddress("LACREW_POLICY_STACK") ?? base.policyStack,
-    whitelistPolicy: envAddress("LACREW_WHITELIST_POLICY") ?? base.whitelistPolicy,
-  };
+  const resolved: ChainAddresses = { ...base, chainId };
+  for (const [field, envVar] of Object.entries(ADDRESS_ENV_VARS) as Array<
+    [Exclude<keyof ChainAddresses, "chainId">, string]
+  >) {
+    const override = envAddress(envVar);
+    if (override) resolved[field] = override;
+  }
+  return resolved;
 }
 
 /** Ethereum Sepolia — first public testnet. */
