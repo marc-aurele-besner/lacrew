@@ -230,6 +230,22 @@ function ensurePlaceholderDeployments() {
 }
 
 function main() {
+  // No forge artifacts (Docker builds, fresh checkouts without foundry):
+  // keep the committed generated files — they are the source of truth until
+  // someone actually rebuilds the contracts.
+  const artifactsReady = CONTRACTS.every((c) => existsSync(join(contractsOut, c.file)));
+  if (!artifactsReady) {
+    if (!existsSync(join(coreRoot, "src/abis.ts"))) {
+      throw new Error(
+        "Missing forge artifacts and no committed src/abis.ts — run: cd contracts && forge build",
+      );
+    }
+    console.warn(
+      "[sync-abis] forge artifacts missing — keeping committed abis.ts/deployments (cd contracts && forge build to regenerate)",
+    );
+    return;
+  }
+
   const abis = {};
   for (const c of CONTRACTS) {
     abis[c.exportName] = loadAbi(c.file);

@@ -1,0 +1,17 @@
+# Context for packages/orchestrator/Dockerfile (built from repo root).
+# Sources only — the container runs its own pnpm install + build; host
+# node_modules (platform-specific) and secrets must never reach the image.
+.git
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+contracts/out
+contracts/cache
+contracts/broadcast
+**/.env
+**/.env.*
+!**/.env.example
+.lacrew
+**/*.log
+**/*.tsbuildinfo
