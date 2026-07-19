@@ -18,6 +18,7 @@ import {
 import { http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { cmdFlows } from "./flows.js";
+import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
@@ -94,6 +95,28 @@ INDEXER_PATH=.lacrew/indexer.json
   }
   console.log("Wrote .env.example, .env (if missing), and .lacrew/config.json");
   console.log("Next: start Anvil, then `lacrew deploy --anvil`");
+}
+
+function cmdScaffold(args: string[]): void {
+  const [template] = args.filter((a) => !a.startsWith("-"));
+  if (!template) {
+    console.log("Usage: lacrew scaffold <template> [--dir <path>]");
+    console.log(`Templates: ${listTemplateIds().join(", ")}`);
+    return;
+  }
+  try {
+    const result = scaffoldTemplate({
+      template,
+      dir: flagValue(args, "--dir"),
+      repoRoot,
+    });
+    console.log(`Scaffolded ${result.template.name} → ${result.dir}`);
+    for (const file of result.files) console.log(`  ${file}`);
+    console.log("Next: cd in, `pnpm install`, then `pnpm start` (mock) or set ORCH_URL.");
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  }
 }
 
 function cmdDeploy(args: string[]): void {
@@ -180,6 +203,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "flows") {
     await cmdFlows(rest);
+    return;
+  }
+  if (cmd === "scaffold") {
+    cmdScaffold(rest);
     return;
   }
 
@@ -554,6 +581,7 @@ async function main(): Promise<void> {
 Commands:
   init                      Write .env.example + .lacrew/config.json
   deploy --anvil            Deploy MockOrg to Anvil and sync ABIs/addresses
+  scaffold <template>       Generate a runnable crew project from a flow template
   version                   Print CLI version
   org [--rpc [url]]         Print org tree (mock or onchain)
   allowances [--rpc]        Print allowances
