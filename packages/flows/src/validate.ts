@@ -24,6 +24,9 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
   if (!def.id?.trim()) errors.push("flow id is required");
   if (!def.name?.trim()) errors.push("flow name is required");
   if (!def.steps?.length) errors.push("flow needs at least one step");
+  if (def.trigger !== undefined && def.trigger !== "manual" && def.trigger !== "epoch") {
+    errors.push(`unknown trigger "${def.trigger}" (manual | epoch)`);
+  }
 
   const ids = new Set<string>();
   for (const step of def.steps ?? []) {

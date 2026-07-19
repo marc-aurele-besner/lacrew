@@ -15,7 +15,8 @@ export const flowTemplates: FlowTemplate[] = [
     category: "treasury",
     author: "LaCrew",
     definition: flow("treasury-pulse", "Treasury pulse")
-      .describe("Daily crew + escalation summary for the human root.")
+      .describe("Crew + escalation summary for the human root, refreshed every payroll epoch.")
+      .trigger("epoch")
       .source({ templateId: "tpl-treasury-pulse", author: "LaCrew" })
       .tool("org", "lacrew_get_org_tree", undefined, { label: "Read org tree" })
       .tool("pending", "lacrew_list_pending_intents", undefined, {

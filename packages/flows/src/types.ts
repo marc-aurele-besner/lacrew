@@ -79,10 +79,18 @@ export type BranchStep = FlowStepBase & {
 export type FlowStep = ModelStep | ToolStep | GateStep | BranchStep;
 export type FlowStepKind = FlowStep["kind"];
 
+export type FlowTrigger = "manual" | "epoch";
+
 export type FlowDefinition = {
   id: string;
   name: string;
   description?: string;
+  /**
+   * When the flow runs: "manual" (default) via UI/SDK/CLI, or "epoch" —
+   * automatically on every payroll epoch (the orchestrator's queue fires it
+   * after allowances stream, turning the pipeline into an automation).
+   */
+  trigger?: FlowTrigger;
   /** Entry step id; defaults to the first declared step. */
   entry?: string;
   steps: FlowStep[];
@@ -126,6 +134,8 @@ export type FlowRunResult = {
   flowId: string;
   flowName?: string;
   status: FlowRunStatus;
+  /** What fired the run ("manual" unless the epoch queue triggered it). */
+  trigger?: FlowTrigger;
   startedAt: string;
   finishedAt: string;
   input?: string;

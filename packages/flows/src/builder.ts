@@ -43,6 +43,12 @@ export class FlowBuilder {
     return this;
   }
 
+  /** "epoch" runs the flow automatically on every payroll epoch. */
+  trigger(trigger: NonNullable<FlowDefinition["trigger"]>): this {
+    this.def.trigger = trigger;
+    return this;
+  }
+
   source(source: FlowDefinition["source"]): this {
     this.def.source = source;
     return this;

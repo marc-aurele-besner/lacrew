@@ -52,8 +52,12 @@ function truncate(s: string, n = 160): string {
 export type RunFlowOptions = {
   input?: string;
   runId?: string;
+  /** What fired the run; recorded on the result (default "manual"). */
+  trigger?: FlowDefinition["trigger"];
   /** Marks the whole run as mocked in the result (set by mock backends). */
   mocked?: boolean;
+  /** Observer invoked after each step completes — live progress for CLIs/UIs. */
+  onStep?: (trace: FlowStepTrace) => void;
 };
 
 /**
@@ -217,6 +221,11 @@ export async function runFlow(
 
     trace.ms = Date.now() - t0;
     steps.push(trace);
+    try {
+      opts.onStep?.(trace);
+    } catch {
+      /* observer errors never break the run */
+    }
     current = trace.next;
     if (status === "error") break;
   }
@@ -226,6 +235,7 @@ export async function runFlow(
     flowId: def.id,
     flowName: def.name,
     status,
+    trigger: opts.trigger ?? "manual",
     startedAt,
     finishedAt: new Date().toISOString(),
     input: opts.input,

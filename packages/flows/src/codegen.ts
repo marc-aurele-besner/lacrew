@@ -67,6 +67,7 @@ export function flowToCode(def: FlowDefinition): string {
     `export const ${name} = flow(${str(def.id)}, ${str(def.name)})`,
   ];
   if (def.description) lines.push(`  .describe(${str(def.description)})`);
+  if (def.trigger && def.trigger !== "manual") lines.push(`  .trigger(${str(def.trigger)})`);
   if (def.entry) lines.push(`  .entry(${str(def.entry)})`);
   for (const step of def.steps) lines.push(`  ${stepCall(step)}`);
   lines[lines.length - 1] += ";";
