@@ -1,0 +1,89 @@
+import type {
+  BranchStep,
+  FlowDefinition,
+  FlowStep,
+  GateStep,
+  ModelStep,
+  ToolStep,
+} from "./types.js";
+import { validateFlow } from "./validate.js";
+
+type StepOpts<T extends FlowStep> = Omit<T, "id" | "kind">;
+
+/**
+ * Code-first flow authoring:
+ *
+ *   const def = flow("treasury-pulse", "Morning treasury pulse")
+ *     .tool("org", "lacrew_get_org_tree")
+ *     .model("summary", { prompt: "Summarize: {{steps.org.json}}" })
+ *     .gate("spend", { value: "75000000" })
+ *     .build();
+ *
+ * Steps chain in declaration order unless a step sets explicit edges.
+ * `build()` validates and throws on structural errors.
+ */
+export function flow(id: string, name?: string): FlowBuilder {
+  return new FlowBuilder(id, name ?? id);
+}
+
+export class FlowBuilder {
+  private def: FlowDefinition;
+
+  constructor(id: string, name: string) {
+    this.def = { id, name, steps: [] };
+  }
+
+  describe(description: string): this {
+    this.def.description = description;
+    return this;
+  }
+
+  entry(stepId: string): this {
+    this.def.entry = stepId;
+    return this;
+  }
+
+  source(source: FlowDefinition["source"]): this {
+    this.def.source = source;
+    return this;
+  }
+
+  model(id: string, opts: StepOpts<ModelStep>): this {
+    this.def.steps.push({ id, kind: "model", ...opts });
+    return this;
+  }
+
+  tool(id: string, tool: string, args?: Record<string, unknown>, opts: Omit<StepOpts<ToolStep>, "tool" | "args"> = {}): this {
+    this.def.steps.push({ id, kind: "tool", tool, args, ...opts });
+    return this;
+  }
+
+  gate(id: string, opts: StepOpts<GateStep>): this {
+    this.def.steps.push({ id, kind: "gate", ...opts });
+    return this;
+  }
+
+  branch(id: string, opts: StepOpts<BranchStep>): this {
+    this.def.steps.push({ id, kind: "branch", ...opts });
+    return this;
+  }
+
+  /** Raw escape hatch for steps built elsewhere (e.g. loaded JSON). */
+  step(step: FlowStep): this {
+    this.def.steps.push(step);
+    return this;
+  }
+
+  toJSON(): FlowDefinition {
+    return structuredClone(this.def);
+  }
+
+  build(): FlowDefinition {
+    const def = this.toJSON();
+    const result = validateFlow(def);
+    if (!result.ok) {
+      throw new Error(`Invalid flow "${def.id}": ${result.errors.join("; ")}`);
+    }
+    return def;
+  }
+}
