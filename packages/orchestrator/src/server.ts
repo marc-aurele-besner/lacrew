@@ -76,7 +76,11 @@ const server = createServer(async (req, res) => {
         queue: queue.status(),
         model: { provider: model.name },
         mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
-        flows: { saved: flows.list().length, templates: flows.templates().length },
+        flows: {
+          saved: flows.list().length,
+          templates: flows.templates().length,
+          store: flows.storeName,
+        },
         auth: { required: Boolean(authToken) },
         audit: { persisted: dbReady },
       });
@@ -145,7 +149,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        send(res, 200, { flow: flows.save(body.flow), mode: runtime.mode });
+        send(res, 200, { flow: await flows.save(body.flow), mode: runtime.mode });
       } catch (err) {
         send(res, 400, { error: err instanceof Error ? err.message : "invalid_flow" });
       }
@@ -158,7 +162,7 @@ const server = createServer(async (req, res) => {
         send(res, 400, { error: "id_required" });
         return;
       }
-      send(res, 200, { removed: flows.remove(body.id) });
+      send(res, 200, { removed: await flows.remove(body.id) });
       return;
     }
 
@@ -448,7 +452,18 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/epoch") {
       const result = await runtime.runEpoch();
-      send(res, 200, { ...result, mode: runtime.mode });
+      // Epoch-triggered flows fire after allowances stream (payroll automations).
+      const epochRuns = await flows.runTriggered("epoch");
+      send(res, 200, {
+        ...result,
+        mode: runtime.mode,
+        flowRuns: epochRuns.map((r) => ({
+          runId: r.runId,
+          flowId: r.flowId,
+          status: r.status,
+          steps: r.steps.length,
+        })),
+      });
       return;
     }
 
@@ -466,8 +481,19 @@ async function main(): Promise<void> {
       console.log(`[@lacrew/orchestrator] audit ring hydrated with ${replayed} persisted events`);
     }
   }
+  const hydrated = await flows.hydrate();
+  if (hydrated.flows > 0 || hydrated.runs > 0) {
+    console.log(
+      `[@lacrew/orchestrator] flows hydrated: ${hydrated.flows} definitions, ${hydrated.runs} runs (${flows.storeName})`,
+    );
+  }
+
   await queue.start({
-    onEpoch: async () => runtime.runEpoch(),
+    onEpoch: async () => {
+      const result = await runtime.runEpoch();
+      await flows.runTriggered("epoch");
+      return result;
+    },
     onTick: async () => runtime.tick(),
   });
 
