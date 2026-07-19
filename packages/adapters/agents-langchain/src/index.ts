@@ -126,3 +126,29 @@ export function createLangChainFlowBackend(opts: LangChainFlowBackendOptions): F
     callTool: (name, args) => runMcpTool(name, args, { backend, useMock }),
   };
 }
+
+/**
+ * Materialize the definitions as real LangChain tools via the optional
+ * `@langchain/core` peer (`pnpm add @langchain/core`). Each definition maps
+ * onto `tool(func, { name, description, schema })` with its JSON Schema —
+ * ready for `createReactAgent` / `bindTools`.
+ */
+export async function toLangChainTools(
+  opts: CreateLacrewLangChainToolsOptions = {},
+): Promise<unknown[]> {
+  let tools: typeof import("@langchain/core/tools");
+  try {
+    tools = await import("@langchain/core/tools");
+  } catch {
+    throw new Error(
+      "@langchain/core is not installed — pnpm add @langchain/core to use toLangChainTools()",
+    );
+  }
+  return createLacrewLangChainTools(opts).map((d) =>
+    tools.tool(async (args: unknown) => d.invoke((args ?? {}) as Record<string, unknown>), {
+      name: d.name,
+      description: d.description,
+      schema: d.schema,
+    }),
+  );
+}

@@ -24,7 +24,16 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
+    "ai": "^7.0.31",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "ai": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
   }
 }

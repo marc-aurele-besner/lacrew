@@ -53,3 +53,29 @@ export function createLacrewVercelAiTools(
 export function listLacrewVercelAiToolNames(): string[] {
   return Object.keys(createLacrewVercelAiTools());
 }
+
+/**
+ * Materialize the definitions as real AI SDK tools via the optional `ai`
+ * peer (`pnpm add ai`). Each definition maps onto
+ * `tool({ description, inputSchema: jsonSchema(...), execute })` — ready to
+ * spread into `generateText({ tools })`.
+ */
+export async function toAiSdkTools(
+  opts: CreateLacrewVercelAiToolsOptions = {},
+): Promise<Record<string, unknown>> {
+  let ai: typeof import("ai");
+  try {
+    ai = await import("ai");
+  } catch {
+    throw new Error("ai is not installed — pnpm add ai to use toAiSdkTools()");
+  }
+  const out: Record<string, unknown> = {};
+  for (const [name, d] of Object.entries(createLacrewVercelAiTools(opts))) {
+    out[name] = ai.tool({
+      description: d.description,
+      inputSchema: ai.jsonSchema(d.parameters),
+      execute: async (args: unknown) => d.execute((args ?? {}) as Record<string, unknown>),
+    });
+  }
+  return out;
+}
