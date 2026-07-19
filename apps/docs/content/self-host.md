@@ -118,7 +118,41 @@ pnpm --filter @lacrew/core sync-abis
 
 Or: `pnpm --filter @lacrew/cli exec tsx src/index.ts deploy` with `SEPOLIA_RPC_URL` + `PRIVATE_KEY` set.
 
+**Set `MANAGER_ADDRESS`.** On any chain other than 31337 the script defaults the
+manager seat to a keyless placeholder address — fine for a read-only publish,
+but escalations can never be approved. Point it at an address whose key you
+hold (the orchestrator's `MANAGER_PRIVATE_KEY`) before deploying.
+
 Override addresses via `LACREW_ORG_REGISTRY`, `LACREW_TREASURY`, `LACREW_ESCALATION_ROUTER`, etc.
+
+### Rehearse the Sepolia path locally
+
+The exact same flow can be dry-run against an Anvil wearing Sepolia's chain id
+— useful before spending real testnet ETH:
+
+```bash
+anvil --chain-id 11155111 --port 8547   # terminal A
+
+# terminal B — deploy exercises the non-Anvil path end to end
+export SEPOLIA_RPC_URL=http://127.0.0.1:8547
+export CHAIN_ID=11155111
+export PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+export MANAGER_ADDRESS=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+pnpm --filter @lacrew/cli exec tsx src/index.ts deploy
+
+# smoke: org → epoch → escalate → approve (75 USDC lands at the x402 target)
+export ANVIL_RPC=$SEPOLIA_RPC_URL
+export MANAGER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+lacrew() { pnpm --filter @lacrew/cli exec tsx src/index.ts "$@"; }
+lacrew org --rpc $SEPOLIA_RPC_URL
+lacrew epoch --rpc $SEPOLIA_RPC_URL
+lacrew tick --rpc $SEPOLIA_RPC_URL      # 75 USDC > 50 cap → ESCALATE
+lacrew approve 1 --rpc $SEPOLIA_RPC_URL
+
+# then discard the local artifacts — placeholders stay committed until a real deploy
+git checkout -- contracts/deployments packages/core/deployments packages/core/src/deployments.generated.ts
+rm -rf contracts/broadcast contracts/deployments/11155111.json
+```
 
 ## Session keys
 

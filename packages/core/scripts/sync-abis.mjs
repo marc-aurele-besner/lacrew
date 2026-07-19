@@ -87,39 +87,34 @@ function writeAbisTs(abisByExport) {
   writeFileSync(join(coreRoot, "src/abis.ts"), parts.join("\n"));
 }
 
-function extractDeploymentsFromBroadcast() {
-  const broadcastRoot = join(repoRoot, "contracts/broadcast/DeployMockOrg.s.sol");
-  if (!existsSync(broadcastRoot)) return null;
+const KNOWN_CHAIN_IDS = ["31337", "11155111", "84532"];
 
-  // Prefer latest run for anvil (31337).
-  const chainIds = ["31337", "11155111", "84532"];
-  for (const chainId of chainIds) {
-    const latest = join(broadcastRoot, chainId, "run-latest.json");
-    if (!existsSync(latest)) continue;
-    const run = JSON.parse(readFileSync(latest, "utf8"));
-    const created = run.transactions?.filter((t) => t.transactionType === "CREATE") ?? [];
-    const byName = {};
-    for (const tx of created) {
-      if (tx.contractName && tx.contractAddress) {
-        byName[tx.contractName] = tx.contractAddress;
-      }
+function extractDeploymentsFromBroadcast(chainId) {
+  const broadcastRoot = join(repoRoot, "contracts/broadcast/DeployMockOrg.s.sol");
+  const latest = join(broadcastRoot, chainId, "run-latest.json");
+  if (!existsSync(latest)) return null;
+  const run = JSON.parse(readFileSync(latest, "utf8"));
+  const created = run.transactions?.filter((t) => t.transactionType === "CREATE") ?? [];
+  const byName = {};
+  for (const tx of created) {
+    if (tx.contractName && tx.contractAddress) {
+      byName[tx.contractName] = tx.contractAddress;
     }
-    if (!byName.OrgRegistry) continue;
-    return {
-      chainId: Number(chainId),
-      mockUSDC: byName.MockUSDC ?? "0x0000000000000000000000000000000000000000",
-      orgRegistry: byName.OrgRegistry,
-      treasury: byName.Treasury,
-      escalationRouter: byName.EscalationRouter,
-      governanceModule: byName.GovernanceModule,
-      spendCapPolicy: byName.SpendCapPolicy,
-      policyStack: byName.PolicyStack,
-      whitelistPolicy: byName.WhitelistPolicy,
-      epochStreamer: byName.EpochStreamer,
-      sessionRegistry: byName.SessionRegistry,
-    };
   }
-  return null;
+  if (!byName.OrgRegistry) return null;
+  return {
+    chainId: Number(chainId),
+    mockUSDC: byName.MockUSDC ?? "0x0000000000000000000000000000000000000000",
+    orgRegistry: byName.OrgRegistry,
+    treasury: byName.Treasury,
+    escalationRouter: byName.EscalationRouter,
+    governanceModule: byName.GovernanceModule,
+    spendCapPolicy: byName.SpendCapPolicy,
+    policyStack: byName.PolicyStack,
+    whitelistPolicy: byName.WhitelistPolicy,
+    epochStreamer: byName.EpochStreamer,
+    sessionRegistry: byName.SessionRegistry,
+  };
 }
 
 function writeDeploymentsJson(addresses) {
@@ -140,38 +135,37 @@ function writeDeploymentsJson(addresses) {
   );
 }
 
-/** Prefer forge script JSON (includes org node accounts); fall back to broadcast CREATEs. */
-function loadDeployments() {
-  const contractsAnvil = join(repoRoot, "contracts/deployments/31337.json");
-  if (existsSync(contractsAnvil)) {
-    const data = JSON.parse(readFileSync(contractsAnvil, "utf8"));
+/** Known Anvil demo accounts — only ever used as fallbacks on chain 31337. */
+const ANVIL_NODE_DEFAULTS = {
+  humanRoot: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  manager: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  worker: "0xCcBcac53a38c585bA0caf2270dd2d906f14dac88",
+  x402Target: "0xC7240d92d1bd7114fB3eeaDC9934d11AaCebe27a",
+};
+
+/**
+ * Prefer forge script JSON (includes org node accounts); fall back to
+ * broadcast CREATEs. Anvil-account defaults never leak onto real chains.
+ */
+function loadDeploymentsForChain(chainId) {
+  const file = join(repoRoot, `contracts/deployments/${chainId}.json`);
+  if (existsSync(file)) {
+    const data = JSON.parse(readFileSync(file, "utf8"));
     if (data.orgRegistry && data.manager) {
       return data;
     }
-    // Script may have been overwritten by an older sync — merge broadcast + known Anvil nodes.
-    const fromBroadcast = extractDeploymentsFromBroadcast();
-    if (fromBroadcast) {
-      return {
-        ...fromBroadcast,
-        humanRoot: data.humanRoot ?? "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        manager: data.manager ?? "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        worker: data.worker ?? "0xCcBcac53a38c585bA0caf2270dd2d906f14dac88",
-        x402Target: data.x402Target ?? "0xC7240d92d1bd7114fB3eeaDC9934d11AaCebe27a",
-      };
+    // Script may have been overwritten by an older sync — merge broadcast CREATEs.
+    const fromBroadcast = extractDeploymentsFromBroadcast(chainId);
+    if (fromBroadcast && chainId === "31337") {
+      return { ...ANVIL_NODE_DEFAULTS, ...data, ...fromBroadcast };
     }
-    return data;
+    return fromBroadcast ? { ...data, ...fromBroadcast } : data;
   }
-  const fromBroadcast = extractDeploymentsFromBroadcast();
-  if (fromBroadcast) {
-    return {
-      ...fromBroadcast,
-      humanRoot: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      manager: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      worker: "0xCcBcac53a38c585bA0caf2270dd2d906f14dac88",
-      x402Target: "0xC7240d92d1bd7114fB3eeaDC9934d11AaCebe27a",
-    };
+  const fromBroadcast = extractDeploymentsFromBroadcast(chainId);
+  if (fromBroadcast && chainId === "31337") {
+    return { ...ANVIL_NODE_DEFAULTS, ...fromBroadcast };
   }
-  return null;
+  return fromBroadcast;
 }
 
 function writeDeploymentsTs() {
@@ -243,8 +237,13 @@ function main() {
   writeAbisTs(abis);
 
   ensurePlaceholderDeployments();
-  const deployments = loadDeployments();
-  if (deployments) {
+  for (const chainId of KNOWN_CHAIN_IDS) {
+    const deployments = loadDeploymentsForChain(chainId);
+    if (!deployments) continue;
+    if (!deployments.orgRegistry) {
+      console.warn(`Skipping chain ${chainId}: incomplete deployment JSON`);
+      continue;
+    }
     writeDeploymentsJson(deployments);
     console.log(`Synced deployments for chain ${deployments.chainId}`);
   }
