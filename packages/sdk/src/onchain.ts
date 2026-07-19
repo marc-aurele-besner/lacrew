@@ -275,6 +275,30 @@ export class OnchainLacrewClient {
     };
   }
 
+  /**
+   * Dry-run an approval (viem eth_call through router.resolve → finalize →
+   * the agent's actual target call) without signing. PRD F1.16.
+   */
+  async simulateResolveApproval(
+    intentId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const wallet = this.requireResolverWallet();
+    try {
+      await this.publicClient.simulateContract({
+        address: this.addresses.escalationRouter,
+        abi: escalationRouterAbi,
+        functionName: "resolve",
+        args: [BigInt(intentId), true],
+        account: wallet.account!,
+      });
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // First line of the viem error carries the decoded revert reason.
+      return { ok: false, reason: message.split("\n")[0] };
+    }
+  }
+
   async resolveIntent(
     intentId: string,
     approved: boolean,

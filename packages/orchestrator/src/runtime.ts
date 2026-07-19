@@ -393,18 +393,42 @@ export class CrewRuntime {
 
   async listPending(): Promise<Intent[]> {
     const intents = await this.client.getPendingIntents();
-    return intents.map((intent) => {
-      if (intent.simulation) return intent;
-      return {
-        ...intent,
-        simulation: simulateIntentAction({
+    const unsimulated = intents.filter((i) => !i.simulation);
+    if (unsimulated.length === 0) return intents;
+
+    // Onchain: enrich with real allowance state + a dry-run of the approval
+    // (eth_call through resolve → finalize → the agent's target call).
+    const onchain = isOnchainClient(this.client) ? this.client : null;
+    const allowances = onchain ? await onchain.getAllowances().catch(() => []) : [];
+    const balanceOf = (agent: string) =>
+      allowances.find((a) => a.node.toLowerCase() === agent.toLowerCase())?.balance;
+
+    return Promise.all(
+      intents.map(async (intent) => {
+        if (intent.simulation) return intent;
+        const simulation = simulateIntentAction({
           agent: intent.agent,
           target: intent.target,
           value: intent.value,
           verdict: intent.verdict,
-        }),
-      };
-    });
+          allowanceBalance: balanceOf(intent.agent),
+        });
+        if (onchain) {
+          const approval = await onchain
+            .simulateResolveApproval(intent.id)
+            .catch(() => null);
+          if (approval && !approval.ok) {
+            simulation.status = "revert";
+            simulation.warnings.push(
+              `Approval dry-run reverted: ${approval.reason ?? "unknown"}`,
+            );
+          } else if (approval?.ok) {
+            simulation.warnings.push("Approval dry-run succeeded (eth_call).");
+          }
+        }
+        return { ...intent, simulation };
+      }),
+    );
   }
 
   /** Merge local ring with indexer/mock client trail (local first, newest first). */
