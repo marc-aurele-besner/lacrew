@@ -451,11 +451,19 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/epoch") {
-      const result = await runtime.runEpoch();
-      // Epoch-triggered flows fire after allowances stream (payroll automations).
+      // Epoch-triggered flows fire even when the onchain stream can't run
+      // (mock mode) — the automation layer stays testable everywhere.
+      let result: Record<string, unknown> = {};
+      let epochError: string | undefined;
+      try {
+        result = (await runtime.runEpoch()) as unknown as Record<string, unknown>;
+      } catch (err) {
+        epochError = err instanceof Error ? err.message : "epoch_failed";
+      }
       const epochRuns = await flows.runTriggered("epoch");
-      send(res, 200, {
+      send(res, epochError && epochRuns.length === 0 ? 400 : 200, {
         ...result,
+        ...(epochError ? { epochError } : {}),
         mode: runtime.mode,
         flowRuns: epochRuns.map((r) => ({
           runId: r.runId,
@@ -490,7 +498,12 @@ async function main(): Promise<void> {
 
   await queue.start({
     onEpoch: async () => {
-      const result = await runtime.runEpoch();
+      let result: unknown;
+      try {
+        result = await runtime.runEpoch();
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] scheduled epoch failed:", err);
+      }
       await flows.runTriggered("epoch");
       return result;
     },
