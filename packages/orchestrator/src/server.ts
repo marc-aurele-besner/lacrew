@@ -83,6 +83,7 @@ const server = createServer(async (req, res) => {
         },
         auth: { required: Boolean(authToken) },
         audit: { persisted: dbReady },
+        runtimeStore: runtime.runtimeStoreName,
       });
       return;
     }
@@ -209,6 +210,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/sessions/history") {
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      send(res, 200, {
+        sessions: await runtime.sessionHistory(limit),
+        store: runtime.runtimeStoreName,
+        mode: runtime.mode,
+      });
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/sessions/revoke") {
       const body = (await readBody(req)) as { sessionId?: string };
       if (!body.sessionId) {
@@ -229,6 +240,16 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/intents") {
       send(res, 200, { intents: await runtime.listPending() });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/intents/history") {
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      send(res, 200, {
+        intents: await runtime.intentHistory(limit),
+        store: runtime.runtimeStoreName,
+        mode: runtime.mode,
+      });
       return;
     }
 

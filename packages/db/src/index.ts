@@ -14,4 +14,14 @@ export {
   type FlowDefinitionRow,
   type FlowRunRow,
 } from "./flows.js";
+export {
+  upsertSessionRow,
+  markSessionRevokedRow,
+  recentSessionRows,
+  insertIntentRow,
+  resolveIntentRows,
+  recentIntentRows,
+  type SessionRow,
+  type IntentRow,
+} from "./runtime.js";
 export * from "./schema/index.js";

@@ -8,6 +8,14 @@ export {
   type AuditStore,
 } from "./auditStore.js";
 export {
+  createRuntimeStoreFromEnv,
+  createMemoryRuntimeStore,
+  createPgRuntimeStore,
+  type RuntimeStore,
+  type SessionRecord,
+  type IntentRecord,
+} from "./runtimeStore.js";
+export {
   issueSession,
   createEphemeralSession,
   isSessionExpired,
