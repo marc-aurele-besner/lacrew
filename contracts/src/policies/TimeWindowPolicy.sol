@@ -31,6 +31,8 @@ contract TimeWindowPolicy is IPolicyModule {
         uint256,
         bytes calldata
     ) external view returns (Verdict verdict) {
+        // Time-of-day bucket, not randomness; miner drift is bounded and acceptable here.
+        // slither-disable-next-line weak-prng
         uint256 tod = block.timestamp % 1 days;
         if (tod < startSecondOfDay || tod >= endSecondOfDay) {
             return Verdict.DENY;

@@ -24,12 +24,12 @@ jobs:
         run: forge build
       - name: Test
         run: forge test
+      # Pip slither (latest crytic-compile) — the docker action's bundled
+      # crytic-compile cannot parse current Foundry build-info output.
+      - name: Install Slither
+        run: pipx install slither-analyzer
       - name: Slither
-        uses: crytic/slither-action@v0.4.0
-        with:
-          target: contracts
-          fail-on: high
-          ignore-compile: true
+        run: slither . --fail-high --filter-paths "lib/"
 
   packages:
     name: Packages
@@ -44,9 +44,9 @@ jobs:
           forge install foundry-rs/forge-std --no-git
           forge install OpenZeppelin/openzeppelin-contracts@v5.3.0 --no-git
           forge build
+      # No version input: pnpm/action-setup reads the packageManager field,
+      # and specifying both (when they differ) is an error.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
