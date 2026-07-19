@@ -69,3 +69,20 @@ test("a LangChain runnable powers model steps in a @lacrew/flows pipeline", asyn
   assert.ok(modelOut.text.startsWith("LC says: Be terse."));
   assert.equal(seen.length, 1);
 });
+
+test("constructs invocable DynamicStructuredTools over the mock backend", async () => {
+    const tools = (await import("./index.js").then((m) => m.toLangChainTools())) as Array<{
+      name: string;
+      description: string;
+      invoke: (args: Record<string, unknown>) => Promise<unknown>;
+    }>;
+    assert.ok(tools.length >= 4);
+    const orgTool = tools.find((t) => t.name === "lacrew_get_org_tree");
+    assert.ok(orgTool);
+    assert.ok(orgTool.description.length > 0);
+
+    const result = await orgTool.invoke({});
+    const parsed = JSON.parse(String(result)) as { nodes?: unknown[] } | unknown[];
+    const nodes = Array.isArray(parsed) ? parsed : parsed.nodes;
+    assert.ok(Array.isArray(nodes) && nodes.length >= 1);
+  });
