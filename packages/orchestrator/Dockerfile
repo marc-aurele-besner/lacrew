@@ -13,11 +13,9 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.js
 COPY packages ./packages
 COPY apps ./apps
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @lacrew/core build \
- && pnpm --filter @lacrew/db build \
- && pnpm --filter @lacrew/sdk build \
- && pnpm --filter @lacrew/adapter-agents-mcp build \
- && pnpm --filter @lacrew/orchestrator build
+# "..." builds the orchestrator plus all its workspace dependencies in
+# topological order — new packages never go stale here.
+RUN pnpm --filter "@lacrew/orchestrator..." build
 
 FROM base AS runtime
 ENV NODE_ENV=production
