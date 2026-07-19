@@ -82,6 +82,14 @@ pnpm --filter @lacrew/orchestrator dev
 # GET /health → db.ready + queue.provider "pg-boss" when DATABASE_URL is set
 ```
 
+With `DATABASE_URL` set the orchestrator persists its restart-surviving state:
+audit events (`orchestrator_audit_events`), flow definitions + runs
+(`orchestrator_flows` / `orchestrator_flow_runs`), and session/intent records
+(`orchestrator_sessions` / `orchestrator_intents` — metadata only, session
+private keys never leave the process). `GET /sessions/history` and
+`GET /intents/history` read them back; without a database the same endpoints
+serve a bounded in-memory ring.
+
 Optional indexer DB on the same Postgres instance:
 
 ```bash
