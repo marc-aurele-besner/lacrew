@@ -135,3 +135,17 @@ const result = await runFlow(budgetGuardedSpend, backend);
 spend, escalation triage, content crew daily). The cloud's marketplace surface
 lists these today; third-party listings are mocked until the Phase 3
 ecosystem work lands.
+
+## Scaffold a crew project
+
+`lacrew scaffold <template>` turns any template into a standalone runnable
+project — `package.json`, `crew.ts`, the flow JSON, `.env.example`, README:
+
+```bash
+lacrew scaffold treasury-pulse --dir my-crew
+cd my-crew && pnpm install && pnpm start   # offline mock run, full step trace
+# set ORCH_URL (+ ORCH_TOKEN) to save + run on a live orchestrator instead
+```
+
+Inside a lacrew checkout the generated project links `@lacrew/flows` via
+`file:`; elsewhere it pins the npm name (publish pending).
