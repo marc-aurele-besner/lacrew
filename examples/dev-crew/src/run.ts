@@ -2,7 +2,7 @@
  * Runnable dev-crew demo (off-chain work, onchain budget).
  *
  *   pnpm --filter @lacrew/example-dev-crew start
- *   ORCH_URL=http://127.0.0.1:8788 pnpm --filter @lacrew/example-dev-crew start
+ *   ORCH_URL=http://127.0.0.1:8788 pnpm --filter @lacrew/example-dev-crew start\n *   ANVIL_RPC=… PRIVATE_KEY=… pnpm --filter @lacrew/example-dev-crew start   # live chain
  */
 
 import { readFileSync } from "node:fs";
@@ -141,8 +141,72 @@ async function runViaMock(): Promise<void> {
   );
 }
 
+
+async function runViaAnvil(): Promise<void> {
+  const { createRuntimeFromEnv } = await import("@lacrew/orchestrator");
+  const runtime = createRuntimeFromEnv();
+  console.log(`[@lacrew/example-dev-crew] anvil mode → chain ${runtime.chainId}`);
+  console.log(`crew=${policy.name}`);
+
+  const nodes = await runtime.getClient().getOrgTree();
+  console.log(
+    "org",
+    nodes.map((n) => `${n.kind}:${n.account.slice(0, 10)}…`).join("  "),
+  );
+
+  for (const spend of policy.demoSpends) {
+    const value = BigInt(spend.valueUsdc) * 10n ** 6n;
+    try {
+      // Session-signed propose for the deployed worker → whitelisted target;
+      // policy.json targets are demo-only, the chain enforces the real ones.
+      const result = await runtime.propose({ value });
+      console.log(`\n${spend.label}`);
+      console.log({ intentId: result.intentId, verdict: result.verdict, txHash: result.txHash });
+      if (spend.x402) {
+        console.log(
+          "x402",
+          mockX402Receipt({
+            agent: runtime.defaultAgent,
+            target: runtime.defaultSpendTarget,
+            valueUsdc: spend.valueUsdc,
+            verdict: result.verdict,
+          }),
+        );
+      }
+    } catch (err) {
+      console.log(`\n${spend.label} → ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  const pending = await runtime.listPending();
+  console.log(
+    "\npending",
+    pending.map((i) => ({
+      id: i.id,
+      value: i.value.toString(),
+      simulation: i.simulation?.status,
+      warnings: i.simulation?.warnings,
+    })),
+  );
+
+  const first = pending[0];
+  if (first && process.env.MANAGER_PRIVATE_KEY) {
+    const resolved = await runtime.resolve(first.id, true);
+    console.log("\napproved", {
+      intentId: first.id,
+      escalated: resolved.escalated,
+      txHash: resolved.txHash,
+    });
+  } else if (first) {
+    console.log("\nset MANAGER_PRIVATE_KEY to approve the escalation");
+  }
+}
+
+const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
 const orch = process.env.ORCH_URL?.replace(/\/$/, "");
-if (orch) {
+if (rpc && process.env.PRIVATE_KEY) {
+  await runViaAnvil();
+} else if (orch) {
   await runViaOrch(orch);
 } else {
   await runViaMock();

@@ -53,6 +53,9 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@lacrew/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
       '@lacrew/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -72,6 +75,9 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@lacrew/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
       '@lacrew/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
