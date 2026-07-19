@@ -697,6 +697,20 @@ export class CrewRuntime {
     return this.client.getCurrentEpoch();
   }
 
+  /** Append an event to the audit ring on behalf of a sibling surface (flows). */
+  recordAudit(event: ProtocolEvent): void {
+    this.pushAudit(event);
+  }
+
+  /** Crew defaults for flow gate steps that omit agent/target. */
+  get defaultAgent(): `0x${string}` {
+    return this.workerAgent;
+  }
+
+  get defaultSpendTarget(): `0x${string}` {
+    return this.spendTarget;
+  }
+
   private pushAudit(event: ProtocolEvent): void {
     this.localAudit.push(event);
     if (this.localAudit.length > AUDIT_RING_MAX) {

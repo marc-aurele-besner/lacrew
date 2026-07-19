@@ -12,7 +12,9 @@ export type ProtocolEventType =
   | "ProposalVetoed"
   | "ProposalExecuted"
   | "SessionIssued"
-  | "SessionRevoked";
+  | "SessionRevoked"
+  | "FlowSaved"
+  | "FlowRun";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;

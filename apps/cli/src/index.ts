@@ -17,6 +17,7 @@ import {
 } from "@lacrew/core";
 import { http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { cmdFlows } from "./flows.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
@@ -175,6 +176,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "deploy") {
     cmdDeploy(rest);
+    return;
+  }
+  if (cmd === "flows") {
+    await cmdFlows(rest);
     return;
   }
 
@@ -572,6 +577,9 @@ Commands:
   gov vote <id> [yes|no]    Vote on a proposal (onchain --rpc)
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)
+  flows <sub>               Agent logic pipelines — templates, list, save,
+                            run (--local for offline), runs, code
+                            (see: lacrew flows help)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

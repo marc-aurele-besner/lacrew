@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@lacrew/core": "workspace:*",
+    "@lacrew/flows": "workspace:*",
     "@lacrew/orchestrator": "workspace:*",
     "@lacrew/sdk": "workspace:*",
     "viem": "^2.31.7"

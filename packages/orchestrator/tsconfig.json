@@ -10,6 +10,7 @@
     { "path": "../core" },
     { "path": "../sdk" },
     { "path": "../db" },
+    { "path": "../flows" },
     { "path": "../adapters/agents-mcp" }
   ]
 }

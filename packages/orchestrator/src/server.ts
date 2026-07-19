@@ -12,6 +12,8 @@ import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import { getOrchToken, isAuthorized } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
+import { createFlowsSurface } from "./flows.js";
+import type { FlowDefinition } from "@lacrew/flows";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
@@ -23,6 +25,7 @@ const model: ModelProvider = createModelProviderFromEnv();
 /** MCP HTTP binds to the live runtime; LACREW_MCP_MOCK=1 forces a detached SDK mock. */
 const mcpUseMock = process.env.LACREW_MCP_MOCK === "1";
 const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
+const flows = createFlowsSurface({ runtime, model, mcpBackend });
 const authToken = getOrchToken();
 let dbReady = false;
 
@@ -73,6 +76,11 @@ const server = createServer(async (req, res) => {
         queue: queue.status(),
         model: { provider: model.name },
         mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
+        flows: {
+          saved: flows.list().length,
+          templates: flows.templates().length,
+          store: flows.storeName,
+        },
         auth: { required: Boolean(authToken) },
         audit: { persisted: dbReady },
       });
@@ -126,6 +134,64 @@ const server = createServer(async (req, res) => {
         useMock: mcpUseMock,
         mode: runtime.mode,
       });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/flows") {
+      send(res, 200, { flows: flows.list(), mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/flows") {
+      const body = (await readBody(req)) as { flow?: FlowDefinition };
+      if (!body.flow?.id) {
+        send(res, 400, { error: "flow_required" });
+        return;
+      }
+      try {
+        send(res, 200, { flow: await flows.save(body.flow), mode: runtime.mode });
+      } catch (err) {
+        send(res, 400, { error: err instanceof Error ? err.message : "invalid_flow" });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/flows/delete") {
+      const body = (await readBody(req)) as { id?: string };
+      if (!body.id) {
+        send(res, 400, { error: "id_required" });
+        return;
+      }
+      send(res, 200, { removed: await flows.remove(body.id) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/flows/run") {
+      const body = (await readBody(req)) as {
+        id?: string;
+        flow?: FlowDefinition;
+        input?: string;
+      };
+      if (!body.id && !body.flow) {
+        send(res, 400, { error: "id_or_flow_required" });
+        return;
+      }
+      try {
+        send(res, 200, await flows.run(body));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "flow_run_failed";
+        send(res, msg === "flow_not_found" ? 404 : 400, { error: msg });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/flows/runs") {
+      send(res, 200, { runs: flows.runs(), mode: runtime.mode });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/flows/templates") {
+      send(res, 200, { templates: flows.templates() });
       return;
     }
 
@@ -385,8 +451,27 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/epoch") {
-      const result = await runtime.runEpoch();
-      send(res, 200, { ...result, mode: runtime.mode });
+      // Epoch-triggered flows fire even when the onchain stream can't run
+      // (mock mode) — the automation layer stays testable everywhere.
+      let result: Record<string, unknown> = {};
+      let epochError: string | undefined;
+      try {
+        result = (await runtime.runEpoch()) as unknown as Record<string, unknown>;
+      } catch (err) {
+        epochError = err instanceof Error ? err.message : "epoch_failed";
+      }
+      const epochRuns = await flows.runTriggered("epoch");
+      send(res, epochError && epochRuns.length === 0 ? 400 : 200, {
+        ...result,
+        ...(epochError ? { epochError } : {}),
+        mode: runtime.mode,
+        flowRuns: epochRuns.map((r) => ({
+          runId: r.runId,
+          flowId: r.flowId,
+          status: r.status,
+          steps: r.steps.length,
+        })),
+      });
       return;
     }
 
@@ -404,8 +489,24 @@ async function main(): Promise<void> {
       console.log(`[@lacrew/orchestrator] audit ring hydrated with ${replayed} persisted events`);
     }
   }
+  const hydrated = await flows.hydrate();
+  if (hydrated.flows > 0 || hydrated.runs > 0) {
+    console.log(
+      `[@lacrew/orchestrator] flows hydrated: ${hydrated.flows} definitions, ${hydrated.runs} runs (${flows.storeName})`,
+    );
+  }
+
   await queue.start({
-    onEpoch: async () => runtime.runEpoch(),
+    onEpoch: async () => {
+      let result: unknown;
+      try {
+        result = await runtime.runEpoch();
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] scheduled epoch failed:", err);
+      }
+      await flows.runTriggered("epoch");
+      return result;
+    },
     onTick: async () => runtime.tick(),
   });
 
