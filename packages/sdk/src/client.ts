@@ -169,6 +169,15 @@ export class LacrewClient {
         target: input.target,
         value: input.value,
         verdict,
+        allowanceBalance: this.allowances.find(
+          (a) => a.node.toLowerCase() === input.agent.toLowerCase(),
+        )?.balance,
+        allowanceCap: Object.entries(this.policy.caps).find(
+          ([key]) => key.toLowerCase() === input.agent.toLowerCase(),
+        )?.[1],
+        whitelisted: this.policy.whitelist.some(
+          (t) => t.toLowerCase() === input.target.toLowerCase(),
+        ),
       }),
     };
     this.intents.push(intent);
