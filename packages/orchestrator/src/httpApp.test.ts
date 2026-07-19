@@ -87,12 +87,21 @@ describe("orchestrator Hono app", () => {
     assert.equal(unknown.status, 404);
   });
 
-  it("epoch trigger responds 200 in mock mode (flows layer stays testable)", async () => {
-    const res = await buildApp().request("/epoch", { method: "POST", body: "{}" });
-    // Mock mode: runEpoch throws, no epoch flows saved → 400 epochError path.
-    assert.equal(res.status, 400);
-    const body = (await res.json()) as { epochError?: string; flowRuns: unknown[] };
-    assert.ok(body.epochError);
+  it("streams mock epochs and lists governance over HTTP", async () => {
+    const app = buildApp();
+    const res = await app.request("/epoch", { method: "POST", body: "{}" });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { epoch: number; flowRuns: unknown[] };
+    assert.equal(body.epoch, 1);
     assert.deepEqual(body.flowRuns, []);
+
+    const hire = await app.request("/governance/propose-hire", {
+      method: "POST",
+      body: JSON.stringify({ label: "Scout" }),
+    });
+    assert.equal(hire.status, 200);
+    const proposals = await app.request("/governance/proposals");
+    const proposalsBody = (await proposals.json()) as { proposals: unknown[] };
+    assert.equal(proposalsBody.proposals.length, 1);
   });
 });

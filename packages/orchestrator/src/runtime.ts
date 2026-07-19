@@ -466,16 +466,12 @@ export class CrewRuntime {
     return result;
   }
 
-  /** List onchain governance proposals (empty in mock mode). */
+  /** List governance proposals (mock client keeps an in-memory register). */
   async listProposals(): Promise<GovernanceProposal[]> {
-    if (!isOnchainClient(this.client)) return [];
     return this.client.getProposals();
   }
 
-  /**
-   * Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode.
-   * Onchain only.
-   */
+  /** Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode. */
   async proposeHire(input: {
     label: string;
     kind?: "manager_agent" | "worker_agent";
@@ -486,9 +482,6 @@ export class CrewRuntime {
     account: `0x${string}`;
     txHash?: `0x${string}`;
   }> {
-    if (!isOnchainClient(this.client)) {
-      throw new Error("proposeHire requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
-    }
     const result = await this.client.proposeHire(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -499,7 +492,7 @@ export class CrewRuntime {
         label: input.label,
         kind: input.kind ?? "worker_agent",
         action: "hire",
-        txHash: result.txHash,
+        txHash: "txHash" in result ? result.txHash : undefined,
       },
     });
     return result;
@@ -510,9 +503,6 @@ export class CrewRuntime {
     account: `0x${string}`;
     tier?: GovernanceTier;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
-      throw new Error("proposeFire requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
-    }
     const result = await this.client.proposeFire(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -521,7 +511,7 @@ export class CrewRuntime {
         proposalId: result.proposalId,
         account: result.account,
         action: "fire",
-        txHash: result.txHash,
+        txHash: "txHash" in result ? result.txHash : undefined,
       },
     });
     return result;
@@ -533,9 +523,6 @@ export class CrewRuntime {
     newParent: `0x${string}`;
     tier?: GovernanceTier;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
-      throw new Error("proposeReparent requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
-    }
     const result = await this.client.proposeReparent(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -545,7 +532,7 @@ export class CrewRuntime {
         account: result.account,
         newParent: input.newParent,
         action: "reparent",
-        txHash: result.txHash,
+        txHash: "txHash" in result ? result.txHash : undefined,
       },
     });
     return result;
@@ -557,9 +544,6 @@ export class CrewRuntime {
     amount: bigint;
     tier?: GovernanceTier;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
-      throw new Error("proposeSetGrant requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
-    }
     const result = await this.client.proposeSetGrant(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -569,7 +553,7 @@ export class CrewRuntime {
         account: result.account,
         amount: input.amount.toString(),
         action: "setGrant",
-        txHash: result.txHash,
+        txHash: "txHash" in result ? result.txHash : undefined,
       },
     });
     return result;
@@ -653,7 +637,19 @@ export class CrewRuntime {
     support: boolean,
   ): Promise<{ txHashes: `0x${string}`[]; proposal: GovernanceProposal }> {
     if (!isOnchainClient(this.client)) {
-      throw new Error("voteGovernance requires onchain mode");
+      await this.client.voteGovernance(proposalId, support);
+      const proposal = await this.client.getProposal(proposalId);
+      this.pushAudit({
+        type: "ProposalVoted",
+        at: new Date().toISOString(),
+        payload: {
+          proposalId,
+          support,
+          yesVotes: proposal.yesVotes,
+          noVotes: proposal.noVotes,
+        },
+      });
+      return { txHashes: [], proposal };
     }
     const txHashes: `0x${string}`[] = [];
     const first = await this.client.voteGovernance(proposalId, support);
@@ -690,9 +686,15 @@ export class CrewRuntime {
     return { txHashes, proposal };
   }
 
-  async vetoGovernance(proposalId: string): Promise<{ txHash: `0x${string}`; proposal: GovernanceProposal }> {
+  async vetoGovernance(proposalId: string): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
     if (!isOnchainClient(this.client)) {
-      throw new Error("vetoGovernance requires onchain mode");
+      const { proposal } = await this.client.vetoGovernance(proposalId);
+      this.pushAudit({
+        type: "ProposalVetoed",
+        at: new Date().toISOString(),
+        payload: { proposalId },
+      });
+      return { proposal };
     }
     const { txHash } = await this.client.vetoGovernance(proposalId);
     const proposal = await this.client.getProposal(proposalId);
@@ -706,9 +708,15 @@ export class CrewRuntime {
 
   async executeGovernance(
     proposalId: string,
-  ): Promise<{ txHash: `0x${string}`; proposal: GovernanceProposal }> {
+  ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
     if (!isOnchainClient(this.client)) {
-      throw new Error("executeGovernance requires onchain mode");
+      const { proposal } = await this.client.executeGovernance(proposalId);
+      this.pushAudit({
+        type: "ProposalExecuted",
+        at: new Date().toISOString(),
+        payload: { proposalId, state: proposal.state },
+      });
+      return { proposal };
     }
     const { txHash } = await this.client.executeGovernance(proposalId);
     const proposal = await this.client.getProposal(proposalId);
@@ -720,18 +728,15 @@ export class CrewRuntime {
     return { txHash, proposal };
   }
 
-  /** Run the next payroll epoch (EpochStreamer → Treasury.streamAllowance). */
+  /** Run the next payroll epoch (EpochStreamer onchain; mock streams caps). */
   async runEpoch(): Promise<{ epoch: number; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
-      throw new Error("runEpoch requires onchain mode (ANVIL_RPC + PRIVATE_KEY)");
-    }
     const result = await this.client.runEpoch();
     this.pushAudit({
       type: "AllowanceStreamed",
       at: new Date().toISOString(),
       payload: {
         epoch: result.epoch,
-        txHash: result.txHash,
+        txHash: "txHash" in result ? result.txHash : undefined,
         via: "EpochStreamer",
       },
     });
@@ -739,7 +744,6 @@ export class CrewRuntime {
   }
 
   async getCurrentEpoch(): Promise<number> {
-    if (!isOnchainClient(this.client)) return 0;
     return this.client.getCurrentEpoch();
   }
 
