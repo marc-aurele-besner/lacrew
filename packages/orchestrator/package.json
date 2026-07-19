@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch --env-file=../../.env src/server.ts",
     "start": "node --env-file=../../.env dist/server.js",
-    "test": "node --import tsx --test src/auth.test.ts src/auditStore.test.ts src/mcpBackend.test.ts src/runtime.test.ts src/queue/memory.test.ts src/queue/pg-boss.test.ts src/model/memory.test.ts",
+    "test": "node --import tsx --test src/auth.test.ts src/auditStore.test.ts src/mcpBackend.test.ts src/runtime.test.ts src/flows.test.ts src/queue/memory.test.ts src/queue/pg-boss.test.ts src/model/memory.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
@@ -24,6 +24,7 @@
     "@lacrew/adapter-agents-mcp": "workspace:*",
     "@lacrew/core": "workspace:*",
     "@lacrew/db": "workspace:*",
+    "@lacrew/flows": "workspace:*",
     "@lacrew/sdk": "workspace:*",
     "pg-boss": "^10.3.2",
     "viem": "^2.55.2"
