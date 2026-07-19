@@ -31,6 +31,13 @@ import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
+import {
+  createMemoryRuntimeStore,
+  createRuntimeStoreFromEnv,
+  type IntentRecord,
+  type RuntimeStore,
+  type SessionRecord,
+} from "./runtimeStore.js";
 
 /** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
 const SESSION_GAS_STIPEND = parseEther("0.05");
@@ -50,6 +57,8 @@ export interface CrewRuntimeOptions {
   chainId?: number;
   /** Persistence for the audit ring; defaults to memory no-op. */
   auditStore?: AuditStore;
+  /** Persistence for session/intent records; defaults to bounded memory. */
+  runtimeStore?: RuntimeStore;
 }
 
 function normalizePk(raw: string | undefined): `0x${string}` | undefined {
@@ -70,7 +79,11 @@ export function createRuntimeFromEnv(): CrewRuntime {
   const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
   const pk = normalizePk(process.env.PRIVATE_KEY);
   if (!rpc || !pk) {
-    return new CrewRuntime({ mode: "mock", auditStore: createAuditStoreFromEnv() });
+    return new CrewRuntime({
+      mode: "mock",
+      auditStore: createAuditStoreFromEnv(),
+      runtimeStore: createRuntimeStoreFromEnv(),
+    });
   }
 
   const chainId = Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID);
@@ -96,6 +109,7 @@ export function createRuntimeFromEnv(): CrewRuntime {
     spendTarget: addresses.x402Target ?? "0x4444444444444444444444444444444444444444",
     managerAgent: addresses.manager ?? MOCK_MANAGER,
     auditStore: createAuditStoreFromEnv(),
+    runtimeStore: createRuntimeStoreFromEnv(),
   });
 }
 
@@ -110,6 +124,7 @@ export class CrewRuntime {
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   private readonly auditStore: AuditStore;
+  private readonly runtimeStore: RuntimeStore;
 
   constructor(options: CrewRuntimeOptions = {}) {
     this.client = options.client ?? createLacrewClient({ useMock: true });
@@ -120,6 +135,7 @@ export class CrewRuntime {
     this.mode = options.mode ?? "mock";
     this.chainId = options.chainId ?? null;
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
+    this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
   }
 
   /** Replay persisted audit events into the local ring (call once on boot). */
@@ -175,6 +191,7 @@ export class CrewRuntime {
       };
       // Keep private key only on the runtime instance, never in audit payloads.
       (this as { _sessionPk?: `0x${string}` })._sessionPk = ephemeral.privateKey;
+      this.recordSession(this.session);
 
       this.pushAudit({
         type: "SessionIssued",
@@ -197,6 +214,7 @@ export class CrewRuntime {
       agent: this.workerAgent,
       scopes: ["spend:whitelist", "propose:intent"],
     });
+    this.recordSession(this.session);
     this.pushAudit({
       type: "SessionIssued",
       at: new Date().toISOString(),
@@ -250,6 +268,7 @@ export class CrewRuntime {
       if (this.session?.keyId === sessionId) {
         this.session = revokeSession(this.session);
       }
+      void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
       this.pushAudit({
         type: "SessionRevoked",
         at: new Date().toISOString(),
@@ -262,6 +281,7 @@ export class CrewRuntime {
       this.session = revokeSession(this.session);
       delete (this as { _sessionPk?: `0x${string}` })._sessionPk;
     }
+    void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
     this.pushAudit({
       type: "SessionRevoked",
       at: new Date().toISOString(),
@@ -305,6 +325,23 @@ export class CrewRuntime {
     });
 
     const txHash = "txHash" in result ? result.txHash : undefined;
+    void this.runtimeStore.saveIntent({
+      intentId: result.intentId,
+      agent,
+      target,
+      value: value.toString(),
+      verdict: result.verdict,
+      status:
+        result.verdict === "ALLOW"
+          ? "executed"
+          : result.verdict === "ESCALATE"
+            ? "pending"
+            : "denied",
+      txHash,
+      sessionKeyId: session.keyId,
+      chainId: this.chainId ?? undefined,
+      proposedAt: new Date().toISOString(),
+    });
     if (result.verdict === "ALLOW") {
       this.pushAudit({
         type: "AllowanceSpent",
@@ -404,6 +441,15 @@ export class CrewRuntime {
   ): Promise<ResolveResult> {
     const result = await this.client.resolveIntent(intentId, approved, approver);
     const txHash = "txHash" in result ? result.txHash : undefined;
+
+    // Escalated intents climbed the tree and are still pending upstream.
+    if (!result.escalated) {
+      void this.runtimeStore.markIntentResolved(intentId, {
+        status: approved ? "approved" : "denied",
+        resolveTxHash: txHash,
+        resolvedAt: new Date().toISOString(),
+      });
+    }
 
     this.pushAudit({
       type: "IntentResolved",
@@ -700,6 +746,37 @@ export class CrewRuntime {
   /** Append an event to the audit ring on behalf of a sibling surface (flows). */
   recordAudit(event: ProtocolEvent): void {
     this.pushAudit(event);
+  }
+
+  /** Persisted session records, newest first (restart-surviving history). */
+  async sessionHistory(limit = 50): Promise<SessionRecord[]> {
+    return this.runtimeStore.recentSessions(limit);
+  }
+
+  /** Persisted intent records, newest first (restart-surviving history). */
+  async intentHistory(limit = 50): Promise<IntentRecord[]> {
+    return this.runtimeStore.recentIntents(limit);
+  }
+
+  get runtimeStoreName(): string {
+    return this.runtimeStore.name;
+  }
+
+  /** Persist session metadata (never the private key). */
+  private recordSession(session: SessionKey): void {
+    void this.runtimeStore.saveSession({
+      keyId: session.keyId,
+      agent: session.agent,
+      keyAddress: session.keyAddress,
+      expiresAt: new Date(session.expiresAt).toISOString(),
+      scopes: session.scopes,
+      maxValue: session.maxValue,
+      allowedTarget: session.allowedTarget,
+      mode: this.mode,
+      chainId: this.chainId ?? undefined,
+      status: "active",
+      issuedAt: new Date().toISOString(),
+    });
   }
 
   /** Crew defaults for flow gate steps that omit agent/target. */
