@@ -23,6 +23,9 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@lacrew/flows':
+        specifier: workspace:*
+        version: link:../../packages/flows
       '@lacrew/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator

@@ -22,7 +22,24 @@ trail apply exactly as they do for any other agent action.
 Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
 `{{steps.<id>.json}}`, and `{{steps.<id>.verdict}}`. Steps fall through in
 declaration order unless a step routes explicitly; `null` stops the flow.
-Cycles are rejected — recurrence belongs to the epoch/queue layer.
+Cycles are rejected — recurrence belongs to the trigger layer instead:
+
+## Triggers
+
+`trigger: "manual"` (default) runs from the UI, SDK, or CLI. `trigger:
+"epoch"` turns the pipeline into an automation: the orchestrator fires it on
+every payroll epoch, right after allowances stream (both the queue schedule
+and `POST /epoch` do this, and the run is tagged `trigger: "epoch"` in the
+trace and audit trail). The shipped `treasury-pulse` template is
+epoch-triggered out of the box.
+
+## Persistence
+
+Definitions and run traces persist to Postgres when `DATABASE_URL` is set
+(`orchestrator_flows` / `orchestrator_flow_runs`, same `@lacrew/db` family as
+the audit trail) and hydrate back on boot; without a database everything
+still works in memory. `/health` reports which store is active under
+`flows.store`.
 
 ## Code-first
 
@@ -57,7 +74,25 @@ console.log(run.status, run.steps.map((s) => s.summary));
 
 `runFlow(def, backend)` executes a definition in-process against any
 `FlowBackend`; `createMockFlowBackend()` is the detached offline fallback the
-tests and demos use.
+tests and demos use. Pass `onStep` to observe progress live:
+
+```ts
+await runFlow(def, backend, {
+  input: "manual run",
+  onStep: (t) => console.log(t.stepId, t.verdict ?? t.status, t.summary),
+});
+```
+
+## CLI
+
+```
+lacrew flows templates                  # built-in catalog (offline)
+lacrew flows run treasury-pulse --local # offline mock run with live trace
+lacrew flows run my-flow --input "hi"   # run on the orchestrator (ORCH_URL/ORCH_TOKEN)
+lacrew flows save my-flow.json          # validate + persist
+lacrew flows runs                       # recent traces, newest first
+lacrew flows code tpl-content-daily     # print the code-first snippet
+```
 
 ## Orchestrator HTTP surface
 
