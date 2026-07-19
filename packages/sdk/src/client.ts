@@ -11,6 +11,7 @@ import {
   mockPendingIntents,
   mockSessionKeys,
   type Allowance,
+  type GovernanceProposal,
   type GovernanceTier,
   type Intent,
   type OrgNode,
@@ -42,18 +43,39 @@ export type ResolveResult = {
   txHash?: `0x${string}`;
 };
 
+/** Mock governance action recorded at propose time, applied on execute. */
+type MockProposalAction =
+  | { kind: "hire"; account: `0x${string}`; nodeKind: OrgNode["kind"]; parent: `0x${string}`; label: string }
+  | { kind: "fire"; account: `0x${string}` }
+  | { kind: "reparent"; account: `0x${string}`; newParent: `0x${string}` }
+  | { kind: "setGrant"; account: `0x${string}`; amount: bigint }
+  | { kind: "raw" };
+
 export class LacrewClient {
   private readonly useMock: boolean;
   private readonly policy: ClientPolicyConfig;
   private intents: Intent[];
   private audit: ProtocolEvent[];
+  private nodes: OrgNode[];
+  private allowances: Allowance[];
+  private proposals: GovernanceProposal[] = [];
+  private readonly proposalActions = new Map<string, MockProposalAction>();
+  private epoch = 0;
 
   constructor(options: LacrewClientOptions = {}) {
     this.useMock = options.useMock ?? true;
     this.policy = options.policy ?? defaultMockPolicy;
-    // Mocked: clone demo intents so approve mutations stay in-process.
+    // Mocked: clone demo state so mutations stay in-process.
     this.intents = mockPendingIntents.map((i) => ({ ...i }));
     this.audit = mockAuditTrail.map((e) => ({ ...e, payload: { ...e.payload } }));
+    this.nodes = mockOrgNodes.map((n) => ({ ...n }));
+    this.allowances = mockAllowances.map((a) => ({ ...a }));
+  }
+
+  private requireMock(what: string): void {
+    if (!this.useMock) {
+      throw new Error(`Onchain ${what} requires createOnchainClient`);
+    }
   }
 
   /** List org nodes. */
@@ -62,7 +84,7 @@ export class LacrewClient {
       // TODO: Read OrgRegistry.getNode / getChildren via viem.
       throw new Error("Onchain org reads are not implemented yet");
     }
-    return mockOrgNodes;
+    return this.nodes.map((n) => ({ ...n }));
   }
 
   /** Allowances for all nodes (or a single node). */
@@ -71,8 +93,10 @@ export class LacrewClient {
       // TODO: Read Treasury.allowanceBalance for each node.
       throw new Error("Onchain allowance reads are not implemented yet");
     }
-    if (!node) return mockAllowances;
-    return mockAllowances.filter((a) => a.node.toLowerCase() === node.toLowerCase());
+    const rows = node
+      ? this.allowances.filter((a) => a.node.toLowerCase() === node.toLowerCase())
+      : this.allowances;
+    return rows.map((a) => ({ ...a }));
   }
 
   /** Pending escalations awaiting approval. */
@@ -282,6 +306,239 @@ export class LacrewClient {
       },
     });
     return { proposalId };
+  }
+
+  // ── Mock governance lifecycle (mirrors GovernanceModule semantics) ──────
+
+  private createMockProposal(
+    tier: GovernanceTier,
+    target: `0x${string}`,
+    action: MockProposalAction,
+    auditPayload: Record<string, unknown>,
+  ): GovernanceProposal {
+    const root = this.nodes.find((n) => n.kind === "human_root");
+    const proposal: GovernanceProposal = {
+      id: `proposal-mock-${this.proposals.length + 1}`,
+      proposer: root?.account ?? "0x0000000000000000000000000000000000000000",
+      tier,
+      target,
+      actionHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      data: "0x",
+      yesVotes: 0,
+      noVotes: 0,
+      yesHumanVotes: 0,
+      deadline: Math.floor(Date.now() / 1000) + 3 * 24 * 3600,
+      eta: 0,
+      state: "active",
+    };
+    this.proposals.push(proposal);
+    this.proposalActions.set(proposal.id, action);
+    this.audit.push({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: { proposalId: proposal.id, tier, ...auditPayload },
+    });
+    return proposal;
+  }
+
+  async getProposals(): Promise<GovernanceProposal[]> {
+    this.requireMock("governance reads");
+    return this.proposals.map((p) => ({ ...p }));
+  }
+
+  async getProposal(id: string): Promise<GovernanceProposal> {
+    this.requireMock("governance reads");
+    const proposal = this.proposals.find((p) => p.id === id);
+    if (!proposal) throw new Error(`Proposal not found: ${id}`);
+    return { ...proposal };
+  }
+
+  async proposeHire(input: {
+    label: string;
+    kind?: OrgNode["kind"];
+    parent?: `0x${string}`;
+    account?: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const manager = this.nodes.find((n) => n.kind === "manager_agent");
+    const parent = input.parent ?? manager?.account ?? this.nodes[0]!.account;
+    // Deterministic pseudo-address from the label (mock accounts, not keys).
+    const hex = Buffer.from(input.label, "utf8").toString("hex").padEnd(40, "0").slice(0, 40);
+    const account = input.account ?? (`0x${hex}` as `0x${string}`);
+    const proposal = this.createMockProposal(
+      input.tier ?? "low",
+      account,
+      { kind: "hire", account, nodeKind: input.kind ?? "worker_agent", parent, label: input.label },
+      { account, label: input.label, action: "hire" },
+    );
+    return { proposalId: proposal.id, account };
+  }
+
+  async proposeFire(input: {
+    account: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      input.tier ?? "low",
+      input.account,
+      { kind: "fire", account: input.account },
+      { account: input.account, action: "fire" },
+    );
+    return { proposalId: proposal.id, account: input.account };
+  }
+
+  async proposeReparent(input: {
+    account: `0x${string}`;
+    newParent: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      input.tier ?? "low",
+      input.account,
+      { kind: "reparent", account: input.account, newParent: input.newParent },
+      { account: input.account, newParent: input.newParent, action: "reparent" },
+    );
+    return { proposalId: proposal.id, account: input.account };
+  }
+
+  async proposeSetGrant(input: {
+    account: `0x${string}`;
+    amount: bigint;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      input.tier ?? "high",
+      input.account,
+      { kind: "setGrant", account: input.account, amount: input.amount },
+      { account: input.account, amount: input.amount.toString(), action: "setGrant" },
+    );
+    return { proposalId: proposal.id, account: input.account };
+  }
+
+  /**
+   * Mock vote: a supporting call casts the demo quorum (root human seat +
+   * manager agent seat), mirroring the runtime's dual-seat onchain behavior.
+   */
+  async voteGovernance(
+    proposalId: string,
+    support: boolean,
+  ): Promise<{ proposal: GovernanceProposal }> {
+    this.requireMock("governance");
+    const proposal = this.proposals.find((p) => p.id === proposalId);
+    if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
+    if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
+    if (support) {
+      proposal.yesVotes += 2;
+      proposal.yesHumanVotes = (proposal.yesHumanVotes ?? 0) + 1;
+    } else {
+      proposal.noVotes += 1;
+    }
+    this.audit.push({
+      type: "ProposalVoted",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId,
+        support,
+        yesVotes: proposal.yesVotes,
+        noVotes: proposal.noVotes,
+      },
+    });
+    return { proposal: { ...proposal } };
+  }
+
+  async vetoGovernance(proposalId: string): Promise<{ proposal: GovernanceProposal }> {
+    this.requireMock("governance");
+    const proposal = this.proposals.find((p) => p.id === proposalId);
+    if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
+    if (proposal.tier !== "high") throw new Error("Only high-tier proposals can be vetoed");
+    if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
+    proposal.state = "vetoed";
+    this.audit.push({
+      type: "ProposalVetoed",
+      at: new Date().toISOString(),
+      payload: { proposalId },
+    });
+    return { proposal: { ...proposal } };
+  }
+
+  async executeGovernance(proposalId: string): Promise<{ proposal: GovernanceProposal }> {
+    this.requireMock("governance");
+    const proposal = this.proposals.find((p) => p.id === proposalId);
+    if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
+    if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
+    const quorum =
+      proposal.yesVotes >= 2 &&
+      (proposal.tier === "low" || (proposal.yesHumanVotes ?? 0) >= 1);
+    if (!quorum) throw new Error(`Quorum not met for ${proposalId}`);
+
+    const action = this.proposalActions.get(proposalId);
+    if (action?.kind === "hire") {
+      this.nodes.push({
+        account: action.account,
+        kind: action.nodeKind,
+        parent: action.parent,
+        active: true,
+        label: action.label,
+      });
+    } else if (action?.kind === "fire") {
+      const fired = this.nodes.find(
+        (n) => n.account.toLowerCase() === action.account.toLowerCase(),
+      );
+      if (fired) {
+        fired.active = false;
+        // Children rewire to the fired node's parent (OrgRegistry.removeNode).
+        for (const n of this.nodes) {
+          if (n.parent?.toLowerCase() === fired.account.toLowerCase()) {
+            n.parent = fired.parent;
+          }
+        }
+      }
+    } else if (action?.kind === "reparent") {
+      const node = this.nodes.find(
+        (n) => n.account.toLowerCase() === action.account.toLowerCase(),
+      );
+      if (node) node.parent = action.newParent;
+    } else if (action?.kind === "setGrant") {
+      const allowance = this.allowances.find(
+        (a) => a.node.toLowerCase() === action.account.toLowerCase(),
+      );
+      if (allowance) allowance.cap = action.amount;
+    }
+
+    proposal.state = "executed";
+    this.audit.push({
+      type: "ProposalExecuted",
+      at: new Date().toISOString(),
+      payload: { proposalId, state: "executed" },
+    });
+    return { proposal: { ...proposal } };
+  }
+
+  // ── Mock payroll epochs (mirrors EpochStreamer semantics) ───────────────
+
+  async getCurrentEpoch(): Promise<number> {
+    this.requireMock("epoch reads");
+    return this.epoch;
+  }
+
+  /** Stream one epoch: every active allowance gains its per-epoch cap. */
+  async runEpoch(): Promise<{ epoch: number }> {
+    this.requireMock("epoch runs");
+    this.epoch += 1;
+    for (const allowance of this.allowances) {
+      allowance.balance += allowance.cap;
+      allowance.epoch = this.epoch;
+    }
+    this.audit.push({
+      type: "AllowanceStreamed",
+      at: new Date().toISOString(),
+      payload: { epoch: this.epoch, via: "mock EpochStreamer" },
+    });
+    return { epoch: this.epoch };
   }
 }
 
