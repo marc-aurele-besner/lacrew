@@ -106,6 +106,27 @@ test("runFlow branch step routes on contains", async () => {
   );
 });
 
+test("validateFlow reports an unknown step kind instead of throwing", () => {
+  // Flows arrive as JSON from builders and marketplace listings, so the
+  // FlowStep union is not a runtime guarantee.
+  const result = validateFlow({
+    id: "x",
+    name: "x",
+    steps: [{ id: "a", kind: "prompt" }],
+  } as unknown as FlowDefinition);
+  assert.ok(!result.ok);
+  assert.ok(result.errors.some((e) => e.includes('unknown kind "prompt"')));
+});
+
+test("runFlow rejects an unknown step kind with a trace, not a throw", async () => {
+  const run = await runFlow(
+    { id: "x", name: "x", steps: [{ id: "a", kind: "prompt" }] } as unknown as FlowDefinition,
+    createMockFlowBackend(),
+  );
+  assert.equal(run.status, "error");
+  assert.ok(run.steps[0]!.error?.includes("unknown kind"));
+});
+
 test("runFlow surfaces step errors without throwing", async () => {
   const def = flow("broken", "Broken").tool("bad", "no_such_tool").build();
   const run = await runFlow(def, createMockFlowBackend());
