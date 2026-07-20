@@ -125,7 +125,18 @@ function mdToHtml(md) {
   return html.join("\n");
 }
 
-function pageShell(title, navHtml, bodyHtml) {
+/** Markdown → plain text for the search index (code blocks dropped). */
+function mdToPlainText(md) {
+  const noCode = md.replace(/```[\s\S]*?```/g, " ");
+  return noCode
+    .replace(/^#{1,4}\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[`*_>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pageShell(title, navHtml, bodyHtml, prefix) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -150,6 +161,10 @@ function pageShell(title, navHtml, bodyHtml) {
     a { color: var(--accent); }
     blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 3px solid var(--accent); color: var(--muted); }
     .brand { font-weight: 700; color: var(--fg); margin-bottom: 1rem; display: block; text-decoration: none; }
+    #docs-search { width: 100%; margin-bottom: 0.75rem; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 0.88rem; }
+    #docs-results a { display: block; padding: 0.3rem 0.4rem; border-radius: 6px; font-size: 0.85rem; }
+    #docs-results a:hover { background: var(--bg); }
+    #docs-results .snippet { display: block; color: var(--muted); font-size: 0.75rem; }
     @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--border); } }
   </style>
 </head>
@@ -157,10 +172,57 @@ function pageShell(title, navHtml, bodyHtml) {
   <div class="layout">
     <aside>
       <a class="brand" href="./index.html">LaCrew docs</a>
+      <input id="docs-search" type="search" placeholder="Search docs…" autocomplete="off" />
+      <div id="docs-results"></div>
       ${navHtml}
     </aside>
     <main>${bodyHtml}</main>
   </div>
+  <script>
+    (function () {
+      var input = document.getElementById("docs-search");
+      var out = document.getElementById("docs-results");
+      if (!input || !out) return;
+      var index = null;
+      function load() {
+        if (index) return Promise.resolve(index);
+        return fetch("${prefix}search-index.json")
+          .then(function (r) { return r.json(); })
+          .then(function (data) { index = data; return data; })
+          .catch(function () { return []; });
+      }
+      function snippet(text, q) {
+        var i = text.toLowerCase().indexOf(q);
+        if (i < 0) return text.slice(0, 90);
+        var start = Math.max(0, i - 30);
+        return (start > 0 ? "…" : "") + text.slice(start, i + q.length + 60) + "…";
+      }
+      input.addEventListener("input", function () {
+        var q = input.value.trim().toLowerCase();
+        if (q.length < 2) { out.innerHTML = ""; return; }
+        load().then(function (entries) {
+          var scored = entries
+            .map(function (e) {
+              var t = e.title.toLowerCase();
+              var score = 0;
+              if (t.indexOf(q) >= 0) score += 5;
+              var occurrences = e.text.toLowerCase().split(q).length - 1;
+              score += Math.min(occurrences, 4);
+              return { e: e, score: score };
+            })
+            .filter(function (x) { return x.score > 0; })
+            .sort(function (a, b) { return b.score - a.score; })
+            .slice(0, 8);
+          out.innerHTML = scored
+            .map(function (x) {
+              return '<a href="${prefix}' + x.e.href + '">' + x.e.title +
+                '<span class="snippet">' + snippet(x.e.text, q) + "</span></a>";
+            })
+            .join("");
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
 `;
@@ -197,8 +259,15 @@ function build() {
       .join("\n");
     const outPath = join(dist, entry.href);
     mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, pageShell(entry.title, navHtml, mdToHtml(md)));
+    writeFileSync(outPath, pageShell(entry.title, navHtml, mdToHtml(md), prefix));
   }
+
+  const searchIndex = entries.map((entry) => ({
+    title: entry.title,
+    href: entry.href,
+    text: mdToPlainText(readFileSync(entry.full, "utf8")).slice(0, 4000),
+  }));
+  writeFileSync(join(dist, "search-index.json"), JSON.stringify(searchIndex));
 
   console.log(
     `[@lacrew/docs] Static HTML build → dist/ (${entries.length} pages) + dist/content/`,
