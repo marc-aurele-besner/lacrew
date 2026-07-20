@@ -57,8 +57,17 @@ type FlowStepBase = {
   label?: string;
   /** Free-form note shown in builders; never sent to models. */
   note?: string;
-  /** Canvas position (visual builder only; ignored by runFlow / validate / codegen). */
-  ui?: { x: number; y: number };
+  /**
+   * Canvas presentation (visual builder only; ignored by runFlow / validate / codegen).
+   * `edgeLabels` offsets mid-edge pills; `refs` are n8n-style extra data inputs
+   * (source step ids keyed by handle id) that do not affect control-flow edges.
+   */
+  ui?: {
+    x: number;
+    y: number;
+    edgeLabels?: Record<string, { x?: number; y?: number }>;
+    refs?: Record<string, string>;
+  };
 };
 
 /**
