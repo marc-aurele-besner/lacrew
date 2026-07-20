@@ -9,12 +9,17 @@ export type FlowsClientOptions = {
 };
 
 export type FlowsClient = {
-  list(): Promise<FlowDefinition[]>;
+  /** Every flow, or only those `as` is scoped to see. */
+  list(opts?: { as?: string }): Promise<FlowDefinition[]>;
   save(def: FlowDefinition): Promise<FlowDefinition>;
   remove(id: string): Promise<void>;
-  run(id: string, opts?: { input?: string }): Promise<FlowRunResult>;
+  /** `as` is the agent the run executes as; it also picks the policy ceiling. */
+  run(id: string, opts?: { input?: string; as?: string }): Promise<FlowRunResult>;
   /** Run an unsaved definition directly (the builder's dry-run path). */
-  runDefinition(def: FlowDefinition, opts?: { input?: string }): Promise<FlowRunResult>;
+  runDefinition(
+    def: FlowDefinition,
+    opts?: { input?: string; as?: string },
+  ): Promise<FlowRunResult>;
   runs(): Promise<FlowRunResult[]>;
   templates(): Promise<FlowTemplate[]>;
 };
@@ -41,7 +46,12 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
   };
 
   return {
-    list: async () => (await call<{ flows: FlowDefinition[] }>("/flows")).flows,
+    list: async (listOpts) =>
+      (
+        await call<{ flows: FlowDefinition[] }>(
+          listOpts?.as ? `/flows?as=${encodeURIComponent(listOpts.as)}` : "/flows",
+        )
+      ).flows,
     save: async (def) =>
       (await call<{ flow: FlowDefinition }>("/flows", {
         method: "POST",
@@ -53,12 +63,12 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
     run: (id, runOpts) =>
       call<FlowRunResult>("/flows/run", {
         method: "POST",
-        body: JSON.stringify({ id, input: runOpts?.input }),
+        body: JSON.stringify({ id, input: runOpts?.input, as: runOpts?.as }),
       }),
     runDefinition: (def, runOpts) =>
       call<FlowRunResult>("/flows/run", {
         method: "POST",
-        body: JSON.stringify({ flow: def, input: runOpts?.input }),
+        body: JSON.stringify({ flow: def, input: runOpts?.input, as: runOpts?.as }),
       }),
     runs: async () => (await call<{ runs: FlowRunResult[] }>("/flows/runs")).runs,
     templates: async () =>

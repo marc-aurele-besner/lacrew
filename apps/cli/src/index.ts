@@ -610,7 +610,7 @@ Commands:
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)
   flows <sub>               Agent logic pipelines — templates, list, save,
-                            run (--local for offline), runs, code
+                            run (--local offline, --as <agent>), runs, code
                             (see: lacrew flows help)
 
 Env:
