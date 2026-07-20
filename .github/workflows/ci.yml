@@ -24,6 +24,9 @@ jobs:
         run: forge build
       - name: Test
         run: forge test
+      # Gas regression guard — regenerate with `forge snapshot` when intended.
+      - name: Gas snapshot check
+        run: forge snapshot --check --tolerance 1 --no-match-test "invariant_|Fuzz|fuzz"
       # Pip slither (latest crytic-compile) — the docker action's bundled
       # crytic-compile cannot parse current Foundry build-info output.
       - name: Install Slither
