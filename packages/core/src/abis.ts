@@ -3,6 +3,43 @@
  * Source: contracts/out/*.sol/*.json after `forge build`.
  */
 
+export const policyModuleAbi = [
+  {
+    "type": "function",
+    "name": "check",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "verdict",
+        "type": "uint8",
+        "internalType": "enum Verdict"
+      }
+    ],
+    "stateMutability": "view"
+  }
+] as const;
+
 export const orgRegistryAbi = [
   {
     "type": "constructor",

@@ -15,6 +15,11 @@ const contractsOut = join(repoRoot, "contracts/out");
 const deploymentsDir = join(coreRoot, "deployments");
 
 const CONTRACTS = [
+  {
+    name: "IPolicyModule",
+    file: "IPolicyModule.sol/IPolicyModule.json",
+    exportName: "policyModuleAbi",
+  },
   { name: "OrgRegistry", file: "OrgRegistry.sol/OrgRegistry.json", exportName: "orgRegistryAbi" },
   { name: "Treasury", file: "Treasury.sol/Treasury.json", exportName: "treasuryAbi" },
   {

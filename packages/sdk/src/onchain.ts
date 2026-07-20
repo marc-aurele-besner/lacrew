@@ -27,6 +27,7 @@ import {
   sessionRegistryAbi,
   spendCapPolicyAbi,
   whitelistPolicyAbi,
+  policyModuleAbi,
   type Allowance,
   type ChainAddresses,
   type GovernanceProposal,
@@ -229,6 +230,35 @@ export class OnchainLacrewClient {
   async getAuditTrail(): Promise<ProtocolEvent[]> {
     const store = await this.readIndexer();
     return store?.audit ?? [];
+  }
+
+  /**
+   * Read a verdict from an IPolicyModule without proposing anything.
+   * Defaults to the org's PolicyStack (falls back to SpendCapPolicy when no
+   * stack is deployed); pass `policyModule` to target a specific module.
+   */
+  async checkPolicy(input: {
+    agent: `0x${string}`;
+    target: `0x${string}`;
+    value: bigint;
+    data?: Hex;
+    policyModule?: `0x${string}`;
+  }): Promise<Verdict> {
+    const module = input.policyModule ?? this.addresses.policyStack ?? this.addresses.spendCapPolicy;
+    if (!module || module === "0x0000000000000000000000000000000000000000") {
+      throw new Error(
+        `No policy module configured for chain ${this.chainId}: set addresses.policyStack or pass policyModule`,
+      );
+    }
+
+    const verdict = (await this.publicClient.readContract({
+      address: module,
+      abi: policyModuleAbi,
+      functionName: "check",
+      args: [input.agent, input.target, input.value, input.data ?? "0x"],
+    })) as number;
+
+    return VERDICT_MAP[verdict] ?? "DENY";
   }
 
   /**
