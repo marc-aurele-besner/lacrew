@@ -11,6 +11,7 @@ export type ProtocolEventType =
   | "ProposalVoted"
   | "ProposalVetoed"
   | "ProposalExecuted"
+  | "ProposalDefeated"
   | "SessionIssued"
   | "SessionRevoked"
   | "FlowSaved"

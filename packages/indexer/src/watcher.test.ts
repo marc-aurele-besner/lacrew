@@ -52,6 +52,40 @@ describe("logToProtocolEvent", () => {
     assert.equal(event?.payload.maxValue, "200000000");
   });
 
+  // The contract event is `Voted`; the consumer schema slot is ProposalVoted.
+  it("maps Voted onto ProposalVoted with stringified weight", () => {
+    const event = logToProtocolEvent(
+      "Voted",
+      { proposalId: 3n, voter: "0xv", support: true, weight: 5n },
+      TX,
+      AT,
+    );
+    assert.equal(event?.type, "ProposalVoted");
+    assert.deepEqual(event?.payload, {
+      proposalId: "3",
+      voter: "0xv",
+      support: true,
+      weight: "5",
+      txHash: TX,
+    });
+  });
+
+  it("maps a no-vote as support false rather than dropping it", () => {
+    const event = logToProtocolEvent(
+      "Voted",
+      { proposalId: 4n, voter: "0xv", support: false, weight: 2n },
+      TX,
+      AT,
+    );
+    assert.equal(event?.payload.support, false);
+  });
+
+  it("maps ProposalDefeated", () => {
+    const event = logToProtocolEvent("ProposalDefeated", { proposalId: 9n }, TX, AT);
+    assert.equal(event?.type, "ProposalDefeated");
+    assert.deepEqual(event?.payload, { proposalId: "9", txHash: TX });
+  });
+
   it("returns null for unknown events", () => {
     assert.equal(logToProtocolEvent("SomethingElse", {}, TX, AT), null);
   });
