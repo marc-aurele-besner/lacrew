@@ -54,4 +54,5 @@ jobs:
       - run: pnpm install
       - run: pnpm --filter @lacrew/core sync-abis
       - run: pnpm build
+      - run: pnpm lint
       - run: pnpm test
