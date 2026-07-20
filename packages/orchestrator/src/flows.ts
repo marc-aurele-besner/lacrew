@@ -8,6 +8,7 @@
 
 import {
   createMockFlowBackend,
+  cronMatches,
   flowTemplates,
   runFlow,
   validateFlow,
@@ -23,6 +24,8 @@ import type { ModelProvider } from "./model/index.js";
 import type { CrewRuntime } from "./runtime.js";
 
 const RUN_RING_MAX = 50;
+/** Cron scheduler poll cadence — fine for minute-resolution schedules. */
+const CRON_POLL_MS = 20_000;
 
 export type FlowsSurface = {
   list(): FlowDefinition[];
@@ -38,6 +41,11 @@ export type FlowsSurface = {
   templates(): FlowTemplate[];
   /** Run every saved flow with the given trigger (queue epoch hook). */
   runTriggered(trigger: FlowTrigger): Promise<FlowRunResult[]>;
+  /** Run cron-triggered flows whose schedule matches `now` (once per minute). */
+  runCronDue(now?: Date): Promise<FlowRunResult[]>;
+  /** Start/stop the minute-resolution cron scheduler (idempotent). */
+  startCron(): void;
+  stopCron(): void;
   /** Load persisted definitions + recent runs; returns counts for boot logs. */
   hydrate(): Promise<{ flows: number; runs: number }>;
   storeName: string;
@@ -53,6 +61,8 @@ export function createFlowsSurface(opts: {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
   const runRing: FlowRunResult[] = [];
+  const cronFiredAt = new Map<string, number>();
+  let cronTimer: NodeJS.Timeout | null = null;
   const mocked = !opts.mcpBackend;
 
   const backend: FlowBackend = mocked
@@ -105,7 +115,7 @@ export function createFlowsSurface(opts: {
     return result;
   };
 
-  return {
+  const surface: FlowsSurface = {
     list: () => [...flows.values()],
     save: async (def) => {
       const check = validateFlow(def);
@@ -132,6 +142,33 @@ export function createFlowsSurface(opts: {
     run: runOne,
     runs: () => [...runRing].reverse(),
     templates: () => flowTemplates,
+    runCronDue: async (now = new Date()) => {
+      const minuteKey = Math.floor(now.getTime() / 60_000);
+      const results: FlowRunResult[] = [];
+      for (const def of flows.values()) {
+        if (def.trigger !== "cron" || !def.schedule) continue;
+        if (!cronMatches(def.schedule, now)) continue;
+        if (cronFiredAt.get(def.id) === minuteKey) continue;
+        cronFiredAt.set(def.id, minuteKey);
+        try {
+          results.push(await runOne({ id: def.id, trigger: "cron" }));
+        } catch (err) {
+          console.error(`[@lacrew/orchestrator] cron flow "${def.id}" failed:`, err);
+        }
+      }
+      return results;
+    },
+    startCron: () => {
+      if (cronTimer) return;
+      cronTimer = setInterval(() => {
+        void surface.runCronDue();
+      }, CRON_POLL_MS);
+      cronTimer.unref?.();
+    },
+    stopCron: () => {
+      if (cronTimer) clearInterval(cronTimer);
+      cronTimer = null;
+    },
     runTriggered: async (trigger) => {
       const due = [...flows.values()].filter((f) => (f.trigger ?? "manual") === trigger);
       const results: FlowRunResult[] = [];
@@ -153,6 +190,7 @@ export function createFlowsSurface(opts: {
     },
     storeName: store.name,
   };
+  return surface;
 }
 
 /**

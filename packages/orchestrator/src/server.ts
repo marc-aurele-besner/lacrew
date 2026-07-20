@@ -73,8 +73,11 @@ async function main(): Promise<void> {
 
   // pg-boss: EPOCH_CRON (default hourly). memory: EPOCH_INTERVAL_MS (>0) opt-in.
   await queue.scheduleEpoch(process.env.EPOCH_CRON ?? "0 * * * *");
+  // Cron-triggered flows (F1.17): minute-resolution, provider-agnostic.
+  flows.startCron();
 
   installShutdownHooks(server, async () => {
+    flows.stopCron();
     await queue.stop();
   });
 

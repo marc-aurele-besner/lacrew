@@ -105,4 +105,41 @@ describe("flows surface", () => {
     const pulse = surface.templates().find((t) => t.id === "tpl-treasury-pulse");
     assert.equal(pulse?.definition.trigger, "epoch");
   });
+
+  it("fires cron flows once per matching minute", async () => {
+    const { surface } = makeSurface();
+    await surface.save(
+      flow("cron-pulse", "Cron pulse")
+        .model("say", { prompt: "ping" })
+        .build(),
+    );
+    const def = surface.list().find((f) => f.id === "cron-pulse")!;
+    await surface.save({ ...def, trigger: "cron", schedule: "*/5 * * * *" });
+
+    const matching = new Date(Date.UTC(2026, 6, 20, 12, 10)); // :10 matches */5
+    const first = await surface.runCronDue(matching);
+    assert.equal(first.length, 1);
+    assert.equal(first[0]?.trigger, "cron");
+
+    // Same minute → no double fire.
+    assert.equal((await surface.runCronDue(matching)).length, 0);
+
+    // Non-matching minute → nothing.
+    const off = new Date(Date.UTC(2026, 6, 20, 12, 12));
+    assert.equal((await surface.runCronDue(off)).length, 0);
+
+    // Next matching minute fires again.
+    const next = new Date(Date.UTC(2026, 6, 20, 12, 15));
+    assert.equal((await surface.runCronDue(next)).length, 1);
+  });
+
+  it("rejects cron flows without a valid schedule", async () => {
+    const { surface } = makeSurface();
+    const def = flow("cron-bad", "Cron bad").model("say", { prompt: "x" }).build();
+    await assert.rejects(
+      () => surface.save({ ...def, trigger: "cron", schedule: "not-a-cron" }),
+      /valid 5-field schedule/,
+    );
+  });
 });
+

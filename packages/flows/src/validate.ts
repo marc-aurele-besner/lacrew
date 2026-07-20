@@ -1,3 +1,4 @@
+import { isValidCron } from "./cron.js";
 import type { BranchStep, FlowDefinition, FlowStep, GateStep } from "./types.js";
 
 export type FlowValidationResult = { ok: boolean; errors: string[] };
@@ -24,8 +25,18 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
   if (!def.id?.trim()) errors.push("flow id is required");
   if (!def.name?.trim()) errors.push("flow name is required");
   if (!def.steps?.length) errors.push("flow needs at least one step");
-  if (def.trigger !== undefined && def.trigger !== "manual" && def.trigger !== "epoch") {
-    errors.push(`unknown trigger "${def.trigger}" (manual | epoch)`);
+  if (
+    def.trigger !== undefined &&
+    def.trigger !== "manual" &&
+    def.trigger !== "epoch" &&
+    def.trigger !== "cron"
+  ) {
+    errors.push(`unknown trigger "${def.trigger}" (manual | epoch | cron)`);
+  }
+  if (def.trigger === "cron" && !isValidCron(def.schedule ?? "")) {
+    errors.push(
+      `cron trigger needs a valid 5-field schedule (got "${def.schedule ?? ""}")`,
+    );
   }
 
   const ids = new Set<string>();
