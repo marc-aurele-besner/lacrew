@@ -36,7 +36,7 @@ export type FlowScope = {
  */
 export type FlowPrincipal = {
   agent: string;
-  nodeKind?: "HumanRoot" | "ManagerAgent" | "WorkerAgent";
+  nodeKind?: "human_root" | "manager_agent" | "worker_agent";
 };
 
 /**
@@ -166,11 +166,13 @@ export type OrgStep = FlowStepBase &
   PolicyGatedStep & {
     kind: "org";
     action: OrgAction;
-    /** Node the action applies to; interpolated. */
-    node: string;
-    /** New parent for "reparent", node kind for "hire". */
+    /** Node the action applies to; interpolated. Unused by "hire", which mints one. */
+    node?: string;
+    /** Display name for the node "hire" creates. */
+    label?: string;
+    /** New parent for "reparent" and "hire". */
     parent?: string;
-    nodeKind?: "ManagerAgent" | "WorkerAgent";
+    nodeKind?: "manager_agent" | "worker_agent";
     /** uint256 decimal string for "set-cap"; interpolated. */
     cap?: string;
     /** Target address for "set-whitelist" / policy module for "set-policy". */
@@ -209,7 +211,7 @@ export type GovernanceStep = FlowStepBase & {
   /** Vote direction for "vote". */
   support?: boolean;
   /** Generic proposal payload for "propose". */
-  tier?: "Low" | "High";
+  tier?: "low" | "high";
   target?: string;
   data?: string;
   next?: string | null;

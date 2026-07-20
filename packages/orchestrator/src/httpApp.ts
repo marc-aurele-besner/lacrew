@@ -67,7 +67,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.onError((err, c) => jsonBig(c, { error: err.message || "unknown" }, 500));
   app.notFound((c) => jsonBig(c, { error: "not_found" }, 404));
 
-  app.get("/health", (c) =>
+  app.get("/health", async (c) =>
     jsonBig(c, {
       ok: true,
       service: "lacrew-orchestrator",
@@ -79,7 +79,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       model: { provider: model.name },
       mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
       flows: {
-        saved: flows.list().length,
+        saved: (await flows.list()).length,
         templates: flows.templates().length,
         store: flows.storeName,
       },
@@ -114,7 +114,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { name: body.name, result, useMock: mcpUseMock, mode: runtime.mode });
   });
 
-  app.get("/flows", (c) => jsonBig(c, { flows: flows.list(), mode: runtime.mode }));
+  // ?as=<address> filters to the flows that agent is scoped to see.
+  app.get("/flows", async (c) => {
+    const as = c.req.query("as") as `0x${string}` | undefined;
+    return jsonBig(c, { flows: await flows.list(as), mode: runtime.mode });
+  });
 
   app.post("/flows", async (c) => {
     const body = await bodyOf<{ flow?: FlowDefinition }>(c);
@@ -133,13 +137,19 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   });
 
   app.post("/flows/run", async (c) => {
-    const body = await bodyOf<{ id?: string; flow?: FlowDefinition; input?: string }>(c);
+    const body = await bodyOf<{
+      id?: string;
+      flow?: FlowDefinition;
+      input?: string;
+      as?: `0x${string}`;
+    }>(c);
     if (!body.id && !body.flow) return jsonBig(c, { error: "id_or_flow_required" }, 400);
     try {
       return jsonBig(c, await flows.run(body));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "flow_run_failed";
-      return jsonBig(c, { error: msg }, msg === "flow_not_found" ? 404 : 400);
+      const status = msg === "flow_not_found" ? 404 : msg === "flow_out_of_scope" ? 403 : 400;
+      return jsonBig(c, { error: msg }, status);
     }
   });
 

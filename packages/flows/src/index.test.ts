@@ -320,9 +320,9 @@ test("validateFlow rejects malformed org, budget, and governance steps", () => {
 test("runFlow records the principal it executed as", async () => {
   const def = flow("who", "Who").gate("spend", { value: "1", onAllow: null }).build();
   const run = await runFlow(def, createMockFlowBackend(), {
-    principal: { agent: AGENT_B, nodeKind: "WorkerAgent" },
+    principal: { agent: AGENT_B, nodeKind: "worker_agent" },
   });
-  assert.deepEqual(run.principal, { agent: AGENT_B, nodeKind: "WorkerAgent" });
+  assert.deepEqual(run.principal, { agent: AGENT_B, nodeKind: "worker_agent" });
 });
 
 test("flowToCode emits scope, schedule, and the new step kinds", () => {

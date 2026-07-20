@@ -296,7 +296,8 @@ export async function runFlow(
         case "org": {
           const result = (await backend.callTool("lacrew_org_action", {
             action: step.action,
-            node: interpolate(step.node, ctx),
+            ...(step.node ? { node: interpolate(step.node, ctx) } : {}),
+            ...(step.label ? { label: interpolate(step.label, ctx) } : {}),
             ...(step.parent ? { parent: interpolate(step.parent, ctx) } : {}),
             ...(step.nodeKind ? { nodeKind: step.nodeKind } : {}),
             ...(step.cap ? { cap: interpolate(step.cap, ctx) } : {}),

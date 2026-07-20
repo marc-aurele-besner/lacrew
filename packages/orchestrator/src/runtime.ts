@@ -29,7 +29,14 @@ import {
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { Verdict } from "@lacrew/flows";
+import type {
+  BudgetActionInput,
+  GovernanceActionInput,
+  OrgActionInput,
+} from "@lacrew/adapter-agents-mcp";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
+import { worstVerdict } from "./flowScope.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
   createMemoryRuntimeStore,
@@ -120,7 +127,16 @@ export class CrewRuntime {
   private readonly managerAgent: `0x${string}`;
   readonly mode: RuntimeMode;
   readonly chainId: number | null;
-  private session: SessionKey | null = null;
+  /**
+   * One session per agent, keyed by lowercased address. A flow runs as its
+   * invoking principal, so the runtime cannot share a single key across agents:
+   * the chain binds each session key to exactly one agent.
+   * Private keys stay in this map and never reach the store or audit payloads.
+   */
+  private readonly sessions = new Map<
+    string,
+    { session: SessionKey; privateKey?: `0x${string}` }
+  >();
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   private readonly auditStore: AuditStore;
@@ -153,15 +169,21 @@ export class CrewRuntime {
     return this.client;
   }
 
-  /** Boot (or rotate) a session key for the worker. Onchain: ephemeral key + SessionRegistry. */
-  async boot(): Promise<SessionKey> {
-    if (this.session && !isSessionExpired(this.session)) {
-      return this.session;
+  /**
+   * Boot (or rotate) a session key for `agent` (default: the crew worker).
+   * Onchain: ephemeral key + SessionRegistry.
+   */
+  async boot(agent?: `0x${string}`): Promise<SessionKey> {
+    const forAgent = agent ?? this.workerAgent;
+    const key = forAgent.toLowerCase();
+    const held = this.sessions.get(key);
+    if (held && !isSessionExpired(held.session)) {
+      return held.session;
     }
 
     if (isOnchainClient(this.client) && this.addressesHasSessions()) {
       const ephemeral = createEphemeralSession({
-        agent: this.workerAgent,
+        agent: forAgent,
         scopes: ["spend:whitelist", "propose:intent"],
       });
       const maxValue = this.sessionMaxValue();
@@ -179,7 +201,7 @@ export class CrewRuntime {
         ephemeral.keyAddress!,
         SESSION_GAS_STIPEND,
       );
-      this.session = {
+      const session: SessionKey = {
         agent: ephemeral.agent,
         keyId: sessionId,
         keyAddress: ephemeral.keyAddress,
@@ -189,42 +211,42 @@ export class CrewRuntime {
         allowedTarget,
         revoked: false,
       };
-      // Keep private key only on the runtime instance, never in audit payloads.
-      (this as { _sessionPk?: `0x${string}` })._sessionPk = ephemeral.privateKey;
-      this.recordSession(this.session);
+      this.sessions.set(key, { session, privateKey: ephemeral.privateKey });
+      this.recordSession(session);
 
       this.pushAudit({
         type: "SessionIssued",
         at: new Date().toISOString(),
         payload: {
-          agent: this.session.agent,
-          keyId: this.session.keyId,
-          keyAddress: this.session.keyAddress,
-          expiresAt: this.session.expiresAt,
-          maxValue: this.session.maxValue,
-          allowedTarget: this.session.allowedTarget,
+          agent: session.agent,
+          keyId: session.keyId,
+          keyAddress: session.keyAddress,
+          expiresAt: session.expiresAt,
+          maxValue: session.maxValue,
+          allowedTarget: session.allowedTarget,
           txHash,
           fundTxHash,
         },
       });
-      return this.session;
+      return session;
     }
 
-    this.session = issueSession({
-      agent: this.workerAgent,
+    const session = issueSession({
+      agent: forAgent,
       scopes: ["spend:whitelist", "propose:intent"],
     });
-    this.recordSession(this.session);
+    this.sessions.set(key, { session });
+    this.recordSession(session);
     this.pushAudit({
       type: "SessionIssued",
       at: new Date().toISOString(),
       payload: {
-        agent: this.session.agent,
-        keyId: this.session.keyId,
-        expiresAt: this.session.expiresAt,
+        agent: session.agent,
+        keyId: session.keyId,
+        expiresAt: session.expiresAt,
       },
     });
-    return this.session;
+    return session;
   }
 
   private addressesHasSessions(): boolean {
@@ -233,14 +255,25 @@ export class CrewRuntime {
     );
   }
 
-  /** Ephemeral session account for onchain propose (never logged). */
-  private sessionSignerAccount() {
+  /** Ephemeral session account for `agent`'s onchain propose (never logged). */
+  private sessionSignerAccount(agent?: `0x${string}`) {
     if (!this.addressesHasSessions()) return undefined;
-    const pk = (this as { _sessionPk?: `0x${string}` })._sessionPk;
+    const key = (agent ?? this.workerAgent).toLowerCase();
+    const pk = this.sessions.get(key)?.privateKey;
     if (!pk) {
-      throw new Error("Session private key missing; call boot() before tick()");
+      throw new Error(
+        `Session private key missing for ${agent ?? this.workerAgent}; call boot() first`,
+      );
     }
     return privateKeyToAccount(pk);
+  }
+
+  /** Locate a held session by its onchain id, across every agent. */
+  private findSessionEntry(sessionId: string): [string, { session: SessionKey }] | undefined {
+    for (const [key, held] of this.sessions) {
+      if (held.session.keyId === sessionId) return [key, held];
+    }
+    return undefined;
   }
 
   private sessionMaxValue(): bigint {
@@ -265,8 +298,9 @@ export class CrewRuntime {
 
   async revokeSessionById(sessionId: string): Promise<{ txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) {
-      if (this.session?.keyId === sessionId) {
-        this.session = revokeSession(this.session);
+      const held = this.findSessionEntry(sessionId);
+      if (held) {
+        this.sessions.set(held[0], { session: revokeSession(held[1].session) });
       }
       void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
       this.pushAudit({
@@ -277,9 +311,10 @@ export class CrewRuntime {
       return {};
     }
     const { txHash } = await this.client.revokeSession(sessionId);
-    if (this.session?.keyId === sessionId) {
-      this.session = revokeSession(this.session);
-      delete (this as { _sessionPk?: `0x${string}` })._sessionPk;
+    const held = this.findSessionEntry(sessionId);
+    if (held) {
+      // Drop the private key with the session; a revoked key must not sign again.
+      this.sessions.set(held[0], { session: revokeSession(held[1].session) });
     }
     void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
     this.pushAudit({
@@ -309,13 +344,13 @@ export class CrewRuntime {
     const target = input.target ?? this.spendTarget;
     const value = input.value;
 
-    const session = await this.boot();
+    const session = await this.boot(agent);
     if (isSessionExpired(session)) {
-      this.session = revokeSession(session);
+      this.sessions.set(agent.toLowerCase(), { session: revokeSession(session) });
       throw new Error("Session expired; call boot() to rotate");
     }
 
-    const sessionAccount = this.sessionSignerAccount();
+    const sessionAccount = this.sessionSignerAccount(agent);
     const result = await this.client.proposeIntent({
       agent,
       target,
@@ -769,6 +804,201 @@ export class CrewRuntime {
 
   async getCurrentEpoch(): Promise<number> {
     return this.client.getCurrentEpoch();
+  }
+
+  /**
+   * Read a verdict without proposing anything. Mock mode has no policy module
+   * to read, so it mirrors the mock client's own spend rule.
+   */
+  async checkPolicy(input: {
+    agent: `0x${string}`;
+    target: `0x${string}`;
+    value: bigint;
+    data?: `0x${string}`;
+  }): Promise<{ verdict: Verdict }> {
+    if (!isOnchainClient(this.client)) {
+      return { verdict: input.value > DEFAULT_SESSION_MAX_VALUE ? "ESCALATE" : "ALLOW" };
+    }
+    const verdict = await this.client.checkPolicy(input);
+    return { verdict: verdict as Verdict };
+  }
+
+  /**
+   * Effective verdict for an action run by `agent` under a flow scoped to
+   * `ceiling`: the stricter of the two policy stacks. The chain enforces the
+   * agent's own stack; the ceiling is this process's additional cap.
+   */
+  async checkEffectivePolicy(input: {
+    agent: `0x${string}`;
+    ceiling?: `0x${string}`;
+    target: `0x${string}`;
+    value: bigint;
+    data?: `0x${string}`;
+  }): Promise<{ verdict: Verdict; capped: boolean }> {
+    const { agent, ceiling, ...rest } = input;
+    const own = (await this.checkPolicy({ agent, ...rest })).verdict;
+    if (!ceiling || ceiling.toLowerCase() === agent.toLowerCase()) {
+      return { verdict: own, capped: false };
+    }
+    const scoped = (await this.checkPolicy({ agent: ceiling, ...rest })).verdict;
+    const effective = worstVerdict(own, scoped);
+    return { verdict: effective, capped: effective !== own };
+  }
+
+  /**
+   * Change the org chart or an agent's properties on behalf of a flow.
+   *
+   * Org structure is constitutional, so every change is a governance proposal —
+   * the orchestrator holds session keys only and must never be able to rewrite
+   * the chart directly. The policy verdict picks the tier instead of
+   * proposal-vs-write: ALLOW earns Low tier (executes on quorum, no timelock),
+   * ESCALATE gets High tier (timelock + human veto), DENY raises nothing.
+   */
+  async orgAction(
+    input: OrgActionInput & { principal?: `0x${string}`; ceiling?: `0x${string}` },
+  ): Promise<{ verdict: Verdict; proposalId?: string; txHash?: `0x${string}` }> {
+    const agent = input.principal ?? this.workerAgent;
+    const { verdict } = await this.checkEffectivePolicy({
+      agent,
+      ceiling: input.ceiling,
+      target: input.node ?? input.parent ?? this.spendTarget,
+      value: input.cap ?? 0n,
+    });
+    if (verdict === "DENY") return { verdict };
+
+    const tier: GovernanceTier = verdict === "ALLOW" ? "low" : "high";
+    switch (input.action) {
+      case "hire": {
+        const r = await this.proposeHire({
+          label: input.label ?? "flow-hire",
+          parent: input.parent!,
+          kind: input.nodeKind ?? "worker_agent",
+          tier,
+        });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "fire":
+      case "deactivate": {
+        const r = await this.proposeFire({ account: input.node!, tier });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "reparent": {
+        const r = await this.proposeReparent({
+          account: input.node!,
+          newParent: input.parent!,
+          tier,
+        });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "set-cap": {
+        const r = await this.proposeSetAgentCap({
+          agent: input.node!,
+          cap: input.cap ?? 0n,
+          tier,
+        });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "set-whitelist": {
+        const r = await this.proposeSetWhitelist({
+          target: input.target!,
+          allowed: input.allowed ?? true,
+          tier,
+        });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "set-policy": {
+        const r = await this.proposeSetNodePolicy({
+          node: input.node!,
+          policyModule: input.target!,
+          tier,
+        });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      // TODO: "activate" needs an OrgRegistry.setActive(true) governance action;
+      // proposeFire only encodes the deactivating side.
+      default:
+        throw new Error(`org action "${input.action}" is not supported yet`);
+    }
+  }
+
+  /**
+   * Move allowances on behalf of a flow. "run-epoch" is a genuine direct write
+   * (the orchestrator is the EpochStreamer operator by design); grants and
+   * streams are treasury-touching and route through governance on the same
+   * verdict-picks-tier rule as `orgAction`.
+   */
+  async setBudget(
+    input: BudgetActionInput & { principal?: `0x${string}`; ceiling?: `0x${string}` },
+  ): Promise<{
+    verdict: Verdict;
+    proposalId?: string;
+    epoch?: number;
+    txHash?: `0x${string}`;
+  }> {
+    const agent = input.principal ?? this.workerAgent;
+    const { verdict } = await this.checkEffectivePolicy({
+      agent,
+      ceiling: input.ceiling,
+      target: input.node ?? this.spendTarget,
+      value: input.amount ?? 0n,
+    });
+    if (verdict === "DENY") return { verdict };
+
+    if (input.action === "run-epoch") {
+      const r = await this.runEpoch();
+      return { verdict, epoch: r.epoch, txHash: r.txHash };
+    }
+
+    const r = await this.proposeSetGrant({
+      account: input.node!,
+      amount: input.amount ?? 0n,
+      tier: verdict === "ALLOW" ? "low" : "high",
+    });
+    return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+  }
+
+  /** Act on the GovernanceModule directly (seat-gated onchain, not by policy). */
+  async governanceAction(
+    input: GovernanceActionInput,
+  ): Promise<{ proposalId?: string; txHash?: `0x${string}` }> {
+    switch (input.action) {
+      case "vote": {
+        const r = await this.voteGovernance(input.proposalId!, input.support ?? true);
+        return { proposalId: input.proposalId, txHash: r.txHashes[0] };
+      }
+      case "veto": {
+        const r = await this.vetoGovernance(input.proposalId!);
+        return { proposalId: input.proposalId, txHash: r.txHash };
+      }
+      case "execute": {
+        const r = await this.executeGovernance(input.proposalId!);
+        return { proposalId: input.proposalId, txHash: r.txHash };
+      }
+      case "propose": {
+        if (!isOnchainClient(this.client)) {
+          throw new Error("governance propose requires onchain mode");
+        }
+        const r = await this.client.proposeGovernance({
+          tier: input.tier ?? "low",
+          target: input.target!,
+          data: (input.data ?? "0x") as `0x${string}`,
+        });
+        this.pushAudit({
+          type: "ProposalCreated",
+          at: new Date().toISOString(),
+          payload: {
+            proposalId: r.proposalId,
+            action: "generic",
+            target: input.target,
+            tier: input.tier ?? "low",
+            txHash: r.txHash,
+          },
+        });
+        return { proposalId: r.proposalId, txHash: r.txHash };
+      }
+      default:
+        throw new Error(`unknown governance action "${input.action}"`);
+    }
   }
 
   /** Append an event to the audit ring on behalf of a sibling surface (flows). */

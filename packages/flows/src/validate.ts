@@ -174,17 +174,20 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
           `org step "${step.id}" has unknown action "${og.action}" (${ORG_ACTIONS.join(" | ")})`,
         );
       }
-      requireAddress(errors, og.node, `org step "${step.id}" node`);
-      if (og.action === "reparent") {
-        requireAddress(errors, og.parent, `org step "${step.id}" parent`);
-      }
+      // "hire" mints a new account from a label; every other action targets one.
       if (og.action === "hire") {
+        if (!og.label?.trim()) errors.push(`org step "${step.id}" needs a label to hire`);
         requireAddress(errors, og.parent, `org step "${step.id}" parent`);
-        if (og.nodeKind !== "ManagerAgent" && og.nodeKind !== "WorkerAgent") {
+        if (og.nodeKind !== "manager_agent" && og.nodeKind !== "worker_agent") {
           errors.push(
-            `org step "${step.id}" needs nodeKind ManagerAgent | WorkerAgent to hire`,
+            `org step "${step.id}" needs nodeKind manager_agent | worker_agent to hire`,
           );
         }
+      } else {
+        requireAddress(errors, og.node, `org step "${step.id}" node`);
+      }
+      if (og.action === "reparent") {
+        requireAddress(errors, og.parent, `org step "${step.id}" parent`);
       }
       if (og.action === "set-cap" && !og.cap?.trim()) {
         errors.push(`org step "${step.id}" needs a cap`);

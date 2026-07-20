@@ -42,10 +42,10 @@ describe("flows surface", () => {
     const { surface } = makeSurface(createMemoryFlowStore());
     const def = flow("t", "Test").tool("org", "lacrew_get_org_tree").build();
     await surface.save(def);
-    assert.equal(surface.list().length, 1);
+    assert.equal((await surface.list()).length, 1);
     await assert.rejects(surface.save({ id: "bad", name: "", steps: [] }), /invalid_flow/);
     assert.ok(await surface.remove("t"));
-    assert.equal(surface.list().length, 0);
+    assert.equal((await surface.list()).length, 0);
   });
 
   it("runs a saved flow, keeps the run ring, and records audit events", async () => {
@@ -85,7 +85,7 @@ describe("flows surface", () => {
     const second = makeSurface(store);
     const counts = await second.surface.hydrate();
     assert.deepEqual(counts, { flows: 1, runs: 1 });
-    assert.equal(second.surface.list()[0]!.id, "keep");
+    assert.equal((await second.surface.list())[0]!.id, "keep");
     assert.equal(second.surface.runs()[0]!.flowId, "keep");
   });
 
@@ -113,7 +113,7 @@ describe("flows surface", () => {
         .model("say", { prompt: "ping" })
         .build(),
     );
-    const def = surface.list().find((f) => f.id === "cron-pulse")!;
+    const def = (await surface.list()).find((f) => f.id === "cron-pulse")!;
     await surface.save({ ...def, trigger: "cron", schedule: "*/5 * * * *" });
 
     const matching = new Date(Date.UTC(2026, 6, 20, 12, 10)); // :10 matches */5
