@@ -24,7 +24,10 @@ export function createRuntimeMcpBackend(
         value: intent.value.toString(),
       })),
     proposeIntent: async (input) => {
-      const { intentId, verdict, txHash } = await runtime.propose(input);
+      const { intentId, verdict, txHash } = await runtime.propose({
+        ...input,
+        ceiling: actor.ceiling,
+      });
       return { intentId, verdict, txHash };
     },
     resolveIntent: async (intentId, approved) => {

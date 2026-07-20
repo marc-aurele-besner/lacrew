@@ -128,9 +128,11 @@ export class CrewRuntime {
   readonly mode: RuntimeMode;
   readonly chainId: number | null;
   /**
-   * One session per agent, keyed by lowercased address. A flow runs as its
-   * invoking principal, so the runtime cannot share a single key across agents:
-   * the chain binds each session key to exactly one agent.
+   * Sessions keyed by agent *and* the limits they were issued under. A flow runs
+   * as its invoking principal, so a single key can't be shared across agents —
+   * the chain binds each key to exactly one agent. Keying on limits too matters
+   * for scope ceilings: reusing a cached wide key for a tighter-scoped run would
+   * silently hand back the authority the ceiling is supposed to remove.
    * Private keys stay in this map and never reach the store or audit payloads.
    */
   private readonly sessions = new Map<
@@ -173,9 +175,14 @@ export class CrewRuntime {
    * Boot (or rotate) a session key for `agent` (default: the crew worker).
    * Onchain: ephemeral key + SessionRegistry.
    */
-  async boot(agent?: `0x${string}`): Promise<SessionKey> {
+  async boot(
+    agent?: `0x${string}`,
+    /** Upper bound for this session's maxValue (a flow's scope ceiling). */
+    limits?: { maxValue?: bigint },
+  ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
-    const key = forAgent.toLowerCase();
+    const ceiling = limits?.maxValue;
+    const key = this.sessionCacheKey(forAgent, ceiling);
     const held = this.sessions.get(key);
     if (held && !isSessionExpired(held.session)) {
       return held.session;
@@ -186,7 +193,14 @@ export class CrewRuntime {
         agent: forAgent,
         scopes: ["spend:whitelist", "propose:intent"],
       });
-      const maxValue = this.sessionMaxValue();
+      // The chain enforces maxValue on every propose, so the ceiling becomes a
+      // real limit rather than a check the orchestrator has to remember.
+      const maxValue =
+        ceiling === undefined
+          ? this.sessionMaxValue()
+          : ceiling < this.sessionMaxValue()
+            ? ceiling
+            : this.sessionMaxValue();
       const allowedTarget = this.sessionAllowedTarget();
       const { sessionId, txHash } = await this.client.issueSession({
         agent: ephemeral.agent,
@@ -249,6 +263,30 @@ export class CrewRuntime {
     return session;
   }
 
+  /** Distinct limit sets need distinct keys; see the `sessions` map comment. */
+  private sessionCacheKey(agent: `0x${string}`, maxValue?: bigint): string {
+    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}`;
+  }
+
+  /**
+   * The session maxValue a run should get: the smaller of the principal's own
+   * spend cap and the scope's. Undefined when there is no ceiling to apply or
+   * no SpendCapPolicy to read.
+   */
+  async ceilingMaxValue(
+    principal: `0x${string}`,
+    ceiling?: `0x${string}`,
+  ): Promise<bigint | undefined> {
+    if (!ceiling || ceiling.toLowerCase() === principal.toLowerCase()) return undefined;
+    if (!isOnchainClient(this.client)) return undefined;
+    const [own, scoped] = await Promise.all([
+      this.client.capOf(principal),
+      this.client.capOf(ceiling),
+    ]);
+    if (own === undefined || scoped === undefined) return undefined;
+    return own <= scoped ? own : scoped;
+  }
+
   private addressesHasSessions(): boolean {
     return Boolean(
       isOnchainClient(this.client) && this.client.addresses.sessionRegistry,
@@ -256,9 +294,9 @@ export class CrewRuntime {
   }
 
   /** Ephemeral session account for `agent`'s onchain propose (never logged). */
-  private sessionSignerAccount(agent?: `0x${string}`) {
+  private sessionSignerAccount(agent?: `0x${string}`, maxValue?: bigint) {
     if (!this.addressesHasSessions()) return undefined;
-    const key = (agent ?? this.workerAgent).toLowerCase();
+    const key = this.sessionCacheKey(agent ?? this.workerAgent, maxValue);
     const pk = this.sessions.get(key)?.privateKey;
     if (!pk) {
       throw new Error(
@@ -334,6 +372,8 @@ export class CrewRuntime {
     agent?: `0x${string}`;
     target?: `0x${string}`;
     value: bigint;
+    /** Flow scope ceiling; caps the session key the chain will enforce. */
+    ceiling?: `0x${string}`;
   }): Promise<{
     session: SessionKey;
     intentId: string;
@@ -344,13 +384,16 @@ export class CrewRuntime {
     const target = input.target ?? this.spendTarget;
     const value = input.value;
 
-    const session = await this.boot(agent);
+    const ceilingValue = await this.ceilingMaxValue(agent, input.ceiling);
+    const session = await this.boot(agent, { maxValue: ceilingValue });
     if (isSessionExpired(session)) {
-      this.sessions.set(agent.toLowerCase(), { session: revokeSession(session) });
+      this.sessions.set(this.sessionCacheKey(agent, ceilingValue), {
+        session: revokeSession(session),
+      });
       throw new Error("Session expired; call boot() to rotate");
     }
 
-    const sessionAccount = this.sessionSignerAccount(agent);
+    const sessionAccount = this.sessionSignerAccount(agent, ceilingValue);
     const result = await this.client.proposeIntent({
       agent,
       target,

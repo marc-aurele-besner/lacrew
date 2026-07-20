@@ -582,6 +582,22 @@ export class OnchainLacrewClient {
    * cannot be undone), this is reversible: an inactive node keeps its place in
    * the chart and can be switched back on.
    */
+  /**
+   * Read an agent's spend cap from SpendCapPolicy. Used to derive session-key
+   * ceilings, where the cap must be known as a number rather than a verdict.
+   * Returns undefined when no SpendCapPolicy is deployed.
+   */
+  async capOf(agent: `0x${string}`): Promise<bigint | undefined> {
+    const addr = this.addresses.spendCapPolicy;
+    if (!addr || addr === "0x0000000000000000000000000000000000000000") return undefined;
+    return (await this.publicClient.readContract({
+      address: addr,
+      abi: spendCapPolicyAbi,
+      functionName: "capOf",
+      args: [agent],
+    })) as bigint;
+  }
+
   async proposeSetActive(input: {
     account: `0x${string}`;
     active: boolean;

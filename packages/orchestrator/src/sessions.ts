@@ -9,6 +9,9 @@ import { DEFAULT_SESSION_TTL_MS, type SessionKey } from "@lacrew/core";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { keccak256, toBytes } from "viem";
 
+/** Monotonic suffix so mock session ids stay unique within a millisecond. */
+let mockSessionSeq = 0;
+
 export interface IssueSessionInput {
   agent: `0x${string}`;
   scopes?: string[];
@@ -52,7 +55,10 @@ export function issueMockSession(input: IssueSessionInput): SessionKey {
   const scopes = input.scopes ?? ["propose:intent"];
   return {
     agent: input.agent,
-    keyId: `sess_mock_${Date.now().toString(36)}`,
+    // Counter as well as clock: two sessions issued in the same millisecond
+    // would otherwise share a keyId, which is the handle used to look them up
+    // and revoke them.
+    keyId: `sess_mock_${Date.now().toString(36)}_${(mockSessionSeq += 1).toString(36)}`,
     expiresAt: Date.now() + ttl,
     scopes,
     revoked: false,

@@ -47,10 +47,28 @@ wins. An org-scoped flow invoked by a junior agent still only gets that agent's
 authority, and an agent-scoped flow invoked by a manager is capped at the
 scoped agent's limits.
 
-> The ceiling is enforced by the orchestrator. The chain independently enforces
-> the invoking principal's own policy stack, which is the guarantee that
-> actually protects the treasury: a compromised orchestrator can ignore a
-> flow's scope cap, but never the principal's policy.
+### How the ceiling is enforced
+
+For **spend value**, the ceiling is enforced onchain. Before a scoped run
+proposes anything, the orchestrator issues that run a session key whose
+`maxValue` is `min(principal cap, scope cap)`, read from `SpendCapPolicy`.
+`EscalationRouter` checks every propose against the key's limits, so an
+over-ceiling spend reverts with `SessionValueExceeded` — the chain refuses it,
+not the orchestrator. Sessions are cached per `(agent, limits)`, so a wide key
+issued for an unscoped run is never reused for a tighter-scoped one.
+
+Other policy dimensions — rate limits, time windows — are **not** carried by the
+session key. For those the ceiling remains an orchestrator-side check, and a
+compromised orchestrator could skip it. The principal's own stack is still
+enforced onchain in every case, which is the guarantee that protects the
+treasury.
+
+> **Trust boundary.** Session limits are only as strong as the issuer role.
+> `SessionRegistry.issue` is root-or-issuer, and the orchestrator normally holds
+> the issuer role, so a compromised orchestrator could mint itself a wider key.
+> It cannot do so silently: every issue emits an onchain event, which Guardian
+> can alert on and the root can revoke. Running the issuer as a separate key the
+> orchestrator does not hold closes this gap.
 
 ## Constitutional steps
 
