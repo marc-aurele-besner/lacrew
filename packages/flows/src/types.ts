@@ -21,6 +21,8 @@ type FlowStepBase = {
   label?: string;
   /** Free-form note shown in builders; never sent to models. */
   note?: string;
+  /** Canvas position (visual builder only; ignored by runFlow / validate / codegen). */
+  ui?: { x: number; y: number };
 };
 
 /**
