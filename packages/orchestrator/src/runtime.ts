@@ -597,6 +597,29 @@ export class CrewRuntime {
     return result;
   }
 
+  /**
+   * Propose suspending or restoring a node (OrgRegistry.setActive). Reversible,
+   * unlike proposeFire's removeNode, which also rewires children to the parent.
+   */
+  async proposeSetActive(input: {
+    account: `0x${string}`;
+    active: boolean;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    const result = await this.client.proposeSetActive(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        action: input.active ? "activate" : "deactivate",
+        txHash: "txHash" in result ? result.txHash : undefined,
+      },
+    });
+    return result;
+  }
+
   /** Propose changing a node's per-epoch grant (high tier by default). */
   async proposeSetGrant(input: {
     account: `0x${string}`;
@@ -895,9 +918,17 @@ export class CrewRuntime {
         });
         return { verdict, proposalId: r.proposalId, txHash: r.txHash };
       }
-      case "fire":
-      case "deactivate": {
+      case "fire": {
         const r = await this.proposeFire({ account: input.node!, tier });
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+      }
+      case "activate":
+      case "deactivate": {
+        const r = await this.proposeSetActive({
+          account: input.node!,
+          active: input.action === "activate",
+          tier,
+        });
         return { verdict, proposalId: r.proposalId, txHash: r.txHash };
       }
       case "reparent": {
@@ -932,8 +963,6 @@ export class CrewRuntime {
         });
         return { verdict, proposalId: r.proposalId, txHash: r.txHash };
       }
-      // TODO: "activate" needs an OrgRegistry.setActive(true) governance action;
-      // proposeFire only encodes the deactivating side.
       default:
         throw new Error(`org action "${input.action}" is not supported yet`);
     }

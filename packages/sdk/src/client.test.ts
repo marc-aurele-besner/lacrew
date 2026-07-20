@@ -85,6 +85,27 @@ describe("LacrewClient resolve recursion", () => {
     assert.equal(worker?.parent?.toLowerCase(), MOCK_ROOT.toLowerCase());
   });
 
+  it("setActive suspends and restores without rewiring children", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const off = await client.proposeSetActive({ account: MOCK_MANAGER, active: false });
+    await client.voteGovernance(off.proposalId, true);
+    await client.executeGovernance(off.proposalId);
+
+    let nodes = await client.getOrgTree();
+    assert.equal(nodes.find((n) => n.account === MOCK_MANAGER)?.active, false);
+    // Unlike fire (removeNode), a suspend leaves the reporting line intact.
+    assert.equal(
+      nodes.find((n) => n.account === MOCK_WORKER)?.parent?.toLowerCase(),
+      MOCK_MANAGER.toLowerCase(),
+    );
+
+    const on = await client.proposeSetActive({ account: MOCK_MANAGER, active: true });
+    await client.voteGovernance(on.proposalId, true);
+    await client.executeGovernance(on.proposalId);
+    nodes = await client.getOrgTree();
+    assert.equal(nodes.find((n) => n.account === MOCK_MANAGER)?.active, true);
+  });
+
   it("streams mock epochs into allowances", async () => {
     const client = createLacrewClient({ useMock: true });
     assert.equal(await client.getCurrentEpoch(), 0);

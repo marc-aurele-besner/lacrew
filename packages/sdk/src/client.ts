@@ -47,6 +47,7 @@ export type ResolveResult = {
 type MockProposalAction =
   | { kind: "hire"; account: `0x${string}`; nodeKind: OrgNode["kind"]; parent: `0x${string}`; label: string }
   | { kind: "fire"; account: `0x${string}` }
+  | { kind: "setActive"; account: `0x${string}`; active: boolean }
   | { kind: "reparent"; account: `0x${string}`; newParent: `0x${string}` }
   | { kind: "setGrant"; account: `0x${string}`; amount: bigint }
   | { kind: "raw" };
@@ -398,6 +399,21 @@ export class LacrewClient {
     return { proposalId: proposal.id, account: input.account };
   }
 
+  async proposeSetActive(input: {
+    account: `0x${string}`;
+    active: boolean;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      input.tier ?? "low",
+      input.account,
+      { kind: "setActive", account: input.account, active: input.active },
+      { account: input.account, action: input.active ? "activate" : "deactivate" },
+    );
+    return { proposalId: proposal.id, account: input.account };
+  }
+
   async proposeReparent(input: {
     account: `0x${string}`;
     newParent: `0x${string}`;
@@ -506,6 +522,12 @@ export class LacrewClient {
           }
         }
       }
+    } else if (action?.kind === "setActive") {
+      // Reversible suspend: the node keeps its place and its children.
+      const node = this.nodes.find(
+        (n) => n.account.toLowerCase() === action.account.toLowerCase(),
+      );
+      if (node) node.active = action.active;
     } else if (action?.kind === "reparent") {
       const node = this.nodes.find(
         (n) => n.account.toLowerCase() === action.account.toLowerCase(),
