@@ -75,6 +75,26 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(await res.json(), { error: "catalogId_required" });
   });
 
+  it("refuses to register a listing without a chain", async () => {
+    const res = await buildApp().request("/marketplace/list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ catalogId: "flow-x", price: "1000000" }),
+    });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "marketplace_requires_chain" });
+  });
+
+  it("validates register input", async () => {
+    const res = await buildApp().request("/marketplace/list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ catalogId: "flow-x" }),
+    });
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "price_required" });
+  });
+
   it("404s unknown routes as JSON", async () => {
     const res = await buildApp().request("/nope");
     assert.equal(res.status, 404);

@@ -699,6 +699,37 @@ export class CrewRuntime {
     };
   }
 
+  /**
+   * Register (or reprice) a listing on MarketplacePayments.
+   *
+   * The seller is bound to the wallet that signs this, so a listing published
+   * through a self-hosted orchestrator accrues to that operator's own address —
+   * the cloud cannot redirect a seller's earnings to itself.
+   */
+  async marketplaceRegister(input: { catalogId: string; price: string }): Promise<{
+    listingId: string;
+    seller: string;
+    price: string;
+    txHash?: `0x${string}`;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("marketplace_requires_chain");
+    }
+    const price = BigInt(input.price);
+    if (price < 0n) throw new Error("price_must_be_non_negative");
+    const { txHash, listingId } = await this.client.registerListing({
+      catalogId: input.catalogId,
+      price,
+    });
+    const seller = this.client.walletClient?.account?.address ?? "";
+    this.pushAudit({
+      type: "MarketplaceListed",
+      at: new Date().toISOString(),
+      payload: { catalogId: input.catalogId, listingId, seller, price: input.price, txHash },
+    });
+    return { listingId, seller, price: input.price, txHash };
+  }
+
   /** Balance accrued to a seller (or the platform) awaiting withdrawal. */
   async marketplaceEarnings(payee: `0x${string}`): Promise<{ owed: string }> {
     if (!isOnchainClient(this.client)) return { owed: "0" };
