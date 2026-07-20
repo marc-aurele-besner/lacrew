@@ -4,9 +4,13 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "build": "node ./scripts/build.mjs",
+    "build": "typedoc && node ./scripts/build.mjs",
     "dev": "node ./scripts/build.mjs --watch",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist content/reference",
     "lint": "node -e \"process.exit(0)\""
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.20",
+    "typedoc-plugin-markdown": "^4.12.0"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../../packages/sdk/src/index.ts", "../../packages/flows/src/index.ts"],
+  "tsconfig": "../../packages/sdk/tsconfig.json",
+  "plugin": ["typedoc-plugin-markdown"],
+  "out": "content/reference",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "disableSources": true,
+  "hidePageHeader": true,
+  "hideBreadcrumbs": true,
+  "skipErrorChecking": true
+}
