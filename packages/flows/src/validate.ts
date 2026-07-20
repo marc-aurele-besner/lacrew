@@ -1,9 +1,68 @@
 import { isValidCron } from "./cron.js";
-import type { BranchStep, FlowDefinition, FlowStep, GateStep, SwitchStep } from "./types.js";
+import type {
+  AgentStep,
+  BranchStep,
+  BudgetStep,
+  FlowDefinition,
+  FlowStep,
+  GateStep,
+  GovernanceStep,
+  OrgStep,
+  SwitchStep,
+} from "./types.js";
 
 export type FlowValidationResult = { ok: boolean; errors: string[] };
 
-export const STEP_KINDS = ["model", "tool", "gate", "branch", "switch"] as const;
+export const STEP_KINDS = [
+  "model",
+  "tool",
+  "gate",
+  "branch",
+  "switch",
+  "agent",
+  "org",
+  "budget",
+  "governance",
+] as const;
+
+export const SCOPE_LEVELS = ["org", "team", "agent"] as const;
+
+export const ORG_ACTIONS = [
+  "hire",
+  "fire",
+  "reparent",
+  "activate",
+  "deactivate",
+  "set-cap",
+  "set-whitelist",
+  "set-policy",
+] as const;
+
+export const BUDGET_ACTIONS = ["set-grant", "stream-allowance", "run-epoch"] as const;
+
+export const GOVERNANCE_ACTIONS = ["propose", "vote", "veto", "execute"] as const;
+
+/** Addresses arrive from builders and marketplace JSON, so shape-check them. */
+function looksLikeAddress(value: string | undefined): boolean {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value.trim());
+}
+
+/** Interpolated fields resolve at run time, so `{{…}}` passes the address check. */
+function isInterpolated(value: string | undefined): boolean {
+  return typeof value === "string" && value.includes("{{");
+}
+
+function requireAddress(
+  errors: string[],
+  value: string | undefined,
+  what: string,
+): void {
+  if (!value?.trim()) {
+    errors.push(`${what} is required`);
+  } else if (!isInterpolated(value) && !looksLikeAddress(value)) {
+    errors.push(`${what} must be a 0x address (got "${value}")`);
+  }
+}
 
 /**
  * All outgoing edges of a step (undefined = fall-through, null = stop).
@@ -14,8 +73,12 @@ export function stepEdges(step: FlowStep): Array<string | null | undefined> {
   switch (step.kind) {
     case "model":
     case "tool":
+    case "agent":
+    case "governance":
       return [step.next];
     case "gate":
+    case "org":
+    case "budget":
       return [step.onAllow, step.onEscalate, step.onDeny];
     case "branch":
       return [step.onTrue, step.onFalse];
@@ -47,6 +110,14 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     errors.push(
       `cron trigger needs a valid 5-field schedule (got "${def.schedule ?? ""}")`,
     );
+  }
+  if (def.scope) {
+    const level = def.scope.level;
+    if (!SCOPE_LEVELS.includes(level)) {
+      errors.push(`unknown scope level "${level}" (${SCOPE_LEVELS.join(" | ")})`);
+    } else if (level !== "org") {
+      requireAddress(errors, def.scope.ref, `scope.ref for a "${level}"-scoped flow`);
+    }
   }
 
   const ids = new Set<string>();
@@ -84,6 +155,68 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
             errors.push(`switch step "${step.id}" case ${i} needs a value`);
           }
         });
+      }
+    }
+    if (step.kind === "agent") {
+      const ag = step as AgentStep;
+      if (ag.action !== "invoke") {
+        errors.push(`agent step "${step.id}" has unknown action "${ag.action}" (invoke)`);
+      }
+      requireAddress(errors, ag.agent, `agent step "${step.id}" agent`);
+      if (!ag.prompt?.trim() && !ag.flowId?.trim()) {
+        errors.push(`agent step "${step.id}" needs a prompt or a flowId`);
+      }
+    }
+    if (step.kind === "org") {
+      const og = step as OrgStep;
+      if (!ORG_ACTIONS.includes(og.action)) {
+        errors.push(
+          `org step "${step.id}" has unknown action "${og.action}" (${ORG_ACTIONS.join(" | ")})`,
+        );
+      }
+      requireAddress(errors, og.node, `org step "${step.id}" node`);
+      if (og.action === "reparent") {
+        requireAddress(errors, og.parent, `org step "${step.id}" parent`);
+      }
+      if (og.action === "hire") {
+        requireAddress(errors, og.parent, `org step "${step.id}" parent`);
+        if (og.nodeKind !== "ManagerAgent" && og.nodeKind !== "WorkerAgent") {
+          errors.push(
+            `org step "${step.id}" needs nodeKind ManagerAgent | WorkerAgent to hire`,
+          );
+        }
+      }
+      if (og.action === "set-cap" && !og.cap?.trim()) {
+        errors.push(`org step "${step.id}" needs a cap`);
+      }
+      if (og.action === "set-whitelist") {
+        requireAddress(errors, og.target, `org step "${step.id}" target`);
+      }
+      if (og.action === "set-policy") {
+        requireAddress(errors, og.target, `org step "${step.id}" policy module`);
+      }
+    }
+    if (step.kind === "budget") {
+      const bg = step as BudgetStep;
+      if (!BUDGET_ACTIONS.includes(bg.action)) {
+        errors.push(
+          `budget step "${step.id}" has unknown action "${bg.action}" (${BUDGET_ACTIONS.join(" | ")})`,
+        );
+      } else if (bg.action !== "run-epoch") {
+        requireAddress(errors, bg.node, `budget step "${step.id}" node`);
+        if (!bg.amount?.trim()) errors.push(`budget step "${step.id}" needs an amount`);
+      }
+    }
+    if (step.kind === "governance") {
+      const gv = step as GovernanceStep;
+      if (!GOVERNANCE_ACTIONS.includes(gv.action)) {
+        errors.push(
+          `governance step "${step.id}" has unknown action "${gv.action}" (${GOVERNANCE_ACTIONS.join(" | ")})`,
+        );
+      } else if (gv.action === "propose") {
+        requireAddress(errors, gv.target, `governance step "${step.id}" target`);
+      } else if (!gv.proposalId?.trim()) {
+        errors.push(`governance step "${step.id}" needs a proposalId to ${gv.action}`);
       }
     }
   }

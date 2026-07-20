@@ -1,6 +1,7 @@
 import type {
   FlowBackend,
   FlowDefinition,
+  FlowPrincipal,
   FlowRunResult,
   FlowStep,
   FlowStepTrace,
@@ -49,11 +50,69 @@ function truncate(s: string, n = 160): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
+/** Shared edge resolution for every policy-gated kind (gate / org / budget). */
+function routeVerdict(
+  def: FlowDefinition,
+  step: {
+    id: string;
+    onAllow?: string | null;
+    onEscalate?: string | null;
+    onDeny?: string | null;
+  },
+  verdict: Verdict,
+): string | null {
+  const edge =
+    verdict === "ALLOW"
+      ? step.onAllow
+      : verdict === "ESCALATE"
+        ? step.onEscalate
+        : step.onDeny;
+  // ALLOW falls through by default; ESCALATE/DENY stop unless routed.
+  return edge !== undefined ? edge : verdict === "ALLOW" ? fallThrough(def, step.id) : null;
+}
+
+/**
+ * Record a policy-gated tool result on the trace. An unreadable verdict becomes
+ * ESCALATE so an unrecognised backend response can never read as approval.
+ */
+function recordVerdict(
+  trace: FlowStepTrace,
+  outputs: StepOutputs,
+  stepId: string,
+  result: Record<string, unknown> | undefined,
+): Verdict {
+  const verdict = normalizeVerdict(result?.verdict) ?? "ESCALATE";
+  outputs[stepId] = {
+    text: verdict,
+    json: JSON.stringify(result ?? {}),
+    verdict,
+  };
+  trace.output = result;
+  trace.verdict = verdict;
+  return verdict;
+}
+
+/** "wrote onchain (0x…)" / "raised proposal 7" / "denied by policy". */
+function verdictSummary(what: string, verdict: Verdict, result?: Record<string, unknown>): string {
+  if (verdict === "ALLOW") {
+    return `${what} applied${result?.txHash ? ` (${result.txHash})` : ""}`;
+  }
+  if (verdict === "ESCALATE") {
+    return `${what} raised for approval${result?.proposalId ? ` (proposal ${result.proposalId})` : result?.intentId ? ` (intent ${result.intentId})` : ""}`;
+  }
+  return `${what} denied by policy`;
+}
+
 export type RunFlowOptions = {
   input?: string;
   runId?: string;
   /** What fired the run; recorded on the result (default "manual"). */
   trigger?: FlowDefinition["trigger"];
+  /**
+   * Identity the run executes as. Recorded on the result and supplied to the
+   * backend as the `agent` default for policy-gated steps.
+   */
+  principal?: FlowPrincipal;
   /** Marks the whole run as mocked in the result (set by mock backends). */
   mocked?: boolean;
   /** Observer invoked after each step completes — live progress for CLIs/UIs. */
@@ -150,33 +209,19 @@ export async function runFlow(
             value: interpolate(step.value, ctx),
           };
           if (step.agent) args.agent = interpolate(step.agent, ctx);
+          else if (opts.principal) args.agent = opts.principal.agent;
           if (step.target) args.target = interpolate(step.target, ctx);
           const result = (await backend.callTool("lacrew_propose_intent", args)) as
             | Record<string, unknown>
             | undefined;
-          const verdict = normalizeVerdict(result?.verdict) ?? "ESCALATE";
-          outputs[step.id] = {
-            text: verdict,
-            json: JSON.stringify(result ?? {}),
-            verdict,
-          };
-          trace.output = result;
-          trace.verdict = verdict;
+          const verdict = recordVerdict(trace, outputs, step.id, result);
           trace.summary =
             verdict === "ALLOW"
               ? `spend allowed under policy${result?.txHash ? ` (${result.txHash})` : ""}`
               : verdict === "ESCALATE"
                 ? `escalated up the reporting line${result?.intentId ? ` (intent ${result.intentId})` : ""}`
                 : "denied by policy";
-          const edge =
-            verdict === "ALLOW"
-              ? step.onAllow
-              : verdict === "ESCALATE"
-                ? step.onEscalate
-                : step.onDeny;
-          // ALLOW falls through by default; ESCALATE/DENY stop unless routed.
-          trace.next =
-            edge !== undefined ? edge : verdict === "ALLOW" ? fallThrough(def, step.id) : null;
+          trace.next = routeVerdict(def, step, verdict);
           break;
         }
         case "branch": {
@@ -232,6 +277,66 @@ export async function runFlow(
           trace.next = next;
           break;
         }
+        case "agent": {
+          const agent = interpolate(step.agent, ctx);
+          const result = (await backend.callTool("lacrew_invoke_agent", {
+            agent,
+            ...(step.prompt ? { prompt: interpolate(step.prompt, ctx) } : {}),
+            ...(step.flowId ? { flowId: step.flowId } : {}),
+          })) as Record<string, unknown> | undefined;
+          const json = JSON.stringify(result ?? {}, (_k, v) =>
+            typeof v === "bigint" ? v.toString() : v,
+          );
+          outputs[step.id] = { text: String(result?.text ?? json), json };
+          trace.output = result;
+          trace.summary = `delegated to ${truncate(agent, 42)} → ${truncate(String(result?.text ?? json), 120)}`;
+          trace.next = step.next === undefined ? fallThrough(def, step.id) : step.next;
+          break;
+        }
+        case "org": {
+          const result = (await backend.callTool("lacrew_org_action", {
+            action: step.action,
+            node: interpolate(step.node, ctx),
+            ...(step.parent ? { parent: interpolate(step.parent, ctx) } : {}),
+            ...(step.nodeKind ? { nodeKind: step.nodeKind } : {}),
+            ...(step.cap ? { cap: interpolate(step.cap, ctx) } : {}),
+            ...(step.target ? { target: interpolate(step.target, ctx) } : {}),
+            ...(step.allowed === undefined ? {} : { allowed: step.allowed }),
+          })) as Record<string, unknown> | undefined;
+          const verdict = recordVerdict(trace, outputs, step.id, result);
+          trace.summary = verdictSummary(step.action, verdict, result);
+          trace.next = routeVerdict(def, step, verdict);
+          break;
+        }
+        case "budget": {
+          const result = (await backend.callTool("lacrew_set_budget", {
+            action: step.action,
+            ...(step.node ? { node: interpolate(step.node, ctx) } : {}),
+            ...(step.amount ? { amount: interpolate(step.amount, ctx) } : {}),
+          })) as Record<string, unknown> | undefined;
+          const verdict = recordVerdict(trace, outputs, step.id, result);
+          trace.summary = verdictSummary(step.action, verdict, result);
+          trace.next = routeVerdict(def, step, verdict);
+          break;
+        }
+        case "governance": {
+          const result = (await backend.callTool("lacrew_governance", {
+            action: step.action,
+            ...(step.proposalId ? { proposalId: interpolate(step.proposalId, ctx) } : {}),
+            ...(step.support === undefined ? {} : { support: step.support }),
+            ...(step.tier ? { tier: step.tier } : {}),
+            ...(step.target ? { target: interpolate(step.target, ctx) } : {}),
+            ...(step.data ? { data: interpolate(step.data, ctx) } : {}),
+          })) as Record<string, unknown> | undefined;
+          const json = JSON.stringify(result ?? {}, (_k, v) =>
+            typeof v === "bigint" ? v.toString() : v,
+          );
+          outputs[step.id] = { text: String(result?.proposalId ?? json), json };
+          trace.output = result;
+          trace.summary = `${step.action}${result?.proposalId ? ` proposal ${result.proposalId}` : ""}${result?.txHash ? ` (${result.txHash})` : ""}`;
+          trace.next = step.next === undefined ? fallThrough(def, step.id) : step.next;
+          break;
+        }
       }
     } catch (err) {
       trace.status = "error";
@@ -257,6 +362,7 @@ export async function runFlow(
     flowName: def.name,
     status,
     trigger: opts.trigger ?? "manual",
+    principal: opts.principal,
     startedAt,
     finishedAt: new Date().toISOString(),
     input: opts.input,
@@ -298,6 +404,44 @@ export function createMockFlowBackend(): FlowBackend {
         }
         case "lacrew_approve_intent":
           return { intentId: String(args.intentId ?? ""), approved: Boolean(args.approved), mocked: true };
+        case "lacrew_check_policy": {
+          const value = BigInt(String(args.value ?? "0"));
+          return { verdict: value > 100_000_000n ? "ESCALATE" : "ALLOW", mocked: true };
+        }
+        case "lacrew_invoke_agent":
+          return {
+            agent: String(args.agent ?? ""),
+            text: `[mock delegate ${String(args.agent ?? "")}] ${truncate(String(args.prompt ?? args.flowId ?? ""), 80)}`,
+            mocked: true,
+          };
+        case "lacrew_org_action": {
+          // Structural changes are constitutional: the mock always escalates.
+          return {
+            verdict: "ESCALATE" as Verdict,
+            action: String(args.action ?? ""),
+            proposalId: `mock-proposal-${String(args.action ?? "")}`,
+            mocked: true,
+          };
+        }
+        case "lacrew_set_budget": {
+          const amount = BigInt(String(args.amount ?? "0"));
+          const verdict: Verdict = amount > 100_000_000n ? "ESCALATE" : "ALLOW";
+          return {
+            verdict,
+            action: String(args.action ?? ""),
+            ...(verdict === "ESCALATE"
+              ? { proposalId: `mock-proposal-${amount}` }
+              : { txHash: `0xmock${amount}` }),
+            mocked: true,
+          };
+        }
+        case "lacrew_governance":
+          return {
+            action: String(args.action ?? ""),
+            proposalId: String(args.proposalId ?? "mock-proposal-1"),
+            txHash: "0xmockgov",
+            mocked: true,
+          };
         default:
           throw new Error(`Unknown mock tool: ${name}`);
       }
