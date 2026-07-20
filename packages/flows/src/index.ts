@@ -5,3 +5,4 @@ export { flow, FlowBuilder } from "./builder.js";
 export { flowToCode, flowRunSnippet } from "./codegen.js";
 export { flowTemplates, getFlowTemplate } from "./templates.js";
 export { createFlowsClient, type FlowsClient, type FlowsClientOptions } from "./client.js";
+export { cronMatches, isValidCron, parseCron } from "./cron.js";

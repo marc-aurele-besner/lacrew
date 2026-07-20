@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/index.test.ts"
+    "test": "node --import tsx --test src/index.test.ts src/cron.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",

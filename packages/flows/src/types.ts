@@ -79,7 +79,7 @@ export type BranchStep = FlowStepBase & {
 export type FlowStep = ModelStep | ToolStep | GateStep | BranchStep;
 export type FlowStepKind = FlowStep["kind"];
 
-export type FlowTrigger = "manual" | "epoch";
+export type FlowTrigger = "manual" | "epoch" | "cron";
 
 export type FlowDefinition = {
   id: string;
@@ -91,6 +91,8 @@ export type FlowDefinition = {
    * after allowances stream, turning the pipeline into an automation).
    */
   trigger?: FlowTrigger;
+  /** 5-field UTC cron expression; required when trigger is "cron". */
+  schedule?: string;
   /** Entry step id; defaults to the first declared step. */
   entry?: string;
   steps: FlowStep[];

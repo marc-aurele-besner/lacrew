@@ -129,6 +129,17 @@ const backend = createLangChainFlowBackend({ runnable: myChain });
 const result = await runFlow(budgetGuardedSpend, backend);
 ```
 
+## Triggers
+
+Flows fire three ways: `manual` (default), `epoch` (after every payroll
+stream, even in mock mode), or `cron` with a 5-field UTC `schedule`
+expression (`*/5 * * * *` style — minute resolution, fired at most once per
+matching minute by the orchestrator's provider-agnostic scheduler):
+
+```json
+{ "trigger": "cron", "schedule": "0 9 * * 1-5" }
+```
+
 ## Templates and the marketplace
 
 `flowTemplates` ships first-party starters (treasury pulse, budget-guarded
