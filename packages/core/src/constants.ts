@@ -72,6 +72,7 @@ export const ADDRESS_ENV_VARS = {
   timeWindowPolicy: "LACREW_TIME_WINDOW_POLICY",
   epochStreamer: "LACREW_EPOCH_STREAMER",
   sessionRegistry: "LACREW_SESSION_REGISTRY",
+  marketplacePayments: "LACREW_MARKETPLACE_PAYMENTS",
   humanRoot: "LACREW_HUMAN_ROOT",
   manager: "LACREW_MANAGER",
   worker: "LACREW_WORKER",

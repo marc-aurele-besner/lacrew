@@ -64,6 +64,11 @@ const CONTRACTS = [
     file: "SessionRegistry.sol/SessionRegistry.json",
     exportName: "sessionRegistryAbi",
   },
+  {
+    name: "MarketplacePayments",
+    file: "MarketplacePayments.sol/MarketplacePayments.json",
+    exportName: "marketplacePaymentsAbi",
+  },
 ];
 
 function loadAbi(relPath) {
