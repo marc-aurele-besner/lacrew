@@ -143,3 +143,98 @@ describe("flows surface", () => {
   });
 });
 
+
+/** Surface with a live-shaped MCP backend, so `agent` steps route to delegate. */
+function makeDelegatingSurface() {
+  const runtime = new CrewRuntime();
+  const stub = {
+    getOrgTree: async () => [],
+    listPendingIntents: async () => [],
+    proposeIntent: async () => ({ verdict: "ALLOW" }),
+    resolveIntent: async () => ({}),
+  };
+  return createFlowsSurface({
+    runtime,
+    model: new MemoryModelProvider(),
+    mcpBackend: stub,
+  });
+}
+
+const DELEGATE = "0x1111111111111111111111111111111111111111";
+
+describe("flow delegation guards", () => {
+  it("refuses a flow that delegates back into itself", async () => {
+    // validateFlow only rejects cycles between a flow's own edges; a flowId
+    // reference is invisible to it, so an unguarded self-delegation would
+    // recurse until the process dies.
+    const surface = makeDelegatingSurface();
+    await surface.save({
+      id: "loop",
+      name: "Loop",
+      steps: [
+        { id: "again", kind: "agent", action: "invoke", agent: DELEGATE, flowId: "loop", next: null },
+      ],
+    });
+    const run = await surface.run({ id: "loop" });
+    assert.equal(run.status, "error");
+    assert.match(run.steps[0]!.error ?? "", /flow_delegation_cycle/);
+  });
+
+  it("refuses an indirect delegation cycle", async () => {
+    const surface = makeDelegatingSurface();
+    for (const [id, target] of [
+      ["a", "b"],
+      ["b", "a"],
+    ]) {
+      await surface.save({
+        id: id!,
+        name: id!,
+        steps: [
+          { id: "go", kind: "agent", action: "invoke", agent: DELEGATE, flowId: target!, next: null },
+        ],
+      });
+    }
+    const run = await surface.run({ id: "a" });
+    assert.equal(run.status, "error");
+    // Surfaces through the delegate wrapper, naming the cycle underneath.
+    assert.match(run.steps[0]!.error ?? "", /flow_delegate_failed|flow_delegation_cycle/);
+  });
+
+  it("bounds acyclic delegation depth", async () => {
+    const surface = makeDelegatingSurface();
+    // A chain longer than MAX_DELEGATION_DEPTH: no cycle, but still unbounded work.
+    const ids = ["d0", "d1", "d2", "d3", "d4", "d5", "d6"];
+    for (let i = 0; i < ids.length; i += 1) {
+      const next = ids[i + 1];
+      await surface.save({
+        id: ids[i]!,
+        name: ids[i]!,
+        steps: next
+          ? [{ id: "go", kind: "agent", action: "invoke", agent: DELEGATE, flowId: next, next: null }]
+          : [{ id: "done", kind: "model", prompt: "end", next: null }],
+      });
+    }
+    const run = await surface.run({ id: "d0" });
+    assert.equal(run.status, "error");
+    assert.match(run.steps[0]!.error ?? "", /flow_delegate_failed|flow_delegation_too_deep/);
+  });
+
+  it("allows delegation within the depth bound", async () => {
+    const surface = makeDelegatingSurface();
+    await surface.save({
+      id: "leaf",
+      name: "Leaf",
+      steps: [{ id: "done", kind: "model", prompt: "leaf work", next: null }],
+    });
+    await surface.save({
+      id: "root",
+      name: "Root",
+      steps: [
+        { id: "go", kind: "agent", action: "invoke", agent: DELEGATE, flowId: "leaf", next: null },
+      ],
+    });
+    const run = await surface.run({ id: "root" });
+    assert.equal(run.status, "completed");
+    assert.equal((run.steps[0]!.output as { status: string }).status, "completed");
+  });
+});
