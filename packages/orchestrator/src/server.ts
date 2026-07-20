@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { getRequestListener } from "@hono/node-server";
-import { checkDbReady, getDatabaseUrl } from "@lacrew/db";
+import { checkDbReady, getDatabaseUrl, runDbMigrations } from "@lacrew/db";
 import { getOrchToken } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
@@ -42,8 +42,22 @@ const app = createOrchestratorApp({
 
 const server = createServer(getRequestListener(app.fetch));
 
+let migrationsRan = false;
+
 async function main(): Promise<void> {
   dbReady = await checkDbReady();
+  if (dbReady) {
+    // Before anything queries. A pulled-but-unapplied migration otherwise
+    // surfaces as a bare "column does not exist" at hydrate time, which reads
+    // like a code bug instead of a schema that was never migrated.
+    try {
+      const migrated = await runDbMigrations();
+      if (!migrated.skipped) migrationsRan = true;
+    } catch (err) {
+      console.error("[@lacrew/orchestrator] migrations failed:", err);
+      dbReady = false;
+    }
+  }
   if (dbReady) {
     const replayed = await runtime.hydrateAudit();
     if (replayed > 0) {
@@ -90,7 +104,8 @@ async function main(): Promise<void> {
         (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
         ` model=${model.name}` +
         ` auth=${authToken ? "on" : "off"}` +
-        ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}`,
+        ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}` +
+        ` migrations=${migrationsRan ? "ok" : "skipped"}`,
     );
   });
 }

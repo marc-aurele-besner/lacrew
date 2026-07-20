@@ -24,4 +24,5 @@ export {
   type SessionRow,
   type IntentRow,
 } from "./runtime.js";
+export { runDbMigrations, type MigrateResult } from "./migrate.js";
 export * from "./schema/index.js";
