@@ -66,6 +66,35 @@ contract MarketplaceHandler is Test {
         ghostPaidIn += price;
     }
 
+    /// The org-funded rail: funds are pushed in, then settlement is called.
+    function buyViaRouter(uint256 buyerSeed, uint256 idSeed, bool overDeliver) external {
+        address router = market.settlementRouter();
+        if (router == address(0)) return;
+        address buyer = buyers[buyerSeed % buyers.length];
+        bytes32 id = listingIds[idSeed % listingIds.length];
+        (address seller, uint256 price, bool active) = market.listings(id);
+        if (seller == address(0) || !active || seller == buyer) return;
+        if (market.hasPurchased(id, buyer)) return;
+
+        uint256 sent = overDeliver ? price + 1e6 : price;
+        if (sent > 0) {
+            vm.prank(buyers[0]);
+            usdc.transfer(address(market), sent);
+        }
+        ghostPaidIn += sent;
+
+        vm.prank(router);
+        market.purchaseFor(id, buyer, price);
+    }
+
+    /// Governance recovering stray/over-delivered funds must not break solvency.
+    function sweep() external {
+        if (market.unallocatedBalance() == 0) return;
+        vm.prank(governor);
+        uint256 amount = market.sweepUnallocated(platform);
+        ghostPaidOut += amount;
+    }
+
     function delistOne(uint256 sellerSeed, uint256 idSeed) external {
         address seller = sellers[sellerSeed % sellers.length];
         bytes32 id = listingIds[idSeed % listingIds.length];
@@ -117,6 +146,10 @@ contract MarketplacePaymentsInvariantTest is StdInvariant, Test {
             vm.prank(buyer);
             usdc.approve(address(market), type(uint256).max);
         }
+
+        // Exercise the org-funded rail alongside the direct one.
+        vm.prank(governor);
+        market.setSettlementRouter(makeAddr("router"));
 
         targetContract(address(handler));
     }

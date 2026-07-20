@@ -4372,6 +4372,29 @@ export const marketplacePaymentsAbi = [
   },
   {
     "type": "function",
+    "name": "purchaseFor",
+    "inputs": [
+      {
+        "name": "listingId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "purchasedAt",
     "inputs": [
       {
@@ -4478,6 +4501,51 @@ export const marketplacePaymentsAbi = [
       }
     ],
     "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setSettlementRouter",
+    "inputs": [
+      {
+        "name": "settlementRouter_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settlementRouter",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sweepUnallocated",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -4660,6 +4728,38 @@ export const marketplacePaymentsAbi = [
   },
   {
     "type": "event",
+    "name": "SettlementRouterUpdated",
+    "inputs": [
+      {
+        "name": "settlementRouter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "UnallocatedSwept",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Withdrawn",
     "inputs": [
       {
@@ -4706,6 +4806,22 @@ export const marketplacePaymentsAbi = [
         "name": "max",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FundsNotDelivered",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "delivered",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -4760,6 +4876,17 @@ export const marketplacePaymentsAbi = [
   },
   {
     "type": "error",
+    "name": "NotSettlementRouter",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NothingOwed",
     "inputs": [
       {
@@ -4768,6 +4895,11 @@ export const marketplacePaymentsAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NothingToSweep",
+    "inputs": []
   },
   {
     "type": "error",

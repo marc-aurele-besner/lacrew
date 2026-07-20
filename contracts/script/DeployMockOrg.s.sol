@@ -131,6 +131,11 @@ contract DeployMockOrg is Script {
         d.marketplace = new MarketplacePayments(
             address(d.usdc), vm.envOr("PLATFORM_FEE_RECIPIENT", humanRoot), humanRoot, PLATFORM_FEE_BPS
         );
+        // An org buys a listing as a normal policy-checked spend: the router pays the
+        // marketplace and then calls purchaseFor, so it must be both a whitelisted target
+        // and the authorised settler.
+        d.marketplace.setSettlementRouter(address(d.router));
+        d.whitelist.setAllowed(address(d.marketplace), true);
 
         // Human root decides high-tier final say; manager is review-only agent seat.
         // Low-tier quorum 2 still requires root + manager dual-sign for hires.

@@ -321,6 +321,132 @@ contract MarketplacePaymentsTest is Test {
         market.purchase(LISTING, 100 * ONE);
     }
 
+    // ——— Org-funded rail (purchaseFor) ———
+
+    /// The router pays the target first, then calls it. Simulated here by transferring
+    /// the price in before calling purchaseFor.
+    function _deliverAndSettle(bytes32 id, address buyer, uint256 price, uint256 maxPrice)
+        private
+    {
+        address router = market.settlementRouter();
+        usdc.mint(router, price);
+        vm.prank(router);
+        usdc.transfer(address(market), price);
+        vm.prank(router);
+        market.purchaseFor(id, buyer, maxPrice);
+    }
+
+    function _wireRouter() private returns (address router) {
+        router = makeAddr("router");
+        vm.prank(governor);
+        market.setSettlementRouter(router);
+    }
+
+    function test_purchaseForSettlesFromDeliveredFunds() public {
+        _wireRouter();
+        _deliverAndSettle(LISTING, buyer, 100 * ONE, 100 * ONE);
+
+        assertTrue(market.hasPurchased(LISTING, buyer), "buyer holds the receipt, not the router");
+        assertEq(market.owed(seller), 80 * ONE);
+        assertEq(market.owed(platform), 20 * ONE);
+        assertEq(market.unallocatedBalance(), 0, "delivery exactly consumed");
+    }
+
+    /// Without delivered funds the contract would credit debt it cannot pay.
+    function test_revertsPurchaseForWithoutDeliveredFunds() public {
+        address router = _wireRouter();
+        vm.prank(router);
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketplacePayments.FundsNotDelivered.selector, 100 * ONE, 0)
+        );
+        market.purchaseFor(LISTING, buyer, 100 * ONE);
+    }
+
+    /// A stray balance must not let a caller settle a purchase for free.
+    function test_revertsPurchaseForFromStranger() public {
+        _wireRouter();
+        usdc.mint(address(market), 100 * ONE);
+        vm.prank(other);
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketplacePayments.NotSettlementRouter.selector, other)
+        );
+        market.purchaseFor(LISTING, buyer, 100 * ONE);
+    }
+
+    /// A seller's accrued balance must never be reachable as "delivered" funds.
+    function test_purchaseForCannotConsumeAccruedSellerBalance() public {
+        address router = _wireRouter();
+
+        // Direct purchase leaves 100 owed to seller+platform, held by the contract.
+        vm.prank(buyer);
+        market.purchase(LISTING, 100 * ONE);
+        assertEq(usdc.balanceOf(address(market)), 100 * ONE);
+        assertEq(market.unallocatedBalance(), 0, "all of it is spoken for");
+
+        bytes32 second = keccak256("second");
+        vm.prank(seller);
+        market.registerListing(second, 100 * ONE);
+
+        // No new funds delivered — the held balance belongs to payees, not this purchase.
+        vm.prank(router);
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketplacePayments.FundsNotDelivered.selector, 100 * ONE, 0)
+        );
+        market.purchaseFor(second, other, 100 * ONE);
+    }
+
+    function test_purchaseForRespectsMaxPrice() public {
+        address router = _wireRouter();
+        vm.prank(seller);
+        market.registerListing(LISTING, 500 * ONE);
+
+        usdc.mint(router, 500 * ONE);
+        vm.prank(router);
+        usdc.transfer(address(market), 500 * ONE);
+        vm.prank(router);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MarketplacePayments.PriceExceedsMax.selector, 500 * ONE, 100 * ONE
+            )
+        );
+        market.purchaseFor(LISTING, buyer, 100 * ONE);
+    }
+
+    function test_sweepRecoversOverDeliveryOnly() public {
+        address router = _wireRouter();
+        usdc.mint(router, 150 * ONE);
+        vm.prank(router);
+        usdc.transfer(address(market), 150 * ONE); // 50 more than the price
+        vm.prank(router);
+        market.purchaseFor(LISTING, buyer, 100 * ONE);
+
+        assertEq(market.unallocatedBalance(), 50 * ONE);
+
+        vm.prank(governor);
+        uint256 swept = market.sweepUnallocated(platform);
+        assertEq(swept, 50 * ONE);
+        assertEq(usdc.balanceOf(address(market)), 100 * ONE, "payee balances untouched");
+        assertEq(market.totalOwed(), 100 * ONE);
+
+        // Payees can still be made whole after a sweep.
+        vm.prank(seller);
+        market.withdraw();
+        assertEq(usdc.balanceOf(seller), 80 * ONE);
+    }
+
+    function test_revertsSweepByStranger() public {
+        usdc.mint(address(market), 10 * ONE);
+        vm.prank(other);
+        vm.expectRevert(abi.encodeWithSelector(MarketplacePayments.NotGovernor.selector, other));
+        market.sweepUnallocated(other);
+    }
+
+    function test_revertsSweepWithNothingUnallocated() public {
+        vm.prank(governor);
+        vm.expectRevert(MarketplacePayments.NothingToSweep.selector);
+        market.sweepUnallocated(platform);
+    }
+
     // ——— Fuzz ———
 
     /// Fee + net must always reconstruct the gross exactly — no dust may be created or lost.

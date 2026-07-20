@@ -40,6 +40,12 @@ contract MarketplacePayments {
     /// @notice May change the fee, the fee recipient, and itself.
     address public governor;
 
+    /// @notice EscalationRouter permitted to settle purchases from pre-delivered funds.
+    /// @dev The router pays a target *before* calling it, so an org-funded purchase arrives
+    ///      as tokens already sitting here rather than as an allowance to pull. Restricting
+    ///      `purchaseFor` to this address stops anyone from spending stray balance.
+    address public settlementRouter;
+
     struct Listing {
         address seller;
         /// @dev Price in token base units (USDC micros). Zero is a valid free listing.
@@ -73,6 +79,8 @@ contract MarketplacePayments {
     event FeeUpdated(uint16 feeBps);
     event FeeRecipientUpdated(address indexed feeRecipient);
     event GovernorUpdated(address indexed governor);
+    event SettlementRouterUpdated(address indexed settlementRouter);
+    event UnallocatedSwept(address indexed to, uint256 amount);
 
     error ZeroAddress();
     error FeeTooHigh(uint16 requested, uint16 max);
@@ -84,6 +92,9 @@ contract MarketplacePayments {
     error PriceExceedsMax(uint256 price, uint256 maxPrice);
     error SellerCannotBuy(bytes32 listingId);
     error NothingOwed(address payee);
+    error NotSettlementRouter(address caller);
+    error FundsNotDelivered(uint256 required, uint256 delivered);
+    error NothingToSweep();
 
     constructor(address token_, address feeRecipient_, address governor_, uint16 feeBps_) {
         if (token_ == address(0) || feeRecipient_ == address(0) || governor_ == address(0)) {
@@ -128,18 +139,51 @@ contract MarketplacePayments {
     /// @dev `maxPrice` is not optional convenience: without it a seller could raise the
     ///      price in the same block a buyer submits and collect the difference.
     function purchase(bytes32 listingId, uint256 maxPrice) external {
+        uint256 price = _recordPurchase(listingId, msg.sender, maxPrice);
+        if (price > 0) token.safeTransferFrom(msg.sender, address(this), price);
+    }
+
+    /// @notice Settle a purchase for `buyer` from funds already delivered to this contract.
+    /// @dev The org-funded rail. EscalationRouter pays a target and *then* calls it, so by
+    ///      the time this runs the tokens are already here and there is nothing to pull —
+    ///      hence the delivery check against unallocated balance instead of transferFrom.
+    ///
+    ///      The purchase is credited to `buyer`, which the caller supplies. That is safe
+    ///      because the caller is spending its own org's allowance: naming a different
+    ///      buyer gifts the listing away rather than stealing one.
+    ///
+    ///      Over-delivery is not refunded here — the excess stays unallocated and is
+    ///      recoverable by the governor via `sweepUnallocated`.
+    function purchaseFor(bytes32 listingId, address buyer, uint256 maxPrice) external {
+        if (msg.sender != settlementRouter) revert NotSettlementRouter(msg.sender);
+        uint256 price = _recordPurchase(listingId, buyer, maxPrice);
+        if (price > 0) {
+            // `_recordPurchase` has already added this purchase to `totalOwed`, so measure
+            // against the debt held *before* it. Anything above that is what was delivered —
+            // which is why a balance accrued to other payees can never fund a purchase.
+            uint256 priorOwed = totalOwed - price;
+            uint256 bal = token.balanceOf(address(this));
+            uint256 delivered = bal > priorOwed ? bal - priorOwed : 0;
+            if (delivered < price) revert FundsNotDelivered(price, delivered);
+        }
+    }
+
+    /// @dev Shared validation + accounting. Credits `owed` but moves no tokens; the caller
+    ///      is responsible for making the contract's balance cover the new debt.
+    function _recordPurchase(bytes32 listingId, address buyer, uint256 maxPrice)
+        private
+        returns (uint256 price)
+    {
         Listing memory l = listings[listingId];
         if (l.seller == address(0)) revert ListingNotFound(listingId);
         if (!l.active) revert ListingInactive(listingId);
-        if (l.seller == msg.sender) revert SellerCannotBuy(listingId);
-        if (purchasedAt[listingId][msg.sender] != 0) {
-            revert AlreadyPurchased(listingId, msg.sender);
-        }
+        if (l.seller == buyer) revert SellerCannotBuy(listingId);
+        if (purchasedAt[listingId][buyer] != 0) revert AlreadyPurchased(listingId, buyer);
         if (l.price > maxPrice) revert PriceExceedsMax(l.price, maxPrice);
 
         // Receipt is written before any transfer, so a reentrant call sees the purchase
         // as already made rather than buying twice.
-        purchasedAt[listingId][msg.sender] = uint64(block.timestamp);
+        purchasedAt[listingId][buyer] = uint64(block.timestamp);
 
         uint256 fee = (l.price * feeBps) / BPS_DENOMINATOR;
         uint256 net = l.price - fee;
@@ -148,10 +192,10 @@ contract MarketplacePayments {
             owed[l.seller] += net;
             owed[feeRecipient] += fee;
             totalOwed += l.price;
-            token.safeTransferFrom(msg.sender, address(this), l.price);
         }
 
-        emit ListingPurchased(listingId, msg.sender, l.seller, l.price, fee, net);
+        emit ListingPurchased(listingId, buyer, l.seller, l.price, fee, net);
+        return l.price;
     }
 
     // ——— Settlement ———
@@ -182,6 +226,24 @@ contract MarketplacePayments {
         emit FeeRecipientUpdated(feeRecipient_);
     }
 
+    function setSettlementRouter(address settlementRouter_) external {
+        _onlyGovernor();
+        settlementRouter = settlementRouter_;
+        emit SettlementRouterUpdated(settlementRouter_);
+    }
+
+    /// @notice Recover balance beyond what is owed — stray transfers and over-delivery.
+    /// @dev Cannot touch `owed`: it draws only from the unallocated surplus, so a seller's
+    ///      accrued balance is not reachable by governance.
+    function sweepUnallocated(address to) external returns (uint256 amount) {
+        _onlyGovernor();
+        if (to == address(0)) revert ZeroAddress();
+        amount = _unallocated();
+        if (amount == 0) revert NothingToSweep();
+        token.safeTransfer(to, amount);
+        emit UnallocatedSwept(to, amount);
+    }
+
     function setGovernor(address governor_) external {
         _onlyGovernor();
         if (governor_ == address(0)) revert ZeroAddress();
@@ -205,6 +267,10 @@ contract MarketplacePayments {
     /// @notice Balance beyond what is owed to payees. Should be zero in normal operation;
     ///         a non-zero value means someone transferred tokens in directly.
     function unallocatedBalance() external view returns (uint256) {
+        return _unallocated();
+    }
+
+    function _unallocated() private view returns (uint256) {
         uint256 bal = token.balanceOf(address(this));
         return bal > totalOwed ? bal - totalOwed : 0;
     }

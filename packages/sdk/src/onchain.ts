@@ -546,6 +546,57 @@ export class OnchainLacrewClient {
     return { txHash: hash, gross, fee, net };
   }
 
+  /**
+   * Buy a listing with org funds instead of a personal wallet.
+   *
+   * The purchase is an ordinary policy-checked spend: it goes through
+   * EscalationRouter, so the agent's spend cap, whitelist, rate limit, and time
+   * window all apply, an over-cap purchase ESCALATEs to a human, and the whole
+   * thing lands in the audit trail like any other intent. The marketplace
+   * contract must be whitelisted and set as the settlement router (DeployMockOrg
+   * does both).
+   *
+   * Returns the router's verdict — `escalate` means a human still has to approve
+   * before the seller is paid, so callers must not report a purchase as complete
+   * on anything but `allow`.
+   */
+  async proposeMarketplacePurchase(input: {
+    agent: `0x${string}`;
+    catalogId: string;
+    /** Who receives the entitlement. Defaults to the paying agent. */
+    buyer?: `0x${string}`;
+    maxPrice?: bigint;
+    account?: Account;
+  }): Promise<{
+    intentId: string;
+    verdict: Verdict;
+    txHash: `0x${string}`;
+    gross: bigint;
+    fee: bigint;
+    net: bigint;
+  }> {
+    const market = this.requireMarketplace();
+    const { gross, fee, net } = await this.quoteListing(input.catalogId);
+    const buyer = input.buyer ?? input.agent;
+    const data = encodeFunctionData({
+      abi: marketplacePaymentsAbi,
+      functionName: "purchaseFor",
+      args: [
+        OnchainLacrewClient.listingId(input.catalogId),
+        buyer,
+        input.maxPrice ?? gross,
+      ],
+    });
+    const result = await this.proposeIntent({
+      agent: input.agent,
+      target: market,
+      value: gross,
+      data,
+      account: input.account,
+    });
+    return { ...result, gross, fee, net };
+  }
+
   /** Balance accrued to `payee` and awaiting withdrawal. */
   async marketplaceEarnings(payee: `0x${string}`): Promise<bigint> {
     return (await this.publicClient.readContract({
