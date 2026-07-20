@@ -225,7 +225,9 @@ contract EscalationRouter {
             sessionRegistry.keyLimits(agent, msg.sender);
         if (!valid) revert InvalidSession(agent, msg.sender);
         if (value > maxValue) revert SessionValueExceeded(agent, value, maxValue);
-        if (allowedTarget != address(0) && target != allowedTarget) {
+        // Handles both single- and multi-target pins (unpinned = any policy-allowed
+        // target); `allowedTarget` is reported only for the revert reason.
+        if (!sessionRegistry.isTargetAllowed(agent, msg.sender, target)) {
             revert SessionTargetDenied(agent, target, allowedTarget);
         }
     }
