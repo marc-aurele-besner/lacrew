@@ -239,6 +239,22 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...(await runtime.marketplaceEarnings(payee)), mode: runtime.mode });
   });
 
+  app.post("/marketplace/list", async (c) => {
+    const body = await bodyOf<{ catalogId?: string; price?: string }>(c);
+    if (!body.catalogId?.trim()) return jsonBig(c, { error: "catalogId_required" }, 400);
+    if (body.price === undefined) return jsonBig(c, { error: "price_required" }, 400);
+    try {
+      const result = await runtime.marketplaceRegister({
+        catalogId: body.catalogId.trim(),
+        price: String(body.price),
+      });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "register_failed";
+      return jsonBig(c, { error: message }, message === "marketplace_requires_chain" ? 409 : 400);
+    }
+  });
+
   app.post("/marketplace/purchase", async (c) => {
     const body = await bodyOf<{
       catalogId?: string;

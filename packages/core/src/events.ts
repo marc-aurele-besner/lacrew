@@ -15,7 +15,8 @@ export type ProtocolEventType =
   | "SessionRevoked"
   | "FlowSaved"
   | "FlowRun"
-  | "MarketplacePurchase";
+  | "MarketplacePurchase"
+  | "MarketplaceListed";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;
