@@ -85,6 +85,20 @@ Events: `GrantUpdated`, `EpochRun(epoch, recipientCount)`. The treasury
 implements `ITreasurySpender.spendAllowance(node, amount, to)` for the
 router's finalize path.
 
+### 4.1 Multi-asset orgs
+
+A `Treasury` binds one immutable ERC-20. An org funds N assets by deploying
+one **Treasury + EscalationRouter + EpochStreamer per asset** over a shared
+`OrgRegistry`, so the org chart stays single while enforcement is
+asset-scoped. Proven in `contracts/test/MultiAsset.t.sol`: allowances stream
+and spend independently, a treasury never moves a foreign token, and pending
+escalations resolve only in their own asset's router.
+
+> **Policy stacks are asset-denominated.** `SpendCapPolicy` compares raw
+> `uint256` values, so a 100 USDC cap (`100e6`) is dust against an 18-decimal
+> asset. Deploy a separate stack per asset; never share one across assets
+> with different decimals.
+
 ## 5. EscalationRouter — the enforcement path
 
 Agents act by proposing intents. The router checks the agent's session key,
