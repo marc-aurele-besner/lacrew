@@ -73,6 +73,28 @@ deny every such action for a reason unrelated to authority.
 `budget: run-epoch` is the exception and writes directly — the orchestrator is
 the `EpochStreamer` operator by design.
 
+`org` distinguishes removal from suspension, because they are not the same
+decision:
+
+- `fire` → `OrgRegistry.removeNode`. Permanent, and the node's children are
+  rewired to its parent.
+- `deactivate` / `activate` → `OrgRegistry.setActive`. Reversible; the node
+  keeps its place in the chart and its reporting line.
+
+## Delegation
+
+An `agent` step can hand work to another agent — a prompt, or a whole flow via
+`flowId`. The nested run gets its own principal, so the delegate acts under its
+*own* policy stack: a flow cannot borrow authority by invoking a more
+privileged agent.
+
+Delegation is bounded. `validateFlow` rejects cycles between a flow's own
+edges, but a `flowId` is not an edge, so the runtime tracks the chain of flows
+on the stack: revisiting one fails with `flow_delegation_cycle`, and a chain
+deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
+fails also fails the delegating step, rather than returning the failure as data
+for the parent to ignore.
+
 ## Triggers
 
 `trigger: "manual"` (default) runs from the UI, SDK, or CLI. `trigger:
@@ -220,6 +242,28 @@ deny every such action for a reason unrelated to authority.
 
 `budget: run-epoch` is the exception and writes directly — the orchestrator is
 the `EpochStreamer` operator by design.
+
+`org` distinguishes removal from suspension, because they are not the same
+decision:
+
+- `fire` → `OrgRegistry.removeNode`. Permanent, and the node's children are
+  rewired to its parent.
+- `deactivate` / `activate` → `OrgRegistry.setActive`. Reversible; the node
+  keeps its place in the chart and its reporting line.
+
+## Delegation
+
+An `agent` step can hand work to another agent — a prompt, or a whole flow via
+`flowId`. The nested run gets its own principal, so the delegate acts under its
+*own* policy stack: a flow cannot borrow authority by invoking a more
+privileged agent.
+
+Delegation is bounded. `validateFlow` rejects cycles between a flow's own
+edges, but a `flowId` is not an edge, so the runtime tracks the chain of flows
+on the stack: revisiting one fails with `flow_delegation_cycle`, and a chain
+deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
+fails also fails the delegating step, rather than returning the failure as data
+for the parent to ignore.
 
 ## Triggers
 
