@@ -13,11 +13,49 @@ export const DEFAULT_SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
 
+/**
+ * Read an address override.
+ * A set-but-malformed value throws: silently falling back to the deployment
+ * JSON would point callers at a different org than the operator intended.
+ */
 function envAddress(key: string): `0x${string}` | undefined {
   const raw =
     typeof process !== "undefined" && process.env ? process.env[key] : undefined;
-  if (!raw || !/^0x[a-fA-F0-9]{40}$/.test(raw)) return undefined;
-  return raw as `0x${string}`;
+  if (raw === undefined) return undefined;
+
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+    throw new Error(
+      `${key} is not a 20-byte hex address: ${JSON.stringify(raw)}. ` +
+        `Unset it or fix the value — a malformed override must not silently fall back.`,
+    );
+  }
+  return trimmed as `0x${string}`;
+}
+
+/** Warn once per (chain, field) when an override disagrees with the deployment JSON. */
+const divergenceWarned = new Set<string>();
+
+function warnOnDivergence(
+  chainId: number,
+  field: string,
+  envVar: string,
+  override: `0x${string}`,
+  fromDeployment: `0x${string}` | undefined,
+): void {
+  if (!fromDeployment || fromDeployment === ZERO) return;
+  if (override.toLowerCase() === fromDeployment.toLowerCase()) return;
+
+  const seen = `${chainId}:${field}`;
+  if (divergenceWarned.has(seen)) return;
+  divergenceWarned.add(seen);
+
+  console.warn(
+    `[lacrew] ${envVar} (${override}) overrides the chain ${chainId} deployment ` +
+      `(${fromDeployment}). Processes that do not load .env will resolve the deployment ` +
+      `address instead — regenerate with: pnpm --filter @lacrew/core addresses:env ${chainId}`,
+  );
 }
 
 /** Env var name per overridable ChainAddresses field (LACREW_<SNAKE_CASE>). */
@@ -62,7 +100,9 @@ export function getAddresses(chainId: number): ChainAddresses {
     [Exclude<keyof ChainAddresses, "chainId">, string]
   >) {
     const override = envAddress(envVar);
-    if (override) resolved[field] = override;
+    if (!override) continue;
+    warnOnDivergence(chainId, field, envVar, override, base[field]);
+    resolved[field] = override;
   }
   return resolved;
 }
@@ -70,11 +110,8 @@ export function getAddresses(chainId: number): ChainAddresses {
 /** Ethereum Sepolia — first public testnet. */
 export const SEPOLIA_CHAIN_ID = 11155111;
 
-/** @deprecated Prefer getAddresses(SEPOLIA_CHAIN_ID). Kept for older imports. */
-export const SEPOLIA_ADDRESSES: ChainAddresses = getAddresses(SEPOLIA_CHAIN_ID);
-
-/** @deprecated Prefer getAddresses(84532). Optional later Base Sepolia slot. */
-export const BASE_SEPOLIA_ADDRESSES: ChainAddresses = getAddresses(84532);
+/** Optional later Base Sepolia slot. */
+export const BASE_SEPOLIA_CHAIN_ID = 84532;
 
 /** Anvil / Foundry default chain. */
 export const ANVIL_CHAIN_ID = 31337;

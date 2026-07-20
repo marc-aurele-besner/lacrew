@@ -42,13 +42,28 @@ describe("getAddresses", () => {
     }
   });
 
-  it("ignores malformed env overrides", () => {
+  it("throws on a malformed env override instead of falling back", () => {
     const saved = process.env.LACREW_ORG_REGISTRY;
     try {
+      // A typo must not resolve to the deployment address behind the caller's back.
       process.env.LACREW_ORG_REGISTRY = "not-an-address";
+      assert.throws(() => getAddresses(ANVIL_CHAIN_ID), /LACREW_ORG_REGISTRY/);
+
+      // Truncated addresses are the realistic failure — a dropped character.
+      process.env.LACREW_ORG_REGISTRY = "0xCcBcac53a38c585bA0caf20dd2d906f14dac88";
+      assert.throws(() => getAddresses(ANVIL_CHAIN_ID), /not a 20-byte hex address/);
+    } finally {
+      if (saved === undefined) delete process.env.LACREW_ORG_REGISTRY;
+      else process.env.LACREW_ORG_REGISTRY = saved;
+    }
+  });
+
+  it("treats an empty override as unset", () => {
+    const saved = process.env.LACREW_ORG_REGISTRY;
+    try {
+      process.env.LACREW_ORG_REGISTRY = "";
       const addrs = getAddresses(ANVIL_CHAIN_ID);
       assert.match(addrs.orgRegistry, /^0x[a-fA-F0-9]{40}$/);
-      assert.notEqual(addrs.orgRegistry, "not-an-address");
     } finally {
       if (saved === undefined) delete process.env.LACREW_ORG_REGISTRY;
       else process.env.LACREW_ORG_REGISTRY = saved;

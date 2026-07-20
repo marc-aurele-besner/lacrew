@@ -18,10 +18,14 @@ import {
 import { http, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { cmdFlows } from "./flows.js";
+import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
+
+// Before any getAddresses() call, so the CLI and the orchestrator agree.
+loadEnvFile(join(repoRoot, ".env"));
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2));
