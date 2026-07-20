@@ -9,9 +9,16 @@ import { CrewRuntime } from "./runtime.js";
 function makeSurface(store?: FlowStore) {
   const runtime = new CrewRuntime();
   // No mcpBackend → detached mock backend (offline-safe test path).
+  // The store is always explicit: defaulting to createFlowStoreFromEnv would
+  // make these unit tests hit Postgres on any machine with DATABASE_URL set,
+  // exercising a different code path and leaving an open pool behind.
   return {
     runtime,
-    surface: createFlowsSurface({ runtime, model: new MemoryModelProvider(), store }),
+    surface: createFlowsSurface({
+      runtime,
+      model: new MemoryModelProvider(),
+      store: store ?? createMemoryFlowStore(),
+    }),
   };
 }
 
@@ -157,6 +164,7 @@ function makeDelegatingSurface() {
     runtime,
     model: new MemoryModelProvider(),
     mcpBackend: stub,
+    store: createMemoryFlowStore(),
   });
 }
 
