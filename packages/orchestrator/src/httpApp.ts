@@ -222,6 +222,45 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, await runtime.resolve(body.intentId, body.approved, body.approver));
   });
 
+  app.get("/marketplace/quote", async (c) => {
+    const catalogId = c.req.query("catalogId");
+    if (!catalogId) return jsonBig(c, { error: "catalogId_required" }, 400);
+    const buyer = c.req.query("buyer") as `0x${string}` | undefined;
+    const quote = await runtime.marketplaceQuote(catalogId);
+    const entitlement = buyer
+      ? await runtime.marketplaceEntitlement(catalogId, buyer)
+      : { purchased: false };
+    return jsonBig(c, { ...quote, ...entitlement, mode: runtime.mode, chainId: runtime.chainId });
+  });
+
+  app.get("/marketplace/earnings", async (c) => {
+    const payee = c.req.query("payee") as `0x${string}` | undefined;
+    if (!payee) return jsonBig(c, { error: "payee_required" }, 400);
+    return jsonBig(c, { ...(await runtime.marketplaceEarnings(payee)), mode: runtime.mode });
+  });
+
+  app.post("/marketplace/purchase", async (c) => {
+    const body = await bodyOf<{
+      catalogId?: string;
+      agent?: `0x${string}`;
+      buyer?: `0x${string}`;
+    }>(c);
+    if (!body.catalogId?.trim()) return jsonBig(c, { error: "catalogId_required" }, 400);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+    try {
+      const result = await runtime.marketplacePurchase({
+        catalogId: body.catalogId.trim(),
+        agent: body.agent,
+        buyer: body.buyer,
+      });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "purchase_failed";
+      // A chainless runtime cannot settle, and saying so beats a fake receipt.
+      return jsonBig(c, { error: message }, message === "marketplace_purchase_requires_chain" ? 409 : 400);
+    }
+  });
+
   app.get("/governance/proposals", async (c) =>
     jsonBig(c, {
       proposals: await runtime.listProposals(),

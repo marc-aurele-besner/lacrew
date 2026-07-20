@@ -178,11 +178,11 @@ export class CrewRuntime {
   async boot(
     agent?: `0x${string}`,
     /** Upper bound for this session's maxValue (a flow's scope ceiling). */
-    limits?: { maxValue?: bigint },
+    limits?: { maxValue?: bigint; allowedTarget?: `0x${string}` },
   ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
     const ceiling = limits?.maxValue;
-    const key = this.sessionCacheKey(forAgent, ceiling);
+    const key = this.sessionCacheKey(forAgent, ceiling, limits?.allowedTarget);
     const held = this.sessions.get(key);
     if (held && !isSessionExpired(held.session)) {
       return held.session;
@@ -201,7 +201,7 @@ export class CrewRuntime {
           : ceiling < this.sessionMaxValue()
             ? ceiling
             : this.sessionMaxValue();
-      const allowedTarget = this.sessionAllowedTarget();
+      const allowedTarget = limits?.allowedTarget ?? this.sessionAllowedTarget();
       const { sessionId, txHash } = await this.client.issueSession({
         agent: ephemeral.agent,
         key: ephemeral.keyAddress!,
@@ -264,8 +264,16 @@ export class CrewRuntime {
   }
 
   /** Distinct limit sets need distinct keys; see the `sessions` map comment. */
-  private sessionCacheKey(agent: `0x${string}`, maxValue?: bigint): string {
-    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}`;
+  private sessionCacheKey(
+    agent: `0x${string}`,
+    maxValue?: bigint,
+    allowedTarget?: `0x${string}`,
+  ): string {
+    // The target is part of the key for the same reason maxValue is: a cached key
+    // pinned to a different target would either be rejected onchain or, worse,
+    // hand back reach the caller's scope was not granted.
+    const target = (allowedTarget ?? this.sessionAllowedTarget()).toLowerCase();
+    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}:${target}`;
   }
 
   /**
@@ -294,9 +302,13 @@ export class CrewRuntime {
   }
 
   /** Ephemeral session account for `agent`'s onchain propose (never logged). */
-  private sessionSignerAccount(agent?: `0x${string}`, maxValue?: bigint) {
+  private sessionSignerAccount(
+    agent?: `0x${string}`,
+    maxValue?: bigint,
+    allowedTarget?: `0x${string}`,
+  ) {
     if (!this.addressesHasSessions()) return undefined;
-    const key = this.sessionCacheKey(agent ?? this.workerAgent, maxValue);
+    const key = this.sessionCacheKey(agent ?? this.workerAgent, maxValue, allowedTarget);
     const pk = this.sessions.get(key)?.privateKey;
     if (!pk) {
       throw new Error(
@@ -574,6 +586,129 @@ export class CrewRuntime {
   }
 
   /** Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode. */
+  // ——— Marketplace ———
+
+  /**
+   * Price and split for a listing, read from MarketplacePayments.
+   *
+   * Returns `listed: false` in mock mode or when the catalog id has no onchain
+   * listing, so callers can show a catalog entry as browsable-but-not-buyable
+   * rather than inventing a price the chain would not honour.
+   */
+  async marketplaceQuote(catalogId: string): Promise<{
+    listed: boolean;
+    gross: string;
+    fee: string;
+    net: string;
+    feeBps: number;
+    seller?: `0x${string}`;
+    active?: boolean;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+    }
+    try {
+      const listing = await this.client.getListing(catalogId);
+      if (!listing) return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+      const q = await this.client.quoteListing(catalogId);
+      return {
+        listed: true,
+        gross: q.gross.toString(),
+        fee: q.fee.toString(),
+        net: q.net.toString(),
+        feeBps: q.feeBps,
+        seller: listing.seller,
+        active: listing.active,
+      };
+    } catch {
+      // No MarketplacePayments deployed on this chain.
+      return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+    }
+  }
+
+  async marketplaceEntitlement(
+    catalogId: string,
+    buyer: `0x${string}`,
+  ): Promise<{ purchased: boolean }> {
+    if (!isOnchainClient(this.client)) return { purchased: false };
+    try {
+      return { purchased: await this.client.hasPurchased(catalogId, buyer) };
+    } catch {
+      return { purchased: false };
+    }
+  }
+
+  /**
+   * Buy a listing with org funds. This is an ordinary policy-checked intent, so
+   * an over-cap purchase comes back `ESCALATE` and pays nobody until a human
+   * approves — callers must not treat anything but `ALLOW` as a completed buy.
+   */
+  async marketplacePurchase(input: {
+    catalogId: string;
+    agent: `0x${string}`;
+    buyer?: `0x${string}`;
+  }): Promise<{
+    intentId: string;
+    verdict: string;
+    txHash?: `0x${string}`;
+    gross: string;
+    fee: string;
+    net: string;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("marketplace_purchase_requires_chain");
+    }
+    // The router only accepts a propose signed by a live session key for the
+    // paying agent, so ensure one exists and sign with it — the root wallet is
+    // not a session and would be rejected.
+    const quote = await this.client.quoteListing(input.catalogId);
+    const market = this.client.addresses.marketplacePayments;
+    if (!market) throw new Error("marketplace_not_deployed");
+
+    // Session keys are pinned to one target, so the default (x402) key cannot
+    // reach the marketplace. Issue one scoped to the marketplace and to exactly
+    // this listing's price — the chain then caps the purchase at what was quoted.
+    await this.boot(input.agent, { maxValue: quote.gross, allowedTarget: market });
+    const result = await this.client.proposeMarketplacePurchase({
+      agent: input.agent,
+      catalogId: input.catalogId,
+      buyer: input.buyer,
+      account: this.sessionSignerAccount(input.agent, quote.gross, market),
+    });
+    this.pushAudit({
+      type: "MarketplacePurchase",
+      at: new Date().toISOString(),
+      payload: {
+        catalogId: input.catalogId,
+        agent: input.agent,
+        buyer: input.buyer ?? input.agent,
+        intentId: result.intentId,
+        verdict: result.verdict,
+        gross: result.gross.toString(),
+        fee: result.fee.toString(),
+        txHash: result.txHash,
+      },
+    });
+    return {
+      intentId: result.intentId,
+      verdict: result.verdict,
+      txHash: result.txHash,
+      gross: result.gross.toString(),
+      fee: result.fee.toString(),
+      net: result.net.toString(),
+    };
+  }
+
+  /** Balance accrued to a seller (or the platform) awaiting withdrawal. */
+  async marketplaceEarnings(payee: `0x${string}`): Promise<{ owed: string }> {
+    if (!isOnchainClient(this.client)) return { owed: "0" };
+    try {
+      return { owed: (await this.client.marketplaceEarnings(payee)).toString() };
+    } catch {
+      return { owed: "0" };
+    }
+  }
+
   async proposeHire(input: {
     label: string;
     kind?: "manager_agent" | "worker_agent";
