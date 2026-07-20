@@ -178,11 +178,11 @@ export class CrewRuntime {
   async boot(
     agent?: `0x${string}`,
     /** Upper bound for this session's maxValue (a flow's scope ceiling). */
-    limits?: { maxValue?: bigint },
+    limits?: { maxValue?: bigint; allowedTarget?: `0x${string}` },
   ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
     const ceiling = limits?.maxValue;
-    const key = this.sessionCacheKey(forAgent, ceiling);
+    const key = this.sessionCacheKey(forAgent, ceiling, limits?.allowedTarget);
     const held = this.sessions.get(key);
     if (held && !isSessionExpired(held.session)) {
       return held.session;
@@ -201,7 +201,7 @@ export class CrewRuntime {
           : ceiling < this.sessionMaxValue()
             ? ceiling
             : this.sessionMaxValue();
-      const allowedTarget = this.sessionAllowedTarget();
+      const allowedTarget = limits?.allowedTarget ?? this.sessionAllowedTarget();
       const { sessionId, txHash } = await this.client.issueSession({
         agent: ephemeral.agent,
         key: ephemeral.keyAddress!,
@@ -264,8 +264,16 @@ export class CrewRuntime {
   }
 
   /** Distinct limit sets need distinct keys; see the `sessions` map comment. */
-  private sessionCacheKey(agent: `0x${string}`, maxValue?: bigint): string {
-    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}`;
+  private sessionCacheKey(
+    agent: `0x${string}`,
+    maxValue?: bigint,
+    allowedTarget?: `0x${string}`,
+  ): string {
+    // The target is part of the key for the same reason maxValue is: a cached key
+    // pinned to a different target would either be rejected onchain or, worse,
+    // hand back reach the caller's scope was not granted.
+    const target = (allowedTarget ?? this.sessionAllowedTarget()).toLowerCase();
+    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}:${target}`;
   }
 
   /**
@@ -294,9 +302,13 @@ export class CrewRuntime {
   }
 
   /** Ephemeral session account for `agent`'s onchain propose (never logged). */
-  private sessionSignerAccount(agent?: `0x${string}`, maxValue?: bigint) {
+  private sessionSignerAccount(
+    agent?: `0x${string}`,
+    maxValue?: bigint,
+    allowedTarget?: `0x${string}`,
+  ) {
     if (!this.addressesHasSessions()) return undefined;
-    const key = this.sessionCacheKey(agent ?? this.workerAgent, maxValue);
+    const key = this.sessionCacheKey(agent ?? this.workerAgent, maxValue, allowedTarget);
     const pk = this.sessions.get(key)?.privateKey;
     if (!pk) {
       throw new Error(
@@ -646,10 +658,22 @@ export class CrewRuntime {
     if (!isOnchainClient(this.client)) {
       throw new Error("marketplace_purchase_requires_chain");
     }
+    // The router only accepts a propose signed by a live session key for the
+    // paying agent, so ensure one exists and sign with it — the root wallet is
+    // not a session and would be rejected.
+    const quote = await this.client.quoteListing(input.catalogId);
+    const market = this.client.addresses.marketplacePayments;
+    if (!market) throw new Error("marketplace_not_deployed");
+
+    // Session keys are pinned to one target, so the default (x402) key cannot
+    // reach the marketplace. Issue one scoped to the marketplace and to exactly
+    // this listing's price — the chain then caps the purchase at what was quoted.
+    await this.boot(input.agent, { maxValue: quote.gross, allowedTarget: market });
     const result = await this.client.proposeMarketplacePurchase({
       agent: input.agent,
       catalogId: input.catalogId,
       buyer: input.buyer,
+      account: this.sessionSignerAccount(input.agent, quote.gross, market),
     });
     this.pushAudit({
       type: "MarketplacePurchase",
