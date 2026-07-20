@@ -815,12 +815,28 @@ export class CrewRuntime {
     target: `0x${string}`;
     value: bigint;
     data?: `0x${string}`;
+    policyModule?: `0x${string}`;
   }): Promise<{ verdict: Verdict }> {
     if (!isOnchainClient(this.client)) {
       return { verdict: input.value > DEFAULT_SESSION_MAX_VALUE ? "ESCALATE" : "ALLOW" };
     }
     const verdict = await this.client.checkPolicy(input);
     return { verdict: verdict as Verdict };
+  }
+
+  /**
+   * The module that answers "how much authority does this agent have?".
+   *
+   * Org and budget actions are not spends: the target is a node, not a payee.
+   * Running them through the full PolicyStack would consult WhitelistPolicy,
+   * which DENIES every address that is not a configured spend target — so every
+   * budget raise would read as denied for a reason unrelated to authority.
+   * SpendCapPolicy is the meaningful signal: within cap → low tier, over cap →
+   * escalate to a timelocked proposal.
+   */
+  private authorityPolicyModule(): `0x${string}` | undefined {
+    if (!isOnchainClient(this.client)) return undefined;
+    return this.client.addresses.spendCapPolicy;
   }
 
   /**
@@ -834,6 +850,7 @@ export class CrewRuntime {
     target: `0x${string}`;
     value: bigint;
     data?: `0x${string}`;
+    policyModule?: `0x${string}`;
   }): Promise<{ verdict: Verdict; capped: boolean }> {
     const { agent, ceiling, ...rest } = input;
     const own = (await this.checkPolicy({ agent, ...rest })).verdict;
@@ -863,6 +880,7 @@ export class CrewRuntime {
       ceiling: input.ceiling,
       target: input.node ?? input.parent ?? this.spendTarget,
       value: input.cap ?? 0n,
+      policyModule: this.authorityPolicyModule(),
     });
     if (verdict === "DENY") return { verdict };
 
@@ -941,6 +959,7 @@ export class CrewRuntime {
       ceiling: input.ceiling,
       target: input.node ?? this.spendTarget,
       value: input.amount ?? 0n,
+      policyModule: this.authorityPolicyModule(),
     });
     if (verdict === "DENY") return { verdict };
 

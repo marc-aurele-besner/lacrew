@@ -92,15 +92,22 @@ function recordVerdict(
   return verdict;
 }
 
-/** "wrote onchain (0x…)" / "raised proposal 7" / "denied by policy". */
+/**
+ * Describe what the backend actually did, not what the verdict permitted.
+ * A constitutional action still becomes a proposal under ALLOW — it just earns
+ * the faster tier — so only a bare txHash may be reported as applied.
+ */
 function verdictSummary(what: string, verdict: Verdict, result?: Record<string, unknown>): string {
-  if (verdict === "ALLOW") {
-    return `${what} applied${result?.txHash ? ` (${result.txHash})` : ""}`;
+  if (verdict === "DENY") return `${what} denied by policy`;
+  const tier = verdict === "ALLOW" ? "low tier" : "high tier, timelocked";
+  if (result?.proposalId) {
+    return `${what} → proposal ${result.proposalId} (${tier})`;
   }
-  if (verdict === "ESCALATE") {
-    return `${what} raised for approval${result?.proposalId ? ` (proposal ${result.proposalId})` : result?.intentId ? ` (intent ${result.intentId})` : ""}`;
+  if (result?.intentId) {
+    return `${what} → intent ${result.intentId} awaiting approval`;
   }
-  return `${what} denied by policy`;
+  if (result?.txHash) return `${what} applied (${result.txHash})`;
+  return `${what} → ${verdict.toLowerCase()}`;
 }
 
 export type RunFlowOptions = {
