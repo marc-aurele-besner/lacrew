@@ -1,5 +1,7 @@
 # LaCrew
 
+**Protocol spec:** [SPEC.md](./SPEC.md) (v0.1 draft) — the normative interface surface, invariants, and conformance rules.
+
 **Payroll, budgets, and approvals for AI agent teams.**
 
 > Your agents. Their budgets. Your keys.
