@@ -574,6 +574,117 @@ export class CrewRuntime {
   }
 
   /** Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode. */
+  // ——— Marketplace ———
+
+  /**
+   * Price and split for a listing, read from MarketplacePayments.
+   *
+   * Returns `listed: false` in mock mode or when the catalog id has no onchain
+   * listing, so callers can show a catalog entry as browsable-but-not-buyable
+   * rather than inventing a price the chain would not honour.
+   */
+  async marketplaceQuote(catalogId: string): Promise<{
+    listed: boolean;
+    gross: string;
+    fee: string;
+    net: string;
+    feeBps: number;
+    seller?: `0x${string}`;
+    active?: boolean;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+    }
+    try {
+      const listing = await this.client.getListing(catalogId);
+      if (!listing) return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+      const q = await this.client.quoteListing(catalogId);
+      return {
+        listed: true,
+        gross: q.gross.toString(),
+        fee: q.fee.toString(),
+        net: q.net.toString(),
+        feeBps: q.feeBps,
+        seller: listing.seller,
+        active: listing.active,
+      };
+    } catch {
+      // No MarketplacePayments deployed on this chain.
+      return { listed: false, gross: "0", fee: "0", net: "0", feeBps: 0 };
+    }
+  }
+
+  async marketplaceEntitlement(
+    catalogId: string,
+    buyer: `0x${string}`,
+  ): Promise<{ purchased: boolean }> {
+    if (!isOnchainClient(this.client)) return { purchased: false };
+    try {
+      return { purchased: await this.client.hasPurchased(catalogId, buyer) };
+    } catch {
+      return { purchased: false };
+    }
+  }
+
+  /**
+   * Buy a listing with org funds. This is an ordinary policy-checked intent, so
+   * an over-cap purchase comes back `ESCALATE` and pays nobody until a human
+   * approves — callers must not treat anything but `ALLOW` as a completed buy.
+   */
+  async marketplacePurchase(input: {
+    catalogId: string;
+    agent: `0x${string}`;
+    buyer?: `0x${string}`;
+  }): Promise<{
+    intentId: string;
+    verdict: string;
+    txHash?: `0x${string}`;
+    gross: string;
+    fee: string;
+    net: string;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("marketplace_purchase_requires_chain");
+    }
+    const result = await this.client.proposeMarketplacePurchase({
+      agent: input.agent,
+      catalogId: input.catalogId,
+      buyer: input.buyer,
+    });
+    this.pushAudit({
+      type: "MarketplacePurchase",
+      at: new Date().toISOString(),
+      payload: {
+        catalogId: input.catalogId,
+        agent: input.agent,
+        buyer: input.buyer ?? input.agent,
+        intentId: result.intentId,
+        verdict: result.verdict,
+        gross: result.gross.toString(),
+        fee: result.fee.toString(),
+        txHash: result.txHash,
+      },
+    });
+    return {
+      intentId: result.intentId,
+      verdict: result.verdict,
+      txHash: result.txHash,
+      gross: result.gross.toString(),
+      fee: result.fee.toString(),
+      net: result.net.toString(),
+    };
+  }
+
+  /** Balance accrued to a seller (or the platform) awaiting withdrawal. */
+  async marketplaceEarnings(payee: `0x${string}`): Promise<{ owed: string }> {
+    if (!isOnchainClient(this.client)) return { owed: "0" };
+    try {
+      return { owed: (await this.client.marketplaceEarnings(payee)).toString() };
+    } catch {
+      return { owed: "0" };
+    }
+  }
+
   async proposeHire(input: {
     label: string;
     kind?: "manager_agent" | "worker_agent";

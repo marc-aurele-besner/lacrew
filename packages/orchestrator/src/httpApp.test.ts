@@ -34,6 +34,47 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.runtimeStore, "memory");
   });
 
+  it("reports a listing as unlisted in mock mode rather than inventing a price", async () => {
+    const res = await buildApp().request("/marketplace/quote?catalogId=flow-x");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(body.listed, false);
+    assert.equal(body.gross, "0");
+    assert.equal(body.purchased, false);
+  });
+
+  it("requires catalogId on quote", async () => {
+    const res = await buildApp().request("/marketplace/quote");
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "catalogId_required" });
+  });
+
+  it("requires payee on earnings", async () => {
+    const res = await buildApp().request("/marketplace/earnings");
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "payee_required" });
+  });
+
+  it("refuses to settle a purchase without a chain instead of faking a receipt", async () => {
+    const res = await buildApp().request("/marketplace/purchase", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ catalogId: "flow-x", agent: "0x0000000000000000000000000000000000000001" }),
+    });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "marketplace_purchase_requires_chain" });
+  });
+
+  it("validates purchase input", async () => {
+    const res = await buildApp().request("/marketplace/purchase", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: "0x0000000000000000000000000000000000000001" }),
+    });
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "catalogId_required" });
+  });
+
   it("404s unknown routes as JSON", async () => {
     const res = await buildApp().request("/nope");
     assert.equal(res.status, 404);
