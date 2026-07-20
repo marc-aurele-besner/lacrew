@@ -28,6 +28,9 @@ contract SessionRegistry {
     mapping(address => uint256[]) private _byAgent;
     /// @dev agent => key => sessionId (0 = none / cleared)
     mapping(address => mapping(address => uint256)) public activeKeySession;
+    /// @dev sessionId => pinned targets (empty = any policy-allowed target)
+    mapping(uint256 => address[]) private _sessionTargets;
+    mapping(uint256 => mapping(address => bool)) private _targetAllowed;
 
     event IssuerUpdated(address indexed issuer);
     event SessionIssued(
@@ -40,6 +43,8 @@ contract SessionRegistry {
         address allowedTarget
     );
     event SessionRevoked(uint256 indexed sessionId, address indexed by);
+    /// @notice Emitted alongside SessionIssued when more than one target is pinned.
+    event SessionTargetsPinned(uint256 indexed sessionId, address[] targets);
 
     error NotAuthorized(address caller);
     error ZeroAddress();
@@ -76,6 +81,36 @@ contract SessionRegistry {
         uint256 maxValue,
         address allowedTarget
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
+        address[] memory targets;
+        if (allowedTarget != address(0)) {
+            targets = new address[](1);
+            targets[0] = allowedTarget;
+        }
+        return _issue(agent, key, expiresAt, scopesHash, maxValue, targets);
+    }
+
+    /// @notice Issue a session pinned to several targets (empty = any policy-allowed target).
+    /// @dev Multi-target sessions are checked with `isTargetAllowed`; `keyLimits`
+    ///      reports only the first target so naive consumers fail closed.
+    function issueScoped(
+        address agent,
+        address key,
+        uint64 expiresAt,
+        bytes32 scopesHash,
+        uint256 maxValue,
+        address[] calldata allowedTargets
+    ) external onlyRootOrIssuer returns (uint256 sessionId) {
+        return _issue(agent, key, expiresAt, scopesHash, maxValue, allowedTargets);
+    }
+
+    function _issue(
+        address agent,
+        address key,
+        uint64 expiresAt,
+        bytes32 scopesHash,
+        uint256 maxValue,
+        address[] memory allowedTargets
+    ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
 
@@ -87,20 +122,33 @@ contract SessionRegistry {
         }
 
         sessionId = nextSessionId++;
+        address first;
+        for (uint256 i = 0; i < allowedTargets.length; i++) {
+            address t = allowedTargets[i];
+            if (t == address(0)) revert ZeroAddress();
+            if (_targetAllowed[sessionId][t]) continue;
+            _targetAllowed[sessionId][t] = true;
+            _sessionTargets[sessionId].push(t);
+            if (first == address(0)) first = t;
+        }
+
         sessions[sessionId] = Session({
             agent: agent,
             key: key,
             expiresAt: expiresAt,
             scopesHash: scopesHash,
             maxValue: maxValue,
-            allowedTarget: allowedTarget,
+            allowedTarget: first,
             revoked: false,
             exists: true
         });
         _byAgent[agent].push(sessionId);
         activeKeySession[agent][key] = sessionId;
 
-        emit SessionIssued(sessionId, agent, key, expiresAt, scopesHash, maxValue, allowedTarget);
+        emit SessionIssued(sessionId, agent, key, expiresAt, scopesHash, maxValue, first);
+        if (_sessionTargets[sessionId].length > 1) {
+            emit SessionTargetsPinned(sessionId, _sessionTargets[sessionId]);
+        }
     }
 
     /// @notice Root (or issuer) revokes a session. Product rule: prefer root-driven revoke.
@@ -128,6 +176,8 @@ contract SessionRegistry {
     }
 
     /// @notice Limits for an active key. `valid` is false when missing/expired/revoked.
+    /// @dev `allowedTarget` is the FIRST pinned target; multi-target sessions must be
+    ///      checked with `isTargetAllowed` (naive consumers therefore fail closed).
     function keyLimits(address agent, address key)
         external
         view
@@ -140,6 +190,23 @@ contract SessionRegistry {
             return (false, 0, address(0), bytes32(0));
         }
         return (true, s.maxValue, s.allowedTarget, s.scopesHash);
+    }
+
+    /// @notice Targets pinned to a session (empty = any policy-allowed target).
+    function allowedTargetsOf(uint256 sessionId) external view returns (address[] memory) {
+        return _sessionTargets[sessionId];
+    }
+
+    /// @notice Whether an active key may call `target`. Unpinned sessions allow any.
+    function isTargetAllowed(address agent, address key, address target)
+        external
+        view
+        returns (bool)
+    {
+        uint256 id = activeKeySession[agent][key];
+        if (id == 0 || !isValid(id)) return false;
+        if (_sessionTargets[id].length == 0) return true;
+        return _targetAllowed[id][target];
     }
 
     function sessionsOf(address agent) external view returns (uint256[] memory) {

@@ -156,14 +156,26 @@ compromise leaks bounded, expiring authority — never the treasury.
 
 ```solidity
 function issue(address agent, address key, uint64 expiresAt, bytes32 scopesHash,
-               uint256 maxValue, address allowedTarget) external returns (uint256 sessionId); // issuer
+               uint256 maxValue, address allowedTarget) external returns (uint256);        // issuer
+function issueScoped(address agent, address key, uint64 expiresAt, bytes32 scopesHash,
+                     uint256 maxValue, address[] calldata allowedTargets) external returns (uint256);
 function revoke(uint256 sessionId) external;                    // root or issuer
 function isKeyValid(address agent, address key) external view returns (bool);
-function keyLimits(address agent, address key) external view returns (uint256 maxValue, address allowedTarget);
+function isTargetAllowed(address agent, address key, address target) external view returns (bool);
+function allowedTargetsOf(uint256 sessionId) external view returns (address[] memory);
+function keyLimits(address agent, address key) external view returns (bool, uint256, address, bytes32);
 ```
 
-Events: `SessionIssued`, `SessionRevoked`. Root revocation never depends on
-the issuer — the root key can always kill a session.
+**Target scoping.** A session pins zero or more targets: empty means any
+target that still passes the node's policy stack; one or more restrict the
+key to exactly those. Enforcement uses `isTargetAllowed`. `keyLimits` reports
+only the *first* pinned target, never `address(0)`, so a consumer that checks
+just `keyLimits` denies the extra targets instead of allowing everything —
+**fail-closed by construction**.
+
+Events: `SessionIssued`, `SessionTargetsPinned` (when >1 target),
+`SessionRevoked`. Root revocation never depends on the issuer — the root key
+can always kill a session.
 
 ## 8. Event taxonomy (audit trail)
 
