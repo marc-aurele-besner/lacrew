@@ -83,15 +83,16 @@ async function main(): Promise<void> {
       return result;
     },
     onTick: async () => runtime.tick(),
+    onFlowCron: async () => flows.runCronDue(),
   });
 
   // pg-boss: EPOCH_CRON (default hourly). memory: EPOCH_INTERVAL_MS (>0) opt-in.
   await queue.scheduleEpoch(process.env.EPOCH_CRON ?? "0 * * * *");
-  // Cron-triggered flows (F1.17): minute-resolution, provider-agnostic.
-  flows.startCron();
+  // Cron-triggered flows (F1.17) sweep every minute through the queue, so a
+  // multi-replica deployment fires each due flow once rather than once each.
+  await queue.scheduleFlowCron("* * * * *");
 
   installShutdownHooks(server, async () => {
-    flows.stopCron();
     await queue.stop();
   });
 

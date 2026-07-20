@@ -7,13 +7,14 @@ import PgBoss from "pg-boss";
 import { getDatabaseUrl } from "@lacrew/db";
 import type { QueueHandlers, QueueJobName, QueueProvider, QueueStatus } from "./types.js";
 
-const QUEUES: QueueJobName[] = ["epoch", "tick"];
+const QUEUES: QueueJobName[] = ["epoch", "tick", "flow-cron"];
 
 export class PgBossQueue implements QueueProvider {
   readonly name = "pg-boss" as const;
   private boss: PgBoss | null = null;
   private ready = false;
   private epochSchedule: string | null = null;
+  private flowCronSchedule: string | null = null;
 
   constructor(private readonly connectionString = getDatabaseUrl()) {}
 
@@ -35,6 +36,11 @@ export class PgBossQueue implements QueueProvider {
     if (handlers.onTick) {
       await boss.work("tick", async () => {
         await handlers.onTick!();
+      });
+    }
+    if (handlers.onFlowCron) {
+      await boss.work("flow-cron", async () => {
+        await handlers.onFlowCron!();
       });
     }
     this.ready = true;
@@ -60,11 +66,22 @@ export class PgBossQueue implements QueueProvider {
     this.epochSchedule = cron;
   }
 
+  /**
+   * pg-boss holds a scheduling lock on the queue name, so N replicas sharing a
+   * database still enqueue one sweep per tick, and one worker claims it.
+   */
+  async scheduleFlowCron(cron: string): Promise<void> {
+    if (!this.boss || !this.ready) throw new Error("PgBossQueue not started");
+    await this.boss.schedule("flow-cron", cron, {});
+    this.flowCronSchedule = cron;
+  }
+
   status(): QueueStatus {
     return {
       provider: "pg-boss",
       ready: this.ready,
       epochSchedule: this.epochSchedule,
+      flowCronSchedule: this.flowCronSchedule,
     };
   }
 }

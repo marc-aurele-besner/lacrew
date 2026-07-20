@@ -55,7 +55,11 @@ export type FlowsSurface = {
   runTriggered(trigger: FlowTrigger): Promise<FlowRunResult[]>;
   /** Run cron-triggered flows whose schedule matches `now` (once per minute). */
   runCronDue(now?: Date): Promise<FlowRunResult[]>;
-  /** Start/stop the minute-resolution cron scheduler (idempotent). */
+  /**
+   * Start/stop an in-process minute-resolution sweeper (idempotent), for
+   * embedders driving flows without a QueueProvider. `startServer` schedules
+   * the sweep on the queue instead — running both double-fires cron flows.
+   */
   startCron(): void;
   stopCron(): void;
   /** Load persisted definitions + recent runs; returns counts for boot logs. */
