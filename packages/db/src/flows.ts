@@ -8,12 +8,16 @@ export interface FlowDefinitionRow {
   id: string;
   name: string;
   definition: Record<string, unknown>;
+  /** Null = org-wide. Denormalized from definition.scope for SQL filtering. */
+  scopeLevel?: string | null;
+  scopeRef?: string | null;
 }
 
 export interface FlowRunRow {
   runId: string;
   flowId: string;
   status: string;
+  principal?: string | null;
   startedAt: string;
   finishedAt: string;
   result: Record<string, unknown>;
@@ -25,10 +29,23 @@ export async function upsertFlowDefinition(
 ): Promise<void> {
   await handle.db
     .insert(flowDefinitions)
-    .values({ id: row.id, name: row.name, definition: row.definition, updatedAt: new Date() })
+    .values({
+      id: row.id,
+      name: row.name,
+      definition: row.definition,
+      scopeLevel: row.scopeLevel ?? null,
+      scopeRef: row.scopeRef ?? null,
+      updatedAt: new Date(),
+    })
     .onConflictDoUpdate({
       target: flowDefinitions.id,
-      set: { name: row.name, definition: row.definition, updatedAt: new Date() },
+      set: {
+        name: row.name,
+        definition: row.definition,
+        scopeLevel: row.scopeLevel ?? null,
+        scopeRef: row.scopeRef ?? null,
+        updatedAt: new Date(),
+      },
     });
 }
 
@@ -41,7 +58,13 @@ export async function listFlowDefinitions(handle: DbHandle): Promise<FlowDefinit
     .select()
     .from(flowDefinitions)
     .orderBy(desc(flowDefinitions.updatedAt));
-  return rows.map((row) => ({ id: row.id, name: row.name, definition: row.definition }));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    definition: row.definition,
+    scopeLevel: row.scopeLevel,
+    scopeRef: row.scopeRef,
+  }));
 }
 
 export async function insertFlowRun(handle: DbHandle, row: FlowRunRow): Promise<void> {
@@ -51,6 +74,7 @@ export async function insertFlowRun(handle: DbHandle, row: FlowRunRow): Promise<
       runId: row.runId,
       flowId: row.flowId,
       status: row.status,
+      principal: row.principal ?? null,
       startedAt: new Date(row.startedAt),
       finishedAt: new Date(row.finishedAt),
       result: row.result,
@@ -69,6 +93,7 @@ export async function recentFlowRuns(handle: DbHandle, limit: number): Promise<F
     runId: row.runId,
     flowId: row.flowId,
     status: row.status,
+    principal: row.principal,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt.toISOString(),
     result: row.result,

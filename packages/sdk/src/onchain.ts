@@ -576,6 +576,46 @@ export class OnchainLacrewClient {
     return { ...result, account: input.account };
   }
 
+  /**
+   * Propose suspending or restoring a node via OrgRegistry.setActive.
+   * Unlike proposeFire (removeNode, which rewires children to the parent and
+   * cannot be undone), this is reversible: an inactive node keeps its place in
+   * the chart and can be switched back on.
+   */
+  /**
+   * Read an agent's spend cap from SpendCapPolicy. Used to derive session-key
+   * ceilings, where the cap must be known as a number rather than a verdict.
+   * Returns undefined when no SpendCapPolicy is deployed.
+   */
+  async capOf(agent: `0x${string}`): Promise<bigint | undefined> {
+    const addr = this.addresses.spendCapPolicy;
+    if (!addr || addr === "0x0000000000000000000000000000000000000000") return undefined;
+    return (await this.publicClient.readContract({
+      address: addr,
+      abi: spendCapPolicyAbi,
+      functionName: "capOf",
+      args: [agent],
+    })) as bigint;
+  }
+
+  async proposeSetActive(input: {
+    account: `0x${string}`;
+    active: boolean;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: orgRegistryAbi,
+      functionName: "setActive",
+      args: [input.account, input.active],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "low",
+      target: this.addresses.orgRegistry,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
   /** Propose moving a node under a new parent via OrgRegistry.reparent. */
   async proposeReparent(input: {
     account: `0x${string}`;

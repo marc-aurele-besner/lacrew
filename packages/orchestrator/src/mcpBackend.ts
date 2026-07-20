@@ -7,7 +7,15 @@
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { CrewRuntime } from "./runtime.js";
 
-export function createRuntimeMcpBackend(runtime: CrewRuntime): McpToolBackend {
+/**
+ * `principal` is the agent a flow run acts as and `ceiling` the flow's scope
+ * cap; both are bound per run so tool calls inherit the run's identity rather
+ * than the process-wide worker.
+ */
+export function createRuntimeMcpBackend(
+  runtime: CrewRuntime,
+  actor: { principal?: `0x${string}`; ceiling?: `0x${string}` } = {},
+): McpToolBackend {
   return {
     getOrgTree: () => runtime.getClient().getOrgTree(),
     listPendingIntents: async () =>
@@ -16,7 +24,10 @@ export function createRuntimeMcpBackend(runtime: CrewRuntime): McpToolBackend {
         value: intent.value.toString(),
       })),
     proposeIntent: async (input) => {
-      const { intentId, verdict, txHash } = await runtime.propose(input);
+      const { intentId, verdict, txHash } = await runtime.propose({
+        ...input,
+        ceiling: actor.ceiling,
+      });
       return { intentId, verdict, txHash };
     },
     resolveIntent: async (intentId, approved) => {
@@ -27,5 +38,12 @@ export function createRuntimeMcpBackend(runtime: CrewRuntime): McpToolBackend {
         txHash,
       };
     },
+    checkPolicy: (input) =>
+      runtime.checkEffectivePolicy({ ...input, ceiling: actor.ceiling }),
+    orgAction: (input) => runtime.orgAction({ ...input, ...actor }),
+    setBudget: (input) => runtime.setBudget({ ...input, ...actor }),
+    governance: (input) => runtime.governanceAction(input),
+    // invokeAgent is layered on in createFlowsSurface: delegation runs a flow,
+    // which only the flows surface can do.
   };
 }

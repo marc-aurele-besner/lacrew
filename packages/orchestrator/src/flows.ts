@@ -19,16 +19,26 @@ import {
   type FlowTrigger,
 } from "@lacrew/flows";
 import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
+import type { OrgNode } from "@lacrew/core";
 import { createFlowStoreFromEnv, type FlowStore } from "./flowStore.js";
+import { ceilingAgent, scopeOf, visibleTo } from "./flowScope.js";
+import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import type { ModelProvider } from "./model/index.js";
 import type { CrewRuntime } from "./runtime.js";
 
 const RUN_RING_MAX = 50;
 /** Cron scheduler poll cadence — fine for minute-resolution schedules. */
 const CRON_POLL_MS = 20_000;
+/**
+ * How deep `agent` steps may nest flow runs. Cycle validation only covers edges
+ * *within* one definition, so a flowId reference is unchecked by it; without a
+ * bound, a flow that delegates back into itself takes the process down.
+ */
+const MAX_DELEGATION_DEPTH = 4;
 
 export type FlowsSurface = {
-  list(): FlowDefinition[];
+  /** Every flow, or only those `as` may see when a principal is given. */
+  list(as?: string): Promise<FlowDefinition[]>;
   save(def: FlowDefinition): Promise<FlowDefinition>;
   remove(id: string): Promise<boolean>;
   run(input: {
@@ -36,6 +46,8 @@ export type FlowsSurface = {
     flow?: FlowDefinition;
     input?: string;
     trigger?: FlowTrigger;
+    /** Agent the run executes as; defaults to the crew worker. */
+    as?: `0x${string}`;
   }): Promise<FlowRunResult>;
   runs(): FlowRunResult[];
   templates(): FlowTemplate[];
@@ -65,15 +77,86 @@ export function createFlowsSurface(opts: {
   let cronTimer: NodeJS.Timeout | null = null;
   const mocked = !opts.mcpBackend;
 
-  const backend: FlowBackend = mocked
-    ? createMockFlowBackend()
-    : {
-        complete: (input) => opts.model.complete(input),
-        callTool: (name, args) =>
-          runMcpTool(name, fillGateDefaults(name, args, opts.runtime), {
-            backend: opts.mcpBackend,
-          }),
+  /** Cached org chart for scope resolution; refreshed lazily per call. */
+  const orgNodes = async (): Promise<OrgNode[]> => {
+    try {
+      return (await opts.runtime.getClient().getOrgTree()) as OrgNode[];
+    } catch {
+      // No reachable registry (mock/detached): scoping cannot be evaluated.
+      return [];
+    }
+  };
+
+  /**
+   * A backend bound to one run's identity. Gate defaults, the policy ceiling,
+   * and delegation all follow the principal rather than the process-wide worker.
+   */
+  const backendFor = (
+    principal: `0x${string}`,
+    ceiling: `0x${string}` | undefined,
+    chain: string[],
+  ): FlowBackend => {
+    if (mocked) return createMockFlowBackend();
+    const bound = createRuntimeMcpBackend(opts.runtime, { principal, ceiling });
+    return {
+      complete: (input) => opts.model.complete(input),
+      callTool: async (name, args) => {
+        if (name === "lacrew_invoke_agent") return delegate(args, chain);
+        return runMcpTool(name, fillGateDefaults(name, args, principal, opts.runtime), {
+          backend: bound,
+        });
+      },
+    };
+  };
+
+  /**
+   * Delegate to another agent: run `flowId` as that agent when given, else hand
+   * the prompt to the model. The delegate's own policy stack applies because
+   * the nested run gets its own principal — a flow cannot borrow authority by
+   * invoking a more privileged agent.
+   */
+  const delegate = async (
+    args: Record<string, unknown>,
+    chain: string[],
+  ): Promise<unknown> => {
+    const agent = String(args.agent ?? "") as `0x${string}`;
+    const flowId = args.flowId ? String(args.flowId) : undefined;
+    if (flowId) {
+      if (chain.includes(flowId)) {
+        throw new Error(`flow_delegation_cycle: ${[...chain, flowId].join(" → ")}`);
+      }
+      if (chain.length >= MAX_DELEGATION_DEPTH) {
+        throw new Error(
+          `flow_delegation_too_deep: ${chain.length} levels (max ${MAX_DELEGATION_DEPTH})`,
+        );
+      }
+      const result = await runOne(
+        {
+          id: flowId,
+          input: args.prompt ? String(args.prompt) : undefined,
+          as: agent,
+        },
+        chain,
+      );
+      if (result.status === "error") {
+        // A delegate that failed must fail the delegating step. Returning the
+        // failure as data would let the parent run report "completed".
+        const cause = result.steps.find((s) => s.status === "error")?.error ?? result.status;
+        throw new Error(`flow_delegate_failed (${flowId}): ${cause}`);
+      }
+      return {
+        agent,
+        runId: result.runId,
+        status: result.status,
+        text: result.steps.at(-1)?.summary ?? result.status,
       };
+    }
+    const completion = await opts.model.complete({
+      system: `You are agent ${agent} in a LaCrew organization.`,
+      prompt: String(args.prompt ?? ""),
+    });
+    return { agent, text: completion.text, model: completion.model };
+  };
 
   const pushRun = (result: FlowRunResult): void => {
     runRing.push(result);
@@ -82,20 +165,32 @@ export function createFlowsSurface(opts: {
     void store.appendRun(result);
   };
 
-  const runOne = async (input: {
-    id?: string;
-    flow?: FlowDefinition;
-    input?: string;
-    trigger?: FlowTrigger;
-  }): Promise<FlowRunResult> => {
+  const runOne = async (
+    input: {
+      id?: string;
+      flow?: FlowDefinition;
+      input?: string;
+      trigger?: FlowTrigger;
+      as?: `0x${string}`;
+    },
+    /** Flow ids already on the delegation stack; guards nested `agent` steps. */
+    chain: string[] = [],
+  ): Promise<FlowRunResult> => {
     const def =
       input.flow ??
       flows.get(input.id ?? "") ??
       flowTemplates.find((t) => t.definition.id === input.id)?.definition;
     if (!def) throw new Error("flow_not_found");
-    const result = await runFlow(def, backend, {
+
+    const principal = input.as ?? opts.runtime.defaultAgent;
+    if (input.as && !visibleTo(def, input.as, await orgNodes())) {
+      throw new Error("flow_out_of_scope");
+    }
+
+    const result = await runFlow(def, backendFor(principal, ceilingAgent(def), [...chain, def.id]), {
       input: input.input,
       trigger: input.trigger,
+      principal: { agent: principal },
       mocked,
     });
     pushRun(result);
@@ -107,6 +202,8 @@ export function createFlowsSurface(opts: {
         runId: result.runId,
         status: result.status,
         trigger: result.trigger ?? "manual",
+        principal,
+        scope: scopeOf(def),
         steps: result.steps.length,
         verdicts: result.steps.filter((s) => s.verdict).map((s) => s.verdict),
         mocked: result.mocked ?? false,
@@ -116,7 +213,12 @@ export function createFlowsSurface(opts: {
   };
 
   const surface: FlowsSurface = {
-    list: () => [...flows.values()],
+    list: async (as) => {
+      const all = [...flows.values()];
+      if (!as) return all;
+      const nodes = await orgNodes();
+      return all.filter((def) => visibleTo(def, as, nodes));
+    },
     save: async (def) => {
       const check = validateFlow(def);
       if (!check.ok) throw new Error(`invalid_flow: ${check.errors.join("; ")}`);
@@ -200,11 +302,13 @@ export function createFlowsSurface(opts: {
 function fillGateDefaults(
   name: string,
   args: Record<string, unknown>,
+  principal: `0x${string}`,
   runtime: CrewRuntime,
 ): Record<string, unknown> {
-  if (name !== "lacrew_propose_intent") return args;
+  if (name !== "lacrew_propose_intent" && name !== "lacrew_check_policy") return args;
   return {
-    agent: args.agent ?? runtime.defaultAgent,
+    // The run's principal, not the process-wide worker.
+    agent: args.agent ?? principal,
     target: args.target ?? runtime.defaultSpendTarget,
     ...args,
     value: String(args.value ?? "0"),

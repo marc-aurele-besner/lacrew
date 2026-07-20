@@ -54,6 +54,50 @@ function stepCall(step: FlowStep): string {
         ["cases", step.cases],
         ["onDefault", step.onDefault],
       ])})`;
+    case "agent":
+      return `.agent(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["action", step.action],
+        ["agent", step.agent],
+        ["prompt", step.prompt],
+        ["flowId", step.flowId],
+        ["next", step.next],
+      ])})`;
+    case "org":
+      return `.org(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["action", step.action],
+        ["node", step.node],
+        ["parent", step.parent],
+        ["nodeKind", step.nodeKind],
+        ["cap", step.cap],
+        ["target", step.target],
+        ["allowed", step.allowed],
+        ["onAllow", step.onAllow],
+        ["onEscalate", step.onEscalate],
+        ["onDeny", step.onDeny],
+      ])})`;
+    case "budget":
+      return `.budget(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["action", step.action],
+        ["node", step.node],
+        ["amount", step.amount],
+        ["onAllow", step.onAllow],
+        ["onEscalate", step.onEscalate],
+        ["onDeny", step.onDeny],
+      ])})`;
+    case "governance":
+      return `.governance(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["action", step.action],
+        ["proposalId", step.proposalId],
+        ["support", step.support],
+        ["tier", step.tier],
+        ["target", step.target],
+        ["data", step.data],
+        ["next", step.next],
+      ])})`;
   }
 }
 
@@ -75,6 +119,13 @@ export function flowToCode(def: FlowDefinition): string {
   ];
   if (def.description) lines.push(`  .describe(${str(def.description)})`);
   if (def.trigger && def.trigger !== "manual") lines.push(`  .trigger(${str(def.trigger)})`);
+  // A cron flow is invalid without its schedule, so emit the pair together.
+  if (def.schedule) lines.push(`  .schedule(${str(def.schedule)})`);
+  if (def.scope && def.scope.level !== "org") {
+    lines.push(`  .scope(${str(def.scope.level)}, ${str(def.scope.ref ?? "")})`);
+  } else if (def.scope) {
+    lines.push(`  .scope(${str(def.scope.level)})`);
+  }
   if (def.entry) lines.push(`  .entry(${str(def.entry)})`);
   for (const step of def.steps) lines.push(`  ${stepCall(step)}`);
   lines[lines.length - 1] += ";";

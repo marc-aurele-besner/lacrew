@@ -6,9 +6,10 @@ live runtime. The same JSON definition powers the cloud's visual Flow Builder
 (UX-first) and the code-first SDK path shown here, and the builder always
 exposes the definition as both JSON and this exact TypeScript.
 
-Flows never hold keys and never touch the treasury: every onchain effect goes
-through `lacrew_propose_intent`, so policy stacks, escalation, and the audit
-trail apply exactly as they do for any other agent action.
+Flows never hold keys and never touch the treasury: every onchain effect is
+policy-checked first and then either proposed as a spend intent or routed into
+governance, so policy stacks, escalation, and the audit trail apply exactly as
+they do for any other agent action.
 
 ## Step kinds
 
@@ -18,11 +19,99 @@ trail apply exactly as they do for any other agent action.
 | `tool` | LaCrew MCP tool call (org tree, pending intents, approve, …) | `next` |
 | `gate` | Proposes a spend intent and branches on the policy verdict | `onAllow` / `onEscalate` / `onDeny` |
 | `branch` | String/number condition on a prior output | `onTrue` / `onFalse` |
+| `switch` | Multi-way match on a prior output | one edge per case / `onDefault` |
+| `agent` | Delegates to another agent, under that agent's own policy | `next` |
+| `org` | Hire, fire, reparent, activate, or change a cap / whitelist / policy | `onAllow` / `onEscalate` / `onDeny` |
+| `budget` | Raise a grant, stream an allowance, run the next epoch | `onAllow` / `onEscalate` / `onDeny` |
+| `governance` | Propose, vote, veto, or execute | `next` |
 
 Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
 `{{steps.<id>.json}}`, and `{{steps.<id>.verdict}}`. Steps fall through in
 declaration order unless a step routes explicitly; `null` stops the flow.
 Cycles are rejected — recurrence belongs to the trigger layer instead:
+
+## Scope
+
+A flow carries a `scope` that decides who can see and invoke it:
+
+| Level | Visible to |
+| --- | --- |
+| `org` (default) | every node in the org |
+| `team` | the node at `scope.ref` and everyone reporting under it |
+| `agent` | the agent at `scope.ref`, plus its managers |
+
+Scope is also a **policy ceiling**. A run always executes as its invoking
+principal — never as the scope — so effective authority is
+`min(principal, scope)`: both policy stacks are read and the stricter verdict
+wins. An org-scoped flow invoked by a junior agent still only gets that agent's
+authority, and an agent-scoped flow invoked by a manager is capped at the
+scoped agent's limits.
+
+### How the ceiling is enforced
+
+For **spend value**, the ceiling is enforced onchain. Before a scoped run
+proposes anything, the orchestrator issues that run a session key whose
+`maxValue` is `min(principal cap, scope cap)`, read from `SpendCapPolicy`.
+`EscalationRouter` checks every propose against the key's limits, so an
+over-ceiling spend reverts with `SessionValueExceeded` — the chain refuses it,
+not the orchestrator. Sessions are cached per `(agent, limits)`, so a wide key
+issued for an unscoped run is never reused for a tighter-scoped one.
+
+Other policy dimensions — rate limits, time windows — are **not** carried by the
+session key. For those the ceiling remains an orchestrator-side check, and a
+compromised orchestrator could skip it. The principal's own stack is still
+enforced onchain in every case, which is the guarantee that protects the
+treasury.
+
+> **Trust boundary.** Session limits are only as strong as the issuer role.
+> `SessionRegistry.issue` is root-or-issuer, and the orchestrator normally holds
+> the issuer role, so a compromised orchestrator could mint itself a wider key.
+> It cannot do so silently: every issue emits an onchain event, which Guardian
+> can alert on and the root can revoke. Running the issuer as a separate key the
+> orchestrator does not hold closes this gap.
+
+## Constitutional steps
+
+`org` and `budget` steps do not write directly. Org structure and treasury
+grants are constitutional, and the orchestrator holds short-lived session keys
+only — letting it rewrite the org chart would be exactly the custody LaCrew
+refuses. So these steps always raise a **governance proposal**, and the policy
+verdict picks the tier:
+
+| Verdict | Result |
+| --- | --- |
+| `ALLOW` | low-tier proposal — executes on quorum, no timelock |
+| `ESCALATE` | high-tier proposal — timelock plus human veto window |
+| `DENY` | nothing is raised; the step routes to `onDeny` |
+
+Authority is read from `SpendCapPolicy` rather than the full stack: the target
+of an org action is a node, not a payee, so consulting `WhitelistPolicy` would
+deny every such action for a reason unrelated to authority.
+
+`budget: run-epoch` is the exception and writes directly — the orchestrator is
+the `EpochStreamer` operator by design.
+
+`org` distinguishes removal from suspension, because they are not the same
+decision:
+
+- `fire` → `OrgRegistry.removeNode`. Permanent, and the node's children are
+  rewired to its parent.
+- `deactivate` / `activate` → `OrgRegistry.setActive`. Reversible; the node
+  keeps its place in the chart and its reporting line.
+
+## Delegation
+
+An `agent` step can hand work to another agent — a prompt, or a whole flow via
+`flowId`. The nested run gets its own principal, so the delegate acts under its
+*own* policy stack: a flow cannot borrow authority by invoking a more
+privileged agent.
+
+Delegation is bounded. `validateFlow` rejects cycles between a flow's own
+edges, but a `flowId` is not an edge, so the runtime tracks the chain of flows
+on the stack: revisiting one fails with `flow_delegation_cycle`, and a chain
+deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
+fails also fails the delegating step, rather than returning the failure as data
+for the parent to ignore.
 
 ## Triggers
 
@@ -128,6 +217,71 @@ import { runFlow } from "@lacrew/flows";
 const backend = createLangChainFlowBackend({ runnable: myChain });
 const result = await runFlow(budgetGuardedSpend, backend);
 ```
+
+## Scope
+
+A flow carries a `scope` that decides who can see and invoke it:
+
+| Level | Visible to |
+| --- | --- |
+| `org` (default) | every node in the org |
+| `team` | the node at `scope.ref` and everyone reporting under it |
+| `agent` | the agent at `scope.ref`, plus its managers |
+
+Scope is also a **policy ceiling**. A run always executes as its invoking
+principal — never as the scope — so effective authority is
+`min(principal, scope)`: both policy stacks are read and the stricter verdict
+wins. An org-scoped flow invoked by a junior agent still only gets that agent's
+authority, and an agent-scoped flow invoked by a manager is capped at the
+scoped agent's limits.
+
+> The ceiling is enforced by the orchestrator. The chain independently enforces
+> the invoking principal's own policy stack, which is the guarantee that
+> actually protects the treasury: a compromised orchestrator can ignore a
+> flow's scope cap, but never the principal's policy.
+
+## Constitutional steps
+
+`org` and `budget` steps do not write directly. Org structure and treasury
+grants are constitutional, and the orchestrator holds short-lived session keys
+only — letting it rewrite the org chart would be exactly the custody LaCrew
+refuses. So these steps always raise a **governance proposal**, and the policy
+verdict picks the tier:
+
+| Verdict | Result |
+| --- | --- |
+| `ALLOW` | low-tier proposal — executes on quorum, no timelock |
+| `ESCALATE` | high-tier proposal — timelock plus human veto window |
+| `DENY` | nothing is raised; the step routes to `onDeny` |
+
+Authority is read from `SpendCapPolicy` rather than the full stack: the target
+of an org action is a node, not a payee, so consulting `WhitelistPolicy` would
+deny every such action for a reason unrelated to authority.
+
+`budget: run-epoch` is the exception and writes directly — the orchestrator is
+the `EpochStreamer` operator by design.
+
+`org` distinguishes removal from suspension, because they are not the same
+decision:
+
+- `fire` → `OrgRegistry.removeNode`. Permanent, and the node's children are
+  rewired to its parent.
+- `deactivate` / `activate` → `OrgRegistry.setActive`. Reversible; the node
+  keeps its place in the chart and its reporting line.
+
+## Delegation
+
+An `agent` step can hand work to another agent — a prompt, or a whole flow via
+`flowId`. The nested run gets its own principal, so the delegate acts under its
+*own* policy stack: a flow cannot borrow authority by invoking a more
+privileged agent.
+
+Delegation is bounded. `validateFlow` rejects cycles between a flow's own
+edges, but a `flowId` is not an edge, so the runtime tracks the chain of flows
+on the stack: revisiting one fails with `flow_delegation_cycle`, and a chain
+deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
+fails also fails the delegating step, rather than returning the failure as data
+for the parent to ignore.
 
 ## Triggers
 

@@ -197,7 +197,8 @@ test("all shipped templates validate and run on the mock backend", async () => {
 });
 
 test("flowToCode round-trips through the builder API shape", () => {
-  const def = flowTemplates[1]!.definition;
+  // By id, not index — template order is not part of the contract.
+  const def = flowTemplates.find((t) => t.id === "tpl-budget-guarded-spend")!.definition;
   const code = flowToCode(def);
   assert.ok(code.includes(`import { flow } from "@lacrew/flows";`));
   assert.ok(code.includes(`.gate("spend"`));
@@ -205,4 +206,137 @@ test("flowToCode round-trips through the builder API shape", () => {
   assert.ok(code.trimEnd().endsWith(";"));
   const snippet = flowRunSnippet(def);
   assert.ok(snippet.includes("createFlowsClient"));
+});
+
+const AGENT_A = "0x1111111111111111111111111111111111111111";
+const AGENT_B = "0x2222222222222222222222222222222222222222";
+
+test("scope defaults to org-wide and validates refs for team/agent", () => {
+  const orgWide = flow("s1", "S1").model("m", { prompt: "hi", next: null }).build();
+  assert.equal(orgWide.scope, undefined);
+
+  const team = flow("s2", "S2")
+    .scope("team", AGENT_A)
+    .model("m", { prompt: "hi", next: null })
+    .build();
+  assert.deepEqual(team.scope, { level: "team", ref: AGENT_A });
+
+  const missingRef = validateFlow({
+    id: "s3",
+    name: "S3",
+    scope: { level: "agent" },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.equal(missingRef.ok, false);
+  assert.ok(missingRef.errors.some((e) => e.includes("scope.ref")));
+
+  const badLevel = validateFlow({
+    id: "s4",
+    name: "S4",
+    scope: { level: "department" as never },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.equal(badLevel.ok, false);
+  assert.ok(badLevel.errors.some((e) => e.includes("unknown scope level")));
+});
+
+test("org step escalates to a proposal and routes on the verdict", async () => {
+  const def = flow("orgy", "Orgy")
+    .org("promote", {
+      action: "set-cap",
+      node: AGENT_A,
+      cap: "500000000",
+      onAllow: "done",
+      onEscalate: "waiting",
+    })
+    .model("done", { prompt: "applied", next: null })
+    .model("waiting", { prompt: "proposal {{steps.promote.verdict}}", next: null })
+    .build();
+
+  const run = await runFlow(def, createMockFlowBackend());
+  assert.equal(run.status, "completed");
+  // Structural changes are constitutional, so the mock always escalates.
+  assert.equal(run.steps[0]!.verdict, "ESCALATE");
+  assert.deepEqual(
+    run.steps.map((s) => s.stepId),
+    ["promote", "waiting"],
+  );
+  assert.ok((run.steps[0]!.output as { proposalId: string }).proposalId);
+});
+
+test("budget step writes directly under cap and proposes above it", async () => {
+  const build = (amount: string) =>
+    flow(`b-${amount}`, "Budget")
+      .budget("raise", {
+        action: "set-grant",
+        node: AGENT_B,
+        amount,
+        onAllow: "ok",
+        onEscalate: "vote",
+      })
+      .model("ok", { prompt: "written", next: null })
+      .model("vote", { prompt: "proposed", next: null })
+      .build();
+
+  const under = await runFlow(build("50000000"), createMockFlowBackend());
+  assert.equal(under.steps[0]!.verdict, "ALLOW");
+  assert.equal(under.steps[1]!.stepId, "ok");
+  assert.ok((under.steps[0]!.output as { txHash: string }).txHash);
+
+  const over = await runFlow(build("500000000"), createMockFlowBackend());
+  assert.equal(over.steps[0]!.verdict, "ESCALATE");
+  assert.equal(over.steps[1]!.stepId, "vote");
+  assert.ok((over.steps[0]!.output as { proposalId: string }).proposalId);
+});
+
+test("agent and governance steps run and expose their output", async () => {
+  const def = flow("deleg", "Delegate")
+    .agent("ask", { action: "invoke", agent: AGENT_A, prompt: "review this" })
+    .governance("cast", { action: "vote", proposalId: "7", support: true, next: null })
+    .build();
+
+  const run = await runFlow(def, createMockFlowBackend());
+  assert.equal(run.status, "completed");
+  assert.ok((run.steps[0]!.output as { text: string }).text.includes(AGENT_A));
+  assert.equal((run.steps[1]!.output as { proposalId: string }).proposalId, "7");
+});
+
+test("validateFlow rejects malformed org, budget, and governance steps", () => {
+  const result = validateFlow({
+    id: "bad",
+    name: "Bad",
+    steps: [
+      { id: "o", kind: "org", action: "reparent", node: "not-an-address", next: null } as never,
+      { id: "b", kind: "budget", action: "teleport", node: AGENT_A } as never,
+      { id: "g", kind: "governance", action: "vote" } as never,
+    ],
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.includes("must be a 0x address")));
+  assert.ok(result.errors.some((e) => e.includes(`org step "o" parent is required`)));
+  assert.ok(result.errors.some((e) => e.includes("unknown action \"teleport\"")));
+  assert.ok(result.errors.some((e) => e.includes("needs a proposalId")));
+});
+
+test("runFlow records the principal it executed as", async () => {
+  const def = flow("who", "Who").gate("spend", { value: "1", onAllow: null }).build();
+  const run = await runFlow(def, createMockFlowBackend(), {
+    principal: { agent: AGENT_B, nodeKind: "worker_agent" },
+  });
+  assert.deepEqual(run.principal, { agent: AGENT_B, nodeKind: "worker_agent" });
+});
+
+test("flowToCode emits scope, schedule, and the new step kinds", () => {
+  const def = flow("coded", "Coded")
+    .trigger("cron")
+    .schedule("0 9 * * 1-5")
+    .scope("team", AGENT_A)
+    .budget("raise", { action: "set-grant", node: AGENT_B, amount: "1000" })
+    .governance("go", { action: "execute", proposalId: "3", next: null })
+    .build();
+  const code = flowToCode(def);
+  assert.ok(code.includes(`.schedule("0 9 * * 1-5")`));
+  assert.ok(code.includes(`.scope("team", "${AGENT_A}")`));
+  assert.ok(code.includes(`.budget("raise"`));
+  assert.ok(code.includes(`.governance("go"`));
 });

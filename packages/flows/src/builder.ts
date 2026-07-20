@@ -1,9 +1,14 @@
 import type {
+  AgentStep,
   BranchStep,
+  BudgetStep,
   FlowDefinition,
+  FlowScope,
   FlowStep,
   GateStep,
+  GovernanceStep,
   ModelStep,
+  OrgStep,
   SwitchStep,
   ToolStep,
 } from "./types.js";
@@ -50,8 +55,20 @@ export class FlowBuilder {
     return this;
   }
 
+  /** 5-field UTC cron expression; required alongside the "cron" trigger. */
+  schedule(schedule: string): this {
+    this.def.schedule = schedule;
+    return this;
+  }
+
   source(source: FlowDefinition["source"]): this {
     this.def.source = source;
+    return this;
+  }
+
+  /** Publish the flow to the whole org, one team subtree, or a single agent. */
+  scope(level: FlowScope["level"], ref?: string): this {
+    this.def.scope = ref === undefined ? { level } : { level, ref };
     return this;
   }
 
@@ -82,6 +99,30 @@ export class FlowBuilder {
 
   switch(id: string, opts: StepOpts<SwitchStep>): this {
     this.def.steps.push({ id, kind: "switch", ...opts });
+    return this;
+  }
+
+  /** Delegate to another agent; the delegate runs under its own policy stack. */
+  agent(id: string, opts: StepOpts<AgentStep>): this {
+    this.def.steps.push({ id, kind: "agent", ...opts });
+    return this;
+  }
+
+  /** Change the org chart or an agent's properties (ALLOW writes, ESCALATE proposes). */
+  org(id: string, opts: StepOpts<OrgStep>): this {
+    this.def.steps.push({ id, kind: "org", ...opts });
+    return this;
+  }
+
+  /** Move allowances: raise a grant, stream one, or run the next epoch. */
+  budget(id: string, opts: StepOpts<BudgetStep>): this {
+    this.def.steps.push({ id, kind: "budget", ...opts });
+    return this;
+  }
+
+  /** Vote, veto, execute, or raise a generic governance proposal. */
+  governance(id: string, opts: StepOpts<GovernanceStep>): this {
+    this.def.steps.push({ id, kind: "governance", ...opts });
     return this;
   }
 

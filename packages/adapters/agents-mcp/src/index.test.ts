@@ -60,7 +60,64 @@ describe("runMcpTool with injected backend", () => {
     assert.ok(Array.isArray(tree) && tree.length > 0);
   });
 
-  it("lists four tools", () => {
-    assert.equal(listLacrewMcpTools().length, 4);
+  it("lists the intent tools plus the crew-driving surface", () => {
+    const names = listLacrewMcpTools().map((t) => t.name);
+    assert.deepEqual(names, [
+      "lacrew_get_org_tree",
+      "lacrew_propose_intent",
+      "lacrew_list_pending_intents",
+      "lacrew_approve_intent",
+      "lacrew_check_policy",
+      "lacrew_org_action",
+      "lacrew_set_budget",
+      "lacrew_governance",
+      "lacrew_invoke_agent",
+    ]);
+  });
+
+  it("reports unsupported capabilities instead of faking success", async () => {
+    // A backend without the optional crew-driving methods must fail loudly:
+    // silence here would read as "the org changed" when nothing happened.
+    const backend = {
+      getOrgTree: async () => [],
+      listPendingIntents: async () => [],
+      proposeIntent: async () => ({}),
+      resolveIntent: async () => ({}),
+    };
+    await assert.rejects(
+      runMcpTool("lacrew_org_action", { action: "fire", node: "0x1" }, { backend }),
+      /not supported by this backend/,
+    );
+  });
+
+  it("routes crew-driving tools to the backend capability", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const backend = {
+      getOrgTree: async () => [],
+      listPendingIntents: async () => [],
+      proposeIntent: async () => ({}),
+      resolveIntent: async () => ({}),
+      checkPolicy: async (input: unknown) => {
+        calls.push(["checkPolicy", input]);
+        return { verdict: "ALLOW" };
+      },
+      setBudget: async (input: unknown) => {
+        calls.push(["setBudget", input]);
+        return { verdict: "ALLOW" };
+      },
+    };
+
+    await runMcpTool(
+      "lacrew_check_policy",
+      { agent: "0xa", target: "0xb", value: "42" },
+      { backend },
+    );
+    await runMcpTool("lacrew_set_budget", { action: "set-grant", amount: "7" }, { backend });
+
+    assert.deepEqual(calls[0], [
+      "checkPolicy",
+      { agent: "0xa", target: "0xb", value: 42n },
+    ]);
+    assert.deepEqual(calls[1], ["setBudget", { action: "set-grant", amount: 7n }]);
   });
 });

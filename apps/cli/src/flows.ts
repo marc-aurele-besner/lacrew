@@ -43,11 +43,17 @@ function loadLocalDefinition(ref: string): FlowDefinition | undefined {
   return undefined;
 }
 
+/** Mirrors KIND_META in the visual builder so traces read the same in both. */
 const STEP_GLYPHS: Record<string, string> = {
   model: "✶",
   tool: "⌬",
   gate: "¤",
   branch: "⑂",
+  switch: "⑂*",
+  agent: "◈",
+  org: "⚏",
+  budget: "◲",
+  governance: "⚖",
 };
 
 function printStep(trace: FlowStepTrace): void {
@@ -83,15 +89,22 @@ export async function cmdFlows(args: string[]): Promise<void> {
     }
 
     case "list": {
-      const flows = await orchClient(rest).list();
+      const as = flagValue(rest, "--as");
+      const flows = await orchClient(rest).list(as ? { as } : undefined);
       if (flows.length === 0) {
-        console.log("No saved flows. Save one: lacrew flows save <file.json>");
+        console.log(
+          as
+            ? `No flows scoped to ${as}.`
+            : "No saved flows. Save one: lacrew flows save <file.json>",
+        );
         return;
       }
       for (const f of flows) {
+        const scope =
+          f.scope && f.scope.level !== "org" ? ` · ${f.scope.level}:${f.scope.ref}` : "";
         console.log(
           `${f.id}  "${f.name}" · ${f.steps.length} steps` +
-            `${f.trigger === "epoch" ? " · epoch-triggered" : ""}`,
+            `${f.trigger === "epoch" ? " · epoch-triggered" : ""}${scope}`,
         );
       }
       return;
@@ -119,11 +132,14 @@ export async function cmdFlows(args: string[]): Promise<void> {
     case "run": {
       const ref = rest.find((a) => !a.startsWith("-"));
       if (!ref) {
-        console.error("Usage: lacrew flows run <id|file.json> [--input text] [--local] [--url <orch>]");
+        console.error(
+          "Usage: lacrew flows run <id|file.json> [--input text] [--as 0x…] [--local] [--url <orch>]",
+        );
         process.exitCode = 1;
         return;
       }
       const input = flagValue(rest, "--input");
+      const as = flagValue(rest, "--as");
       const local = rest.includes("--local");
 
       if (local) {
@@ -145,11 +161,26 @@ export async function cmdFlows(args: string[]): Promise<void> {
 
       const client = orchClient(rest);
       const localDef = ref.endsWith(".json") ? loadLocalDefinition(ref) : undefined;
-      const run = localDef
-        ? await client.runDefinition(localDef, { input })
-        : await client.run(ref, { input });
-      for (const step of run.steps) printStep(step);
-      printRun(run);
+      try {
+        const run = localDef
+          ? await client.runDefinition(localDef, { input, as })
+          : await client.run(ref, { input, as });
+        for (const step of run.steps) printStep(step);
+        printRun(run);
+      } catch (err) {
+        // The orchestrator's refusals are expected outcomes, not crashes.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("flow_out_of_scope")) {
+          console.error(
+            `"${ref}" is not in scope for ${as}. Check: lacrew flows list --as ${as}`,
+          );
+        } else if (msg.includes("flow_not_found")) {
+          console.error(`No flow "${ref}" on the orchestrator. See: lacrew flows list`);
+        } else {
+          console.error(msg);
+        }
+        process.exitCode = 1;
+      }
       return;
     }
 
@@ -181,10 +212,13 @@ export async function cmdFlows(args: string[]): Promise<void> {
 
 Commands:
   flows templates                      List built-in flow templates (offline)
-  flows list [--url <orch>]            List flows saved on the orchestrator
+  flows list [--as 0x…]                List flows saved on the orchestrator;
+                                       --as narrows to one agent's scope
   flows save <file.json>               Validate + save a definition
   flows run <id|file.json>             Run via the orchestrator (live trace)
         [--input text] [--local]      --local runs on the mock backend offline
+        [--as 0x…]                    run as that agent; its policy applies,
+                                       capped by the flow's scope
   flows runs                           Recent run traces (newest first)
   flows code <templateId|file.json>    Print the code-first @lacrew/flows snippet
 
