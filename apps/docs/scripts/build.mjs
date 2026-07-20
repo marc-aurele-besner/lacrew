@@ -20,6 +20,33 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const content = join(root, "content");
 const dist = join(root, "dist");
+const repoRoot = join(root, "..", "..");
+const repoBlob = "https://github.com/marc-aurele-besner/lacrew/blob/main";
+
+/**
+ * Import the root SPEC.md as a docs page (PRD F0.11) so the normative protocol
+ * surface is published alongside the narrative docs. Repo-relative links are
+ * rewritten: in-site targets to their page, everything else to GitHub.
+ */
+function importSpec() {
+  const src = join(repoRoot, "SPEC.md");
+  if (!existsSync(src)) return;
+  const md = readFileSync(src, "utf8")
+    // Links into apps/docs/content are pages on this site. Their link text is
+    // written as a repo path, so retarget both text and href.
+    .replace(
+      /\[`apps\/docs\/content\/([^`]*)`\]\(\.\/apps\/docs\/content\/[^)]*\)/g,
+      (_, target) => {
+        const page = target.endsWith("/") ? `${target}overview.md` : target;
+        const label = basename(page, ".md").replace(/-/g, " ");
+        return `[${label} docs](./${page})`;
+      },
+    )
+    // Everything else in the repo is only reachable on GitHub.
+    .replaceAll("./SECURITY.md", `${repoBlob}/SECURITY.md`)
+    .replaceAll("./contracts/src/", `${repoBlob}/contracts/src/`);
+  writeFileSync(join(content, "spec.md"), md);
+}
 
 function walkMarkdown(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -66,7 +93,11 @@ function mdToHtml(md) {
       .replace(
         /\[([^\]]+)\]\(([^)]+)\)/g,
         (_, text, href) => {
-          const h = href.endsWith(".md") ? href.replace(/\.md$/, ".html") : href;
+          // Only in-site markdown becomes a page; absolute URLs stay verbatim.
+          const external = /^[a-z][a-z0-9+.-]*:/i.test(href);
+          const h = !external && href.endsWith(".md")
+            ? href.replace(/\.md$/, ".html")
+            : href;
           return `<a href="${h}">${text}</a>`;
         },
       );
@@ -230,6 +261,7 @@ function pageShell(title, navHtml, bodyHtml, prefix) {
 
 function build() {
   mkdirSync(dist, { recursive: true });
+  importSpec();
   if (existsSync(content)) {
     cpSync(content, join(dist, "content"), { recursive: true });
   }
@@ -268,6 +300,10 @@ function build() {
     text: mdToPlainText(readFileSync(entry.full, "utf8")).slice(0, 4000),
   }));
   writeFileSync(join(dist, "search-index.json"), JSON.stringify(searchIndex));
+
+  // GitHub Pages: custom domain + serve paths starting with "_" verbatim.
+  writeFileSync(join(dist, "CNAME"), "docs.lacrew.xyz\n");
+  writeFileSync(join(dist, ".nojekyll"), "");
 
   console.log(
     `[@lacrew/docs] Static HTML build → dist/ (${entries.length} pages) + dist/content/`,

@@ -2,25 +2,28 @@
 
 > Your agents. Their budgets. Your keys.
 
-This site will host the protocol spec, contract interfaces, SDK reference, self-hosting guide, and cloud product docs.
+Protocol spec, contract interfaces, SDK reference, and self-hosting guide for
+LaCrew — the onchain org chart, budget, and escalation layer for AI agent teams.
 
-## Status
+## Start here
 
-Mocked content scaffold. The real docs site (Fumadocs) is not wired yet.
+- [Protocol specification](./spec.md) — the normative interface surface, invariants, and conformance rules (v0.1 draft)
+- [Protocol overview](./protocol/overview.md) — the narrative introduction
 
-## Read next
+## Protocol
 
-- [Protocol overview](./protocol/overview.md)
 - [IPolicyModule](./protocol/policy-module.md)
 - [Escalation flow](./protocol/escalation.md)
 - [Governance](./protocol/governance.md)
 - [Security model](./protocol/security.md)
-- [SDK reference](./sdk.md)
+
+## Build
+
+- [SDK reference](./sdk.md) — hand-written guide
+- [API reference](./reference/README.md) — generated from source by TypeDoc
+- [Flows](./flows.md)
 - [Self-hosting](./self-host.md)
-- [Architecture review checklist](../../../docs/architecture-review.md) (non-custodial)
 
 ## TODO
 
-- TODO: Stand up Fumadocs (or Docusaurus) app under `apps/docs`
-- TODO: Generate SDK reference from TypeDoc
-- TODO: Deploy to docs.lacrew.xyz
+- TODO: Adopt Fumadocs (or Docusaurus) in place of the static HTML builder
