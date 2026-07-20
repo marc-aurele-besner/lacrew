@@ -1,23 +1,19 @@
 /**
  * Safe smart-account wallet adapter (PRD F1.8).
  * Mocked: stub Safe address only. Implements WalletAdapter for swappability.
+ * Policy verdicts are real once bound via `createSafeWalletAdapter`.
  */
 
-import type { Verdict } from "@lacrew/core";
+import {
+  checkWithPolicy,
+  withPolicyReader,
+  type AdapterCheckInput,
+  type PolicyReader,
+  type WalletAdapter,
+} from "@lacrew/adapter-wallet-agentkit";
 
-/** Keep aligned with @lacrew/adapter-wallet-agentkit WalletAdapter. */
-export interface WalletAdapter {
-  readonly provider: string;
-  createWallet(label?: string): Promise<{ address: `0x${string}`; provider: string }>;
-  checkPolicy(input: AdapterCheckInput): Verdict | Promise<Verdict>;
-}
-
-export interface AdapterCheckInput {
-  agent: `0x${string}`;
-  target: `0x${string}`;
-  value: bigint;
-  data: `0x${string}`;
-}
+export { checkWithPolicy };
+export type { AdapterCheckInput, PolicyReader, WalletAdapter };
 
 export interface SafeWallet {
   address: `0x${string}`;
@@ -36,12 +32,6 @@ export async function createSafeWallet(owners: `0x${string}`[] = []): Promise<Sa
   };
 }
 
-/** Mocked policy preflight — same cap heuristic as AgentKit until onchain bind. */
-export function checkWithPolicy(input: AdapterCheckInput): Verdict {
-  const cap = 100n * 10n ** 6n;
-  return input.value <= cap ? "ALLOW" : "ESCALATE";
-}
-
 export const safeWalletAdapter: WalletAdapter = {
   provider: "safe",
   async createWallet() {
@@ -50,3 +40,8 @@ export const safeWalletAdapter: WalletAdapter = {
   },
   checkPolicy: checkWithPolicy,
 };
+
+/** Safe adapter reading verdicts from a live policy module instead of the mock. */
+export function createSafeWalletAdapter(reader: PolicyReader): WalletAdapter {
+  return withPolicyReader(safeWalletAdapter, reader);
+}

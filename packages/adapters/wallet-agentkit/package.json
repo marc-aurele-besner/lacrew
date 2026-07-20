@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test src/index.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
@@ -21,6 +22,8 @@
     "@lacrew/core": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   }
 }

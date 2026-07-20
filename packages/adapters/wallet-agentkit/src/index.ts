@@ -36,13 +36,42 @@ export async function createAgentKitWallet(label = "mock-agent"): Promise<AgentK
 }
 
 /**
+ * Reader for an onchain IPolicyModule — satisfied by `OnchainLacrewClient`.
+ * Adapters depend on this shape, never on a concrete client or vendor SDK.
+ */
+export interface PolicyReader {
+  checkPolicy(input: AdapterCheckInput): Promise<Verdict>;
+}
+
+/**
  * Preflight a spend through the LaCrew policy standard.
  * Mocked: always ALLOW under 100 USDC units; else ESCALATE.
+ * Used only when no `PolicyReader` is wired — see `checkWithPolicyReader`.
  */
 export function checkWithPolicy(input: AdapterCheckInput): Verdict {
-  // TODO: Delegate to onchain IPolicyModule stack for the agent node.
   const cap = 100n * 10n ** 6n;
   return input.value <= cap ? "ALLOW" : "ESCALATE";
+}
+
+/**
+ * Preflight against the real onchain policy stack.
+ * The verdict is advisory: enforcement stays onchain at propose time, so a
+ * reader failure must not silently read as ALLOW — it surfaces to the caller.
+ */
+export async function checkWithPolicyReader(
+  reader: PolicyReader,
+  input: AdapterCheckInput,
+): Promise<Verdict> {
+  return reader.checkPolicy(input);
+}
+
+/** Bind an adapter to a live policy module; without a reader it stays mocked. */
+export function withPolicyReader(adapter: WalletAdapter, reader: PolicyReader): WalletAdapter {
+  return {
+    provider: adapter.provider,
+    createWallet: (label?: string) => adapter.createWallet(label),
+    checkPolicy: (input) => checkWithPolicyReader(reader, input),
+  };
 }
 
 export const agentKitWalletAdapter: WalletAdapter = {
@@ -50,3 +79,8 @@ export const agentKitWalletAdapter: WalletAdapter = {
   createWallet: createAgentKitWallet,
   checkPolicy: checkWithPolicy,
 };
+
+/** AgentKit adapter reading verdicts from a live policy module instead of the mock. */
+export function createAgentKitWalletAdapter(reader: PolicyReader): WalletAdapter {
+  return withPolicyReader(agentKitWalletAdapter, reader);
+}
