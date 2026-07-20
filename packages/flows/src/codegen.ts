@@ -47,6 +47,13 @@ function stepCall(step: FlowStep): string {
         ["onTrue", step.onTrue],
         ["onFalse", step.onFalse],
       ])})`;
+    case "switch":
+      return `.switch(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["when", step.when],
+        ["cases", step.cases],
+        ["onDefault", step.onDefault],
+      ])})`;
   }
 }
 

@@ -211,6 +211,27 @@ export async function runFlow(
               : (step.onFalse ?? null);
           break;
         }
+        case "switch": {
+          const source = interpolate(step.when.source, ctx).trim().toLowerCase();
+          let matched: { value: string; next?: string | null } | undefined;
+          for (const c of step.cases) {
+            if (c.value.trim().toLowerCase() === source) {
+              matched = c;
+              break;
+            }
+          }
+          const next = matched ? (matched.next ?? null) : (step.onDefault ?? null);
+          outputs[step.id] = {
+            text: matched ? matched.value : "default",
+            json: JSON.stringify({ source, matched: matched?.value ?? null }),
+          };
+          trace.output = { source: truncate(source, 120), matched: matched?.value ?? null };
+          trace.summary = matched
+            ? `case "${truncate(matched.value, 40)}" → ${next ?? "stop"}`
+            : `default → ${next ?? "stop"}`;
+          trace.next = next;
+          break;
+        }
       }
     } catch (err) {
       trace.status = "error";

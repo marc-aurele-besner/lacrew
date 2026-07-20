@@ -78,7 +78,26 @@ export type BranchStep = FlowStepBase & {
   onFalse?: string | null;
 };
 
-export type FlowStep = ModelStep | ToolStep | GateStep | BranchStep;
+/**
+ * Multi-way branch: compare an interpolated source to each case value
+ * (trim + case-insensitive equals). First match wins; else `onDefault`.
+ * No array fall-through — unset edges stop.
+ */
+export type SwitchStep = FlowStepBase & {
+  kind: "switch";
+  when: {
+    /** Interpolated expression, e.g. "{{steps.triage.text}}". */
+    source: string;
+  };
+  cases: Array<{
+    /** Literal compared to the resolved source. */
+    value: string;
+    next?: string | null;
+  }>;
+  onDefault?: string | null;
+};
+
+export type FlowStep = ModelStep | ToolStep | GateStep | BranchStep | SwitchStep;
 export type FlowStepKind = FlowStep["kind"];
 
 export type FlowTrigger = "manual" | "epoch" | "cron";

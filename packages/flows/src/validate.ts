@@ -1,9 +1,9 @@
 import { isValidCron } from "./cron.js";
-import type { BranchStep, FlowDefinition, FlowStep, GateStep } from "./types.js";
+import type { BranchStep, FlowDefinition, FlowStep, GateStep, SwitchStep } from "./types.js";
 
 export type FlowValidationResult = { ok: boolean; errors: string[] };
 
-export const STEP_KINDS = ["model", "tool", "gate", "branch"] as const;
+export const STEP_KINDS = ["model", "tool", "gate", "branch", "switch"] as const;
 
 /**
  * All outgoing edges of a step (undefined = fall-through, null = stop).
@@ -19,6 +19,8 @@ export function stepEdges(step: FlowStep): Array<string | null | undefined> {
       return [step.onAllow, step.onEscalate, step.onDeny];
     case "branch":
       return [step.onTrue, step.onFalse];
+    case "switch":
+      return [...step.cases.map((c) => c.next), step.onDefault];
     default:
       return [];
   }
@@ -68,6 +70,21 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     }
     if (step.kind === "branch" && !(step as BranchStep).when?.source?.trim()) {
       errors.push(`branch step "${step.id}" needs a when.source`);
+    }
+    if (step.kind === "switch") {
+      const sw = step as SwitchStep;
+      if (!sw.when?.source?.trim()) {
+        errors.push(`switch step "${step.id}" needs a when.source`);
+      }
+      if (!Array.isArray(sw.cases) || sw.cases.length === 0) {
+        errors.push(`switch step "${step.id}" needs at least one case`);
+      } else {
+        sw.cases.forEach((c, i) => {
+          if (!c.value?.trim()) {
+            errors.push(`switch step "${step.id}" case ${i} needs a value`);
+          }
+        });
+      }
     }
   }
 

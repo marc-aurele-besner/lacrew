@@ -4,6 +4,7 @@ import type {
   FlowStep,
   GateStep,
   ModelStep,
+  SwitchStep,
   ToolStep,
 } from "./types.js";
 import { validateFlow } from "./validate.js";
@@ -59,7 +60,12 @@ export class FlowBuilder {
     return this;
   }
 
-  tool(id: string, tool: string, args?: Record<string, unknown>, opts: Omit<StepOpts<ToolStep>, "tool" | "args"> = {}): this {
+  tool(
+    id: string,
+    tool: string,
+    args?: Record<string, unknown>,
+    opts: Omit<StepOpts<ToolStep>, "tool" | "args"> = {},
+  ): this {
     this.def.steps.push({ id, kind: "tool", tool, args, ...opts });
     return this;
   }
@@ -71,6 +77,11 @@ export class FlowBuilder {
 
   branch(id: string, opts: StepOpts<BranchStep>): this {
     this.def.steps.push({ id, kind: "branch", ...opts });
+    return this;
+  }
+
+  switch(id: string, opts: StepOpts<SwitchStep>): this {
+    this.def.steps.push({ id, kind: "switch", ...opts });
     return this;
   }
 

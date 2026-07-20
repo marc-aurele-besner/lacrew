@@ -106,6 +106,44 @@ test("runFlow branch step routes on contains", async () => {
   );
 });
 
+test("runFlow switch hits matching case", async () => {
+  const def = flow("sw2", "SW2")
+    .model("say", { prompt: "x" })
+    .switch("route", {
+      when: { source: "{{steps.say.text}}" },
+      cases: [{ value: "[mock model] x", next: "hit" }],
+      onDefault: "miss",
+    })
+    .model("hit", { prompt: "hit", next: null })
+    .model("miss", { prompt: "miss", next: null })
+    .build();
+  const run = await runFlow(def, createMockFlowBackend());
+  assert.equal(run.status, "completed");
+  assert.deepEqual(
+    run.steps.map((s) => s.stepId),
+    ["say", "route", "hit"],
+  );
+});
+
+test("runFlow switch uses onDefault when no case matches", async () => {
+  const def = flow("sw3", "SW3")
+    .model("say", { prompt: "x" })
+    .switch("route", {
+      when: { source: "{{steps.say.text}}" },
+      cases: [{ value: "APPROVE", next: "hit" }],
+      onDefault: "miss",
+    })
+    .model("hit", { prompt: "hit", next: null })
+    .model("miss", { prompt: "miss", next: null })
+    .build();
+  const run = await runFlow(def, createMockFlowBackend());
+  assert.equal(run.status, "completed");
+  assert.deepEqual(
+    run.steps.map((s) => s.stepId),
+    ["say", "route", "miss"],
+  );
+});
+
 test("validateFlow reports an unknown step kind instead of throwing", () => {
   // Flows arrive as JSON from builders and marketplace listings, so the
   // FlowStep union is not a runtime guarantee.
