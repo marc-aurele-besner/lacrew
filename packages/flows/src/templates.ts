@@ -8,6 +8,76 @@ import type { FlowTemplate } from "./types.js";
  */
 export const flowTemplates: FlowTemplate[] = [
   {
+    id: "tpl-crew-onboarding",
+    name: "Crew onboarding",
+    description:
+      "Raise a hire under a manager and brief the human root on what still has to happen. Hiring is constitutional, so it becomes a governance proposal rather than a write.",
+    category: "governance",
+    author: "LaCrew",
+    definition: flow("crew-onboarding", "Crew onboarding")
+      .describe(
+        "Pass the hiring manager's address as the run input. Org changes never write directly: the policy verdict picks the proposal tier.",
+      )
+      .source({ templateId: "tpl-crew-onboarding", author: "LaCrew" })
+      .org("hire", {
+        label: "Hire a researcher",
+        action: "hire",
+        parent: "{{input}}",
+        nodeKind: "worker_agent",
+        onAllow: "note",
+        onEscalate: "note",
+        onDeny: null,
+      })
+      .model("note", {
+        label: "Draft the onboarding note",
+        system: "You brief a human root on pending organizational changes.",
+        prompt:
+          "A hire was raised as {{steps.hire.verdict}} ({{steps.hire.json}}).\n\nIn two sentences, tell the human root what was proposed and what has to happen before the new agent can spend: the proposal needs quorum, and its cap and whitelist are separate changes.",
+        next: null,
+      })
+      .build(),
+  },
+  {
+    id: "tpl-payroll-review",
+    name: "Payroll review",
+    description:
+      "Every epoch, read the crew and pending escalations, judge whether anyone is starved of budget, and raise a grant proposal when they are.",
+    category: "governance",
+    author: "LaCrew",
+    definition: flow("payroll-review", "Payroll review")
+      .describe(
+        "Epoch automation that turns repeated escalations into a budget conversation instead of a backlog. Pass the node to review as the run input.",
+      )
+      .trigger("epoch")
+      .source({ templateId: "tpl-payroll-review", author: "LaCrew" })
+      .tool("org", "lacrew_get_org_tree", undefined, { label: "Read org tree" })
+      .tool("pending", "lacrew_list_pending_intents", undefined, {
+        label: "List pending escalations",
+      })
+      .model("judge", {
+        label: "Is anyone under-funded?",
+        system: "You review agent payroll for a LaCrew organization.",
+        prompt:
+          "Org tree: {{steps.org.json}}\nPending escalations: {{steps.pending.json}}\n\nIf an agent keeps escalating because its allowance is too small, reply with RAISE and one sentence of justification. Otherwise reply HOLD.",
+      })
+      .branch("decide", {
+        label: "RAISE or HOLD",
+        when: { source: "{{steps.judge.text}}", op: "contains", value: "RAISE" },
+        onTrue: "raise",
+        onFalse: null,
+      })
+      .budget("raise", {
+        label: "Propose a bigger grant",
+        action: "set-grant",
+        node: "{{input}}",
+        amount: "250000000",
+        onAllow: null,
+        onEscalate: null,
+        onDeny: null,
+      })
+      .build(),
+  },
+  {
     id: "tpl-treasury-pulse",
     name: "Treasury pulse",
     description:

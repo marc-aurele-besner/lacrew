@@ -43,11 +43,17 @@ function loadLocalDefinition(ref: string): FlowDefinition | undefined {
   return undefined;
 }
 
+/** Mirrors KIND_META in the visual builder so traces read the same in both. */
 const STEP_GLYPHS: Record<string, string> = {
   model: "✶",
   tool: "⌬",
   gate: "¤",
   branch: "⑂",
+  switch: "⑂*",
+  agent: "◈",
+  org: "⚏",
+  budget: "◲",
+  governance: "⚖",
 };
 
 function printStep(trace: FlowStepTrace): void {

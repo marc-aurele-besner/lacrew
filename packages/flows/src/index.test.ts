@@ -197,7 +197,8 @@ test("all shipped templates validate and run on the mock backend", async () => {
 });
 
 test("flowToCode round-trips through the builder API shape", () => {
-  const def = flowTemplates[1]!.definition;
+  // By id, not index — template order is not part of the contract.
+  const def = flowTemplates.find((t) => t.id === "tpl-budget-guarded-spend")!.definition;
   const code = flowToCode(def);
   assert.ok(code.includes(`import { flow } from "@lacrew/flows";`));
   assert.ok(code.includes(`.gate("spend"`));
