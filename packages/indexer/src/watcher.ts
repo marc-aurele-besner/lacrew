@@ -47,8 +47,12 @@ const governanceEvents = [
   parseAbiItem(
     "event ProposalCreated(uint256 indexed proposalId, address indexed proposer, uint8 tier, address target, bytes32 actionHash)",
   ),
+  parseAbiItem(
+    "event Voted(uint256 indexed proposalId, address indexed voter, bool support, uint256 weight)",
+  ),
   parseAbiItem("event ProposalExecuted(uint256 indexed proposalId)"),
   parseAbiItem("event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer)"),
+  parseAbiItem("event ProposalDefeated(uint256 indexed proposalId)"),
 ];
 const treasuryEvents = [
   parseAbiItem("event AllowanceStreamed(address indexed node, uint256 amount, uint64 epoch)"),
@@ -121,9 +125,29 @@ export function logToProtocolEvent(
           txHash,
         },
       };
+    // The contract emits `Voted`; consumers read it as ProposalVoted, the same
+    // shape the orchestrator records when it casts a vote itself.
+    case "Voted":
+      return {
+        type: "ProposalVoted",
+        at,
+        payload: {
+          proposalId: String(args.proposalId),
+          voter: args.voter as string,
+          support: Boolean(args.support),
+          weight: String(args.weight),
+          txHash,
+        },
+      };
     case "ProposalExecuted":
       return {
         type: "ProposalExecuted",
+        at,
+        payload: { proposalId: String(args.proposalId), txHash },
+      };
+    case "ProposalDefeated":
+      return {
+        type: "ProposalDefeated",
         at,
         payload: { proposalId: String(args.proposalId), txHash },
       };
