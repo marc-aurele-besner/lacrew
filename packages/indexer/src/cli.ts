@@ -72,6 +72,5 @@ if (process.env.INDEXER_BACKFILL !== "0") {
 watcher.start();
 
 process.on("SIGINT", () => {
-  watcher.stop();
-  process.exit(0);
+  void watcher.stop().finally(() => process.exit(0));
 });
