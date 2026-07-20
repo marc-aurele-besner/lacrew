@@ -14,6 +14,7 @@ import {EscalationRouter} from "../src/EscalationRouter.sol";
 import {GovernanceModule} from "../src/GovernanceModule.sol";
 import {EpochStreamer} from "../src/EpochStreamer.sol";
 import {SessionRegistry} from "../src/SessionRegistry.sol";
+import {MarketplacePayments} from "../src/MarketplacePayments.sol";
 import {IOrgRegistry} from "../src/interfaces/IOrgRegistry.sol";
 import {IPolicyModule} from "../src/interfaces/IPolicyModule.sol";
 
@@ -22,6 +23,8 @@ import {IPolicyModule} from "../src/interfaces/IPolicyModule.sol";
 ///      On Anvil (31337), manager is Anvil account #1 so MANAGER_PRIVATE_KEY can sign resolve.
 contract DeployMockOrg is Script {
     uint256 internal constant USDC = 1e6;
+    /// @dev 20% platform take rate on marketplace sales.
+    uint16 internal constant PLATFORM_FEE_BPS = 2000;
     /// @dev Anvil default account #1 — known key in lacrew/.env.example (demo only).
     address internal constant ANVIL_MANAGER = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
@@ -38,6 +41,7 @@ contract DeployMockOrg is Script {
         TimeWindowPolicy timeWindow;
         EpochStreamer epochStreamer;
         SessionRegistry sessionRegistry;
+        MarketplacePayments marketplace;
         address humanRoot;
         address manager;
         address worker;
@@ -121,6 +125,18 @@ contract DeployMockOrg is Script {
         d.sessionRegistry = new SessionRegistry(humanRoot);
         d.router.setSessionRegistry(address(d.sessionRegistry));
 
+        // Marketplace settlement is intentionally not wired into Treasury or the router:
+        // a purchase is buyer-to-seller, not an org spend, so it must not be able to
+        // reach org allowances. Fees accrue to the deployer's platform address.
+        d.marketplace = new MarketplacePayments(
+            address(d.usdc), vm.envOr("PLATFORM_FEE_RECIPIENT", humanRoot), humanRoot, PLATFORM_FEE_BPS
+        );
+        // An org buys a listing as a normal policy-checked spend: the router pays the
+        // marketplace and then calls purchaseFor, so it must be both a whitelisted target
+        // and the authorised settler.
+        d.marketplace.setSettlementRouter(address(d.router));
+        d.whitelist.setAllowed(address(d.marketplace), true);
+
         // Human root decides high-tier final say; manager is review-only agent seat.
         // Low-tier quorum 2 still requires root + manager dual-sign for hires.
         d.gov.setVotingPower(humanRoot, 1, GovernanceModule.SeatRole.Human);
@@ -175,6 +191,7 @@ contract DeployMockOrg is Script {
         vm.serializeAddress(obj, "timeWindowPolicy", address(d.timeWindow));
         vm.serializeAddress(obj, "epochStreamer", address(d.epochStreamer));
         vm.serializeAddress(obj, "sessionRegistry", address(d.sessionRegistry));
+        vm.serializeAddress(obj, "marketplacePayments", address(d.marketplace));
         vm.serializeAddress(obj, "humanRoot", d.humanRoot);
         vm.serializeAddress(obj, "manager", d.manager);
         vm.serializeAddress(obj, "worker", d.worker);
@@ -185,6 +202,7 @@ contract DeployMockOrg is Script {
 
         console2.log("EscalationRouter", address(d.router));
         console2.log("SessionRegistry", address(d.sessionRegistry));
+        console2.log("MarketplacePayments", address(d.marketplace));
         console2.log("workerStack", address(d.workerStack));
         console2.log("managerStack", address(d.managerStack));
         console2.log("worker", d.worker);

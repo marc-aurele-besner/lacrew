@@ -99,6 +99,8 @@ export interface ChainAddresses {
   timeWindowPolicy?: `0x${string}`;
   epochStreamer?: `0x${string}`;
   sessionRegistry?: `0x${string}`;
+  /** USDC settlement for marketplace sales. Independent of Treasury by design. */
+  marketplacePayments?: `0x${string}`;
   /** Org node accounts seeded by DeployMockOrg. */
   humanRoot?: `0x${string}`;
   manager?: `0x${string}`;

@@ -28,6 +28,8 @@ import {
   spendCapPolicyAbi,
   whitelistPolicyAbi,
   policyModuleAbi,
+  marketplacePaymentsAbi,
+  mockUsdcAbi,
   type Allowance,
   type ChainAddresses,
   type GovernanceProposal,
@@ -404,6 +406,219 @@ export class OnchainLacrewClient {
       }
     }
     return out.sort((x, y) => y.expiresAt - x.expiresAt);
+  }
+
+  // ——— Marketplace settlement ———
+  //
+  // Deliberately separate from the intent/allowance path: a purchase is a buyer
+  // paying a seller, not an org spending its own budget, so it never touches
+  // Treasury allowances or the escalation router.
+
+  private requireMarketplace(): `0x${string}` {
+    const addr = this.addresses.marketplacePayments;
+    if (!addr || addr === "0x0000000000000000000000000000000000000000") {
+      throw new Error("marketplacePayments address missing — redeploy with DeployMockOrg");
+    }
+    return addr;
+  }
+
+  /** Catalog ids are strings off-chain; onchain they are their keccak hash. */
+  static listingId(catalogId: string): `0x${string}` {
+    return keccak256(toBytes(catalogId));
+  }
+
+  /** Price and split for a listing, at the fee currently in force. */
+  async quoteListing(
+    catalogId: string,
+  ): Promise<{ gross: bigint; fee: bigint; net: bigint; feeBps: number }> {
+    const address = this.requireMarketplace();
+    const [quote, feeBps] = await Promise.all([
+      this.publicClient.readContract({
+        address,
+        abi: marketplacePaymentsAbi,
+        functionName: "quote",
+        args: [OnchainLacrewClient.listingId(catalogId)],
+      }) as Promise<readonly [bigint, bigint, bigint]>,
+      this.publicClient.readContract({
+        address,
+        abi: marketplacePaymentsAbi,
+        functionName: "feeBps",
+      }) as Promise<number>,
+    ]);
+    return { gross: quote[0], fee: quote[1], net: quote[2], feeBps: Number(feeBps) };
+  }
+
+  async getListing(
+    catalogId: string,
+  ): Promise<{ seller: `0x${string}`; price: bigint; active: boolean } | undefined> {
+    const result = (await this.publicClient.readContract({
+      address: this.requireMarketplace(),
+      abi: marketplacePaymentsAbi,
+      functionName: "listings",
+      args: [OnchainLacrewClient.listingId(catalogId)],
+    })) as readonly [`0x${string}`, bigint, boolean];
+    const [seller, price, active] = result;
+    if (seller === "0x0000000000000000000000000000000000000000") return undefined;
+    return { seller, price, active };
+  }
+
+  /** True once `buyer` holds a receipt for `catalogId`. */
+  async hasPurchased(catalogId: string, buyer: `0x${string}`): Promise<boolean> {
+    return (await this.publicClient.readContract({
+      address: this.requireMarketplace(),
+      abi: marketplacePaymentsAbi,
+      functionName: "hasPurchased",
+      args: [OnchainLacrewClient.listingId(catalogId), buyer],
+    })) as boolean;
+  }
+
+  /** List (or reprice) a listing the calling wallet sells. */
+  async registerListing(input: {
+    catalogId: string;
+    price: bigint;
+  }): Promise<{ txHash: `0x${string}`; listingId: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const listingId = OnchainLacrewClient.listingId(input.catalogId);
+    const hash = await wallet.writeContract({
+      address: this.requireMarketplace(),
+      abi: marketplacePaymentsAbi,
+      functionName: "registerListing",
+      args: [listingId, input.price],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash, listingId };
+  }
+
+  /**
+   * Buy a listing, approving the exact gross first when the current ERC20
+   * allowance is short.
+   *
+   * `maxPrice` defaults to the quoted gross, so a seller repricing between the
+   * quote and the send makes the purchase revert rather than overcharge.
+   */
+  async purchaseListing(input: {
+    catalogId: string;
+    maxPrice?: bigint;
+  }): Promise<{ txHash: `0x${string}`; gross: bigint; fee: bigint; net: bigint }> {
+    const wallet = this.requireWallet();
+    const market = this.requireMarketplace();
+    const buyer = wallet.account!.address;
+    const { gross, fee, net } = await this.quoteListing(input.catalogId);
+    const maxPrice = input.maxPrice ?? gross;
+
+    const token = (await this.publicClient.readContract({
+      address: market,
+      abi: marketplacePaymentsAbi,
+      functionName: "token",
+    })) as `0x${string}`;
+
+    if (gross > 0n) {
+      const allowance = (await this.publicClient.readContract({
+        address: token,
+        abi: mockUsdcAbi,
+        functionName: "allowance",
+        args: [buyer, market],
+      })) as bigint;
+      if (allowance < gross) {
+        const approveHash = await wallet.writeContract({
+          address: token,
+          abi: mockUsdcAbi,
+          functionName: "approve",
+          args: [market, gross],
+          account: wallet.account!,
+          chain: wallet.chain,
+        });
+        await this.publicClient.waitForTransactionReceipt({ hash: approveHash });
+      }
+    }
+
+    const hash = await wallet.writeContract({
+      address: market,
+      abi: marketplacePaymentsAbi,
+      functionName: "purchase",
+      args: [OnchainLacrewClient.listingId(input.catalogId), maxPrice],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash, gross, fee, net };
+  }
+
+  /**
+   * Buy a listing with org funds instead of a personal wallet.
+   *
+   * The purchase is an ordinary policy-checked spend: it goes through
+   * EscalationRouter, so the agent's spend cap, whitelist, rate limit, and time
+   * window all apply, an over-cap purchase ESCALATEs to a human, and the whole
+   * thing lands in the audit trail like any other intent. The marketplace
+   * contract must be whitelisted and set as the settlement router (DeployMockOrg
+   * does both).
+   *
+   * Returns the router's verdict — `escalate` means a human still has to approve
+   * before the seller is paid, so callers must not report a purchase as complete
+   * on anything but `allow`.
+   */
+  async proposeMarketplacePurchase(input: {
+    agent: `0x${string}`;
+    catalogId: string;
+    /** Who receives the entitlement. Defaults to the paying agent. */
+    buyer?: `0x${string}`;
+    maxPrice?: bigint;
+    account?: Account;
+  }): Promise<{
+    intentId: string;
+    verdict: Verdict;
+    txHash: `0x${string}`;
+    gross: bigint;
+    fee: bigint;
+    net: bigint;
+  }> {
+    const market = this.requireMarketplace();
+    const { gross, fee, net } = await this.quoteListing(input.catalogId);
+    const buyer = input.buyer ?? input.agent;
+    const data = encodeFunctionData({
+      abi: marketplacePaymentsAbi,
+      functionName: "purchaseFor",
+      args: [
+        OnchainLacrewClient.listingId(input.catalogId),
+        buyer,
+        input.maxPrice ?? gross,
+      ],
+    });
+    const result = await this.proposeIntent({
+      agent: input.agent,
+      target: market,
+      value: gross,
+      data,
+      account: input.account,
+    });
+    return { ...result, gross, fee, net };
+  }
+
+  /** Balance accrued to `payee` and awaiting withdrawal. */
+  async marketplaceEarnings(payee: `0x${string}`): Promise<bigint> {
+    return (await this.publicClient.readContract({
+      address: this.requireMarketplace(),
+      abi: marketplacePaymentsAbi,
+      functionName: "owed",
+      args: [payee],
+    })) as bigint;
+  }
+
+  /** Withdraw everything accrued to the calling wallet. */
+  async withdrawMarketplaceEarnings(): Promise<{ txHash: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: this.requireMarketplace(),
+      abi: marketplacePaymentsAbi,
+      functionName: "withdraw",
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
   }
 
   /** Send ETH from the root wallet (Phase 0 gas sponsorship for session keys). */
