@@ -3,7 +3,13 @@ import type { BranchStep, FlowDefinition, FlowStep, GateStep } from "./types.js"
 
 export type FlowValidationResult = { ok: boolean; errors: string[] };
 
-/** All outgoing edges of a step (undefined = fall-through, null = stop). */
+export const STEP_KINDS = ["model", "tool", "gate", "branch"] as const;
+
+/**
+ * All outgoing edges of a step (undefined = fall-through, null = stop).
+ * Unknown kinds have no edges: flows arrive as JSON from builders and
+ * marketplace listings, so the type union is not a runtime guarantee.
+ */
 export function stepEdges(step: FlowStep): Array<string | null | undefined> {
   switch (step.kind) {
     case "model":
@@ -13,6 +19,8 @@ export function stepEdges(step: FlowStep): Array<string | null | undefined> {
       return [step.onAllow, step.onEscalate, step.onDeny];
     case "branch":
       return [step.onTrue, step.onFalse];
+    default:
+      return [];
   }
 }
 
@@ -44,6 +52,11 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     if (!step.id?.trim()) errors.push("every step needs an id");
     else if (ids.has(step.id)) errors.push(`duplicate step id "${step.id}"`);
     else ids.add(step.id);
+    if (!STEP_KINDS.includes(step.kind as (typeof STEP_KINDS)[number])) {
+      errors.push(
+        `step "${step.id}" has unknown kind "${step.kind}" (${STEP_KINDS.join(" | ")})`,
+      );
+    }
     if (step.kind === "model" && !step.prompt?.trim()) {
       errors.push(`model step "${step.id}" needs a prompt`);
     }
