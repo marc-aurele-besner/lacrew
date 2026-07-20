@@ -1,0 +1,61 @@
+name: Docs
+
+# Publishes apps/docs to GitHub Pages → docs.lacrew.xyz (PRD F1.14 / F0.11).
+# Pull requests build only; deploys happen on main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "SPEC.md"
+      - "packages/sdk/**"
+      - "packages/flows/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "apps/docs/**"
+      - "SPEC.md"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-flight deploy; queue behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      # TypeDoc resolves the SDK's own types, so its build must run first.
+      - run: pnpm --filter @lacrew/docs... build
+      - name: Verify the spec page was published
+        run: test -f apps/docs/dist/spec.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/docs/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
