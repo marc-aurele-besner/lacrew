@@ -1,10 +1,11 @@
 /**
  * Lightweight in-process event watcher for local demos.
  * Streams escalation + governance + treasury + session events into a JSON
- * store and, when DATABASE_URL is set, into Postgres
+ * store and out to every configured EventSink — Postgres by default
  * (orchestrator_audit_events — the stable consumer schema, F1.11) with
  * (tx_hash, log_index) dedup so backfills are idempotent.
- * TODO: Replace the watch loop with Ponder once multi-chain reorg handling matters.
+ * TODO: Replace the watch loop with Ponder once multi-chain reorg handling
+ * matters. That swaps the event *source*; sinks are already pluggable.
  */
 
 import {
@@ -23,13 +24,8 @@ import {
   type Intent,
   type ProtocolEvent,
 } from "@lacrew/core";
-import {
-  createDb,
-  getDatabaseUrl,
-  insertChainAuditEvent,
-  type DbHandle,
-} from "@lacrew/db";
 import { loadStore, saveStore, type IndexerStore } from "./store.js";
+import { createEventSinksFromEnv, writeToSinks, type EventSink } from "./sinks/index.js";
 
 const routerEvents = [
   parseAbiItem(
@@ -198,6 +194,8 @@ export type WatcherOptions = {
   chainId?: number;
   storePath: string;
   routerAddress?: `0x${string}`;
+  /** Durable targets for decoded events; defaults to Postgres when configured. */
+  sinks?: EventSink[];
 };
 
 export class EventWatcher {
@@ -208,8 +206,7 @@ export class EventWatcher {
   private store: IndexerStore;
   private unwatchers: Array<() => void> = [];
   private lastErrorAt = 0;
-  private readonly pgEnabled = Boolean(getDatabaseUrl());
-  private pg: DbHandle | undefined;
+  private readonly sinks: EventSink[];
   private readonly blockTimes = new Map<bigint, string>();
 
   constructor(options: WatcherOptions) {
@@ -219,6 +216,7 @@ export class EventWatcher {
     this.storePath = options.storePath;
     this.store = loadStore(options.storePath);
     this.client = createPublicClient({ transport: http(options.rpcUrl) });
+    this.sinks = options.sinks ?? createEventSinksFromEnv();
   }
 
   /** Contract → decoded-event sets this watcher covers. */
@@ -288,13 +286,15 @@ export class EventWatcher {
 
     console.log(
       `[@lacrew/indexer] watching router/gov/treasury/sessions → ${this.storePath}` +
-        (this.pgEnabled ? " + postgres" : ""),
+        (this.sinks.length > 0 ? ` + ${this.sinks.map((s) => s.name).join(", ")}` : ""),
     );
   }
 
-  stop(): void {
+  /** Unsubscribe and release sink handles (the pg pool holds the process open). */
+  async stop(): Promise<void> {
     for (const u of this.unwatchers) u();
     this.unwatchers = [];
+    for (const sink of this.sinks) await sink.close();
   }
 
   getStore(): IndexerStore {
@@ -335,21 +335,11 @@ export class EventWatcher {
     if (!opts.skipJsonAudit) this.store.audit.push(event);
     saveStore(this.storePath, this.store);
 
-    if (this.pgEnabled && log.transactionHash != null && log.logIndex != null) {
-      try {
-        this.pg ??= createDb();
-        await insertChainAuditEvent(this.pg, {
-          ...event,
-          txHash: log.transactionHash,
-          logIndex: log.logIndex,
-        });
-      } catch (err) {
-        console.error(
-          "[@lacrew/indexer] postgres insert failed:",
-          err instanceof Error ? err.message.split("\n")[0] : err,
-        );
-      }
-    }
+    await writeToSinks(this.sinks, {
+      event,
+      txHash: log.transactionHash ?? null,
+      logIndex: log.logIndex ?? null,
+    });
   }
 
   /** Block timestamp → ISO, cached per block. */

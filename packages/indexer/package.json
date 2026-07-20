@@ -18,7 +18,7 @@
     "start": "node dist/cli.js",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/store.test.ts src/watcher.test.ts"
+    "test": "node --import tsx --test src/store.test.ts src/watcher.test.ts src/sinks/sinks.test.ts"
   },
   "dependencies": {
     "@lacrew/core": "workspace:*",
