@@ -56,6 +56,8 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
           id: def.id,
           name: def.name,
           definition: def as unknown as Record<string, unknown>,
+          scopeLevel: def.scope?.level ?? null,
+          scopeRef: def.scope?.ref ?? null,
         });
       } catch (err) {
         warn("save", err);
@@ -83,6 +85,7 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
           runId: run.runId,
           flowId: run.flowId,
           status: run.status,
+          principal: run.principal?.agent ?? null,
           startedAt: run.startedAt,
           finishedAt: run.finishedAt,
           result: run as unknown as Record<string, unknown>,
