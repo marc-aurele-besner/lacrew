@@ -211,6 +211,12 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../core
+      '@safe-global/safe-modules-deployments':
+        specifier: ^3.0.8
+        version: 3.0.8
+      viem:
+        specifier: ^2.21.0
+        version: 2.55.2(typescript@5.9.3)(zod@4.4.3)
     devDependencies:
       '@safe-global/protocol-kit':
         specifier: ^8.0.4
@@ -224,9 +230,6 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
-      viem:
-        specifier: ^2.21.0
-        version: 2.55.2(typescript@5.9.3)(zod@4.4.3)
 
   packages/core:
     devDependencies:

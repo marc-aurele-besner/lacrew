@@ -16,7 +16,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --import tsx --test src/index.test.ts",
     "clean": "rm -rf dist",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
+    "smoke:cdp": "node --import tsx scripts/smoke-cdp.ts"
   },
   "dependencies": {
     "@lacrew/core": "workspace:*"

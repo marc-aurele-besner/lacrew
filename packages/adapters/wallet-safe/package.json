@@ -14,20 +14,21 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/index.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@lacrew/adapter-wallet-agentkit": "workspace:*",
-    "@lacrew/core": "workspace:*"
+    "@lacrew/core": "workspace:*",
+    "@safe-global/safe-modules-deployments": "^3.0.8",
+    "viem": "^2.21.0"
   },
   "devDependencies": {
     "@safe-global/protocol-kit": "^8.0.4",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3",
-    "viem": "^2.21.0"
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "@safe-global/protocol-kit": "^8.0.0"
