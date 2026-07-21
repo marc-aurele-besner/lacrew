@@ -6,6 +6,7 @@ import {IOrgRegistry} from "./interfaces/IOrgRegistry.sol";
 import {IRateRecorder} from "./interfaces/IRateRecorder.sol";
 import {ITreasurySpender} from "./interfaces/ITreasurySpender.sol";
 import {SessionRegistry} from "./SessionRegistry.sol";
+import {SessionScopes} from "./SessionScopes.sol";
 
 /// @title EscalationRouter
 /// @notice Creates pending intents when a policy returns ESCALATE; parents approve upward.
@@ -239,8 +240,9 @@ contract EscalationRouter {
         (valid, maxValue, allowedTarget, scopeMask) =
             sessionRegistry.keyLimits(agent, msg.sender);
         if (!valid) revert InvalidSession(agent, msg.sender);
-        uint256 needed = sessionRegistry.SCOPE_PROPOSE_INTENT();
-        if (scopeMask & needed == 0) revert SessionScopeDenied(agent, needed, scopeMask);
+        if (scopeMask & SessionScopes.PROPOSE_INTENT == 0) {
+            revert SessionScopeDenied(agent, SessionScopes.PROPOSE_INTENT, scopeMask);
+        }
         if (value > maxValue) revert SessionValueExceeded(agent, value, maxValue);
         // Handles both single- and multi-target pins (unpinned = any policy-allowed
         // target); `allowedTarget` is reported only for the revert reason.
@@ -253,8 +255,9 @@ contract EscalationRouter {
     ///      narrowing this call, so every bit is granted and this passes.
     function _requireSpendScope(address agent, uint256 scopeMask) private view {
         if (address(sessionRegistry) == address(0)) return;
-        uint256 needed = sessionRegistry.SCOPE_SPEND_WHITELIST();
-        if (scopeMask & needed == 0) revert SessionScopeDenied(agent, needed, scopeMask);
+        if (scopeMask & SessionScopes.SPEND_WHITELIST == 0) {
+            revert SessionScopeDenied(agent, SessionScopes.SPEND_WHITELIST, scopeMask);
+        }
     }
 
     function _policyFor(address node) private view returns (IPolicyModule) {

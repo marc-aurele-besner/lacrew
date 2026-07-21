@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.28;
 
+import {SessionScopes} from "./SessionScopes.sol";
+
 /// @title SessionRegistry
 /// @notice Onchain registry of scoped, expiring agent session keys.
 /// @dev Phase 0 bridge before ERC-4337 session modules (F1.3). Root issues and revokes;
@@ -12,14 +14,13 @@ pragma solidity ^0.8.28;
 ///      digest of the scope list could not be gated on without the caller also
 ///      supplying the preimage, which would let the caller pick the answer.
 contract SessionRegistry {
-    /// @notice May call `EscalationRouter.propose` at all.
-    uint256 public constant SCOPE_PROPOSE_INTENT = 1 << 0;
-    /// @notice May let an ALLOW verdict settle funds immediately. Without it a
-    ///         session can raise intents but never move money on its own.
-    uint256 public constant SCOPE_SPEND_WHITELIST = 1 << 1;
-    /// @dev Every bit this version knows about; anything else is rejected at
-    ///      issue time so a typo'd scope cannot be mistaken for a granted one.
-    uint256 public constant SCOPE_ALL = SCOPE_PROPOSE_INTENT | SCOPE_SPEND_WHITELIST;
+    /// @notice Mirrors of `SessionScopes`, exposed so off-chain callers can read
+    ///         the vocabulary from the deployment they are actually talking to.
+    uint256 public constant SCOPE_PROPOSE_INTENT = SessionScopes.PROPOSE_INTENT;
+    uint256 public constant SCOPE_SPEND_WHITELIST = SessionScopes.SPEND_WHITELIST;
+    /// @dev Anything outside this is rejected at issue time, so a typo'd scope
+    ///      cannot be mistaken for a granted one.
+    uint256 public constant SCOPE_ALL = SessionScopes.ALL;
 
     struct Session {
         address agent;
@@ -129,7 +130,7 @@ contract SessionRegistry {
     ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
-        if (scopeMask == 0 || scopeMask & ~SCOPE_ALL != 0) revert InvalidScopeMask(scopeMask);
+        if (scopeMask == 0 || scopeMask & ~SessionScopes.ALL != 0) revert InvalidScopeMask(scopeMask);
 
         // Revoke any prior active session for this key binding.
         uint256 prior = activeKeySession[agent][key];
