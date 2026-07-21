@@ -1385,6 +1385,27 @@ export const escalationRouterAbi = [
   },
   {
     "type": "error",
+    "name": "SessionScopeDenied",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "granted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SessionTargetDenied",
     "inputs": [
       {
@@ -3646,6 +3667,45 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "SCOPE_ALL",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SCOPE_PROPOSE_INTENT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SCOPE_SPEND_WHITELIST",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "activeKeySession",
     "inputs": [
       {
@@ -3792,9 +3852,9 @@ export const sessionRegistryAbi = [
         "internalType": "uint64"
       },
       {
-        "name": "scopesHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "maxValue",
@@ -3836,9 +3896,9 @@ export const sessionRegistryAbi = [
         "internalType": "uint64"
       },
       {
-        "name": "scopesHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "maxValue",
@@ -3905,9 +3965,9 @@ export const sessionRegistryAbi = [
         "internalType": "address"
       },
       {
-        "name": "scopesHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -3965,9 +4025,9 @@ export const sessionRegistryAbi = [
         "internalType": "uint64"
       },
       {
-        "name": "scopesHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "maxValue",
@@ -4066,10 +4126,10 @@ export const sessionRegistryAbi = [
         "internalType": "uint64"
       },
       {
-        "name": "scopesHash",
-        "type": "bytes32",
+        "name": "scopeMask",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "uint256"
       },
       {
         "name": "maxValue",
@@ -4143,6 +4203,17 @@ export const sessionRegistryAbi = [
         "name": "expiresAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidScopeMask",
+    "inputs": [
+      {
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
