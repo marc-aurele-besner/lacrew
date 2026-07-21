@@ -21,11 +21,13 @@ import {
   getAddresses,
   MOCK_MANAGER,
   MOCK_WORKER,
+  SESSION_SCOPES,
   type GovernanceProposal,
   type GovernanceTier,
   type Intent,
   type ProtocolEvent,
   type SessionKey,
+  type SessionScope,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -47,6 +49,17 @@ import {
 } from "./runtimeStore.js";
 
 /** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
+/** Full authority: what a session gets when the caller does not narrow it. */
+const DEFAULT_SESSION_SCOPES: readonly SessionScope[] = SESSION_SCOPES;
+
+/** Order-insensitive comparison, matching how the onchain mask is built. */
+function sameScopes(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].sort();
+  const right = [...b].sort();
+  return left.every((scope, i) => scope === right[i]);
+}
+
 const SESSION_GAS_STIPEND = parseEther("0.05");
 /** Default session maxValue: 200 USDC (matches DeployMockOrg worker stream; over policy cap → escalate). */
 const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
@@ -139,6 +152,8 @@ export class CrewRuntime {
     string,
     { session: SessionKey; privateKey?: `0x${string}` }
   >();
+  /** agent (lowercased) => scopes last explicitly requested for it. */
+  private readonly sessionScopePolicy = new Map<string, SessionScope[]>();
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   private readonly auditStore: AuditStore;
@@ -178,21 +193,32 @@ export class CrewRuntime {
   async boot(
     agent?: `0x${string}`,
     /** Upper bound for this session's maxValue (a flow's scope ceiling). */
-    limits?: { maxValue?: bigint; allowedTarget?: `0x${string}` },
+    limits?: {
+      maxValue?: bigint;
+      allowedTarget?: `0x${string}`;
+      /** What the key may do. Defaults to the full vocabulary. */
+      scopes?: SessionScope[];
+    },
   ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
     const ceiling = limits?.maxValue;
+    // An explicit narrowing sticks until it is explicitly changed. Internal
+    // callers (propose, purchase) boot without scopes, so defaulting to the
+    // full set here would silently re-widen an agent on the next action and
+    // make narrowing unobservable outside the one call that asked for it.
+    const scopes = limits?.scopes ?? this.scopePolicyFor(forAgent);
+    if (limits?.scopes) this.sessionScopePolicy.set(forAgent.toLowerCase(), limits.scopes);
     const key = this.sessionCacheKey(forAgent, ceiling, limits?.allowedTarget);
     const held = this.sessions.get(key);
-    if (held && !isSessionExpired(held.session)) {
+    // A cached session is only reusable when its scopes match what was asked
+    // for. Reusing a wider one would hand back authority this call did not
+    // request, which is the failure the scopes exist to prevent.
+    if (held && !isSessionExpired(held.session) && sameScopes(held.session.scopes, scopes)) {
       return held.session;
     }
 
     if (isOnchainClient(this.client) && this.addressesHasSessions()) {
-      const ephemeral = createEphemeralSession({
-        agent: forAgent,
-        scopes: ["spend:whitelist", "propose:intent"],
-      });
+      const ephemeral = createEphemeralSession({ agent: forAgent, scopes });
       // The chain enforces maxValue on every propose, so the ceiling becomes a
       // real limit rather than a check the orchestrator has to remember.
       const maxValue =
@@ -238,6 +264,7 @@ export class CrewRuntime {
           expiresAt: session.expiresAt,
           maxValue: session.maxValue,
           allowedTarget: session.allowedTarget,
+          scopes: session.scopes,
           txHash,
           fundTxHash,
         },
@@ -245,10 +272,7 @@ export class CrewRuntime {
       return session;
     }
 
-    const session = issueSession({
-      agent: forAgent,
-      scopes: ["spend:whitelist", "propose:intent"],
-    });
+    const session = issueSession({ agent: forAgent, scopes });
     this.sessions.set(key, { session });
     this.recordSession(session);
     this.pushAudit({
@@ -258,9 +282,15 @@ export class CrewRuntime {
         agent: session.agent,
         keyId: session.keyId,
         expiresAt: session.expiresAt,
+        scopes: session.scopes,
       },
     });
     return session;
+  }
+
+  /** Scopes an agent was last explicitly booted with; full set until narrowed. */
+  private scopePolicyFor(agent: `0x${string}`): SessionScope[] {
+    return this.sessionScopePolicy.get(agent.toLowerCase()) ?? [...DEFAULT_SESSION_SCOPES];
   }
 
   /** Distinct limit sets need distinct keys; see the `sessions` map comment. */

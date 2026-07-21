@@ -7,6 +7,7 @@
 import { Hono, type Context } from "hono";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
+import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
 import { isAuthorized } from "./auth.js";
 import type { CrewRuntime } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
@@ -157,7 +158,43 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.get("/flows/templates", (c) => jsonBig(c, { templates: flows.templates() }));
 
-  app.post("/boot", async (c) => jsonBig(c, { session: await runtime.boot() }));
+  /**
+   * Boot (or rotate) a session key. Scopes narrow what the key may do; omitting
+   * them grants the full vocabulary, which is what an unmodified caller expects.
+   * An unknown scope is a 400 rather than a silent drop — issuing a key with
+   * less authority than asked for fails later and far from the typo.
+   */
+  app.post("/boot", async (c) => {
+    const body = await bodyOf<{
+      agent?: string;
+      scopes?: string[];
+      maxValue?: string;
+      allowedTarget?: string;
+    }>(c);
+
+    let scopes: SessionScope[] | undefined;
+    if (body.scopes !== undefined) {
+      if (!Array.isArray(body.scopes) || body.scopes.length === 0) {
+        return jsonBig(c, { error: "scopes_must_be_a_non_empty_array" }, 400);
+      }
+      const unknown = body.scopes.filter((s) => !isSessionScope(s));
+      if (unknown.length > 0) {
+        return jsonBig(
+          c,
+          { error: `unknown_scopes: ${unknown.join(", ")}`, known: SESSION_SCOPES },
+          400,
+        );
+      }
+      scopes = body.scopes as SessionScope[];
+    }
+
+    const session = await runtime.boot(body.agent as `0x${string}` | undefined, {
+      scopes,
+      maxValue: body.maxValue ? BigInt(body.maxValue) : undefined,
+      allowedTarget: body.allowedTarget as `0x${string}` | undefined,
+    });
+    return jsonBig(c, { session });
+  });
 
   app.get("/sessions", async (c) =>
     jsonBig(c, {
