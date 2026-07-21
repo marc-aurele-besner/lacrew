@@ -66,12 +66,56 @@ export interface Intent {
   simulation?: IntentSimulation;
 }
 
+/**
+ * The scopes a session key can carry. Closed on purpose: SessionRegistry
+ * rejects a mask with any bit it does not know, so a scope invented here
+ * without a matching bit onchain would be refused at issue time rather than
+ * silently granting nothing.
+ */
+export type SessionScope = "propose:intent" | "spend:whitelist";
+
+/** Bit positions, mirroring `SessionRegistry.SCOPE_*`. */
+export const SESSION_SCOPE_BIT: Record<SessionScope, number> = {
+  "propose:intent": 1 << 0,
+  "spend:whitelist": 1 << 1,
+};
+
+export const SESSION_SCOPES = Object.keys(SESSION_SCOPE_BIT) as SessionScope[];
+
+export function isSessionScope(value: string): value is SessionScope {
+  return value in SESSION_SCOPE_BIT;
+}
+
+/**
+ * Encode scopes for `SessionRegistry.issue`. Throws on an unknown scope: a
+ * silently dropped scope would issue a key with less authority than the caller
+ * asked for, which fails later and far from the cause.
+ */
+export function sessionScopeMask(scopes: readonly string[]): bigint {
+  let mask = 0n;
+  for (const scope of scopes) {
+    if (!isSessionScope(scope)) {
+      throw new Error(
+        `unknown session scope "${scope}" — known scopes: ${SESSION_SCOPES.join(", ")}`,
+      );
+    }
+    mask |= BigInt(SESSION_SCOPE_BIT[scope]);
+  }
+  return mask;
+}
+
+/** Decode a mask back to scope names, for display and persistence. */
+export function sessionScopesFromMask(mask: bigint): SessionScope[] {
+  return SESSION_SCOPES.filter((scope) => (mask & BigInt(SESSION_SCOPE_BIT[scope])) !== 0n);
+}
+
 export interface SessionKey {
   agent: `0x${string}`;
   /** Session id (onchain uint as string, or mock UUID). */
   keyId: string;
   expiresAt: number;
-  scopes: string[];
+  /** Enforced by EscalationRouter via the onchain scope mask. */
+  scopes: SessionScope[];
   /** Ephemeral EOA address registered onchain (when issued via SessionRegistry). */
   keyAddress?: `0x${string}`;
   /** Onchain max propose value (decimal string); enforced by EscalationRouter. */

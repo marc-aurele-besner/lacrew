@@ -30,6 +30,8 @@ contract SessionMultiTargetTest is Test {
     EscalationRouter internal router;
     SessionRegistry internal sessions;
 
+    /// @dev Resolved in setUp: reading it inline would consume the next vm.prank.
+    uint256 internal allScopes;
     function setUp() public {
         MockUSDC usdc = new MockUSDC();
         registry = new OrgRegistry(root);
@@ -62,11 +64,12 @@ contract SessionMultiTargetTest is Test {
         usdc.approve(address(treasury), type(uint256).max);
         treasury.deposit(1_000 * ONE);
         treasury.streamAllowance(worker, 500 * ONE, 1);
+        allScopes = sessions.SCOPE_ALL();
     }
 
     function _pin(address[] memory targets) internal returns (uint256) {
         return sessions.issueScoped(
-            worker, sessionKey, uint64(block.timestamp + 1 hours), bytes32(0), 200 * ONE, targets
+            worker, sessionKey, uint64(block.timestamp + 1 hours), allScopes, 200 * ONE, targets
         );
     }
 
@@ -162,7 +165,7 @@ contract SessionMultiTargetTest is Test {
 
     function test_singleTargetIssueStillPinsExactly() public {
         sessions.issue(
-            worker, sessionKey, uint64(block.timestamp + 1 hours), bytes32(0), 200 * ONE, vendorA
+            worker, sessionKey, uint64(block.timestamp + 1 hours), allScopes, 200 * ONE, vendorA
         );
         assertTrue(sessions.isTargetAllowed(worker, sessionKey, vendorA));
         assertFalse(sessions.isTargetAllowed(worker, sessionKey, vendorB));

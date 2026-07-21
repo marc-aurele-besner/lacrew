@@ -30,6 +30,7 @@ import {
   policyModuleAbi,
   marketplacePaymentsAbi,
   mockUsdcAbi,
+  sessionScopesFromMask,
   type Allowance,
   type ChainAddresses,
   type GovernanceProposal,
@@ -384,13 +385,13 @@ export class OnchainLacrewClient {
           `0x${string}`,
           `0x${string}`,
           number | bigint,
-          `0x${string}`,
+          bigint,
           bigint,
           `0x${string}`,
           boolean,
           boolean,
         ];
-        const [, key, expiresAtRaw, , maxValue, allowedTarget, revoked, exists] = row;
+        const [, key, expiresAtRaw, scopeMask, maxValue, allowedTarget, revoked, exists] = row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
         out.push({
@@ -398,7 +399,7 @@ export class OnchainLacrewClient {
           keyId: id.toString(),
           keyAddress: key,
           expiresAt: expiresAtSec * 1000,
-          scopes: [],
+          scopes: sessionScopesFromMask(scopeMask),
           maxValue: maxValue.toString(),
           allowedTarget,
           revoked: revoked || expiresAtSec <= nowSec,
@@ -642,7 +643,8 @@ export class OnchainLacrewClient {
     agent: `0x${string}`;
     key: `0x${string}`;
     expiresAtSec: number;
-    scopesHash: `0x${string}`;
+    /** Scope bitmask; see `sessionScopeMask` in @lacrew/core. */
+    scopeMask: bigint;
     /** Max propose value; defaults to max uint256 (unlimited). */
     maxValue?: bigint;
     /** Sole allowed target; defaults to zero (any policy-allowed target). */
@@ -662,7 +664,7 @@ export class OnchainLacrewClient {
         input.agent,
         input.key,
         BigInt(input.expiresAtSec),
-        input.scopesHash,
+        input.scopeMask,
         maxValue,
         allowedTarget,
       ],

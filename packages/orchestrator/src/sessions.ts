@@ -5,34 +5,35 @@
  * TODO: Replace with ERC-4337 session modules (ZeroDev / Rhinestone) in F1.3.
  */
 
-import { DEFAULT_SESSION_TTL_MS, type SessionKey } from "@lacrew/core";
+import {
+  DEFAULT_SESSION_TTL_MS,
+  sessionScopeMask,
+  type SessionKey,
+  type SessionScope,
+} from "@lacrew/core";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { keccak256, toBytes } from "viem";
 
 /** Monotonic suffix so mock session ids stay unique within a millisecond. */
 let mockSessionSeq = 0;
 
 export interface IssueSessionInput {
   agent: `0x${string}`;
-  scopes?: string[];
+  scopes?: SessionScope[];
   ttlMs?: number;
 }
 
 export interface IssuedSession extends SessionKey {
   /** Ephemeral private key — keep in-process only; never persist or log. */
   privateKey: `0x${string}`;
-  scopesHash: `0x${string}`;
+  /** Bitmask handed to `SessionRegistry.issue`; what the chain enforces. */
+  scopeMask: bigint;
   expiresAtSec: number;
-}
-
-export function scopesHash(scopes: string[]): `0x${string}` {
-  return keccak256(toBytes(scopes.slice().sort().join("|")));
 }
 
 /** Create an ephemeral key pair + metadata (not yet registered onchain). */
 export function createEphemeralSession(input: IssueSessionInput): IssuedSession {
   const ttl = input.ttlMs ?? DEFAULT_SESSION_TTL_MS;
-  const scopes = input.scopes ?? ["propose:intent", "spend:whitelist"];
+  const scopes: SessionScope[] = input.scopes ?? ["propose:intent", "spend:whitelist"];
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
   const expiresAt = Date.now() + ttl;
@@ -43,7 +44,7 @@ export function createEphemeralSession(input: IssueSessionInput): IssuedSession 
     expiresAt,
     expiresAtSec: Math.floor(expiresAt / 1000),
     scopes,
-    scopesHash: scopesHash(scopes),
+    scopeMask: sessionScopeMask(scopes),
     privateKey,
     revoked: false,
   };
@@ -52,7 +53,7 @@ export function createEphemeralSession(input: IssueSessionInput): IssuedSession 
 /** Mock path: opaque UUID without a real key (offline demos). */
 export function issueMockSession(input: IssueSessionInput): SessionKey {
   const ttl = input.ttlMs ?? DEFAULT_SESSION_TTL_MS;
-  const scopes = input.scopes ?? ["propose:intent"];
+  const scopes: SessionScope[] = input.scopes ?? ["propose:intent"];
   return {
     agent: input.agent,
     // Counter as well as clock: two sessions issued in the same millisecond

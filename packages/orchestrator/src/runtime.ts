@@ -206,7 +206,7 @@ export class CrewRuntime {
         agent: ephemeral.agent,
         key: ephemeral.keyAddress!,
         expiresAtSec: ephemeral.expiresAtSec,
-        scopesHash: ephemeral.scopesHash,
+        scopeMask: ephemeral.scopeMask,
         maxValue,
         allowedTarget,
       });

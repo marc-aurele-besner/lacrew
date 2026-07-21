@@ -1,18 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.28;
 
+import {SessionScopes} from "./SessionScopes.sol";
+
 /// @title SessionRegistry
 /// @notice Onchain registry of scoped, expiring agent session keys.
 /// @dev Phase 0 bridge before ERC-4337 session modules (F1.3). Root issues and revokes;
 ///      orchestrator holds only the ephemeral private key off-chain.
-///      EscalationRouter enforces `maxValue` and optional `allowedTarget`
-///      (`address(0)` = any target that still passes policy).
+///      EscalationRouter enforces `scopeMask`, `maxValue`, and optional
+///      `allowedTarget` (`address(0)` = any target that still passes policy).
+///
+///      Scopes are a bitmask so the chain can test membership on its own. A
+///      digest of the scope list could not be gated on without the caller also
+///      supplying the preimage, which would let the caller pick the answer.
 contract SessionRegistry {
+    /// @notice Mirrors of `SessionScopes`, exposed so off-chain callers can read
+    ///         the vocabulary from the deployment they are actually talking to.
+    uint256 public constant SCOPE_PROPOSE_INTENT = SessionScopes.PROPOSE_INTENT;
+    uint256 public constant SCOPE_SPEND_WHITELIST = SessionScopes.SPEND_WHITELIST;
+    /// @dev Anything outside this is rejected at issue time, so a typo'd scope
+    ///      cannot be mistaken for a granted one.
+    uint256 public constant SCOPE_ALL = SessionScopes.ALL;
+
     struct Session {
         address agent;
         address key;
         uint64 expiresAt;
-        bytes32 scopesHash;
+        uint256 scopeMask;
         uint256 maxValue;
         address allowedTarget;
         bool revoked;
@@ -38,7 +52,7 @@ contract SessionRegistry {
         address indexed agent,
         address indexed key,
         uint64 expiresAt,
-        bytes32 scopesHash,
+        uint256 scopeMask,
         uint256 maxValue,
         address allowedTarget
     );
@@ -51,6 +65,9 @@ contract SessionRegistry {
     error InvalidExpiry(uint64 expiresAt);
     error SessionNotFound(uint256 sessionId);
     error AlreadyRevoked(uint256 sessionId);
+    /// @dev An empty mask would be a session that can do nothing; an unknown bit
+    ///      is almost always a caller encoding scopes against a newer vocabulary.
+    error InvalidScopeMask(uint256 scopeMask);
 
     modifier onlyRootOrIssuer() {
         if (msg.sender != humanRoot && msg.sender != issuer) revert NotAuthorized(msg.sender);
@@ -77,7 +94,7 @@ contract SessionRegistry {
         address agent,
         address key,
         uint64 expiresAt,
-        bytes32 scopesHash,
+        uint256 scopeMask,
         uint256 maxValue,
         address allowedTarget
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
@@ -86,7 +103,7 @@ contract SessionRegistry {
             targets = new address[](1);
             targets[0] = allowedTarget;
         }
-        return _issue(agent, key, expiresAt, scopesHash, maxValue, targets);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, targets);
     }
 
     /// @notice Issue a session pinned to several targets (empty = any policy-allowed target).
@@ -96,23 +113,24 @@ contract SessionRegistry {
         address agent,
         address key,
         uint64 expiresAt,
-        bytes32 scopesHash,
+        uint256 scopeMask,
         uint256 maxValue,
         address[] calldata allowedTargets
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
-        return _issue(agent, key, expiresAt, scopesHash, maxValue, allowedTargets);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets);
     }
 
     function _issue(
         address agent,
         address key,
         uint64 expiresAt,
-        bytes32 scopesHash,
+        uint256 scopeMask,
         uint256 maxValue,
         address[] memory allowedTargets
     ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
+        if (scopeMask == 0 || scopeMask & ~SessionScopes.ALL != 0) revert InvalidScopeMask(scopeMask);
 
         // Revoke any prior active session for this key binding.
         uint256 prior = activeKeySession[agent][key];
@@ -136,7 +154,7 @@ contract SessionRegistry {
             agent: agent,
             key: key,
             expiresAt: expiresAt,
-            scopesHash: scopesHash,
+            scopeMask: scopeMask,
             maxValue: maxValue,
             allowedTarget: first,
             revoked: false,
@@ -145,7 +163,7 @@ contract SessionRegistry {
         _byAgent[agent].push(sessionId);
         activeKeySession[agent][key] = sessionId;
 
-        emit SessionIssued(sessionId, agent, key, expiresAt, scopesHash, maxValue, first);
+        emit SessionIssued(sessionId, agent, key, expiresAt, scopeMask, maxValue, first);
         if (_sessionTargets[sessionId].length > 1) {
             emit SessionTargetsPinned(sessionId, _sessionTargets[sessionId]);
         }
@@ -181,15 +199,15 @@ contract SessionRegistry {
     function keyLimits(address agent, address key)
         external
         view
-        returns (bool valid, uint256 maxValue, address allowedTarget, bytes32 scopesHash)
+        returns (bool valid, uint256 maxValue, address allowedTarget, uint256 scopeMask)
     {
         uint256 id = activeKeySession[agent][key];
-        if (id == 0) return (false, 0, address(0), bytes32(0));
+        if (id == 0) return (false, 0, address(0), 0);
         Session storage s = sessions[id];
         if (!s.exists || s.revoked || block.timestamp >= s.expiresAt) {
-            return (false, 0, address(0), bytes32(0));
+            return (false, 0, address(0), 0);
         }
-        return (true, s.maxValue, s.allowedTarget, s.scopesHash);
+        return (true, s.maxValue, s.allowedTarget, s.scopeMask);
     }
 
     /// @notice Targets pinned to a session (empty = any policy-allowed target).
