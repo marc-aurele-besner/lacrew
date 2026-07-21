@@ -23,6 +23,8 @@ import {
 } from "./safe.js";
 
 export * from "./safe.js";
+export * from "./allowance.js";
+export * from "./execute.js";
 export { checkWithPolicy };
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
 

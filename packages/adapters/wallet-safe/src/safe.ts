@@ -43,7 +43,7 @@ export type ConnectSafeWalletOptions = SafeWalletConfig & {
 type SafeConstructor = typeof import("@safe-global/protocol-kit").default;
 
 /** Load the optional peer, surfacing install guidance instead of a module error. */
-async function loadSafeKit(): Promise<SafeConstructor> {
+export async function loadSafeKit(): Promise<SafeConstructor> {
   let mod: unknown;
   try {
     mod = await import("@safe-global/protocol-kit");
