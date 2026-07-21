@@ -23,8 +23,18 @@
     "@lacrew/core": "workspace:*"
   },
   "devDependencies": {
+    "@safe-global/protocol-kit": "^8.0.4",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "viem": "^2.21.0"
+  },
+  "peerDependencies": {
+    "@safe-global/protocol-kit": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@safe-global/protocol-kit": {
+      "optional": true
+    }
   }
 }

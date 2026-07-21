@@ -1,10 +1,15 @@
 /**
  * Coinbase CDP / AgentKit wallet adapter (PRD F1.8).
- * Mocked: stub wallet handle; no CDP SDK calls.
- * Conforms to WalletAdapter so GOAT / EIP-7702 / Safe can share the surface.
+ * Real provisioning lives in `./cdp.js`; this module owns the shared
+ * `WalletAdapter` contract that Safe / GOAT / EIP-7702 adapters also implement.
+ *
+ * Every mocked value here is named `mock*` so a fake address can never be
+ * reached by accident — real code paths go through `createCdpWalletAdapter`.
  */
 
 import type { Verdict } from "@lacrew/core";
+
+export * from "./cdp.js";
 
 /** Shared adapter contract — feature code depends on this, not a vendor SDK. */
 export interface WalletAdapter {
@@ -25,9 +30,8 @@ export interface AdapterCheckInput {
   data: `0x${string}`;
 }
 
-/** Mocked wallet factory. */
-export async function createAgentKitWallet(label = "mock-agent"): Promise<AgentKitWallet> {
-  // TODO: Call CDP/AgentKit SDK to provision a real smart account.
+/** Mocked wallet factory — fixed address, no CDP call. Demos and tests only. */
+export async function createMockAgentKitWallet(label = "mock-agent"): Promise<AgentKitWallet> {
   void label;
   return {
     address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -74,13 +78,18 @@ export function withPolicyReader(adapter: WalletAdapter, reader: PolicyReader): 
   };
 }
 
-export const agentKitWalletAdapter: WalletAdapter = {
+/** Fully mocked adapter — mock address and mock verdicts. Never for funds. */
+export const mockAgentKitWalletAdapter: WalletAdapter = {
   provider: "agentkit",
-  createWallet: createAgentKitWallet,
+  createWallet: createMockAgentKitWallet,
   checkPolicy: checkWithPolicy,
 };
 
-/** AgentKit adapter reading verdicts from a live policy module instead of the mock. */
-export function createAgentKitWalletAdapter(reader: PolicyReader): WalletAdapter {
-  return withPolicyReader(agentKitWalletAdapter, reader);
+/**
+ * Mocked wallet addresses with real onchain verdicts — useful while an org's
+ * policy stack is live but wallets are not yet provisioned.
+ * For real wallets use `createCdpWalletAdapter({ reader, ... })`.
+ */
+export function createMockAgentKitWalletAdapter(reader: PolicyReader): WalletAdapter {
+  return withPolicyReader(mockAgentKitWalletAdapter, reader);
 }
