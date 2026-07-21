@@ -165,4 +165,81 @@ describe("orchestrator Hono app", () => {
     const proposalsBody = (await proposals.json()) as { proposals: unknown[] };
     assert.equal(proposalsBody.proposals.length, 1);
   });
+  /* ——— Session scopes ——— */
+
+  async function boot(app: ReturnType<typeof buildApp>, body: unknown) {
+    const res = await app.request("/boot", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { res, body: (await res.json()) as Record<string, any> };
+  }
+
+  it("grants the full vocabulary when the caller does not narrow it", async () => {
+    const { res, body } = await boot(buildApp(), {});
+    assert.equal(res.status, 200);
+    assert.deepEqual(body.session.scopes.slice().sort(), [
+      "propose:intent",
+      "spend:whitelist",
+    ]);
+  });
+
+  it("issues a narrowed session when scopes are requested", async () => {
+    const { res, body } = await boot(buildApp(), { scopes: ["propose:intent"] });
+    assert.equal(res.status, 200);
+    assert.deepEqual(body.session.scopes, ["propose:intent"]);
+  });
+
+  /**
+   * The cache is keyed on agent+limits, so without a scope comparison a narrow
+   * request would be served the wide session booted before it.
+   */
+  it("does not hand a cached wide session to a narrow request", async () => {
+    const app = buildApp();
+    const wide = await boot(app, {});
+    assert.equal(wide.body.session.scopes.length, 2);
+    const narrow = await boot(app, { scopes: ["propose:intent"] });
+    assert.deepEqual(narrow.body.session.scopes, ["propose:intent"]);
+  });
+
+  it("reuses the session when the same scopes are asked for again", async () => {
+    const app = buildApp();
+    const first = await boot(app, { scopes: ["propose:intent"] });
+    const second = await boot(app, { scopes: ["propose:intent"] });
+    assert.equal(first.body.session.keyId, second.body.session.keyId);
+  });
+
+  /**
+   * propose/purchase boot without scopes. If that reset the agent to the full
+   * set, a narrowing would last exactly one call and never be observable.
+   */
+  it("keeps a narrowing in force for later internal boots", async () => {
+    const app = buildApp();
+    await boot(app, { scopes: ["propose:intent"] });
+    const implicit = await boot(app, {});
+    assert.deepEqual(implicit.body.session.scopes, ["propose:intent"]);
+  });
+
+  it("re-widens only when asked to explicitly", async () => {
+    const app = buildApp();
+    await boot(app, { scopes: ["propose:intent"] });
+    const widened = await boot(app, { scopes: ["propose:intent", "spend:whitelist"] });
+    assert.equal(widened.body.session.scopes.length, 2);
+    const implicit = await boot(app, {});
+    assert.equal(implicit.body.session.scopes.length, 2);
+  });
+
+  it("rejects an unknown scope instead of dropping it", async () => {
+    const { res, body } = await boot(buildApp(), { scopes: ["spend:everything"] });
+    assert.equal(res.status, 400);
+    assert.match(body.error, /^unknown_scopes: spend:everything$/);
+    assert.deepEqual(body.known, ["propose:intent", "spend:whitelist"]);
+  });
+
+  it("rejects an empty scope list — the registry would refuse the mask anyway", async () => {
+    const { res, body } = await boot(buildApp(), { scopes: [] });
+    assert.equal(res.status, 400);
+    assert.equal(body.error, "scopes_must_be_a_non_empty_array");
+  });
 });
