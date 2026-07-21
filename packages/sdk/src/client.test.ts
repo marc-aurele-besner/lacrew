@@ -130,3 +130,38 @@ describe("LacrewClient resolve recursion", () => {
     assert.equal(allowance!.cap, 999n);
   });
 });
+
+describe("mock electorate", () => {
+  it("reports seats with weight and role", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const seats = await client.readGovernanceSeats();
+    assert.ok(seats.length > 0);
+    for (const seat of seats) {
+      assert.match(seat.power, /^\d+$/, "power is an integer string");
+      assert.ok(["human", "agent", "none"].includes(seat.role));
+    }
+  });
+
+  it("includes a human seat, since only human weight clears high tier", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const seats = await client.readGovernanceSeats();
+    assert.ok(seats.some((s) => s.role === "human"));
+  });
+
+  it("reports quorums as weights, matching the deployed defaults", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const config = await client.readGovernanceConfig();
+    assert.equal(config.quorumYes, "2");
+    assert.equal(config.quorumHumanYes, "1");
+    assert.ok(config.humanRoot.startsWith("0x"));
+  });
+
+  it("mock seat weights sum to at least the low-tier quorum", async () => {
+    // Otherwise the fixture could never pass a proposal it is meant to demo.
+    const client = createLacrewClient({ useMock: true });
+    const seats = await client.readGovernanceSeats();
+    const config = await client.readGovernanceConfig();
+    const total = seats.reduce((sum, s) => sum + BigInt(s.power), 0n);
+    assert.ok(total >= BigInt(config.quorumYes), `${total} < ${config.quorumYes}`);
+  });
+});

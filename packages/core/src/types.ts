@@ -25,6 +25,39 @@ export interface GovernanceProposal {
   state: GovernanceProposalState;
 }
 
+/** Seat classification in GovernanceModule. Agent yes-weight counts for low tier only. */
+export type GovernanceSeatRole = "none" | "human" | "agent";
+
+/**
+ * A seat in the electorate as GovernanceModule holds it.
+ *
+ * `power` is the weight the contract applies when this address votes; zero
+ * means it cannot vote at all (`vote()` reverts `NoVotingPower`). Only `human`
+ * seats accrue to `yesHumanVotes`, which is the sole gate for high-tier
+ * execution — an agent seat can help carry a low-tier proposal but can never
+ * satisfy a high-tier one.
+ */
+export interface GovernanceSeat {
+  voter: `0x${string}`;
+  /** Weight as the contract stores it. String to avoid precision loss. */
+  power: string;
+  role: GovernanceSeatRole;
+}
+
+/** Quorum thresholds and the root that may change them. All weights, not counts. */
+export interface GovernanceConfig {
+  /** All-seat yes-weight required for low tier. */
+  quorumYes: string;
+  /** Human-seat yes-weight required for high tier. */
+  quorumHumanYes: string;
+  /**
+   * The only address that may call `setVotingPower` / `setQuorum*`. Note this
+   * is NOT itself routed through governance: the root can re-weight the
+   * electorate unilaterally, including granting itself quorum-clearing weight.
+   */
+  humanRoot: `0x${string}`;
+}
+
 export interface OrgNode {
   account: `0x${string}`;
   kind: NodeKind;

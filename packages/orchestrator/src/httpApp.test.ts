@@ -148,6 +148,48 @@ describe("orchestrator Hono app", () => {
     assert.equal(unknown.status, 404);
   });
 
+  it("serves the electorate with weights, roles, and the real quorums", async () => {
+    const app = buildApp();
+    const res = await app.request("/governance/electorate");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      seats: Array<{ voter: string; power: string; role: string }>;
+      config: { quorumYes: string; quorumHumanYes: string; humanRoot: string };
+      mode: string;
+    };
+
+    assert.ok(body.seats.length > 0, "expected at least one seat");
+    // Weight and seat class are what execute() gates on, so both must be served.
+    for (const seat of body.seats) {
+      assert.ok(seat.voter.startsWith("0x"), `bad voter ${seat.voter}`);
+      assert.match(seat.power, /^\d+$/, `power must be an integer string, got ${seat.power}`);
+      assert.ok(["human", "agent", "none"].includes(seat.role), `bad role ${seat.role}`);
+    }
+
+    // Only human weight can satisfy a high-tier proposal.
+    assert.ok(
+      body.seats.some((s) => s.role === "human"),
+      "the fixture electorate must include a human seat",
+    );
+
+    assert.match(body.config.quorumYes, /^\d+$/);
+    assert.match(body.config.quorumHumanYes, /^\d+$/);
+    assert.ok(body.config.humanRoot.startsWith("0x"));
+    assert.equal(body.mode, "mock");
+  });
+
+  it("never serves a zero-power seat as part of the electorate", async () => {
+    const app = buildApp();
+    const res = await app.request("/governance/electorate");
+    const body = (await res.json()) as { seats: Array<{ power: string }> };
+    // A zero-power address cannot vote at all — vote() reverts NoVotingPower.
+    assert.equal(
+      body.seats.filter((s) => s.power === "0").length,
+      0,
+      "a zero-power seat is not part of the electorate",
+    );
+  });
+
   it("streams mock epochs and lists governance over HTTP", async () => {
     const app = buildApp();
     const res = await app.request("/epoch", { method: "POST", body: "{}" });

@@ -322,6 +322,26 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }),
   );
 
+  /**
+   * The electorate and the quorum thresholds `execute()` gates on.
+   *
+   * Weight is enforced onchain, so this is a read of `votingPower` / `seatRole`
+   * and the two quorums — not a policy this process decides. A consumer showing
+   * a quorum should use these numbers: the contract's deployed defaults are
+   * mutable by the human root.
+   */
+  app.get("/governance/electorate", async (c) => {
+    try {
+      const { seats, config, mode } = await runtime.listElectorate();
+      return jsonBig(c, { seats, config, mode, chainId: runtime.chainId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "electorate_failed";
+      // A client that cannot read seats says so rather than inventing an
+      // electorate — a fabricated seat list is worse than an absent one.
+      return jsonBig(c, { error: message }, 501);
+    }
+  });
+
   app.post("/governance/propose-hire", async (c) => {
     const body = await bodyOf<{
       label?: string;

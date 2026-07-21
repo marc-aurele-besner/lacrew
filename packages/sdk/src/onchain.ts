@@ -33,8 +33,11 @@ import {
   sessionScopesFromMask,
   type Allowance,
   type ChainAddresses,
+  type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceProposalState,
+  type GovernanceSeat,
+  type GovernanceSeatRole,
   type GovernanceTier,
   type Intent,
   type OrgNode,
@@ -58,6 +61,13 @@ const STATE_FROM: Record<number, GovernanceProposalState> = {
   1: "executed",
   2: "vetoed",
   3: "defeated",
+};
+
+/** SeatRole enum order in GovernanceModule: None, Human, Agent. */
+const SEAT_ROLE_FROM: Record<number, GovernanceSeatRole> = {
+  0: "none",
+  1: "human",
+  2: "agent",
 };
 
 const NODE_KIND_MAP: Record<OrgNode["kind"], number> = {
@@ -1006,6 +1016,112 @@ export class OnchainLacrewClient {
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
     return { txHash: hash };
+  }
+
+  /**
+   * Quorum thresholds and the root that may change them, read from the chain.
+   *
+   * These are the numbers `execute()` actually gates on, so a UI that shows a
+   * hardcoded quorum is showing a guess. Both are *weights*, not voter counts:
+   * one seat with power 5 clears a `quorumYes` of 2 alone.
+   */
+  async readGovernanceConfig(): Promise<GovernanceConfig> {
+    const [quorumYes, quorumHumanYes, humanRoot] = await Promise.all([
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "quorumYes",
+      }) as Promise<bigint>,
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "quorumHumanYes",
+      }) as Promise<bigint>,
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "humanRoot",
+      }) as Promise<`0x${string}`>,
+    ]);
+    return {
+      quorumYes: quorumYes.toString(),
+      quorumHumanYes: quorumHumanYes.toString(),
+      humanRoot,
+    };
+  }
+
+  /** One seat's current weight and role. Power "0" means it cannot vote. */
+  async readGovernanceSeat(voter: `0x${string}`): Promise<GovernanceSeat> {
+    const [power, role] = await Promise.all([
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "votingPower",
+        args: [voter],
+      }) as Promise<bigint>,
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "seatRole",
+        args: [voter],
+      }) as Promise<number>,
+    ]);
+    return { voter, power: power.toString(), role: SEAT_ROLE_FROM[role] ?? "none" };
+  }
+
+  /**
+   * The electorate: every address ever given voting power, re-read at current
+   * state.
+   *
+   * The contract exposes no enumeration — `votingPower` is a bare mapping — so
+   * candidates come from `VotingPowerUpdated` logs and each is then read back
+   * from state rather than trusted from the log. That matters because a seat
+   * revoked after its last log entry would otherwise still look active.
+   * Revoked seats (power 0) are dropped unless asked for.
+   */
+  async readGovernanceSeats(
+    opts: { includeRevoked?: boolean; fromBlock?: bigint } = {},
+  ): Promise<GovernanceSeat[]> {
+    const logs = await this.publicClient.getLogs({
+      address: this.addresses.governanceModule,
+      event: {
+        type: "event",
+        name: "VotingPowerUpdated",
+        inputs: [
+          { name: "voter", type: "address", indexed: true },
+          { name: "power", type: "uint256", indexed: false },
+          { name: "role", type: "uint8", indexed: false },
+        ],
+      },
+      fromBlock: opts.fromBlock ?? 0n,
+      toBlock: "latest",
+    });
+
+    const candidates = new Set<string>();
+    for (const log of logs) {
+      const voter = (log as { args?: { voter?: `0x${string}` } }).args?.voter;
+      if (voter) candidates.add(voter.toLowerCase());
+    }
+
+    const seats = await Promise.all(
+      [...candidates].map((voter) => this.readGovernanceSeat(voter as `0x${string}`)),
+    );
+    const active = opts.includeRevoked ? seats : seats.filter((s) => s.power !== "0");
+    // Heaviest first: who carries a vote is the question this list answers.
+    return active.sort((a, b) => {
+      const d = BigInt(b.power) - BigInt(a.power);
+      return d > 0n ? 1 : d < 0n ? -1 : a.voter.localeCompare(b.voter);
+    });
+  }
+
+  /** Whether an address has already voted on a proposal (double-vote guard). */
+  async readHasVoted(proposalId: string, voter: `0x${string}`): Promise<boolean> {
+    return (await this.publicClient.readContract({
+      address: this.addresses.governanceModule,
+      abi: governanceModuleAbi,
+      functionName: "hasVoted",
+      args: [BigInt(proposalId), voter],
+    })) as boolean;
   }
 
   private async readProposal(id: bigint): Promise<GovernanceProposal> {

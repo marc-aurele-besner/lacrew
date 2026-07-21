@@ -22,7 +22,9 @@ import {
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
+  type GovernanceConfig,
   type GovernanceProposal,
+  type GovernanceSeat,
   type GovernanceTier,
   type Intent,
   type ProtocolEvent,
@@ -613,6 +615,34 @@ export class CrewRuntime {
   /** List governance proposals (mock client keeps an in-memory register). */
   async listProposals(): Promise<GovernanceProposal[]> {
     return this.client.getProposals();
+  }
+
+  /**
+   * The electorate: who may vote, with what weight and seat class, plus the
+   * quorum thresholds `execute()` actually gates on.
+   *
+   * Weight is enforced onchain — `votingPower[voter]` is read by `vote()` and a
+   * zero-weight address reverts — so this is a read, never a policy this
+   * process decides. Consumers that display a quorum should use these numbers
+   * rather than the contract's deployed defaults, which are mutable by the root.
+   */
+  async listElectorate(): Promise<{
+    seats: GovernanceSeat[];
+    config: GovernanceConfig;
+    mode: RuntimeMode;
+  }> {
+    const client = this.client as {
+      readGovernanceSeats?: (opts?: unknown) => Promise<GovernanceSeat[]>;
+      readGovernanceConfig?: () => Promise<GovernanceConfig>;
+    };
+    if (!client.readGovernanceSeats || !client.readGovernanceConfig) {
+      throw new Error("electorate_unsupported_by_client");
+    }
+    const [seats, config] = await Promise.all([
+      client.readGovernanceSeats(),
+      client.readGovernanceConfig(),
+    ]);
+    return { seats, config, mode: this.mode };
   }
 
   /** Propose hiring a worker/manager via GovernanceModule → OrgRegistry.addNode. */

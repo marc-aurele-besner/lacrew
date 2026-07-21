@@ -5,13 +5,17 @@
  */
 
 import {
+  MOCK_MANAGER,
+  MOCK_ROOT,
   mockAllowances,
   mockAuditTrail,
   mockOrgNodes,
   mockPendingIntents,
   mockSessionKeys,
   type Allowance,
+  type GovernanceConfig,
   type GovernanceProposal,
+  type GovernanceSeat,
   type GovernanceTier,
   type Intent,
   type OrgNode,
@@ -442,6 +446,25 @@ export class LacrewClient {
       { account: input.account, amount: input.amount.toString(), action: "setGrant" },
     );
     return { proposalId: proposal.id, account: input.account };
+  }
+
+  /**
+   * Mock electorate, mirroring the deploy fixture (`DeployMockOrg`): a human
+   * root seat and a manager agent seat, both weight 1. Labelled `Mocked` — the
+   * real values live in `votingPower` / `seatRole` onchain.
+   */
+  async readGovernanceSeats(): Promise<GovernanceSeat[]> {
+    this.requireMock("governance");
+    return [
+      { voter: MOCK_ROOT, power: "1", role: "human" },
+      { voter: MOCK_MANAGER, power: "1", role: "agent" },
+    ];
+  }
+
+  /** Mocked quorum, matching the contract's deployed defaults. */
+  async readGovernanceConfig(): Promise<GovernanceConfig> {
+    this.requireMock("governance");
+    return { quorumYes: "2", quorumHumanYes: "1", humanRoot: MOCK_ROOT };
   }
 
   /**
