@@ -62,6 +62,7 @@ contract EscalationRouter {
     error InvalidSession(address agent, address key);
     error SessionValueExceeded(address agent, uint256 value, uint256 maxValue);
     error SessionTargetDenied(address agent, address target, address allowedTarget);
+    error SessionScopeDenied(address agent, uint256 required, uint256 granted);
     error ZeroAddress();
 
     constructor(address orgRegistry_, address policy_) {
@@ -115,7 +116,7 @@ contract EscalationRouter {
     ) external returns (uint256 intentId, Verdict verdict) {
         IOrgRegistry.Node memory agentNode = orgRegistry.getNode(agent);
         if (!agentNode.active) revert InactiveAgent(agent);
-        _requireValidSession(agent, target, value);
+        uint256 scopeMask = _requireValidSession(agent, target, value);
 
         verdict = _policyFor(agent).check(agent, target, value, data);
 
@@ -124,6 +125,10 @@ contract EscalationRouter {
         }
 
         if (verdict == Verdict.ALLOW) {
+            // Settlement is a second grant. A policy ALLOW says the action is
+            // within the org's rules; the spend scope says this particular key
+            // is allowed to act on that without a human in the loop.
+            _requireSpendScope(agent, scopeMask);
             _finalizeAction(agent, target, value, data);
             return (0, verdict);
         }
@@ -217,19 +222,39 @@ contract EscalationRouter {
         }
     }
 
-    /// @dev Unset registry = unit-test bootstrap. Otherwise: valid session + maxValue + target.
-    function _requireValidSession(address agent, address target, uint256 value) private view {
-        if (address(sessionRegistry) == address(0)) return;
-        if (msg.sender == agent) return;
-        (bool valid, uint256 maxValue, address allowedTarget,) =
+    /// @dev Unset registry = unit-test bootstrap. Otherwise: valid session + scope
+    ///      + maxValue + target. Returns the granted scope mask so the caller can
+    ///      gate settlement separately; `type(uint256).max` when the registry is
+    ///      unset or the agent is acting for itself (no session to narrow it).
+    function _requireValidSession(address agent, address target, uint256 value)
+        private
+        view
+        returns (uint256 scopeMask)
+    {
+        if (address(sessionRegistry) == address(0)) return type(uint256).max;
+        if (msg.sender == agent) return type(uint256).max;
+        bool valid;
+        uint256 maxValue;
+        address allowedTarget;
+        (valid, maxValue, allowedTarget, scopeMask) =
             sessionRegistry.keyLimits(agent, msg.sender);
         if (!valid) revert InvalidSession(agent, msg.sender);
+        uint256 needed = sessionRegistry.SCOPE_PROPOSE_INTENT();
+        if (scopeMask & needed == 0) revert SessionScopeDenied(agent, needed, scopeMask);
         if (value > maxValue) revert SessionValueExceeded(agent, value, maxValue);
         // Handles both single- and multi-target pins (unpinned = any policy-allowed
         // target); `allowedTarget` is reported only for the revert reason.
         if (!sessionRegistry.isTargetAllowed(agent, msg.sender, target)) {
             revert SessionTargetDenied(agent, target, allowedTarget);
         }
+    }
+
+    /// @dev `type(uint256).max` from `_requireValidSession` means no session is
+    ///      narrowing this call, so every bit is granted and this passes.
+    function _requireSpendScope(address agent, uint256 scopeMask) private view {
+        if (address(sessionRegistry) == address(0)) return;
+        uint256 needed = sessionRegistry.SCOPE_SPEND_WHITELIST();
+        if (scopeMask & needed == 0) revert SessionScopeDenied(agent, needed, scopeMask);
     }
 
     function _policyFor(address node) private view returns (IPolicyModule) {

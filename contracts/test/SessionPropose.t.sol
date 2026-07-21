@@ -23,6 +23,8 @@ contract SessionProposeTest is Test {
     SessionRegistry internal sessions;
     EscalationRouter internal router;
 
+    /// @dev Resolved in setUp: reading it inline would consume the next vm.prank.
+    uint256 internal allScopes;
     function setUp() public {
         registry = new OrgRegistry(root);
         vm.prank(root);
@@ -43,6 +45,7 @@ contract SessionProposeTest is Test {
         router = new EscalationRouter(address(registry), address(stack));
         sessions = new SessionRegistry(root);
         router.setSessionRegistry(address(sessions));
+        allScopes = sessions.SCOPE_ALL();
     }
 
     function _issueSession(uint64 ttl) internal returns (uint256 sessionId) {
@@ -51,7 +54,7 @@ contract SessionProposeTest is Test {
             worker,
             sessionKey,
             uint64(block.timestamp + ttl),
-            bytes32("scopes"),
+            allScopes,
             type(uint256).max,
             address(0)
         );

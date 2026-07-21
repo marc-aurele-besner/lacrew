@@ -25,6 +25,8 @@ contract SessionScopeTest is Test {
     SessionRegistry internal sessions;
     EscalationRouter internal router;
 
+    /// @dev Resolved in setUp: reading it inline would consume the next vm.prank.
+    uint256 internal allScopes;
     function setUp() public {
         registry = new OrgRegistry(root);
         vm.prank(root);
@@ -46,6 +48,7 @@ contract SessionScopeTest is Test {
         router = new EscalationRouter(address(registry), address(stack));
         sessions = new SessionRegistry(root);
         router.setSessionRegistry(address(sessions));
+        allScopes = sessions.SCOPE_ALL();
     }
 
     function _issue(uint256 maxValue, address allowedTarget) internal {
@@ -54,7 +57,7 @@ contract SessionScopeTest is Test {
             worker,
             sessionKey,
             uint64(block.timestamp + 1 hours),
-            bytes32("scopes"),
+            allScopes,
             maxValue,
             allowedTarget
         );
@@ -108,12 +111,12 @@ contract SessionScopeTest is Test {
 
     function test_keyLimitsReportsMaxValueAndTarget() public {
         _issue(123 * USDC, goodTarget);
-        (bool valid, uint256 maxValue, address allowed, bytes32 scopesHash) =
+        (bool valid, uint256 maxValue, address allowed, uint256 scopeMask) =
             sessions.keyLimits(worker, sessionKey);
         assertTrue(valid);
         assertEq(maxValue, 123 * USDC);
         assertEq(allowed, goodTarget);
-        assertEq(scopesHash, bytes32("scopes"));
+        assertEq(scopeMask, sessions.SCOPE_ALL());
     }
 
     function test_agentEoaBypassesSessionLimits() public {

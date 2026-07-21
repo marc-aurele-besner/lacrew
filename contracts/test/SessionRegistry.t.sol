@@ -11,13 +11,16 @@ contract SessionRegistryTest is Test {
     address internal target = makeAddr("target");
     SessionRegistry internal registry;
 
+    /// @dev Resolved in setUp: reading it inline would consume the next vm.prank.
+    uint256 internal allScopes;
     function setUp() public {
         registry = new SessionRegistry(root);
         vm.warp(1_700_000_000);
+        allScopes = registry.SCOPE_ALL();
     }
 
     function test_issueAndValidate() public {
-        bytes32 scopes = keccak256("spend:whitelist");
+        uint256 scopes = registry.SCOPE_SPEND_WHITELIST();
         uint256 maxValue = 200e6;
         vm.prank(root);
         uint256 id = registry.issue(
@@ -30,7 +33,7 @@ contract SessionRegistryTest is Test {
             address agent,
             address k,
             uint64 exp,
-            bytes32 sc,
+            uint256 sc,
             uint256 mv,
             address at,
             bool revoked,
@@ -45,7 +48,7 @@ contract SessionRegistryTest is Test {
         assertFalse(revoked);
         assertTrue(exists);
 
-        (bool valid, uint256 lim, address allowed, bytes32 sh) = registry.keyLimits(worker, key);
+        (bool valid, uint256 lim, address allowed, uint256 sh) = registry.keyLimits(worker, key);
         assertTrue(valid);
         assertEq(lim, maxValue);
         assertEq(allowed, target);
@@ -55,7 +58,7 @@ contract SessionRegistryTest is Test {
     function test_expires() public {
         vm.prank(root);
         uint256 id = registry.issue(
-            worker, key, uint64(block.timestamp + 10), bytes32(0), type(uint256).max, address(0)
+            worker, key, uint64(block.timestamp + 10), allScopes, type(uint256).max, address(0)
         );
         vm.warp(block.timestamp + 11);
         assertFalse(registry.isValid(id));
@@ -65,7 +68,7 @@ contract SessionRegistryTest is Test {
     function test_rootRevokes() public {
         vm.prank(root);
         uint256 id = registry.issue(
-            worker, key, uint64(block.timestamp + 1 hours), bytes32(0), type(uint256).max, address(0)
+            worker, key, uint64(block.timestamp + 1 hours), allScopes, type(uint256).max, address(0)
         );
         vm.prank(root);
         registry.revoke(id);
@@ -75,7 +78,7 @@ contract SessionRegistryTest is Test {
     function test_strangerCannotIssue() public {
         vm.expectRevert(abi.encodeWithSelector(SessionRegistry.NotAuthorized.selector, address(this)));
         registry.issue(
-            worker, key, uint64(block.timestamp + 1 hours), bytes32(0), type(uint256).max, address(0)
+            worker, key, uint64(block.timestamp + 1 hours), allScopes, type(uint256).max, address(0)
         );
     }
 
@@ -85,7 +88,7 @@ contract SessionRegistryTest is Test {
         registry.setIssuer(orch);
         vm.prank(orch);
         uint256 id = registry.issue(
-            worker, key, uint64(block.timestamp + 1 hours), bytes32(0), type(uint256).max, address(0)
+            worker, key, uint64(block.timestamp + 1 hours), allScopes, type(uint256).max, address(0)
         );
         assertTrue(registry.isValid(id));
     }

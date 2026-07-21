@@ -26,7 +26,7 @@ contract GovernanceFuzzTest is Test {
         gov.setQuorumHumanYes(1);
         vm.stopPrank();
         vm.warp(1_700_000_000);
-    }
+}
 
     function testFuzz_highTierCannotExecuteBeforeEta(uint256 earlyWarp) public {
         address worker = makeAddr("worker");
@@ -78,8 +78,10 @@ contract GovernanceFuzzTest is Test {
         address worker = makeAddr("agent");
         address key = makeAddr("key");
         uint64 exp = uint64(block.timestamp + ttl);
+        // Read before the prank — an external call would consume it.
+        uint256 allScopes = sessions.SCOPE_ALL();
         vm.prank(root);
-        uint256 id = sessions.issue(worker, key, exp, bytes32(0), type(uint256).max, address(0));
+        uint256 id = sessions.issue(worker, key, exp, allScopes, type(uint256).max, address(0));
         assertTrue(sessions.isValid(id));
 
         vm.warp(uint256(exp) + 1);
