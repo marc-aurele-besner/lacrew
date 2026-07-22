@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   getAddresses,
+  hasDeployment,
   ADDRESS_ENV_VARS,
   ANVIL_CHAIN_ID,
   SEPOLIA_CHAIN_ID,
@@ -67,6 +68,39 @@ describe("getAddresses", () => {
     } finally {
       if (saved === undefined) delete process.env.LACREW_ORG_REGISTRY;
       else process.env.LACREW_ORG_REGISTRY = saved;
+    }
+  });
+});
+
+describe("hasDeployment", () => {
+  it("is true for a chain that was actually deployed to", () => {
+    assert.equal(hasDeployment(ANVIL_CHAIN_ID), true);
+  });
+
+  it("is false for a chain with no deployment", () => {
+    // Sepolia and Base Sepolia used to ship committed address books of
+    // 0x…01 through 0x…07. They looked like deployments, satisfied every type,
+    // and produced a runtime whose reads all revert — rendering as an empty org
+    // rather than as a chain nobody has deployed to. The placeholders are gone;
+    // this is the question a caller should ask instead.
+    const prev = process.env[ADDRESS_ENV_VARS.orgRegistry];
+    delete process.env[ADDRESS_ENV_VARS.orgRegistry];
+    try {
+      assert.equal(hasDeployment(SEPOLIA_CHAIN_ID), false);
+      assert.equal(hasDeployment(999_999), false);
+    } finally {
+      if (prev !== undefined) process.env[ADDRESS_ENV_VARS.orgRegistry] = prev;
+    }
+  });
+
+  it("counts a fully overridden local deployment", () => {
+    const prev = process.env[ADDRESS_ENV_VARS.orgRegistry];
+    process.env[ADDRESS_ENV_VARS.orgRegistry] = "0x1111111111111111111111111111111111111111";
+    try {
+      assert.equal(hasDeployment(SEPOLIA_CHAIN_ID), true);
+    } finally {
+      if (prev === undefined) delete process.env[ADDRESS_ENV_VARS.orgRegistry];
+      else process.env[ADDRESS_ENV_VARS.orgRegistry] = prev;
     }
   });
 });

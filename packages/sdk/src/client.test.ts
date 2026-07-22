@@ -114,9 +114,11 @@ describe("LacrewClient resolve recursion", () => {
     const { epoch } = await client.runEpoch();
     assert.equal(epoch, 1);
     const [allowanceAfter] = await client.getAllowances(MOCK_WORKER);
+    // The fixture worker is capped; an uncapped one would stream nothing.
+    assert.notEqual(allowanceBefore!.cap, null);
     assert.equal(
       allowanceAfter!.balance,
-      allowanceBefore!.balance + allowanceBefore!.cap,
+      allowanceBefore!.balance + allowanceBefore!.cap!,
     );
     assert.equal(allowanceAfter!.epoch, 1);
   });

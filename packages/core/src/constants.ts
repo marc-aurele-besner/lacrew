@@ -86,6 +86,23 @@ export const ADDRESS_ENV_VARS = {
  * long-lived Anvil whose nonces diverge from the committed JSON) can be
  * fully described in .env without touching tracked files.
  */
+/**
+ * Whether this chain has a real deployment, as opposed to the zero-address
+ * shape `getAddresses` falls back to.
+ *
+ * Worth asking before constructing a client. Sepolia and Base Sepolia used to
+ * ship committed address books full of `0x…01`–`0x…07`, which look like
+ * deployments, satisfy every type, and produce a runtime whose reads all revert
+ * — an org that renders as "empty" rather than as "not deployed". Those entries
+ * are gone; this is how a caller tells the difference now.
+ *
+ * An env override counts: a fully described local deployment is a deployment.
+ */
+export function hasDeployment(chainId: number): boolean {
+  if (DEPLOYMENTS[chainId]) return true;
+  return Boolean(envAddress(ADDRESS_ENV_VARS.orgRegistry));
+}
+
 export function getAddresses(chainId: number): ChainAddresses {
   const base = DEPLOYMENTS[chainId] ?? {
     chainId,

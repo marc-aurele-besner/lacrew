@@ -584,7 +584,9 @@ export class LacrewClient {
     this.requireMock("epoch runs");
     this.epoch += 1;
     for (const allowance of this.allowances) {
-      allowance.balance += allowance.cap;
+      // An uncapped allowance streams nothing: the per-epoch amount *is* the
+      // cap, so with no cap configured there is no figure to stream.
+      allowance.balance += allowance.cap ?? 0n;
       allowance.epoch = this.epoch;
     }
     this.audit.push({

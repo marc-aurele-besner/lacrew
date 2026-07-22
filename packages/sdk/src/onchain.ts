@@ -208,24 +208,55 @@ export class OnchainLacrewClient {
     const token = (this.addresses.mockUSDC ??
       "0x0000000000000000000000000000000000000000") as `0x${string}`;
 
+    // The epoch is a property of the streamer, not of any one agent, so it is
+    // read once rather than per node. `epoch: 1` used to be hardcoded, which
+    // made every allowance claim to be from the first epoch forever.
+    const epoch = this.addresses.epochStreamer
+      ? Number(
+          (await this.publicClient.readContract({
+            address: this.addresses.epochStreamer,
+            abi: epochStreamerAbi,
+            functionName: "currentEpoch",
+          })) as bigint,
+        )
+      : 0;
+
     const out: Allowance[] = [];
     for (const n of targets) {
-      const balance = (await this.publicClient.readContract({
-        address: this.addresses.treasury,
-        abi: treasuryAbi,
-        functionName: "allowanceBalance",
-        args: [n.account],
-      })) as bigint;
+      const [balance, cap] = await Promise.all([
+        this.publicClient.readContract({
+          address: this.addresses.treasury,
+          abi: treasuryAbi,
+          functionName: "allowanceBalance",
+          args: [n.account],
+        }) as Promise<bigint>,
+        this.readAgentCap(n.account),
+      ]);
       if (balance === 0n && n.kind === "human_root") continue;
-      out.push({
-        node: n.account,
-        token,
-        balance,
-        epoch: 1,
-        cap: balance,
-      });
+      out.push({ node: n.account, token, balance, epoch, cap });
     }
     return out;
+  }
+
+  /**
+   * The spend ceiling SpendCapPolicy will actually enforce for this agent.
+   *
+   * `capOf` is the right read, not `agentCap`: an agent with no specific cap
+   * inherits `defaultCap`, and `check()` compares against `capOf`, so the
+   * inherited value is every bit as binding as an explicit one. There is no
+   * uncapped agent while the module is in the stack.
+   *
+   * Null therefore means "this dimension is not enforced here" — no
+   * SpendCapPolicy deployed — rather than "no limit set for this agent".
+   */
+  private async readAgentCap(agent: `0x${string}`): Promise<bigint | null> {
+    if (!this.addresses.spendCapPolicy) return null;
+    return (await this.publicClient.readContract({
+      address: this.addresses.spendCapPolicy,
+      abi: spendCapPolicyAbi,
+      functionName: "capOf",
+      args: [agent],
+    })) as bigint;
   }
 
   /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */

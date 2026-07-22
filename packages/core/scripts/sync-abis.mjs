@@ -213,30 +213,27 @@ function writeDeploymentsTs() {
   writeFileSync(join(coreRoot, "src/deployments.generated.ts"), body.join("\n"));
 }
 
-function ensurePlaceholderDeployments() {
+/**
+ * A chain gets an address book when it has actually been deployed to, and not
+ * before.
+ *
+ * This used to synthesise `0x…01`–`0x…07` entries for Base Sepolia and an anvil
+ * alias. Those look like deployments: `getAddresses` returns them, the
+ * orchestrator builds an "onchain" runtime from them, and every read then
+ * reverts or returns zero — which the UI renders as an empty org rather than as
+ * a chain nobody deployed to. That is the same failure mode as serving mock
+ * data, only harder to notice, so the placeholders are gone. Callers that need
+ * to know should ask `hasDeployment(chainId)`.
+ *
+ * `anvil.json` is still written, but only as an alias of a real 31337 deploy.
+ */
+function writeAnvilAlias(addresses) {
+  if (addresses?.chainId !== 31337) return;
   mkdirSync(deploymentsDir, { recursive: true });
-  const placeholder = {
-    chainId: 31337,
-    mockUSDC: "0x0000000000000000000000000000000000000000",
-    orgRegistry: "0x0000000000000000000000000000000000000001",
-    treasury: "0x0000000000000000000000000000000000000002",
-    escalationRouter: "0x0000000000000000000000000000000000000003",
-    governanceModule: "0x0000000000000000000000000000000000000004",
-    spendCapPolicy: "0x0000000000000000000000000000000000000005",
-    policyStack: "0x0000000000000000000000000000000000000006",
-    whitelistPolicy: "0x0000000000000000000000000000000000000007",
-  };
-  const anvilPath = join(deploymentsDir, "anvil.json");
-  if (!existsSync(anvilPath)) {
-    writeFileSync(anvilPath, `${JSON.stringify(placeholder, null, 2)}\n`);
-  }
-  const sepoliaPath = join(deploymentsDir, "84532.json");
-  if (!existsSync(sepoliaPath)) {
-    writeFileSync(
-      sepoliaPath,
-      `${JSON.stringify({ ...placeholder, chainId: 84532 }, null, 2)}\n`,
-    );
-  }
+  writeFileSync(
+    join(deploymentsDir, "anvil.json"),
+    `${JSON.stringify(addresses, null, 2)}\n`,
+  );
 }
 
 function main() {
@@ -262,7 +259,6 @@ function main() {
   }
   writeAbisTs(abis);
 
-  ensurePlaceholderDeployments();
   for (const chainId of KNOWN_CHAIN_IDS) {
     const deployments = loadDeploymentsForChain(chainId);
     if (!deployments) continue;
@@ -271,6 +267,7 @@ function main() {
       continue;
     }
     writeDeploymentsJson(deployments);
+    writeAnvilAlias(deployments);
     console.log(`Synced deployments for chain ${deployments.chainId}`);
   }
 
