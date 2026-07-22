@@ -5,9 +5,10 @@ import { createFlowsSurface } from "./flows.js";
 import { createMemoryFlowStore, type FlowStore } from "./flowStore.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { CrewRuntime } from "./runtime.js";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 function makeSurface(store?: FlowStore) {
-  const runtime = new CrewRuntime();
+  const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   // No mcpBackend → detached mock backend (offline-safe test path).
   // The store is always explicit: defaulting to createFlowStoreFromEnv would
   // make these unit tests hit Postgres on any machine with DATABASE_URL set,
@@ -153,7 +154,7 @@ describe("flows surface", () => {
 
 /** Surface with a live-shaped MCP backend, so `agent` steps route to delegate. */
 function makeDelegatingSurface() {
-  const runtime = new CrewRuntime();
+  const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   const stub = {
     getOrgTree: async () => [],
     listPendingIntents: async () => [],

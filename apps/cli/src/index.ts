@@ -11,7 +11,6 @@ import {
   createOnchainClient,
   type OnchainLacrewClient,
 } from "@lacrew/sdk";
-import { createLacrewClient } from "@lacrew/sdk/testing";
 import { CrewRuntime, createEphemeralSession } from "@lacrew/orchestrator";
 import {
   PROTOCOL_NAME,
@@ -53,7 +52,12 @@ function createClient(args: string[]) {
     (hasFlag(args, "--rpc") ? "http://127.0.0.1:8545" : undefined);
 
   if (!rpc && !hasFlag(args, "--rpc")) {
-    return createLacrewClient({ useMock: true });
+    // No mock fallback: the CLI prints org trees, balances and audit trails,
+    // and a fabricated one is indistinguishable from a real one on a terminal.
+    throw new Error(
+      "No chain configured. Set ANVIL_RPC (or RPC_URL), or pass --rpc <url>. " +
+        "Start a local one with: pnpm dev:stack",
+    );
   }
 
   const rpcUrl = rpc ?? "http://127.0.0.1:8545";

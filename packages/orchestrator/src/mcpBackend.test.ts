@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { runMcpTool } from "@lacrew/adapter-agents-mcp";
 import { CrewRuntime } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 describe("createRuntimeMcpBackend", () => {
   it("MCP propose lands in the same runtime the server reads", async () => {
-    const runtime = new CrewRuntime({ mode: "mock" });
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), mode: "mock" });
     const backend = createRuntimeMcpBackend(runtime);
 
     // 150 USDC exceeds the mock worker cap → escalation intent.
