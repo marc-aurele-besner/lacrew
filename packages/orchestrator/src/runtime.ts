@@ -20,6 +20,7 @@ import {
   getAddresses,
   hasDeployment,
   sessionRegistryAbi,
+  ADDRESS_ENV_VARS,
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
@@ -127,6 +128,7 @@ export type RuntimeBootFailure =
   | "no_rpc"
   | "no_private_key"
   | "no_deployment"
+  | "incomplete_deployment"
   | "rpc_unreachable"
   | "chain_id_mismatch";
 
@@ -166,6 +168,24 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
   }
 
   const addresses = getAddresses(chainId);
+
+  // An address book can name the contracts and still omit the seats. A seat
+  // filled in from a demo fixture would have the runtime propose as an agent
+  // the org never hired: onchain that reverts, and until it does every read
+  // describes work nobody authorised. Checked before dialing out — it is a
+  // config gap no reachable RPC would fix.
+  const { worker, manager, x402Target } = addresses;
+  if (!worker || !manager || !x402Target) {
+    const missing = (["worker", "manager", "x402Target"] as const).filter((k) => !addresses[k]);
+    return {
+      ok: false,
+      reason: "incomplete_deployment",
+      detail: `Chain ${chainId} has contracts but no ${missing.join(", ")}. Run \`lacrew deploy\` to seed the org, or set ${missing
+        .map((k) => ADDRESS_ENV_VARS[k])
+        .join(", ")}.`,
+    };
+  }
+
   const managerPk = normalizePk(process.env.MANAGER_PRIVATE_KEY);
   const account = privateKeyToAccount(pk);
   const resolverAccount = managerPk ? privateKeyToAccount(managerPk) : account;
@@ -206,9 +226,9 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       client,
       mode: "onchain",
       chainId,
-      workerAgent: addresses.worker ?? MOCK_WORKER,
-      spendTarget: addresses.x402Target ?? "0x4444444444444444444444444444444444444444",
-      managerAgent: addresses.manager ?? MOCK_MANAGER,
+      workerAgent: worker,
+      spendTarget: x402Target,
+      managerAgent: manager,
       auditStore: createAuditStoreFromEnv(),
       runtimeStore: createRuntimeStoreFromEnv(),
     }),
@@ -243,12 +263,25 @@ export class CrewRuntime {
   private readonly runtimeStore: RuntimeStore;
 
   constructor(options: CrewRuntimeOptions) {
+    this.mode = options.mode ?? "mock";
+    // The demo fixtures below belong to the in-memory client only. An onchain
+    // runtime that adopted them would sign as an address the org does not
+    // contain, so the caller must name real seats or not claim to be onchain.
+    if (this.mode === "onchain") {
+      const missing = (["workerAgent", "managerAgent", "spendTarget"] as const).filter(
+        (k) => !options[k],
+      );
+      if (missing.length > 0) {
+        throw new Error(
+          `An onchain CrewRuntime needs ${missing.join(", ")}; there is no demo address to stand in for a real seat.`,
+        );
+      }
+    }
     this.client = options.client;
     this.workerAgent = options.workerAgent ?? MOCK_WORKER;
     this.spendTarget =
       options.spendTarget ?? "0x4444444444444444444444444444444444444444";
     this.managerAgent = options.managerAgent ?? MOCK_MANAGER;
-    this.mode = options.mode ?? "mock";
     this.chainId = options.chainId ?? null;
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
@@ -470,6 +503,16 @@ export class CrewRuntime {
         },
       });
       return session;
+    }
+
+    // A chain-backed runtime whose address book has no SessionRegistry cannot
+    // issue anything. Handing back an opaque id would look like a live key to
+    // every caller, and to the audit trail, while nothing onchain constrains
+    // what it signs — the one property a session key exists to provide.
+    if (isOnchainClient(this.client)) {
+      throw new Error(
+        `Cannot issue a session on chain ${this.chainId ?? "unknown"}: no sessionRegistry in the address book. Deploy one, or set ${ADDRESS_ENV_VARS.sessionRegistry}.`,
+      );
     }
 
     const session = issueSession({ agent: forAgent, scopes });

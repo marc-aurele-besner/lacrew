@@ -72,7 +72,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     jsonBig(c, {
       ok: true,
       service: "lacrew-orchestrator",
-      mocked: false,
+      // Derived, not asserted: a caller checking this field is asking whether
+      // it can trust the data, and the runtime is the only thing that knows.
+      mocked: runtime.mode === "mock",
       mode: runtime.mode,
       chainId: runtime.chainId,
       chain: { reachable: true, chainId: runtime.chainId },

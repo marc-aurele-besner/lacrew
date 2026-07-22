@@ -31,6 +31,9 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.ok, true);
     assert.equal(body.service, "lacrew-orchestrator");
     assert.equal(body.mode, "mock");
+    // The field a caller checks to decide whether the data can be trusted, so
+    // it has to follow the runtime rather than assert a healthy answer.
+    assert.equal(body.mocked, true);
     assert.equal((body.auth as { required: boolean }).required, false);
     assert.equal(body.runtimeStore, "memory");
   });
