@@ -8,6 +8,8 @@ export interface SessionRow {
   keyId: string;
   agent: string;
   keyAddress?: string;
+  /** AES-256-GCM envelope around the private key; never logged or served. */
+  sealedKey?: string | null;
   expiresAt: string;
   scopes: string[];
   maxValue?: string;
@@ -39,6 +41,7 @@ export async function upsertSessionRow(handle: DbHandle, row: SessionRow): Promi
     keyId: row.keyId,
     agent: row.agent,
     keyAddress: row.keyAddress ?? null,
+    sealedKey: row.sealedKey ?? null,
     expiresAt: new Date(row.expiresAt),
     scopes: row.scopes,
     maxValue: row.maxValue ?? null,
@@ -77,6 +80,7 @@ export async function recentSessionRows(handle: DbHandle, limit: number): Promis
     keyId: row.keyId,
     agent: row.agent,
     keyAddress: row.keyAddress ?? undefined,
+    sealedKey: row.sealedKey ?? undefined,
     expiresAt: row.expiresAt.toISOString(),
     scopes: row.scopes,
     maxValue: row.maxValue ?? undefined,

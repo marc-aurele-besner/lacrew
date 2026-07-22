@@ -171,7 +171,11 @@ async function main() {
   await run("deploy", "pnpm", ["--filter", "@lacrew/cli", "exec", "tsx", "src/index.ts", "deploy", "--anvil"]);
 
   log("orchestrator", "starting");
-  spawnService("orchestrator", "pnpm", ["--filter", "@lacrew/orchestrator", "dev"]);
+  // `dev:once`, not `dev`: here the orchestrator is infrastructure for the
+  // loop, and hot-reloading it on every save restarts the chain-facing process
+  // for edits that usually have nothing to do with it. `pnpm dev` still
+  // watches, for anyone actually working on the orchestrator.
+  spawnService("orchestrator", "pnpm", ["--filter", "@lacrew/orchestrator", "dev:once"]);
   await waitFor("orchestrator", async () => {
     try {
       const res = await fetch(`http://127.0.0.1:${ORCH_PORT}/health`, {

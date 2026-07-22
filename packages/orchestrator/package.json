@@ -16,9 +16,10 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch --env-file=../../.env src/server.ts",
     "start": "node --env-file=../../.env dist/server.js",
-    "test": "node --import tsx --test src/auth.test.ts src/auditStore.test.ts src/mcpBackend.test.ts src/runtime.test.ts src/runtimeStore.test.ts src/httpApp.test.ts src/flows.test.ts src/flowScope.test.ts src/queue/memory.test.ts src/queue/pg-boss.test.ts src/model/memory.test.ts",
+    "test": "node --import tsx --test src/auth.test.ts src/secretBox.test.ts src/auditStore.test.ts src/mcpBackend.test.ts src/runtime.test.ts src/runtimeStore.test.ts src/httpApp.test.ts src/flows.test.ts src/flowScope.test.ts src/queue/memory.test.ts src/queue/pg-boss.test.ts src/model/memory.test.ts",
     "clean": "rm -rf dist",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "dev:once": "tsx --env-file=../../.env src/server.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.10",

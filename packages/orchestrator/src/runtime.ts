@@ -19,6 +19,7 @@ import {
   ANVIL_CHAIN_ID,
   escalationRouterAbi,
   getAddresses,
+  sessionRegistryAbi,
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
@@ -41,6 +42,7 @@ import type {
 } from "@lacrew/adapter-agents-mcp";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 import { worstVerdict } from "./flowScope.js";
+import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
   createMemoryRuntimeStore,
@@ -62,7 +64,20 @@ function sameScopes(a: readonly string[], b: readonly string[]): boolean {
   return left.every((scope, i) => scope === right[i]);
 }
 
-const SESSION_GAS_STIPEND = parseEther("0.05");
+/**
+ * Gas sponsored to a session key so it can submit `propose` itself.
+ *
+ * Topped up only when the key is actually short (see `fundSessionKey`). It was
+ * previously sent unconditionally on every issue, so a restart of a 20-agent
+ * org moved 1 ETH for nothing. Lowered from 0.05 for the same reason: this
+ * covers a handful of proposes, and running dry tops up again.
+ *
+ * Phase 0 — an AA paymaster replaces this entirely.
+ */
+function sessionGasStipend(): bigint {
+  const raw = process.env.SESSION_GAS_STIPEND_ETH?.trim();
+  return raw ? parseEther(raw) : parseEther("0.01");
+}
 /** Default session maxValue: 200 USDC (matches DeployMockOrg worker stream; over policy cap → escalate). */
 const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 
@@ -187,6 +202,125 @@ export class CrewRuntime {
     return persisted.length;
   }
 
+  /**
+   * Restore sealed session keys so a restart reuses live onchain sessions
+   * instead of issuing (and gas-funding) replacements. Call once on boot.
+   *
+   * **The chain is authoritative.** Every candidate is confirmed against
+   * `SessionRegistry.keyLimits` before it is trusted, so a session revoked or
+   * expired while this process was down is dropped rather than resurrected —
+   * a stale local entry would otherwise sign against authority the chain has
+   * already taken away.
+   *
+   * Returns the number restored. Zero is normal and not an error: sealing may
+   * be unconfigured, the store may be empty, or every session may have aged out.
+   */
+  async hydrateSessions(): Promise<number> {
+    if (!sessionSealingAvailable()) return 0;
+    if (!isOnchainClient(this.client) || !this.addressesHasSessions()) return 0;
+
+    const persisted = await this.runtimeStore.recentSessions(AUDIT_RING_MAX);
+    let restored = 0;
+
+    for (const row of persisted) {
+      if (row.status !== "active" || !row.keyAddress) continue;
+      const privateKey = unsealSessionKey(row.sealedKey);
+      if (!privateKey) continue;
+
+      // The key must actually be the one the chain knows about; a mismatch
+      // means the row and the envelope disagree and neither can be trusted.
+      let derived: `0x${string}`;
+      try {
+        derived = privateKeyToAccount(privateKey).address;
+      } catch {
+        continue;
+      }
+      if (derived.toLowerCase() !== row.keyAddress.toLowerCase()) continue;
+
+      const limits = await this.readKeyLimits(row.agent as `0x${string}`, derived);
+      if (!limits?.valid) continue;
+
+      const session: SessionKey = {
+        agent: row.agent as `0x${string}`,
+        keyId: row.keyId,
+        keyAddress: derived,
+        expiresAt: new Date(row.expiresAt).getTime(),
+        scopes: row.scopes as SessionScope[],
+        // Limits come from the chain, not the row: the chain is what enforces
+        // them, and the row could be stale.
+        maxValue: limits.maxValue.toString(),
+        allowedTarget: limits.allowedTarget,
+        revoked: false,
+      };
+      if (isSessionExpired(session)) continue;
+
+      // Top up if the key has spent down since it was issued. Reuse removed the
+      // implicit refill that re-issuing used to provide, so without this a
+      // long-lived key eventually runs dry and its proposes fail for want of
+      // gas rather than for any policy reason.
+      try {
+        await this.fundSessionKey(derived);
+      } catch (err) {
+        // A funding failure must not cost us the key: it is still valid and
+        // may well have enough gas already.
+        console.error(
+          "[@lacrew/orchestrator] session key top-up failed:",
+          err instanceof Error ? err.message.split("\n")[0] : err,
+        );
+      }
+
+      this.sessions.set(
+        this.sessionCacheKey(session.agent, limits.maxValue, limits.allowedTarget),
+        { session, privateKey },
+      );
+      restored += 1;
+    }
+    return restored;
+  }
+
+  /**
+   * Top the session key up to the stipend, but only when it is short.
+   *
+   * The transfer used to be unconditional on every issue, so re-issuing an
+   * already-funded key moved ETH for nothing — and with a key reused across
+   * restarts, that would now be most calls. Returns the funding tx hash, or
+   * undefined when no transfer was needed.
+   */
+  private async fundSessionKey(keyAddress: `0x${string}`): Promise<Hex | undefined> {
+    if (!isOnchainClient(this.client)) return undefined;
+    const stipend = sessionGasStipend();
+    try {
+      const balance = await this.client.publicClient.getBalance({ address: keyAddress });
+      if (balance >= stipend) return undefined;
+    } catch {
+      // Balance unreadable: fund anyway. An unfunded key cannot propose at all,
+      // which is a worse failure than a redundant transfer.
+    }
+    const { txHash } = await this.client.fundEth(keyAddress, stipend);
+    return txHash;
+  }
+
+  /** `SessionRegistry.keyLimits`, or null when it cannot be read. */
+  private async readKeyLimits(
+    agent: `0x${string}`,
+    key: `0x${string}`,
+  ): Promise<{ valid: boolean; maxValue: bigint; allowedTarget: `0x${string}` } | null> {
+    if (!isOnchainClient(this.client)) return null;
+    const registry = this.client.addresses.sessionRegistry;
+    if (!registry) return null;
+    try {
+      const [valid, maxValue, allowedTarget] = (await this.client.publicClient.readContract({
+        address: registry,
+        abi: sessionRegistryAbi,
+        functionName: "keyLimits",
+        args: [agent, key],
+      })) as [boolean, bigint, `0x${string}`, bigint];
+      return { valid, maxValue, allowedTarget };
+    } catch {
+      return null;
+    }
+  }
+
   getClient(): LacrewClient | OnchainLacrewClient {
     return this.client;
   }
@@ -242,10 +376,7 @@ export class CrewRuntime {
         allowedTarget,
       });
       // Root sponsors gas so the session key can submit propose (Phase 0; AA/paymaster later).
-      const { txHash: fundTxHash } = await this.client.fundEth(
-        ephemeral.keyAddress!,
-        SESSION_GAS_STIPEND,
-      );
+      const fundTxHash = await this.fundSessionKey(ephemeral.keyAddress!);
       const session: SessionKey = {
         agent: ephemeral.agent,
         keyId: sessionId,
@@ -257,7 +388,8 @@ export class CrewRuntime {
         revoked: false,
       };
       this.sessions.set(key, { session, privateKey: ephemeral.privateKey });
-      this.recordSession(session);
+      // Awaited: this is the only durable copy of a key that just cost gas.
+      await this.recordSession(session, ephemeral.privateKey);
 
       this.pushAudit({
         type: "SessionIssued",
@@ -279,7 +411,8 @@ export class CrewRuntime {
 
     const session = issueSession({ agent: forAgent, scopes });
     this.sessions.set(key, { session });
-    this.recordSession(session);
+    // No key exists on this path, so nothing is lost by not waiting.
+    void this.recordSession(session);
     this.pushAudit({
       type: "SessionIssued",
       at: new Date().toISOString(),
@@ -308,7 +441,13 @@ export class CrewRuntime {
     // pinned to a different target would either be rejected onchain or, worse,
     // hand back reach the caller's scope was not granted.
     const target = (allowedTarget ?? this.sessionAllowedTarget()).toLowerCase();
-    return `${agent.toLowerCase()}:${maxValue === undefined ? "default" : maxValue.toString()}:${target}`;
+    // Both sides are resolved to what the session is actually issued with. An
+    // unspecified ceiling used to key as the literal "default", so a boot with
+    // no ceiling and a boot with a ceiling equal to the default — identical
+    // sessions onchain — landed in two cache entries, and the second issued a
+    // redundant session (and paid gas for it) to say the same thing.
+    const ceiling = maxValue ?? this.sessionMaxValue();
+    return `${agent.toLowerCase()}:${ceiling.toString()}:${target}`;
   }
 
   /**
@@ -1359,7 +1498,11 @@ export class CrewRuntime {
 
   /** Persisted session records, newest first (restart-surviving history). */
   async sessionHistory(limit = 50): Promise<SessionRecord[]> {
-    return this.runtimeStore.recentSessions(limit);
+    const rows = await this.runtimeStore.recentSessions(limit);
+    // `sealedKey` is stripped here rather than at the route, because this is
+    // the only path out of the store and a second caller must not have to
+    // remember. Sealed or not, key material has no business in a response.
+    return rows.map(({ sealedKey: _sealed, ...row }) => row);
   }
 
   /** Persisted intent records, newest first (restart-surviving history). */
@@ -1371,12 +1514,20 @@ export class CrewRuntime {
     return this.runtimeStore.name;
   }
 
-  /** Persist session metadata (never the private key). */
-  private recordSession(session: SessionKey): void {
-    void this.runtimeStore.saveSession({
+  /**
+   * Persist session metadata, plus the private key **sealed** when a sealing
+   * key is configured (see secretBox.ts). Cleartext keys are never written.
+   *
+   * Awaited by callers on the onchain path: a crash between `issueSession` and
+   * this write would strand a key that cost gas to mint and leave a live
+   * onchain session nothing can sign for.
+   */
+  private recordSession(session: SessionKey, privateKey?: `0x${string}`): Promise<void> {
+    return this.runtimeStore.saveSession({
       keyId: session.keyId,
       agent: session.agent,
       keyAddress: session.keyAddress,
+      sealedKey: privateKey ? sealSessionKey(privateKey) : null,
       expiresAt: new Date(session.expiresAt).toISOString(),
       scopes: session.scopes,
       maxValue: session.maxValue,
