@@ -115,7 +115,15 @@ async function runViaMock(): Promise<void> {
 
 async function runViaAnvil(): Promise<void> {
   const { createRuntimeFromEnv } = await import("@lacrew/orchestrator");
-  const runtime = createRuntimeFromEnv();
+  const boot = await createRuntimeFromEnv();
+  if (!boot.ok) {
+    // The example demonstrates the real thing. Printing an invented org tree
+    // here is exactly the failure this change removes, so it stops instead.
+    console.error(`[@lacrew/example-trading-crew] no chain (${boot.reason}): ${boot.detail}`);
+    process.exitCode = 1;
+    return;
+  }
+  const runtime = boot.runtime;
   console.log(`[@lacrew/example-trading-crew] anvil mode → chain ${runtime.chainId}`);
   console.log(`crew=${policy.name}`);
 
