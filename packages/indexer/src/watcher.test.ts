@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { logToProtocolEvent } from "./watcher.js";
+import { EventWatcher, logToProtocolEvent } from "./watcher.js";
+import { loadStore } from "./store.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const AT = "2026-07-18T00:00:00.000Z";
 const TX = "0xabc";
@@ -88,5 +92,38 @@ describe("logToProtocolEvent", () => {
 
   it("returns null for unknown events", () => {
     assert.equal(logToProtocolEvent("SomethingElse", {}, TX, AT), null);
+  });
+});
+
+describe("an intent whose row cannot be read is not a zero-value spend", () => {
+  it("marks it unreadable instead of inventing target and value", async () => {
+    // Port 1 refuses, so `readContract` throws — the RPC blip / ABI mismatch
+    // case. This used to record target 0x0000…0000 and value 0, which renders
+    // in an approval queue as "0 USDC → 0x0000…0000": a spend request nobody
+    // made, indistinguishable from one that was read successfully.
+    const dir = mkdtempSync(join(tmpdir(), "lacrew-watcher-"));
+    const storePath = join(dir, "store.json");
+    const watcher = new EventWatcher({
+      rpcUrl: "http://127.0.0.1:1",
+      storePath,
+      sinks: [],
+    });
+
+    await (
+      watcher as unknown as {
+        upsertFromChain: (
+          id: bigint,
+          agent: `0x${string}`,
+          awaiting: `0x${string}`,
+        ) => Promise<void>;
+      }
+    ).upsertFromChain(1n, "0xaaa" as `0x${string}`, "0xbbb" as `0x${string}`);
+
+    const stored = loadStore(storePath);
+    const intent = stored.pendingIntents[0];
+    assert.equal(intent?.id, "1");
+    // The intent is still listed — it exists and somebody is waiting on it.
+    assert.equal(intent?.unreadable, true);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

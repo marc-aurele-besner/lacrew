@@ -310,9 +310,10 @@ export class EventWatcher {
     const args = log.args;
     if (!eventName || !args) return;
 
-    const at = await this.blockTime(log.blockNumber);
+    const { at, source: atSource } = await this.blockTime(log.blockNumber);
     const event = logToProtocolEvent(eventName, args, log.transactionHash, at);
     if (!event) return;
+    event.atSource = atSource;
 
     if (eventName === "IntentCreated") {
       await this.upsertFromChain(
@@ -342,18 +343,26 @@ export class EventWatcher {
     });
   }
 
-  /** Block timestamp → ISO, cached per block. */
-  private async blockTime(blockNumber: bigint | null): Promise<string> {
-    if (blockNumber == null) return new Date().toISOString();
+  /**
+   * Block timestamp → ISO, cached per block.
+   *
+   * Falls back to ingestion time when the block cannot be read, and says so:
+   * ordering still needs a timestamp, but the audit trail must not present
+   * "when we noticed" as "when it happened".
+   */
+  private async blockTime(
+    blockNumber: bigint | null,
+  ): Promise<{ at: string; source: "block" | "ingest" }> {
+    if (blockNumber == null) return { at: new Date().toISOString(), source: "ingest" };
     const cached = this.blockTimes.get(blockNumber);
-    if (cached) return cached;
+    if (cached) return { at: cached, source: "block" };
     try {
       const block = await this.client.getBlock({ blockNumber });
       const iso = new Date(Number(block.timestamp) * 1000).toISOString();
       this.blockTimes.set(blockNumber, iso);
-      return iso;
+      return { at: iso, source: "block" };
     } catch {
-      return new Date().toISOString();
+      return { at: new Date().toISOString(), source: "ingest" };
     }
   }
 
@@ -362,9 +371,9 @@ export class EventWatcher {
     agent: `0x${string}`,
     awaiting: `0x${string}`,
   ): Promise<void> {
-    let target = "0x0000000000000000000000000000000000000000" as `0x${string}`;
-    let value = 0n;
-    let data = "0x" as Hex;
+    let target: `0x${string}` | undefined;
+    let value: bigint | undefined;
+    let data: Hex | undefined;
     try {
       const row = (await this.client.readContract({
         address: this.router,
@@ -384,19 +393,27 @@ export class EventWatcher {
       value = row[2];
       data = row[3];
     } catch {
-      // keep defaults
+      // Left undefined. The zeros this used to fall back to were not a
+      // degraded read, they were a different spend request: an approver saw
+      // "0 USDC → 0x0000…0000" and had no way to tell it from a real one.
     }
 
+    const unreadable = target === undefined || value === undefined || data === undefined;
     const intent: Intent = {
       id: id.toString(),
       agent,
-      target,
-      value,
-      data,
+      // Still zeros on the unreadable path, because the field is typed as an
+      // address and something must be there — but `unreadable` travels with
+      // them, so a consumer can say "could not read" instead of rendering a
+      // spend of nothing to nobody.
+      target: target ?? "0x0000000000000000000000000000000000000000",
+      value: value ?? 0n,
+      data: data ?? "0x",
       awaitingApprover: awaiting,
       resolved: false,
       approved: null,
       verdict: "ESCALATE",
+      ...(unreadable ? { unreadable: true } : {}),
     };
     const idx = this.store.pendingIntents.findIndex((i) => i.id === intent.id);
     if (idx >= 0) this.store.pendingIntents[idx] = intent;
