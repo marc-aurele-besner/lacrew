@@ -9,6 +9,7 @@
 
 import {
   getAddress,
+  hashTypedData,
   hexToBigInt,
   isAddress,
   keccak256,
@@ -200,6 +201,84 @@ export async function verifyAuthorization(opts: {
     };
   }
   return { valid: true };
+}
+
+/** EIP-1271 magic value returned by `isValidSignature` on success. */
+export const ERC1271_MAGIC_VALUE = "0x1626ba7e";
+
+const ERC1271_ABI = [
+  {
+    type: "function",
+    name: "isValidSignature",
+    stateMutability: "view",
+    inputs: [
+      { name: "hash", type: "bytes32" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [{ type: "bytes4" }],
+  },
+] as const satisfies Abi;
+
+/**
+ * Verify a contract payer's signature by asking the payer itself. Safe and
+ * smart-account signatures do not recover to `from`, so ecrecover-based checks
+ * reject them; the account is the only authority on its own signing rules.
+ */
+export async function verifyContractAuthorization(
+  client: ContractReader,
+  domain: Eip712Domain,
+  authorization: Authorization,
+  signature: `0x${string}`,
+): Promise<VerificationResult> {
+  const digest = hashTypedData(authorizationTypedData(domain, authorization));
+  try {
+    const result = (await client.readContract({
+      address: authorization.from,
+      abi: ERC1271_ABI as Abi,
+      functionName: "isValidSignature",
+      args: [digest, signature],
+    })) as string;
+    return result === ERC1271_MAGIC_VALUE
+      ? { valid: true }
+      : { valid: false, reason: `payer rejected the signature (returned ${result})` };
+  } catch {
+    // A reverting isValidSignature means rejected just as firmly as a wrong
+    // return value — Safe reverts on an unrecognized signer — and a payer with
+    // no EIP-1271 at all lands here too. Both are a refusal to pay.
+    return {
+      valid: false,
+      reason: "payer rejected the signature or does not implement EIP-1271",
+    };
+  }
+}
+
+/**
+ * Verify against whichever scheme the payer uses, detected from chain. Prefer
+ * this when a resource server accepts both EOAs and smart accounts.
+ */
+export async function verifyAuthorizationAuto(opts: {
+  client: ContractReader & { getCode: (a: { address: `0x${string}` }) => Promise<`0x${string}` | undefined> };
+  domain: Eip712Domain;
+  authorization: Authorization;
+  signature: `0x${string}`;
+  requirements: PaymentRequirements;
+  now?: number;
+}): Promise<VerificationResult> {
+  // Field checks (recipient, amount, timing) apply to both payer kinds, so run
+  // the shared pass first and only swap the signature check.
+  const base = await verifyAuthorization(opts);
+  if (base.valid) return base;
+
+  const code = await opts.client.getCode({ address: opts.authorization.from });
+  if (!code || code === "0x") return base;
+  if (!/not the payer|could not be recovered/.test(base.reason)) return base;
+
+  return verifyContractAuthorization(
+    opts.client,
+    opts.domain,
+    opts.authorization,
+    opts.signature,
+  );
 }
 
 /** Stable id for a payment, useful as an audit key. */

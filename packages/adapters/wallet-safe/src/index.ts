@@ -99,3 +99,4 @@ export function createSafeWalletAdapter(opts: SafeWalletAdapterOptions): WalletA
     },
   };
 }
+export * from "./x402.js";

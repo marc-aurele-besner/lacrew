@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts src/x402.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
@@ -22,7 +22,8 @@
     "@lacrew/adapter-wallet-agentkit": "workspace:*",
     "@lacrew/core": "workspace:*",
     "@safe-global/safe-modules-deployments": "^3.0.8",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "@lacrew/x402": "workspace:*"
   },
   "devDependencies": {
     "@safe-global/protocol-kit": "^8.0.4",

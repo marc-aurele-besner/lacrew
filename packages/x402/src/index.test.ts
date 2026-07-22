@@ -10,6 +10,8 @@ import {
   USDC,
   authorizationId,
   buildAuthorization,
+  buildSettlementTx,
+  resolvePayerType,
   createPaymentRequirements,
   decodePaymentHeader,
   encodePaymentHeader,
@@ -281,5 +283,45 @@ test("a non-positive authorization value is refused at build time", () => {
   assert.throws(
     () => buildAuthorization({ from: account.address, to: payee, value: 0n }),
     /must be positive/,
+  );
+});
+
+test("settlement picks the overload from the payer type, never signature length", async () => {
+  const auth = authFor();
+  const sig = await signed(auth);
+  // A 1-of-1 Safe signature is also 65 bytes, so length cannot disambiguate —
+  // guessing would produce a garbage `v` and an unattributable revert.
+  const eoa = buildSettlementTx(USDC.base.address, auth, sig);
+  const contract = buildSettlementTx(USDC.base.address, auth, sig, "contract");
+  assert.match(eoa.data, /^0xe3ee160e/); // (…, uint8 v, bytes32 r, bytes32 s)
+  assert.match(contract.data, /^0xcf092995/); // (…, bytes signature)
+  assert.notEqual(eoa.data, contract.data);
+});
+
+test("a contract signature of any length passes through unsplit", () => {
+  const auth = authFor();
+  // Multi-owner Safe signatures exceed 65 bytes; the EOA path would reject
+  // this, the contract path must forward it verbatim.
+  const long = `0x${"ab".repeat(130)}` as `0x${string}`;
+  assert.throws(() => buildSettlementTx(USDC.base.address, auth, long), /65-byte/);
+  const tx = buildSettlementTx(USDC.base.address, auth, long, "contract");
+  assert.ok(tx.data.includes("ab".repeat(130)), "signature must be forwarded intact");
+});
+
+test("payer type is read from account code", async () => {
+  const codes: Record<string, `0x${string}`> = {
+    "0x1111111111111111111111111111111111111111": "0x",
+    "0x2222222222222222222222222222222222222222": "0x60806040",
+  };
+  const client = {
+    getCode: async ({ address }: { address: `0x${string}` }) => codes[address.toLowerCase()],
+  };
+  assert.equal(
+    await resolvePayerType(client, "0x1111111111111111111111111111111111111111"),
+    "eoa",
+  );
+  assert.equal(
+    await resolvePayerType(client, "0x2222222222222222222222222222222222222222"),
+    "contract",
   );
 });

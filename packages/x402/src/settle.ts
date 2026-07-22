@@ -40,6 +40,40 @@ export const EIP3009_ABI = [
   },
 ] as const satisfies Abi;
 
+/**
+ * EIP-3009 overload taking an opaque signature, which is how EIP-1271 contract
+ * payers (Safe, smart accounts) settle. The token calls `isValidSignature` on
+ * the payer instead of running ecrecover.
+ */
+export const EIP3009_BYTES_ABI = [
+  {
+    type: "function",
+    name: "transferWithAuthorization",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+] as const satisfies Abi;
+
+/**
+ * How the payer authorized the transfer.
+ * - `eoa` — ECDSA, split into (v, r, s)
+ * - `contract` — EIP-1271, passed through as opaque bytes
+ *
+ * This is never inferred from signature length: a 1-of-1 Safe signature is also
+ * 65 bytes, so guessing would silently produce a garbage `v` and an
+ * unattributable revert. Use `resolvePayerType` to detect it from chain state.
+ */
+export type PayerType = "eoa" | "contract";
+
 export type SettlementTransaction = {
   to: `0x${string}`;
   data: `0x${string}`;
@@ -78,24 +112,36 @@ export function buildSettlementTx(
   asset: `0x${string}`,
   authorization: Authorization,
   signature: `0x${string}`,
+  payerType: PayerType = "eoa",
 ): SettlementTransaction {
+  const common = [
+    authorization.from,
+    authorization.to,
+    authorization.value,
+    authorization.validAfter,
+    authorization.validBefore,
+    authorization.nonce,
+  ] as const;
+
+  if (payerType === "contract") {
+    return {
+      to: asset,
+      data: encodeFunctionData({
+        abi: EIP3009_BYTES_ABI as Abi,
+        functionName: "transferWithAuthorization",
+        args: [...common, signature],
+      }),
+      value: 0n,
+    };
+  }
+
   const { v, r, s } = splitSignature(signature);
   return {
     to: asset,
     data: encodeFunctionData({
       abi: EIP3009_ABI as Abi,
       functionName: "transferWithAuthorization",
-      args: [
-        authorization.from,
-        authorization.to,
-        authorization.value,
-        authorization.validAfter,
-        authorization.validBefore,
-        authorization.nonce,
-        v,
-        r,
-        s,
-      ],
+      args: [...common, v, r, s],
     }),
     value: 0n,
   };
@@ -105,12 +151,46 @@ export function buildSettlementTx(
 export function buildSettlementTxFromPayload(
   asset: `0x${string}`,
   payload: PaymentPayload,
+  payerType: PayerType = "eoa",
 ): SettlementTransaction {
   return buildSettlementTx(
     asset,
     fromWire(payload.payload.authorization),
     payload.payload.signature,
+    payerType,
   );
+}
+
+/** Reader exposing account code — satisfied by a viem PublicClient. */
+export type CodeReader = {
+  getCode: (args: { address: `0x${string}` }) => Promise<`0x${string}` | undefined>;
+};
+
+/**
+ * Whether the payer is a contract, and therefore signs via EIP-1271. The wire
+ * format carries no payer-type field, so this is read from chain rather than
+ * guessed from the signature.
+ */
+export async function resolvePayerType(
+  client: CodeReader,
+  payer: `0x${string}`,
+): Promise<PayerType> {
+  const code = await client.getCode({ address: payer });
+  return code && code !== "0x" ? "contract" : "eoa";
+}
+
+/**
+ * Settlement transaction with the payer type detected from chain — the safe
+ * default when a resource server accepts payments from both EOAs and smart
+ * accounts.
+ */
+export async function buildSettlementTxAuto(
+  client: CodeReader,
+  asset: `0x${string}`,
+  payload: PaymentPayload,
+): Promise<SettlementTransaction> {
+  const payerType = await resolvePayerType(client, payload.payload.authorization.from);
+  return buildSettlementTxFromPayload(asset, payload, payerType);
 }
 
 /**

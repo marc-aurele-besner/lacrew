@@ -211,6 +211,9 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../core
+      '@lacrew/x402':
+        specifier: workspace:*
+        version: link:../../x402
       '@safe-global/safe-modules-deployments':
         specifier: ^3.0.8
         version: 3.0.8
