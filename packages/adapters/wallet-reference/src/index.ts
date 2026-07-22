@@ -9,7 +9,7 @@ import {
   type WalletAdapter,
   checkWithPolicy,
 } from "@lacrew/adapter-wallet-agentkit";
-import { createLacrewClient } from "@lacrew/sdk";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 export type { WalletAdapter, AdapterCheckInput };
 

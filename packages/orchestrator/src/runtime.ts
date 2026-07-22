@@ -8,17 +8,17 @@
  */
 
 import {
-  createLacrewClient,
   createOnchainClient,
   simulateIntentAction,
-  type LacrewClient,
   type OnchainLacrewClient,
   type ResolveResult,
 } from "@lacrew/sdk";
+import type { LacrewClient } from "@lacrew/sdk/testing";
 import {
   ANVIL_CHAIN_ID,
   escalationRouterAbi,
   getAddresses,
+  hasDeployment,
   sessionRegistryAbi,
   MOCK_MANAGER,
   MOCK_WORKER,
@@ -88,7 +88,12 @@ const AUDIT_RING_MAX = 200;
 const AUDIT_STORE_TTL_MS = 2_000;
 
 export interface CrewRuntimeOptions {
-  client?: LacrewClient | OnchainLacrewClient;
+  /**
+   * Required. It used to default to the in-memory test client, which is how a
+   * runtime with no chain still answered every read with an invented org.
+   * Tests inject a client explicitly; production builds one from env.
+   */
+  client: LacrewClient | OnchainLacrewClient;
   workerAgent?: `0x${string}`;
   spendTarget?: `0x${string}`;
   managerAgent?: `0x${string}`;
@@ -113,19 +118,53 @@ function isOnchainClient(
   return "publicClient" in client && typeof (client as OnchainLacrewClient).publicClient === "object";
 }
 
-/** Build a runtime from env: onchain when ANVIL_RPC + PRIVATE_KEY are present. */
-export function createRuntimeFromEnv(): CrewRuntime {
+/**
+ * Why a runtime could not be built. The caller reports the reason rather than
+ * substituting an org, so "we cannot reach the chain" never renders as "this
+ * workspace has no agents".
+ */
+export type RuntimeBootFailure =
+  | "no_rpc"
+  | "no_private_key"
+  | "no_deployment"
+  | "rpc_unreachable"
+  | "chain_id_mismatch";
+
+export type RuntimeBoot =
+  | { ok: true; runtime: CrewRuntime }
+  | { ok: false; reason: RuntimeBootFailure; detail: string };
+
+/**
+ * Build a runtime from env.
+ *
+ * There is no mock fallback. It used to return an in-memory runtime whenever
+ * RPC or a key was missing, which is where every fabricated org, intent and
+ * session downstream came from — the orchestrator answered confidently with an
+ * organisation nobody owned. A missing chain is now a reported failure.
+ *
+ * The RPC is probed rather than assumed: constructing a viem client never
+ * fails, so without a probe a misconfigured endpoint yields a runtime that
+ * claims to be onchain and throws on every read.
+ */
+export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
   const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
+  if (!rpc) {
+    return { ok: false, reason: "no_rpc", detail: "Set ANVIL_RPC (or RPC_URL) to a JSON-RPC endpoint." };
+  }
   const pk = normalizePk(process.env.PRIVATE_KEY);
-  if (!rpc || !pk) {
-    return new CrewRuntime({
-      mode: "mock",
-      auditStore: createAuditStoreFromEnv(),
-      runtimeStore: createRuntimeStoreFromEnv(),
-    });
+  if (!pk) {
+    return { ok: false, reason: "no_private_key", detail: "Set PRIVATE_KEY; it signs proposals and sponsors session gas." };
   }
 
   const chainId = Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID);
+  if (!hasDeployment(chainId)) {
+    return {
+      ok: false,
+      reason: "no_deployment",
+      detail: `No contracts deployed for chain ${chainId}. Run \`lacrew deploy\`, or set the LACREW_* address overrides.`,
+    };
+  }
+
   const addresses = getAddresses(chainId);
   const managerPk = normalizePk(process.env.MANAGER_PRIVATE_KEY);
   const account = privateKeyToAccount(pk);
@@ -140,16 +179,40 @@ export function createRuntimeFromEnv(): CrewRuntime {
     indexerPath: process.env.INDEXER_PATH,
   });
 
-  return new CrewRuntime({
-    client,
-    mode: "onchain",
-    chainId,
-    workerAgent: addresses.worker ?? MOCK_WORKER,
-    spendTarget: addresses.x402Target ?? "0x4444444444444444444444444444444444444444",
-    managerAgent: addresses.manager ?? MOCK_MANAGER,
-    auditStore: createAuditStoreFromEnv(),
-    runtimeStore: createRuntimeStoreFromEnv(),
-  });
+  // Probe before claiming to be onchain. A wrong chain is worse than an
+  // unreachable one: the addresses resolve, the reads succeed, and they
+  // describe somebody else's deployment.
+  let reported: number;
+  try {
+    reported = await client.publicClient.getChainId();
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "rpc_unreachable",
+      detail: `Could not reach ${rpc}: ${err instanceof Error ? err.message.split("\n")[0] : "unknown error"}`,
+    };
+  }
+  if (reported !== chainId) {
+    return {
+      ok: false,
+      reason: "chain_id_mismatch",
+      detail: `CHAIN_ID is ${chainId} but ${rpc} reports ${reported}; the address book would be for the wrong chain.`,
+    };
+  }
+
+  return {
+    ok: true,
+    runtime: new CrewRuntime({
+      client,
+      mode: "onchain",
+      chainId,
+      workerAgent: addresses.worker ?? MOCK_WORKER,
+      spendTarget: addresses.x402Target ?? "0x4444444444444444444444444444444444444444",
+      managerAgent: addresses.manager ?? MOCK_MANAGER,
+      auditStore: createAuditStoreFromEnv(),
+      runtimeStore: createRuntimeStoreFromEnv(),
+    }),
+  };
 }
 
 export class CrewRuntime {
@@ -179,8 +242,8 @@ export class CrewRuntime {
   private readonly auditStore: AuditStore;
   private readonly runtimeStore: RuntimeStore;
 
-  constructor(options: CrewRuntimeOptions = {}) {
-    this.client = options.client ?? createLacrewClient({ useMock: true });
+  constructor(options: CrewRuntimeOptions) {
+    this.client = options.client;
     this.workerAgent = options.workerAgent ?? MOCK_WORKER;
     this.spendTarget =
       options.spendTarget ?? "0x4444444444444444444444444444444444444444";

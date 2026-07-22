@@ -7,6 +7,7 @@ import {
   type SessionRecord,
 } from "./runtimeStore.js";
 import { CrewRuntime } from "./runtime.js";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   keyId: "sess_1",
@@ -100,7 +101,7 @@ describe("createRuntimeStoreFromEnv", () => {
 describe("CrewRuntime runtime store wiring", () => {
   it("persists session + intent records across boot/tick/resolve", async () => {
     const store = createMemoryRuntimeStore();
-    const runtime = new CrewRuntime({ runtimeStore: store });
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), runtimeStore: store });
 
     const tick = await runtime.tick();
     assert.equal(tick.verdict, "ESCALATE");
@@ -123,7 +124,7 @@ describe("CrewRuntime runtime store wiring", () => {
 
   it("marks the session revoked in the store", async () => {
     const store = createMemoryRuntimeStore();
-    const runtime = new CrewRuntime({ runtimeStore: store });
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), runtimeStore: store });
     const booted = await runtime.boot();
 
     await runtime.revokeSessionById(booted.keyId);

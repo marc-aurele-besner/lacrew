@@ -1,7 +1,10 @@
 /**
  * Orchestrator bootstrap: Hono app (httpApp.ts) served over node:http so the
- * reusePort/shutdown helpers keep working. Mocked by default; onchain when
- * ANVIL_RPC + PRIVATE_KEY are set.
+ * reusePort/shutdown helpers keep working.
+ *
+ * Requires a reachable chain — there is no mock fallback. When one cannot be
+ * built the process still listens and serves `createUnavailableApp`, so callers
+ * get a reason instead of a connection refused, and 503 instead of an empty org.
  * Queue: QueueProvider — pg-boss when DATABASE_URL set, else in-memory.
  */
 
@@ -15,37 +18,63 @@ import { createFlowsSurface } from "./flows.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
-import { createOrchestratorApp } from "./httpApp.js";
+import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 
-const runtime = createRuntimeFromEnv();
 const port = Number(process.env.PORT ?? 8788);
 const queue: QueueProvider = createQueueFromEnv();
 const model: ModelProvider = createModelProviderFromEnv();
 /** MCP HTTP binds to the live runtime; LACREW_MCP_MOCK=1 forces a detached SDK mock. */
 const mcpUseMock = process.env.LACREW_MCP_MOCK === "1";
-const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
-const flows = createFlowsSurface({ runtime, model, mcpBackend });
 const authToken = getOrchToken();
 let dbReady = false;
-
-const app = createOrchestratorApp({
-  runtime,
-  queue,
-  model,
-  flows,
-  mcpBackend,
-  mcpUseMock,
-  authToken,
-  isDbReady: () => dbReady,
-  isDbConfigured: () => Boolean(getDatabaseUrl()),
-});
-
-const server = createServer(getRequestListener(app.fetch));
 
 let migrationsRan = false;
 
 async function main(): Promise<void> {
   dbReady = await checkDbReady();
+
+  const boot = await createRuntimeFromEnv();
+  if (!boot.ok) {
+    // Listen anyway. A process that refuses to start is indistinguishable from
+    // one that crashed, and the caller needs to know *which* thing is missing.
+    console.error(
+      `[@lacrew/orchestrator] no chain (${boot.reason}): ${boot.detail}`,
+    );
+    const server = createServer(
+      getRequestListener(
+        createUnavailableApp({
+          reason: boot.reason,
+          detail: boot.detail,
+          isDbReady: () => dbReady,
+          isDbConfigured: () => Boolean(getDatabaseUrl()),
+          ...(authToken ? { authToken } : {}),
+        }).fetch,
+      ),
+    );
+    installShutdownHooks(server, async () => {});
+    await listenHttp(server, port, () => {
+      console.log(
+        `[@lacrew/orchestrator] listening on :${port} with no chain — every data route answers 503 (${boot.reason})`,
+      );
+    });
+    return;
+  }
+  const runtime = boot.runtime;
+  const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
+  const flows = createFlowsSurface({ runtime, model, mcpBackend });
+  const app = createOrchestratorApp({
+    runtime,
+    queue,
+    model,
+    flows,
+    mcpBackend,
+    mcpUseMock,
+    authToken,
+    isDbReady: () => dbReady,
+    isDbConfigured: () => Boolean(getDatabaseUrl()),
+  });
+  const server = createServer(getRequestListener(app.fetch));
+
   if (dbReady) {
     // Before anything queries. A pulled-but-unapplied migration otherwise
     // surfaces as a bare "column does not exist" at hydrate time, which reads

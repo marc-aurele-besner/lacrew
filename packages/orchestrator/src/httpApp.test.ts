@@ -5,9 +5,10 @@ import { createFlowsSurface } from "./flows.js";
 import { InMemoryQueue } from "./queue/index.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { createOrchestratorApp } from "./httpApp.js";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 function buildApp(authToken?: string) {
-  const runtime = new CrewRuntime();
+  const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   const model = new MemoryModelProvider();
   const flows = createFlowsSurface({ runtime, model });
   return createOrchestratorApp({

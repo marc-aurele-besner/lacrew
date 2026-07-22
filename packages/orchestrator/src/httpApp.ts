@@ -72,9 +72,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     jsonBig(c, {
       ok: true,
       service: "lacrew-orchestrator",
-      mocked: runtime.mode === "mock",
+      mocked: false,
       mode: runtime.mode,
       chainId: runtime.chainId,
+      chain: { reachable: true, chainId: runtime.chainId },
       db: { configured: options.isDbConfigured(), ready: options.isDbReady() },
       queue: queue.status(),
       model: { provider: model.name },
@@ -516,6 +517,63 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       epochError && epochRuns.length === 0 ? 400 : 200,
     );
   });
+
+  return app;
+}
+
+/**
+ * The app served when no chain could be reached.
+ *
+ * It exists so the process still listens: a connection refused tells a caller
+ * nothing, and the cloud cannot distinguish "orchestrator down" from "chain
+ * misconfigured" without being told which. `/health` answers 200 with the
+ * reason; every data route answers 503.
+ *
+ * Never `[]`. An empty array is a claim about the organisation — that it has no
+ * agents, no intents, no history. 503 is a claim about this process. Collapsing
+ * the two is what let a misconfigured orchestrator render as an empty workspace.
+ */
+export function createUnavailableApp(options: {
+  reason: string;
+  detail: string;
+  isDbReady: () => boolean;
+  isDbConfigured: () => boolean;
+  authToken?: string;
+}): Hono {
+  const app = new Hono();
+
+  app.use("*", async (c, next) => {
+    if (c.req.method === "OPTIONS") {
+      return c.newResponse(null, 204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET,POST,OPTIONS",
+        "access-control-allow-headers": "content-type,authorization",
+      });
+    }
+    if (options.authToken && !(c.req.method === "GET" && c.req.path === "/health")) {
+      if (!isAuthorized(c.req.header("authorization"), options.authToken)) {
+        return jsonBig(c, { error: "unauthorized" }, 401);
+      }
+    }
+    await next();
+  });
+
+  app.get("/health", (c) =>
+    jsonBig(c, {
+      // `ok` describes the process, which is running and answering. Whether it
+      // can reach a chain is a separate question, answered separately.
+      ok: true,
+      service: "lacrew-orchestrator",
+      mode: "unavailable",
+      chainId: null,
+      chain: { reachable: false, reason: options.reason, detail: options.detail },
+      db: { configured: options.isDbConfigured(), ready: options.isDbReady() },
+    }),
+  );
+
+  app.all("*", (c) =>
+    jsonBig(c, { error: "chain_unavailable", reason: options.reason, detail: options.detail }, 503),
+  );
 
   return app;
 }
