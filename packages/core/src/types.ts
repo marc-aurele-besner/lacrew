@@ -73,8 +73,18 @@ export interface Allowance {
   token: `0x${string}`;
   balance: bigint;
   epoch: number;
-  /** Soft cap used by client-side policy preflight. */
-  cap: bigint;
+  /**
+   * The ceiling SpendCapPolicy will enforce for this agent — its own cap, or
+   * the module default it inherits. Both are equally binding.
+   *
+   * Null means the dimension is not enforced at all (no SpendCapPolicy in the
+   * stack), not "no limit set for this agent".
+   *
+   * Previously the onchain read reported `cap: balance`, so every agent
+   * appeared to be spending exactly to its limit no matter what the policy
+   * actually allowed.
+   */
+  cap: bigint | null;
 }
 
 /** Human-readable preflight of the agent's intended action (PRD F1.16). */

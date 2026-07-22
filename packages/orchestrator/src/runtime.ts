@@ -69,6 +69,8 @@ const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 export type RuntimeMode = "mock" | "onchain";
 
 const AUDIT_RING_MAX = 200;
+/** How long a persisted-audit read is reused; the dashboard polls every 3s. */
+const AUDIT_STORE_TTL_MS = 2_000;
 
 export interface CrewRuntimeOptions {
   client?: LacrewClient | OnchainLacrewClient;
@@ -158,6 +160,7 @@ export class CrewRuntime {
   private readonly sessionScopePolicy = new Map<string, SessionScope[]>();
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
+  private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
   private readonly auditStore: AuditStore;
   private readonly runtimeStore: RuntimeStore;
 
@@ -553,27 +556,58 @@ export class CrewRuntime {
     );
   }
 
-  /** Merge local ring with indexer/mock client trail (local first, newest first). */
+  /**
+   * Merge the local ring, the persisted store, and the client's trail
+   * (local first, newest first).
+   *
+   * The persisted store is read here and not only in `hydrateAudit`, because
+   * the indexer writes chain events into the same table from a separate
+   * process. Reading it once at boot meant anything indexed afterwards stayed
+   * invisible until the orchestrator restarted — so an approval that settled
+   * onchain a minute ago was missing from the trail that is supposed to prove
+   * it happened. Cached briefly since the dashboard polls this every 3s.
+   */
   async audit(): Promise<ProtocolEvent[]> {
-    const remote = await this.client.getAuditTrail();
+    const [remote, persisted] = await Promise.all([
+      this.client.getAuditTrail(),
+      this.recentPersistedAudit(),
+    ]);
     const seen = new Set<string>();
     const out: ProtocolEvent[] = [];
     const keyOf = (e: ProtocolEvent) =>
       `${e.type}:${e.payload.intentId ?? ""}:${e.payload.txHash ?? ""}:${e.payload.value ?? ""}:${e.at}`;
 
-    for (const e of [...this.localAudit].reverse()) {
-      const k = keyOf(e);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(e);
-    }
-    for (const e of [...remote].reverse()) {
-      const k = keyOf(e);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(e);
-    }
+    const take = (events: ProtocolEvent[]) => {
+      for (const e of events) {
+        const k = keyOf(e);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(e);
+      }
+    };
+
+    take([...this.localAudit].reverse());
+    take(persisted);
+    take([...remote].reverse());
     return out;
+  }
+
+  /** Persisted trail, newest first, cached for AUDIT_STORE_TTL_MS. */
+  private async recentPersistedAudit(): Promise<ProtocolEvent[]> {
+    const now = Date.now();
+    if (this.auditCache && now - this.auditCache.at < AUDIT_STORE_TTL_MS) {
+      return this.auditCache.events;
+    }
+    try {
+      const events = await this.auditStore.recent(AUDIT_RING_MAX);
+      // `recent` returns oldest-first; this merge is newest-first throughout.
+      const ordered = [...events].reverse();
+      this.auditCache = { events: ordered, at: now };
+      return ordered;
+    } catch {
+      // A store blip must not empty a trail the local ring can still answer.
+      return this.auditCache?.events ?? [];
+    }
   }
 
   /**
