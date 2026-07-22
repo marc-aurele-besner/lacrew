@@ -85,9 +85,15 @@ export type GovernanceActionInput = {
 };
 
 export interface RunMcpToolOptions {
-  /** Live backend; takes precedence over the SDK fallback. */
+  /** Live backend; takes precedence over everything else. */
   backend?: McpToolBackend;
-  /** SDK fallback flag when no backend is given (default true = mock). */
+  /**
+   * Opt in to the detached demo client from `@lacrew/sdk/testing`.
+   *
+   * Must be set explicitly. There is no default backend: with no `backend` and
+   * no `useMock: true`, a tool call throws rather than answering from the
+   * sample org.
+   */
   useMock?: boolean;
 }
 
@@ -281,9 +287,9 @@ export function createOrchHttpMcpBackend(baseUrl: string, token?: string): McpTo
   };
 }
 
-/** Detached SDK client backend (mock demo data unless useMock: false). */
+/** Detached SDK client backend. Demo data only when `useMock: true`. */
 export function createSdkMcpBackend(opts: { useMock?: boolean } = {}): McpToolBackend {
-  const client = createLacrewClient({ useMock: opts.useMock ?? true });
+  const client = createLacrewClient({ useMock: opts.useMock ?? false });
   return {
     getOrgTree: () => client.getOrgTree(),
     listPendingIntents: () => client.getPendingIntents(),
@@ -292,13 +298,30 @@ export function createSdkMcpBackend(opts: { useMock?: boolean } = {}): McpToolBa
   };
 }
 
-/** Tool runner; dispatches to opts.backend, else a detached SDK client. */
+/**
+ * The backend a tool call runs against.
+ *
+ * There is no default. The demo client used to be one, so any of the framework
+ * adapters called with no arguments — the documented entry points — returned
+ * tools that served the sample org tree and accepted proposes and approvals.
+ * A model reported an approved spend that had never touched a chain, and
+ * nothing in the payload said otherwise. Going live must not be the opt-in.
+ */
+export function resolveMcpBackend(opts: RunMcpToolOptions = {}): McpToolBackend {
+  if (opts.backend) return opts.backend;
+  if (opts.useMock === true) return createSdkMcpBackend({ useMock: true });
+  throw new Error(
+    "No LaCrew backend configured. Pass `backend` (an orchestrator URL, or ORCH_URL for the stdio server) to run against a chain, or `useMock: true` for the detached demo client.",
+  );
+}
+
+/** Tool runner; dispatches to `opts.backend`, or an explicitly requested mock. */
 export async function runMcpTool(
   name: string,
   args: Record<string, unknown>,
   opts: RunMcpToolOptions = {},
 ): Promise<unknown> {
-  const backend = opts.backend ?? createSdkMcpBackend({ useMock: opts.useMock });
+  const backend = resolveMcpBackend(opts);
 
   switch (name) {
     case "lacrew_get_org_tree":
