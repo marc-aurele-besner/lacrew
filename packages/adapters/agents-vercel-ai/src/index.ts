@@ -37,7 +37,7 @@ export function createLacrewVercelAiTools(
     typeof opts.backend === "string"
       ? createOrchHttpMcpBackend(opts.backend, process.env.ORCH_TOKEN?.trim() || undefined)
       : opts.backend;
-  const useMock = opts.useMock ?? true;
+  const useMock = opts.useMock;
   const out: Record<string, VercelAiToolDefinition> = {};
   for (const t of listLacrewMcpTools()) {
     out[t.name] = {

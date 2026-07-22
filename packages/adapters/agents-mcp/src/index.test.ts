@@ -55,9 +55,31 @@ describe("runMcpTool with injected backend", () => {
     await assert.rejects(runMcpTool("lacrew_nope", {}, { backend: stubBackend([]) }), /Unknown MCP tool/);
   });
 
-  it("falls back to the SDK mock without a backend", async () => {
-    const tree = (await runMcpTool("lacrew_get_org_tree", {})) as unknown[];
+  it("refuses to answer without a backend", async () => {
+    // This used to serve the sample org tree. A model asking "who is in my
+    // org?" got Human Root / Manager A / Worker 1 with no marker saying so.
+    await assert.rejects(
+      runMcpTool("lacrew_get_org_tree", {}),
+      /No LaCrew backend configured/,
+    );
+  });
+
+  it("serves the demo client only when it is asked for", async () => {
+    const tree = (await runMcpTool("lacrew_get_org_tree", {}, { useMock: true })) as unknown[];
     assert.ok(Array.isArray(tree) && tree.length > 0);
+  });
+
+  it("refuses a propose that names no backend", async () => {
+    // The worst of the set: a returned intentId and verdict for a spend that
+    // never reached a chain.
+    await assert.rejects(
+      runMcpTool("lacrew_propose_intent", {
+        agent: "0x1111111111111111111111111111111111111111",
+        target: "0x2222222222222222222222222222222222222222",
+        value: "1000000",
+      }),
+      /No LaCrew backend configured/,
+    );
   });
 
   it("lists the intent tools plus the crew-driving surface", () => {

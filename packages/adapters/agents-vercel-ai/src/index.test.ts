@@ -34,7 +34,7 @@ test("routes execute through an injected backend", async () => {
 
 test("constructs executable AI SDK tools over the mock backend", async () => {
     const { toAiSdkTools } = await import("./index.js");
-    const tools = (await toAiSdkTools()) as Record<
+    const tools = (await toAiSdkTools({ useMock: true })) as Record<
       string,
       { description?: string; execute?: (args: unknown, opts: unknown) => Promise<unknown> }
     >;

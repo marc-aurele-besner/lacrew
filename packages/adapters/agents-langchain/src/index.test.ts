@@ -8,6 +8,8 @@ import {
 } from "./index.js";
 
 test("exposes all LaCrew MCP tools in LangChain shape", async () => {
+  // No backend: describing the tools is fine without one. Only invoking needs
+  // somewhere to run, which is where the refusal lands.
   const tools = createLacrewLangChainTools();
   const names = tools.map((t) => t.name);
   assert.deepEqual(names, listLacrewLangChainToolNames());
@@ -21,7 +23,7 @@ test("exposes all LaCrew MCP tools in LangChain shape", async () => {
 });
 
 test("tool invoke returns a JSON string (LangChain string-output convention)", async () => {
-  const tools = createLacrewLangChainTools();
+  const tools = createLacrewLangChainTools({ useMock: true });
   const orgTree = tools.find((t) => t.name === "lacrew_get_org_tree")!;
   const out = await orgTree.invoke({});
   assert.equal(typeof out, "string");
@@ -55,7 +57,7 @@ test("a LangChain runnable powers model steps in a @lacrew/flows pipeline", asyn
       return { content: `LC says: ${String(input).slice(0, 40)}` };
     },
   };
-  const backend = createLangChainFlowBackend({ runnable });
+  const backend = createLangChainFlowBackend({ runnable, useMock: true });
 
   const def = flow("lc-demo", "LangChain demo")
     .tool("org", "lacrew_get_org_tree")
@@ -71,7 +73,7 @@ test("a LangChain runnable powers model steps in a @lacrew/flows pipeline", asyn
 });
 
 test("constructs invocable DynamicStructuredTools over the mock backend", async () => {
-    const tools = (await import("./index.js").then((m) => m.toLangChainTools())) as Array<{
+    const tools = (await import("./index.js").then((m) => m.toLangChainTools({ useMock: true }))) as Array<{
       name: string;
       description: string;
       invoke: (args: Record<string, unknown>) => Promise<unknown>;

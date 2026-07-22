@@ -53,7 +53,7 @@ export function createLacrewLangChainTools(
     typeof opts.backend === "string"
       ? createOrchHttpMcpBackend(opts.backend, process.env.ORCH_TOKEN?.trim() || undefined)
       : opts.backend;
-  const useMock = opts.useMock ?? true;
+  const useMock = opts.useMock;
   return listLacrewMcpTools().map((t) => ({
     name: t.name,
     description: t.description,
@@ -116,7 +116,7 @@ export function createLangChainFlowBackend(opts: LangChainFlowBackendOptions): F
     typeof opts.backend === "string"
       ? createOrchHttpMcpBackend(opts.backend, process.env.ORCH_TOKEN?.trim() || undefined)
       : opts.backend;
-  const useMock = opts.useMock ?? true;
+  const useMock = opts.useMock;
   return {
     complete: async ({ system, prompt, model }) => {
       const input = system ? `${system}\n\n${prompt}` : prompt;
