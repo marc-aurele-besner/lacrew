@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { createLacrewClient } from "@lacrew/sdk";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 export interface McpToolDescriptor {
   name: string;

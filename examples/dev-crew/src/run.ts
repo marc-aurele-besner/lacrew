@@ -9,7 +9,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOCK_WORKER, MOCK_MANAGER } from "@lacrew/core";
-import { createLacrewClient, simulateIntentAction } from "@lacrew/sdk";
+import {
+  simulateIntentAction,
+} from "@lacrew/sdk";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const policy = JSON.parse(

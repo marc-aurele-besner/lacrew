@@ -7,7 +7,11 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLacrewClient, createOnchainClient, type OnchainLacrewClient } from "@lacrew/sdk";
+import {
+  createOnchainClient,
+  type OnchainLacrewClient,
+} from "@lacrew/sdk";
+import { createLacrewClient } from "@lacrew/sdk/testing";
 import { CrewRuntime, createEphemeralSession } from "@lacrew/orchestrator";
 import {
   PROTOCOL_NAME,

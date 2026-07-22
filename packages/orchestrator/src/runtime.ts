@@ -8,13 +8,12 @@
  */
 
 import {
-  createLacrewClient,
   createOnchainClient,
   simulateIntentAction,
-  type LacrewClient,
   type OnchainLacrewClient,
   type ResolveResult,
 } from "@lacrew/sdk";
+import { createLacrewClient, type LacrewClient } from "@lacrew/sdk/testing";
 import {
   ANVIL_CHAIN_ID,
   escalationRouterAbi,

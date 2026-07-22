@@ -7,11 +7,6 @@
 import {
   MOCK_MANAGER,
   MOCK_ROOT,
-  mockAllowances,
-  mockAuditTrail,
-  mockOrgNodes,
-  mockPendingIntents,
-  mockSessionKeys,
   type Allowance,
   type GovernanceConfig,
   type GovernanceProposal,
@@ -23,12 +18,20 @@ import {
   type SessionKey,
   type Verdict,
 } from "@lacrew/core";
+import type { ResolveResult } from "../types.js";
+import {
+  mockAllowances,
+  mockAuditTrail,
+  mockOrgNodes,
+  mockPendingIntents,
+  mockSessionKeys,
+} from "./fixtures.js";
 import {
   checkClientPolicy,
   defaultMockPolicy,
   type ClientPolicyConfig,
-} from "./policy.js";
-import { simulateIntentAction } from "./simulate.js";
+} from "../policy.js";
+import { simulateIntentAction } from "../simulate.js";
 
 export interface LacrewClientOptions {
   /** Reserved for future RPC / address config. */
@@ -39,13 +42,6 @@ export interface LacrewClientOptions {
   policy?: ClientPolicyConfig;
 }
 
-export type ResolveResult = {
-  intent: Intent;
-  /** true when the intent climbed to a higher approver instead of closing. */
-  escalated: boolean;
-  /** Present when the write hit chain (createOnchainClient). */
-  txHash?: `0x${string}`;
-};
 
 /** Mock governance action recorded at propose time, applied on execute. */
 type MockProposalAction =
@@ -602,9 +598,3 @@ export function createLacrewClient(options?: LacrewClientOptions): LacrewClient 
   return new LacrewClient(options);
 }
 
-export {
-  createOnchainClient,
-  type OnchainClientOptions,
-  type OnchainLacrewClient,
-  type OnchainResolveResult,
-} from "./onchain.js";

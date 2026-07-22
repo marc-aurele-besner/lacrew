@@ -10,11 +10,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/policy.test.ts src/client.test.ts src/onchain.test.ts src/simulate.test.ts",
+    "test": "node --import tsx --test src/policy.test.ts src/testing/client.test.ts src/surface.test.ts src/onchain.test.ts src/simulate.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
