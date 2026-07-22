@@ -3,8 +3,12 @@ import { index, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle
 /**
  * Runtime session + intent records (F1.7). Written by the orchestrator so
  * issued sessions and proposed intents survive restarts and stay queryable
- * without hitting the chain. Metadata only — session private keys never
- * leave the runtime process.
+ * without hitting the chain.
+ *
+ * Session private keys are stored **sealed** (`sealed_key`) and never in
+ * cleartext — see `packages/orchestrator/src/secretBox.ts` for the envelope and
+ * what the trust boundary actually is. Nothing here is served over HTTP: the
+ * session endpoints return metadata only.
  */
 export const runtimeSessions = pgTable(
   "orchestrator_sessions",
@@ -17,6 +21,13 @@ export const runtimeSessions = pgTable(
     agent: text("agent").notNull(),
     /** Ephemeral EOA registered in SessionRegistry (onchain mode only). */
     keyAddress: text("key_address"),
+    /**
+     * AES-256-GCM envelope around the session private key, so a restart can
+     * reuse the live onchain session instead of issuing (and gas-funding) a new
+     * one. Null when sealing is not configured — a supported mode in which
+     * restarts simply re-issue. Never logged, never served.
+     */
+    sealedKey: text("sealed_key"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     scopes: jsonb("scopes").notNull().$type<string[]>(),
     maxValue: text("max_value"),

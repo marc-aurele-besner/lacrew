@@ -43,6 +43,13 @@
       "when": 1784552922713,
       "tag": "0005_adorable_lady_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784734122117,
+      "tag": "0006_cute_beyonder",
+      "breakpoints": true
     }
   ]
 }

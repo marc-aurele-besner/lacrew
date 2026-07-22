@@ -63,6 +63,18 @@ async function main(): Promise<void> {
     if (replayed > 0) {
       console.log(`[@lacrew/orchestrator] audit ring hydrated with ${replayed} persisted events`);
     }
+    // Reclaim sealed session keys so a restart reuses the live onchain sessions
+    // rather than issuing — and gas-funding — replacements for them.
+    try {
+      const sessions = await runtime.hydrateSessions();
+      if (sessions > 0) {
+        console.log(`[@lacrew/orchestrator] ${sessions} session key(s) restored from store`);
+      }
+    } catch (err) {
+      // Never fatal: the runtime issues fresh sessions on demand, so a failure
+      // here costs gas, not correctness.
+      console.error("[@lacrew/orchestrator] session hydration failed:", err);
+    }
   }
   const hydrated = await flows.hydrate();
   if (hydrated.flows > 0 || hydrated.runs > 0) {

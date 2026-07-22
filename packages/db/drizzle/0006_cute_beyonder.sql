@@ -1,0 +1,1 @@
+ALTER TABLE "orchestrator_sessions" ADD COLUMN "sealed_key" text;
