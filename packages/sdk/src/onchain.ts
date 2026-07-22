@@ -45,6 +45,7 @@ import {
   type SessionKey,
   type Verdict,
 } from "@lacrew/core";
+import { resolveWorkspacePath } from "@lacrew/core/node";
 
 const TIER_MAP: Record<GovernanceTier, number> = {
   low: 0,
@@ -123,7 +124,10 @@ export class OnchainLacrewClient {
   constructor(options: OnchainClientOptions) {
     this.chainId = options.chainId ?? options.addresses?.chainId ?? ANVIL_CHAIN_ID;
     this.addresses = options.addresses ?? getAddresses(this.chainId);
-    this.indexerPath = options.indexerPath ?? process.env.INDEXER_PATH ?? process.env.INDEXER_URL;
+    // Anchored to the workspace root so this resolves to the same file the
+    // indexer writes, which runs from a different cwd. A URL passes through.
+    const rawIndexer = options.indexerPath ?? process.env.INDEXER_PATH ?? process.env.INDEXER_URL;
+    this.indexerPath = rawIndexer ? resolveWorkspacePath(rawIndexer) : undefined;
     this.transport = options.transport;
     this.chain = options.chain;
     this.publicClient = createPublicClient({

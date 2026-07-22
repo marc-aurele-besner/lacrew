@@ -163,6 +163,12 @@ function cmdDeploy(args: string[]): void {
       "--private-key",
       privateKey,
       "--broadcast",
+      // Send and confirm one transaction at a time. Without it the deploy
+      // broadcasts the whole batch, mines every transaction successfully, and
+      // then hangs forever polling for receipts it never matches — so the
+      // contracts are live but the command never returns and nothing
+      // downstream (ABI sync, address book) ever runs.
+      "--slow",
     ],
     { cwd: contractsDir, encoding: "utf8", stdio: "inherit" },
   );
