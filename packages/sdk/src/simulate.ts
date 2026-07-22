@@ -72,12 +72,12 @@ export function simulateIntentAction(input: SimulateIntentInput): IntentSimulati
     );
   }
 
-  // Deterministic-ish gas from value so UI doesn't look frozen.
-  const gas = 90_000 + Number((input.value / 10n ** 4n) % 80_000n);
-
+  // No gasEstimate: nothing here calls estimateGas, and a figure derived from
+  // the spend amount is not a measurement. Everything else this returns comes
+  // from the caller's real allowance and policy inputs, so an invented number
+  // beside them would be read as one of them.
   return {
     status,
-    gasEstimate: gas.toLocaleString("en-US"),
     assetChanges: [
       { asset: `${asset} (agent ${shortAddr(input.agent)})`, delta: `-${usdc}`, direction: "out" },
       { asset: `${asset} (target ${shortAddr(input.target)})`, delta: `+${usdc}`, direction: "in" },

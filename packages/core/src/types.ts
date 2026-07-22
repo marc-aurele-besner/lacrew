@@ -90,7 +90,15 @@ export interface Allowance {
 /** Human-readable preflight of the agent's intended action (PRD F1.16). */
 export type IntentSimulation = {
   status: "ok" | "warning" | "revert";
-  gasEstimate: string;
+  /**
+   * Present only when something actually estimated gas.
+   *
+   * Absent is a real state and must stay renderable as one. A number derived
+   * from the spend amount used to fill this in, sitting beside a status and
+   * warnings that come from genuine allowance and policy reads — which made
+   * the invented figure read as measured.
+   */
+  gasEstimate?: string;
   assetChanges: Array<{ asset: string; delta: string; direction: "in" | "out" }>;
   warnings: string[];
 };

@@ -8,7 +8,7 @@
  */
 
 import {
-  checkWithPolicy,
+  demoPolicyVerdict,
   withPolicyReader,
   type AdapterCheckInput,
   type PolicyReader,
@@ -25,7 +25,7 @@ import {
 export * from "./safe.js";
 export * from "./allowance.js";
 export * from "./execute.js";
-export { checkWithPolicy };
+export { demoPolicyVerdict };
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
 
 export interface MockSafeWallet {
@@ -53,7 +53,7 @@ export const mockSafeWalletAdapter: WalletAdapter = {
     const w = await createMockSafeWallet();
     return { address: w.address, provider: w.provider };
   },
-  checkPolicy: checkWithPolicy,
+  checkPolicy: demoPolicyVerdict,
 };
 
 /** Mocked Safe addresses with real onchain verdicts. */

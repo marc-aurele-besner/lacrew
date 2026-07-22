@@ -7,7 +7,7 @@ import { MOCK_WORKER, type Verdict } from "@lacrew/core";
 import {
   type AdapterCheckInput,
   type WalletAdapter,
-  checkWithPolicy,
+  demoPolicyVerdict,
 } from "@lacrew/adapter-wallet-agentkit";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 
@@ -41,9 +41,9 @@ export async function createReferenceWallet(label = "ref-agent"): Promise<Refere
   return w;
 }
 
+/** Demo verdict, not a policy read — see `demoPolicyVerdict`. */
 export function checkReferencePolicy(input: AdapterCheckInput): Verdict {
-  // Same PolicyModule-shaped preflight as AgentKit stub — swappable later.
-  return checkWithPolicy(input);
+  return demoPolicyVerdict(input);
 }
 
 export const referenceWalletAdapter: WalletAdapter = {

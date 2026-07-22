@@ -3,7 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { test } from "node:test";
 import {
-  checkWithPolicy,
+  demoPolicyVerdict,
   createCdpWallet,
   createCdpWalletAdapter,
   createMockAgentKitWalletAdapter,
@@ -71,8 +71,8 @@ async function startMockCdp(): Promise<{
 }
 
 test("mocked policy escalates over cap", () => {
-  assert.equal(checkWithPolicy(SPEND), "ESCALATE");
-  assert.equal(checkWithPolicy({ ...SPEND, value: 10n * 10n ** 6n }), "ALLOW");
+  assert.equal(demoPolicyVerdict(SPEND), "ESCALATE");
+  assert.equal(demoPolicyVerdict({ ...SPEND, value: 10n * 10n ** 6n }), "ALLOW");
 });
 
 test("bound mock adapter reads the verdict from the policy reader", async () => {
