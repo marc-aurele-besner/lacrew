@@ -10,13 +10,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "scripts": {
     "sync-abis": "node scripts/sync-abis.mjs",
     "addresses:env": "node scripts/addresses-env.mjs",
     "build": "node scripts/sync-abis.mjs && tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/constants.test.ts src/sessionScopes.test.ts",
+    "test": "node --import tsx --test src/constants.test.ts src/sessionScopes.test.ts src/node.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },

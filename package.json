@@ -11,6 +11,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --filter=@lacrew/orchestrator",
+    "dev:stack": "node scripts/dev-stack.mjs",
     "dev:indexer": "pnpm --filter @lacrew/indexer dev",
     "dev:all": "turbo run dev --filter=@lacrew/orchestrator --filter=@lacrew/indexer",
     "db:up": "docker compose up -d",
