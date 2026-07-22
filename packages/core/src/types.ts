@@ -107,6 +107,16 @@ export interface Intent {
   verdict: Verdict;
   /** Attached at propose time for approver UX (mock heuristic or viem sim). */
   simulation?: IntentSimulation;
+  /**
+   * Set when the event announcing this intent was seen but its onchain row
+   * could not be read, so `target`, `value` and `data` are unknown.
+   *
+   * The intent is still listed: it exists, somebody is waiting on it, and
+   * dropping it would hide a pending approval. But an approver decides on the
+   * target and the amount, so those must never be filled in with zeros — that
+   * renders as "0 USDC → 0x0000…0000", which is a spend request nobody made.
+   */
+  unreadable?: boolean;
 }
 
 /**
