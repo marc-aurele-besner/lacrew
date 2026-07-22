@@ -1,0 +1,40 @@
+{
+  "name": "@lacrew/adapter-wallet-metamask",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/delegation.test.ts"
+  },
+  "dependencies": {
+    "@lacrew/adapter-wallet-agentkit": "workspace:*",
+    "@lacrew/core": "workspace:*",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@metamask/smart-accounts-kit": "^1.7.0",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "@metamask/smart-accounts-kit": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@metamask/smart-accounts-kit": {
+      "optional": true
+    }
+  }
+}
