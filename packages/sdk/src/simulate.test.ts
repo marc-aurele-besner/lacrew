@@ -65,3 +65,31 @@ test("overdraft beyond allowance balance marks revert", () => {
   assert.ok(sim.warnings.some((w) => w.includes("cannot cover")));
 });
 
+
+test("reports no gas estimate, because nothing estimated gas", () => {
+  // A figure derived from the spend amount is not a measurement, and it sat
+  // beside a status and warnings that do come from real allowance and policy
+  // inputs — which is what made it read as measured.
+  const sim = simulateIntentAction({
+    agent: "0x1111111111111111111111111111111111111111",
+    target: "0x2222222222222222222222222222222222222222",
+    value: 75n * 10n ** 6n,
+    verdict: "ALLOW",
+  });
+  assert.equal(sim.gasEstimate, undefined);
+  // The rest still answers: absent gas is not a broken simulation.
+  assert.equal(sim.status, "ok");
+  assert.equal(sim.assetChanges.length, 2);
+});
+
+test("two different spends do not differ only by an invented gas number", () => {
+  const of = (value: bigint) =>
+    simulateIntentAction({
+      agent: "0x1111111111111111111111111111111111111111",
+      target: "0x2222222222222222222222222222222222222222",
+      value,
+      verdict: "ALLOW",
+    }).gasEstimate;
+  assert.equal(of(1n * 10n ** 6n), undefined);
+  assert.equal(of(90n * 10n ** 6n), undefined);
+});

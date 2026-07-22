@@ -47,14 +47,24 @@ export interface PolicyReader {
   checkPolicy(input: AdapterCheckInput): Promise<Verdict>;
 }
 
+/** The demo threshold. Corresponds to nothing deployed. */
+const DEMO_CAP = 100n * 10n ** 6n;
+
 /**
- * Preflight a spend through the LaCrew policy standard.
- * Mocked: always ALLOW under 100 USDC units; else ESCALATE.
- * Used only when no `PolicyReader` is wired — see `checkWithPolicyReader`.
+ * A fixed ALLOW/ESCALATE split for demos. **Not a policy check.**
+ *
+ * It reads no chain. The 100 USDC threshold matches no org's `SpendCapPolicy`,
+ * and the `Verdict` it returns is the same type a real read returns, with
+ * nothing on it to say which one you hold — so an ALLOW from here is
+ * indistinguishable from permission the chain actually granted.
+ *
+ * The name says so, because a call site is where the confusion happens. Use
+ * `checkWithPolicyReader` for a real verdict; `createSafeWalletAdapter` shows
+ * the shape, refusing to construct without a reader rather than falling back
+ * here.
  */
-export function checkWithPolicy(input: AdapterCheckInput): Verdict {
-  const cap = 100n * 10n ** 6n;
-  return input.value <= cap ? "ALLOW" : "ESCALATE";
+export function demoPolicyVerdict(input: AdapterCheckInput): Verdict {
+  return input.value <= DEMO_CAP ? "ALLOW" : "ESCALATE";
 }
 
 /**
@@ -82,7 +92,7 @@ export function withPolicyReader(adapter: WalletAdapter, reader: PolicyReader): 
 export const mockAgentKitWalletAdapter: WalletAdapter = {
   provider: "agentkit",
   createWallet: createMockAgentKitWallet,
-  checkPolicy: checkWithPolicy,
+  checkPolicy: demoPolicyVerdict,
 };
 
 /**
