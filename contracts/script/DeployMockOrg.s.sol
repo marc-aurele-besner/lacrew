@@ -124,6 +124,8 @@ contract DeployMockOrg is Script {
 
         d.sessionRegistry = new SessionRegistry(humanRoot);
         d.router.setSessionRegistry(address(d.sessionRegistry));
+        // Let the router record proposals against a key's rate limit.
+        d.sessionRegistry.setEscalationRouter(address(d.router));
 
         // Marketplace settlement is intentionally not wired into Treasury or the router:
         // a purchase is buyer-to-seller, not an org spend, so it must not be able to

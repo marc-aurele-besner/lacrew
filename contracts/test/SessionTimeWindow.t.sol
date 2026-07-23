@@ -67,7 +67,9 @@ contract SessionTimeWindowTest is Test {
             200 * USDC,
             targets,
             windowStart,
-            windowEnd
+            windowEnd,
+            0,
+            0
         );
     }
 
@@ -133,7 +135,7 @@ contract SessionTimeWindowTest is Test {
             abi.encodeWithSelector(SessionRegistry.InvalidWindow.selector, uint32(17 hours), uint32(9 hours))
         );
         sessions.issueScopedTimed(
-            worker, sessionKey, uint64(block.timestamp + DAY), allScopes, 200 * USDC, targets, 17 hours, 9 hours
+            worker, sessionKey, uint64(block.timestamp + DAY), allScopes, 200 * USDC, targets, 17 hours, 9 hours, 0, 0
         );
 
         vm.prank(root);
@@ -141,7 +143,16 @@ contract SessionTimeWindowTest is Test {
             abi.encodeWithSelector(SessionRegistry.InvalidWindow.selector, uint32(1 hours), uint32(DAY + 1))
         );
         sessions.issueScopedTimed(
-            worker, sessionKey, uint64(block.timestamp + DAY), allScopes, 200 * USDC, targets, 1 hours, uint32(DAY + 1)
+            worker,
+            sessionKey,
+            uint64(block.timestamp + DAY),
+            allScopes,
+            200 * USDC,
+            targets,
+            1 hours,
+            uint32(DAY + 1),
+            0,
+            0
         );
     }
 }
