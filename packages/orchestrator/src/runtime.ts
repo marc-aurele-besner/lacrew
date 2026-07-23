@@ -1288,6 +1288,8 @@ export class CrewRuntime {
     account: `0x${string}`;
     amount: bigint;
     tier?: GovernanceTier;
+    /** Asset stack the grant targets (symbol or token); omit for primary (USDC). */
+    asset?: string;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
     const result = await this.client.proposeSetGrant(input);
     this.pushAudit({
@@ -1298,6 +1300,7 @@ export class CrewRuntime {
         account: result.account,
         amount: input.amount.toString(),
         action: "setGrant",
+        asset: input.asset,
         txHash: "txHash" in result ? result.txHash : undefined,
       },
     });
@@ -1474,13 +1477,14 @@ export class CrewRuntime {
   }
 
   /** Run the next payroll epoch (EpochStreamer onchain; mock streams caps). */
-  async runEpoch(): Promise<{ epoch: number; txHash?: `0x${string}` }> {
-    const result = await this.client.runEpoch();
+  async runEpoch(asset?: string): Promise<{ epoch: number; txHash?: `0x${string}` }> {
+    const result = await this.client.runEpoch(asset);
     this.pushAudit({
       type: "AllowanceStreamed",
       at: new Date().toISOString(),
       payload: {
         epoch: result.epoch,
+        asset,
         txHash: "txHash" in result ? result.txHash : undefined,
         via: "EpochStreamer",
       },
@@ -1488,8 +1492,8 @@ export class CrewRuntime {
     return result;
   }
 
-  async getCurrentEpoch(): Promise<number> {
-    return this.client.getCurrentEpoch();
+  async getCurrentEpoch(asset?: string): Promise<number> {
+    return this.client.getCurrentEpoch(asset);
   }
 
   /**
