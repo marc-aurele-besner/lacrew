@@ -18,7 +18,7 @@ import {
   getAddresses,
   ANVIL_CHAIN_ID,
 } from "@lacrew/core";
-import { http, parseEther } from "viem";
+import { http, parseEther, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { cmdFlows } from "./flows.js";
 import { loadEnvFile } from "./env.js";
@@ -280,6 +280,40 @@ async function main(): Promise<void> {
         return;
       }
       printJson(await (client as { revokeSession: (id: string) => Promise<unknown> }).revokeSession(sessionId));
+      return;
+    }
+
+    case "session-issuer": {
+      // Who SessionRegistry currently accepts for issue/revoke (root or this).
+      if (!("getIssuer" in client)) {
+        console.error("session-issuer requires onchain client (--rpc + PRIVATE_KEY)");
+        process.exitCode = 1;
+        return;
+      }
+      printJson({ issuer: await (client as { getIssuer: () => Promise<string> }).getIssuer() });
+      return;
+    }
+
+    case "session-set-issuer": {
+      // Root authorises a dedicated issuer key so the orchestrator can mint
+      // bounded session keys without holding root. PRIVATE_KEY here must be root.
+      const cleaned = [...rest];
+      const rpcIdx = cleaned.indexOf("--rpc");
+      if (rpcIdx >= 0) cleaned.splice(rpcIdx, 2);
+      const address = cleaned[0];
+      if (!address || !isAddress(address)) {
+        console.error("Usage: lacrew session-set-issuer <0xaddress> [--rpc]");
+        process.exitCode = 1;
+        return;
+      }
+      if (!("setIssuer" in client)) {
+        console.error("session-set-issuer requires onchain client (--rpc + PRIVATE_KEY = root)");
+        process.exitCode = 1;
+        return;
+      }
+      printJson(
+        await (client as { setIssuer: (a: `0x${string}`) => Promise<unknown> }).setIssuer(address),
+      );
       return;
     }
 
@@ -607,6 +641,8 @@ Commands:
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
   sessions [--rpc]          List session keys (onchain SessionRegistry when --rpc)
   session-revoke <id> [--rpc]  Revoke a session (root/issuer key)
+  session-issuer [--rpc]    Show the SessionRegistry issuer
+  session-set-issuer <0x..> [--rpc]  Root authorises a dedicated issuer key
   epoch [--rpc]             Run next payroll epoch (EpochStreamer)
   tick                      Run one mocked worker tick
   propose <a> <t> <v>       Propose an intent
