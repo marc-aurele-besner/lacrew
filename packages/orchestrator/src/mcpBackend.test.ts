@@ -43,4 +43,29 @@ describe("createRuntimeMcpBackend", () => {
     const after = await runtime.listPending();
     assert.ok(!after.some((i) => i.id === proposed.intentId));
   });
+
+  it("forwards the scope's window and rate onto propose", async () => {
+    // The last link of the flow-scope → session-key thread: a flow's scope
+    // window/rate ride the actor into every propose the run makes.
+    let captured: { window?: unknown; rate?: unknown; ceiling?: unknown } | undefined;
+    const fakeRuntime = {
+      propose: async (input: { window?: unknown; rate?: unknown; ceiling?: unknown }) => {
+        captured = input;
+        return { intentId: "1", verdict: "ESCALATE" };
+      },
+    } as unknown as CrewRuntime;
+    const backend = createRuntimeMcpBackend(fakeRuntime, {
+      ceiling: "0x2222222222222222222222222222222222222222",
+      window: { start: 32400, end: 61200 },
+      rate: { maxProposals: 5, ratePeriod: 3600 },
+    });
+    await backend.proposeIntent({
+      agent: "0x3333333333333333333333333333333333333333",
+      target: "0x4444444444444444444444444444444444444444",
+      value: 1n,
+    });
+    assert.deepEqual(captured?.window, { start: 32400, end: 61200 });
+    assert.deepEqual(captured?.rate, { maxProposals: 5, ratePeriod: 3600 });
+    assert.equal(captured?.ceiling, "0x2222222222222222222222222222222222222222");
+  });
 });

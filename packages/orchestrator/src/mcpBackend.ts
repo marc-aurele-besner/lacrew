@@ -14,7 +14,12 @@ import type { CrewRuntime } from "./runtime.js";
  */
 export function createRuntimeMcpBackend(
   runtime: CrewRuntime,
-  actor: { principal?: `0x${string}`; ceiling?: `0x${string}` } = {},
+  actor: {
+    principal?: `0x${string}`;
+    ceiling?: `0x${string}`;
+    window?: { start: number; end: number };
+    rate?: { maxProposals: number; ratePeriod: number };
+  } = {},
 ): McpToolBackend {
   return {
     getOrgTree: () => runtime.getClient().getOrgTree(),
@@ -27,6 +32,8 @@ export function createRuntimeMcpBackend(
       const { intentId, verdict, txHash } = await runtime.propose({
         ...input,
         ceiling: actor.ceiling,
+        window: actor.window,
+        rate: actor.rate,
       });
       return { intentId, verdict, txHash };
     },

@@ -6,6 +6,7 @@ import {
   ancestorsOf,
   ceilingAgent,
   scopeOf,
+  scopeSessionLimits,
   subtreeOf,
   visibleTo,
   worstVerdict,
@@ -47,6 +48,20 @@ describe("flow scope", () => {
     assert.deepEqual(scopeOf(def), { level: "org" });
     assert.equal(ceilingAgent(def), undefined);
     for (const n of TREE) assert.ok(visibleTo(def, n.account, TREE));
+  });
+
+  it("carries the scope's window and rate onto the run's session limits", () => {
+    assert.deepEqual(scopeSessionLimits(withScope()), { window: undefined, rate: undefined });
+    const limited = withScope({
+      level: "team",
+      ref: MANAGER,
+      window: { start: 32400, end: 61200 },
+      rate: { maxProposals: 5, ratePeriod: 3600 },
+    });
+    assert.deepEqual(scopeSessionLimits(limited), {
+      window: { start: 32400, end: 61200 },
+      rate: { maxProposals: 5, ratePeriod: 3600 },
+    });
   });
 
   it("scopes a team flow to the subtree, not to siblings", () => {

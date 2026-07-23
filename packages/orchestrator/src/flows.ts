@@ -21,7 +21,7 @@ import {
 import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { OrgNode } from "@lacrew/core";
 import { createFlowStoreFromEnv, type FlowStore } from "./flowStore.js";
-import { ceilingAgent, scopeOf, visibleTo } from "./flowScope.js";
+import { ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import type { ModelProvider } from "./model/index.js";
 import type { CrewRuntime } from "./runtime.js";
@@ -98,10 +98,19 @@ export function createFlowsSurface(opts: {
   const backendFor = (
     principal: `0x${string}`,
     ceiling: `0x${string}` | undefined,
+    sessionLimits: {
+      window?: { start: number; end: number };
+      rate?: { maxProposals: number; ratePeriod: number };
+    },
     chain: string[],
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
-    const bound = createRuntimeMcpBackend(opts.runtime, { principal, ceiling });
+    const bound = createRuntimeMcpBackend(opts.runtime, {
+      principal,
+      ceiling,
+      window: sessionLimits.window,
+      rate: sessionLimits.rate,
+    });
     return {
       complete: (input) => opts.model.complete(input),
       callTool: async (name, args) => {
@@ -191,7 +200,10 @@ export function createFlowsSurface(opts: {
       throw new Error("flow_out_of_scope");
     }
 
-    const result = await runFlow(def, backendFor(principal, ceilingAgent(def), [...chain, def.id]), {
+    const result = await runFlow(
+      def,
+      backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id]),
+      {
       input: input.input,
       trigger: input.trigger,
       principal: { agent: principal },

@@ -240,6 +240,34 @@ test("scope defaults to org-wide and validates refs for team/agent", () => {
   assert.ok(badLevel.errors.some((e) => e.includes("unknown scope level")));
 });
 
+test("scope validates a session window and rate limit", () => {
+  const good = validateFlow({
+    id: "w1",
+    name: "W1",
+    scope: { level: "org", window: { start: 32400, end: 61200 }, rate: { maxProposals: 5, ratePeriod: 3600 } },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.ok(good.ok, good.errors.join("; "));
+
+  const badWindow = validateFlow({
+    id: "w2",
+    name: "W2",
+    scope: { level: "org", window: { start: 61200, end: 32400 } },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.equal(badWindow.ok, false);
+  assert.ok(badWindow.errors.some((e) => e.includes("scope.window")));
+
+  const badRate = validateFlow({
+    id: "w3",
+    name: "W3",
+    scope: { level: "org", rate: { maxProposals: 0, ratePeriod: 3600 } },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.equal(badRate.ok, false);
+  assert.ok(badRate.errors.some((e) => e.includes("scope.rate")));
+});
+
 test("org step escalates to a proposal and routes on the verdict", async () => {
   const def = flow("orgy", "Orgy")
     .org("promote", {
