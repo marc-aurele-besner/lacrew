@@ -410,17 +410,39 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       account?: `0x${string}`;
       amount?: string | number;
       tier?: "low" | "high";
+      /** Asset stack to fund (symbol or token); omit for the primary (USDC) stack. */
+      asset?: string;
     }>(c);
     if (!body.account || body.amount === undefined || body.amount === "") {
       return jsonBig(c, { error: "account_and_amount_required" }, 400);
     }
     const amount = BigInt(body.amount);
-    const result = await runtime.proposeSetGrant({
-      account: body.account,
-      amount,
-      tier: body.tier,
-    });
-    return jsonBig(c, { ...result, mode: runtime.mode, amount: amount.toString() });
+    try {
+      const result = await runtime.proposeSetGrant({
+        account: body.account,
+        amount,
+        tier: body.tier,
+        asset: body.asset,
+      });
+      return jsonBig(c, {
+        ...result,
+        mode: runtime.mode,
+        amount: amount.toString(),
+        asset: body.asset,
+      });
+    } catch (err) {
+      // The asset selector is operator input — an unknown asset (or a
+      // non-primary asset in mock mode, which cannot resolve a stack) is a 400,
+      // not the generic 500 the primary path keeps for chain/config failures.
+      if (body.asset) {
+        return jsonBig(
+          c,
+          { error: err instanceof Error ? err.message : "propose_failed" },
+          400,
+        );
+      }
+      throw err;
+    }
   });
 
   app.post("/governance/propose-set-node-policy", async (c) => {
@@ -498,26 +520,41 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...result, mode: runtime.mode });
   });
 
-  app.get("/epoch", (c) => {
+  app.get("/epoch", async (c) => {
     const q = queue.status();
-    return runtime.getCurrentEpoch().then((currentEpoch) =>
-      jsonBig(c, {
+    // Optional ?asset=SYMBOL|token reads that asset's own EpochStreamer.
+    const asset = c.req.query("asset") || undefined;
+    try {
+      const currentEpoch = await runtime.getCurrentEpoch(asset);
+      return jsonBig(c, {
         currentEpoch,
+        asset,
         mode: runtime.mode,
         chainId: runtime.chainId,
         schedule: q.epochSchedule ?? null,
         queue: q.provider,
-      }),
-    );
+      });
+    } catch (err) {
+      if (asset) {
+        return jsonBig(
+          c,
+          { error: err instanceof Error ? err.message : "epoch_read_failed" },
+          400,
+        );
+      }
+      throw err;
+    }
   });
 
   app.post("/epoch", async (c) => {
+    // Optional { asset } streams that asset's own EpochStreamer; omit for USDC.
+    const body = await bodyOf<{ asset?: string }>(c);
     // Epoch-triggered flows fire even when the onchain stream can't run
     // (mock mode) — the automation layer stays testable everywhere.
     let result: Record<string, unknown> = {};
     let epochError: string | undefined;
     try {
-      result = (await runtime.runEpoch()) as unknown as Record<string, unknown>;
+      result = (await runtime.runEpoch(body.asset)) as unknown as Record<string, unknown>;
     } catch (err) {
       epochError = err instanceof Error ? err.message : "epoch_failed";
     }
@@ -526,6 +563,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       c,
       {
         ...result,
+        ...(body.asset ? { asset: body.asset } : {}),
         ...(epochError ? { epochError } : {}),
         mode: runtime.mode,
         flowRuns: epochRuns.map((r) => ({

@@ -211,6 +211,36 @@ describe("orchestrator Hono app", () => {
     const proposalsBody = (await proposals.json()) as { proposals: unknown[] };
     assert.equal(proposalsBody.proposals.length, 1);
   });
+
+  it("threads an asset selector through grant/epoch and rejects non-primary in mock mode", async () => {
+    const app = buildApp();
+    const worker = "0x000000000000000000000000000000000000dEaD";
+
+    // No asset → the primary (USDC) stack, unchanged: a proposal is created.
+    const primaryGrant = await app.request("/governance/propose-set-grant", {
+      method: "POST",
+      body: JSON.stringify({ account: worker, amount: "1000000" }),
+    });
+    assert.equal(primaryGrant.status, 200);
+
+    // A non-primary asset cannot resolve a stack in the mock (single-asset)
+    // client — the operator's bad input is a 400, not the primary path's 500.
+    const wethGrant = await app.request("/governance/propose-set-grant", {
+      method: "POST",
+      body: JSON.stringify({ account: worker, amount: "1000000000000000000", asset: "WETH" }),
+    });
+    assert.equal(wethGrant.status, 400);
+    assert.match(((await wethGrant.json()) as { error?: string }).error ?? "", /asset/i);
+
+    // Same for a per-asset epoch: the mock throw surfaces as epochError, and
+    // with no epoch flows to run the endpoint reports it as 400.
+    const wethEpoch = await app.request("/epoch", {
+      method: "POST",
+      body: JSON.stringify({ asset: "WETH" }),
+    });
+    assert.equal(wethEpoch.status, 400);
+    assert.match(((await wethEpoch.json()) as { epochError?: string }).epochError ?? "", /asset/i);
+  });
   /* ——— Session scopes ——— */
 
   async function boot(app: ReturnType<typeof buildApp>, body: unknown) {
