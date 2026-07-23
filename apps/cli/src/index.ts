@@ -241,7 +241,8 @@ async function main(): Promise<void> {
     }
 
     case "allowances": {
-      printJson(await client.getAllowances());
+      // --asset SYMBOL|token reads that asset's own Treasury; omit for USDC.
+      printJson(await client.getAllowances(undefined, flagValue(rest, "--asset")));
       return;
     }
 
@@ -323,7 +324,12 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      printJson(await (client as { runEpoch: () => Promise<unknown> }).runEpoch());
+      // --asset SYMBOL|token streams that asset's own EpochStreamer; omit for USDC.
+      printJson(
+        await (
+          client as { runEpoch: (asset?: string) => Promise<unknown> }
+        ).runEpoch(flagValue(rest, "--asset")),
+      );
       return;
     }
 
@@ -445,6 +451,9 @@ async function main(): Promise<void> {
       const cleaned = [...rest];
       const rpcIdx = cleaned.indexOf("--rpc");
       if (rpcIdx >= 0) cleaned.splice(rpcIdx, 2);
+      // Strip --asset too so it never shifts the positional <account> <amount>.
+      const assetIdx = cleaned.indexOf("--asset");
+      if (assetIdx >= 0) cleaned.splice(assetIdx, 2);
       const sub = cleaned[0];
       if (sub === "propose") {
         const tier = cleaned[1];
@@ -521,7 +530,9 @@ async function main(): Promise<void> {
         const account = cleaned[1] as `0x${string}` | undefined;
         const amountRaw = cleaned[2];
         if (!account || amountRaw === undefined) {
-          console.error("Usage: lacrew gov grant <account> <amountWei> [--rpc]");
+          console.error(
+            "Usage: lacrew gov grant <account> <amountWei> [--asset <symbol>] [--rpc]",
+          );
           process.exitCode = 1;
           return;
         }
@@ -530,10 +541,12 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           return;
         }
+        // amountWei is denominated in the target asset's own decimals.
         printJson(
           await (client as { proposeSetGrant: Function }).proposeSetGrant({
             account,
             amount: BigInt(amountRaw),
+            asset: flagValue(rest, "--asset"),
           }),
         );
         return;
@@ -636,14 +649,14 @@ Commands:
   scaffold <template>       Generate a runnable crew project from a flow template
   version                   Print CLI version
   org [--rpc [url]]         Print org tree (mock or onchain)
-  allowances [--rpc]        Print allowances
+  allowances [--asset <sym>] [--rpc]  Print allowances (per asset with --asset)
   intents [--rpc]           List pending escalations
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
   sessions [--rpc]          List session keys (onchain SessionRegistry when --rpc)
   session-revoke <id> [--rpc]  Revoke a session (root/issuer key)
   session-issuer [--rpc]    Show the SessionRegistry issuer
   session-set-issuer <0x..> [--rpc]  Root authorises a dedicated issuer key
-  epoch [--rpc]             Run next payroll epoch (EpochStreamer)
+  epoch [--asset <sym>] [--rpc]  Run next payroll epoch (per asset with --asset)
   tick                      Run one mocked worker tick
   propose <a> <t> <v>       Propose an intent
   approve <id> [approver]   Approve a pending intent
@@ -652,7 +665,7 @@ Commands:
   gov hire <label>          Propose OrgRegistry.addNode (--rpc)
   gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
   gov reparent <acct> <parent>  Propose OrgRegistry.reparent (--rpc)
-  gov grant <acct> <amountWei>  Propose EpochStreamer.setGrant (high tier, --rpc)
+  gov grant <acct> <amountWei> [--asset <sym>]  Propose EpochStreamer.setGrant (high tier, --rpc)
   gov whitelist <target> [yes|no]  Propose WhitelistPolicy.setAllowed (--rpc)
   gov cap <agent> <capWei>  Propose SpendCapPolicy.setAgentCap (--rpc)
   gov policy <node> <module>  Propose EscalationRouter.setNodePolicy (--rpc)
