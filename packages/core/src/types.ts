@@ -183,6 +183,11 @@ export interface SessionKey {
   maxValue?: string;
   /** Sole allowed target (`0x0…0` / omit = any policy-allowed target). */
   allowedTarget?: `0x${string}`;
+  /**
+   * Daily allowed window in seconds since midnight UTC, `[start, end)`, enforced
+   * by EscalationRouter. Omitted when the key has no window (any time).
+   */
+  window?: { start: number; end: number };
   /** true when revoked onchain or locally. */
   revoked?: boolean;
 }
