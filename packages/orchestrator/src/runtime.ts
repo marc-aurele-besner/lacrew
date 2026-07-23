@@ -505,6 +505,13 @@ export class CrewRuntime {
       allowedTarget?: `0x${string}`;
       /** What the key may do. Defaults to the full vocabulary. */
       scopes?: SessionScope[];
+      /**
+       * Whether explicit `scopes` update the agent's standing policy. True for an
+       * operator's deliberate narrowing (it must stick, or internal boots
+       * re-widen it); false for a per-run narrowing like a flow's scope, which
+       * applies to this key only and must not re-scope the agent.
+       */
+      persistScopePolicy?: boolean;
       /** Daily UTC window `[start, end)` in seconds; the chain refuses proposes outside it. */
       window?: { start: number; end: number };
       /** Propose rate limit; the chain refuses more than `maxProposals` per `ratePeriod`. */
@@ -518,7 +525,9 @@ export class CrewRuntime {
     // full set here would silently re-widen an agent on the next action and
     // make narrowing unobservable outside the one call that asked for it.
     const scopes = limits?.scopes ?? this.scopePolicyFor(forAgent);
-    if (limits?.scopes) this.sessionScopePolicy.set(forAgent.toLowerCase(), limits.scopes);
+    if (limits?.scopes && limits.persistScopePolicy !== false) {
+      this.sessionScopePolicy.set(forAgent.toLowerCase(), limits.scopes);
+    }
     const key = this.sessionCacheKey(
       forAgent,
       ceiling,
@@ -762,6 +771,8 @@ export class CrewRuntime {
     window?: { start: number; end: number };
     /** Flow scope's propose rate limit, carried onto the run's session key. */
     rate?: { maxProposals: number; ratePeriod: number };
+    /** Flow scope's session scope mask, carried onto the run's key (per-run only). */
+    scopes?: SessionScope[];
   }): Promise<{
     session: SessionKey;
     intentId: string;
@@ -777,6 +788,9 @@ export class CrewRuntime {
       maxValue: ceilingValue,
       window: input.window,
       rate: input.rate,
+      scopes: input.scopes,
+      // A flow's scope narrows this run's key, not the agent's standing policy.
+      persistScopePolicy: false,
     });
     if (isSessionExpired(session)) {
       this.sessions.set(

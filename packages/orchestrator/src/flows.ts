@@ -98,10 +98,7 @@ export function createFlowsSurface(opts: {
   const backendFor = (
     principal: `0x${string}`,
     ceiling: `0x${string}` | undefined,
-    sessionLimits: {
-      window?: { start: number; end: number };
-      rate?: { maxProposals: number; ratePeriod: number };
-    },
+    sessionLimits: ReturnType<typeof scopeSessionLimits>,
     chain: string[],
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
@@ -110,6 +107,7 @@ export function createFlowsSurface(opts: {
       ceiling,
       window: sessionLimits.window,
       rate: sessionLimits.rate,
+      scopes: sessionLimits.scopes,
     });
     return {
       complete: (input) => opts.model.complete(input),

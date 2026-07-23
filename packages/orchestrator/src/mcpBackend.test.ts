@@ -58,6 +58,7 @@ describe("createRuntimeMcpBackend", () => {
       ceiling: "0x2222222222222222222222222222222222222222",
       window: { start: 32400, end: 61200 },
       rate: { maxProposals: 5, ratePeriod: 3600 },
+      scopes: ["propose:intent"],
     });
     await backend.proposeIntent({
       agent: "0x3333333333333333333333333333333333333333",
@@ -66,6 +67,7 @@ describe("createRuntimeMcpBackend", () => {
     });
     assert.deepEqual(captured?.window, { start: 32400, end: 61200 });
     assert.deepEqual(captured?.rate, { maxProposals: 5, ratePeriod: 3600 });
+    assert.deepEqual((captured as { scopes?: unknown })?.scopes, ["propose:intent"]);
     assert.equal(captured?.ceiling, "0x2222222222222222222222222222222222222222");
   });
 });

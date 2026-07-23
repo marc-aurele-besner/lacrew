@@ -37,6 +37,14 @@ export type FlowScope = {
    * key; the chain enforces it. Any level.
    */
   rate?: { maxProposals: number; ratePeriod: number };
+  /**
+   * Session scope mask a run's key is narrowed to (e.g. `["propose:intent"]` for
+   * a flow that only raises intents, never settles). The vocabulary lives in
+   * `@lacrew/core` (`SessionScope`); the orchestrator validates it, since this
+   * package stays free of chain dependencies. Applies to the run's key only, not
+   * the agent's standing policy.
+   */
+  scopes?: string[];
 };
 
 /**
