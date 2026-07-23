@@ -30,6 +30,7 @@ import {
   policyModuleAbi,
   marketplacePaymentsAbi,
   mockUsdcAbi,
+  resolveAssetStack,
   sessionScopesFromMask,
   type Allowance,
   type ChainAddresses,
@@ -216,37 +217,47 @@ export class OnchainLacrewClient {
     return nodes;
   }
 
-  async getAllowances(node?: `0x${string}`): Promise<Allowance[]> {
+  /**
+   * Allowances for the org, denominated in one asset.
+   *
+   * `asset` selects the enforcement stack (symbol or token address); omit it for
+   * the primary (USDC) stack. Balances, cap and epoch are all read from that
+   * asset's own Treasury / SpendCapPolicy / EpochStreamer, so a WETH read never
+   * borrows USDC's bookkeeping.
+   */
+  async getAllowances(node?: `0x${string}`, asset?: string): Promise<Allowance[]> {
+    const stack = resolveAssetStack(this.addresses, asset);
     const tree = await this.getOrgTree();
     const targets = node
       ? tree.filter((n) => n.account.toLowerCase() === node.toLowerCase())
       : tree;
-    const token = (this.addresses.mockUSDC ??
-      "0x0000000000000000000000000000000000000000") as `0x${string}`;
+    const token = stack.token;
 
     // The epoch is a property of the streamer, not of any one agent, so it is
     // read once rather than per node. `epoch: 1` used to be hardcoded, which
     // made every allowance claim to be from the first epoch forever.
-    const epoch = this.addresses.epochStreamer
-      ? Number(
-          (await this.publicClient.readContract({
-            address: this.addresses.epochStreamer,
-            abi: epochStreamerAbi,
-            functionName: "currentEpoch",
-          })) as bigint,
-        )
-      : 0;
+    const streamer = stack.epochStreamer;
+    const epoch =
+      streamer && streamer !== "0x0000000000000000000000000000000000000000"
+        ? Number(
+            (await this.publicClient.readContract({
+              address: streamer,
+              abi: epochStreamerAbi,
+              functionName: "currentEpoch",
+            })) as bigint,
+          )
+        : 0;
 
     const out: Allowance[] = [];
     for (const n of targets) {
       const [balance, cap] = await Promise.all([
         this.publicClient.readContract({
-          address: this.addresses.treasury,
+          address: stack.treasury,
           abi: treasuryAbi,
           functionName: "allowanceBalance",
           args: [n.account],
         }) as Promise<bigint>,
-        this.readAgentCap(n.account),
+        this.readAgentCap(n.account, stack.spendCapPolicy),
       ]);
       if (balance === 0n && n.kind === "human_root") continue;
       out.push({ node: n.account, token, balance, epoch, cap });
@@ -265,14 +276,28 @@ export class OnchainLacrewClient {
    * Null therefore means "this dimension is not enforced here" — no
    * SpendCapPolicy deployed — rather than "no limit set for this agent".
    */
-  private async readAgentCap(agent: `0x${string}`): Promise<bigint | null> {
-    if (!this.addresses.spendCapPolicy) return null;
+  private async readAgentCap(
+    agent: `0x${string}`,
+    spendCapPolicy: `0x${string}` | undefined = this.addresses.spendCapPolicy,
+  ): Promise<bigint | null> {
+    if (!spendCapPolicy) return null;
     return (await this.publicClient.readContract({
-      address: this.addresses.spendCapPolicy,
+      address: spendCapPolicy,
       abi: spendCapPolicyAbi,
       functionName: "capOf",
       args: [agent],
     })) as bigint;
+  }
+
+  /**
+   * Resolve an asset's EpochStreamer address, or undefined when the stack has
+   * no streamer (a bare address book carries the zero address for it).
+   */
+  private assetStreamer(asset?: string): `0x${string}` | undefined {
+    const addr = resolveAssetStack(this.addresses, asset).epochStreamer;
+    return addr && addr !== "0x0000000000000000000000000000000000000000"
+      ? addr
+      : undefined;
   }
 
   /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */
@@ -841,9 +866,9 @@ export class OnchainLacrewClient {
     })) as `0x${string}`;
   }
 
-  /** Current payroll epoch from EpochStreamer (0 if not deployed). */
-  async getCurrentEpoch(): Promise<number> {
-    const addr = this.addresses.epochStreamer;
+  /** Current payroll epoch from an asset's EpochStreamer (0 if not deployed). */
+  async getCurrentEpoch(asset?: string): Promise<number> {
+    const addr = this.assetStreamer(asset);
     if (!addr) return 0;
     const epoch = (await this.publicClient.readContract({
       address: addr,
@@ -854,11 +879,12 @@ export class OnchainLacrewClient {
   }
 
   /**
-   * Run the next payroll epoch via EpochStreamer (operator = wallet account).
-   * Streams configured grants into node allowances.
+   * Run the next payroll epoch via an asset's EpochStreamer (operator = wallet
+   * account). Streams that asset's configured grants into node allowances.
+   * `asset` selects the stack (symbol or token); omit it for the primary asset.
    */
-  async runEpoch(): Promise<{ epoch: number; txHash: `0x${string}` }> {
-    const addr = this.addresses.epochStreamer;
+  async runEpoch(asset?: string): Promise<{ epoch: number; txHash: `0x${string}` }> {
+    const addr = this.assetStreamer(asset);
     if (!addr) {
       throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
     }
@@ -1005,13 +1031,18 @@ export class OnchainLacrewClient {
   /**
    * Propose changing a node's per-epoch grant (EpochStreamer.setGrant).
    * Defaults to high tier — budget-touching / human final say.
+   *
+   * `asset` selects which asset's EpochStreamer the grant targets (symbol or
+   * token address); omit it for the primary asset. `amount` is denominated in
+   * that asset's own decimals, since caps and grants are asset-denominated.
    */
   async proposeSetGrant(input: {
     account: `0x${string}`;
     amount: bigint;
     tier?: GovernanceTier;
+    asset?: string;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.addresses.epochStreamer;
+    const addr = this.assetStreamer(input.asset);
     if (!addr) {
       throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
     }
