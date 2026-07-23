@@ -758,6 +758,10 @@ export class CrewRuntime {
     value: bigint;
     /** Flow scope ceiling; caps the session key the chain will enforce. */
     ceiling?: `0x${string}`;
+    /** Flow scope's daily window, carried onto the run's session key. */
+    window?: { start: number; end: number };
+    /** Flow scope's propose rate limit, carried onto the run's session key. */
+    rate?: { maxProposals: number; ratePeriod: number };
   }): Promise<{
     session: SessionKey;
     intentId: string;
@@ -769,11 +773,16 @@ export class CrewRuntime {
     const value = input.value;
 
     const ceilingValue = await this.ceilingMaxValue(agent, input.ceiling);
-    const session = await this.boot(agent, { maxValue: ceilingValue });
+    const session = await this.boot(agent, {
+      maxValue: ceilingValue,
+      window: input.window,
+      rate: input.rate,
+    });
     if (isSessionExpired(session)) {
-      this.sessions.set(this.sessionCacheKey(agent, ceilingValue), {
-        session: revokeSession(session),
-      });
+      this.sessions.set(
+        this.sessionCacheKey(agent, ceilingValue, undefined, input.window, input.rate),
+        { session: revokeSession(session) },
+      );
       throw new Error("Session expired; call boot() to rotate");
     }
 

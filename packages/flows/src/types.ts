@@ -27,6 +27,16 @@ export type FlowScope = {
   level: FlowScopeLevel;
   /** Team root node address for "team", agent address for "agent"; optional org id for "org". */
   ref?: string;
+  /**
+   * Daily UTC window `[start, end)` in seconds a run's session key may propose
+   * in; the chain (EscalationRouter) refuses proposes outside it. Any level.
+   */
+  window?: { start: number; end: number };
+  /**
+   * At most `maxProposals` proposes per `ratePeriod` seconds for a run's session
+   * key; the chain enforces it. Any level.
+   */
+  rate?: { maxProposals: number; ratePeriod: number };
 };
 
 /**

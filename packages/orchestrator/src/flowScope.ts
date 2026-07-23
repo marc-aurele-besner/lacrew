@@ -105,3 +105,16 @@ export function ceilingAgent(def: FlowDefinition): `0x${string}` | undefined {
   if (scope.level === "org" || !scope.ref) return undefined;
   return scope.ref as `0x${string}`;
 }
+
+/**
+ * The daily window and propose rate a flow's scope pins onto its runs' session
+ * keys, enforced by the chain. Independent of level — even an org-scoped flow
+ * may declare "business hours only" or a rate cap.
+ */
+export function scopeSessionLimits(def: FlowDefinition): {
+  window?: { start: number; end: number };
+  rate?: { maxProposals: number; ratePeriod: number };
+} {
+  const scope = scopeOf(def);
+  return { window: scope.window, rate: scope.rate };
+}

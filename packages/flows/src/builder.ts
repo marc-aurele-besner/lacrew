@@ -67,8 +67,17 @@ export class FlowBuilder {
   }
 
   /** Publish the flow to the whole org, one team subtree, or a single agent. */
-  scope(level: FlowScope["level"], ref?: string): this {
-    this.def.scope = ref === undefined ? { level } : { level, ref };
+  scope(
+    level: FlowScope["level"],
+    ref?: string,
+    limits?: Pick<FlowScope, "window" | "rate">,
+  ): this {
+    this.def.scope = {
+      level,
+      ...(ref === undefined ? {} : { ref }),
+      ...(limits?.window ? { window: limits.window } : {}),
+      ...(limits?.rate ? { rate: limits.rate } : {}),
+    };
     return this;
   }
 

@@ -118,6 +118,26 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     } else if (level !== "org") {
       requireAddress(errors, def.scope.ref, `scope.ref for a "${level}"-scoped flow`);
     }
+    // Untrusted JSON: a bad window/rate must fail validation, not reach the
+    // chain as a revert. Same bounds the contract checks (see SessionRegistry).
+    const w = def.scope.window;
+    if (w !== undefined) {
+      if (
+        !Number.isInteger(w.start) ||
+        !Number.isInteger(w.end) ||
+        w.start < 0 ||
+        w.end <= w.start ||
+        w.end > 86400
+      ) {
+        errors.push("scope.window must be integers 0 <= start < end <= 86400");
+      }
+    }
+    const r = def.scope.rate;
+    if (r !== undefined) {
+      if (!Number.isInteger(r.maxProposals) || !Number.isInteger(r.ratePeriod) || r.maxProposals <= 0 || r.ratePeriod <= 0) {
+        errors.push("scope.rate needs positive integers maxProposals and ratePeriod");
+      }
+    }
   }
 
   const ids = new Set<string>();
