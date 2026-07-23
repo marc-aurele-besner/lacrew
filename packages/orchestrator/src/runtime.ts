@@ -189,11 +189,17 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
   const managerPk = normalizePk(process.env.MANAGER_PRIVATE_KEY);
   const account = privateKeyToAccount(pk);
   const resolverAccount = managerPk ? privateKeyToAccount(managerPk) : account;
+  // A dedicated issuer key lets the process issue session keys without holding
+  // root. It signs `SessionRegistry.issue`/`revoke`; root authorises it once via
+  // `setIssuer`. Absent the env, issuance falls back to the main account.
+  const issuerPk = normalizePk(process.env.LACREW_ISSUER_PRIVATE_KEY);
+  const issuerAccount = issuerPk ? privateKeyToAccount(issuerPk) : account;
 
   const client = createOnchainClient({
     transport: http(rpc),
     account,
     resolverAccount,
+    issuerAccount,
     chainId,
     addresses,
     indexerPath: process.env.INDEXER_PATH,
@@ -218,6 +224,26 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       reason: "chain_id_mismatch",
       detail: `CHAIN_ID is ${chainId} but ${rpc} reports ${reported}; the address book would be for the wrong chain.`,
     };
+  }
+
+  // Authorise a dedicated issuer key when one is configured and not already the
+  // registry's issuer. Only root may `setIssuer`, so this succeeds when the main
+  // account is root (the local/demo default) and is a harmless no-op otherwise —
+  // in a split-key deployment root authorises the issuer out of band, and the
+  // orchestrator only needs the key, not the right to grant it.
+  if (issuerAccount.address.toLowerCase() !== account.address.toLowerCase()) {
+    try {
+      const current = await client.getIssuer();
+      if (current.toLowerCase() !== issuerAccount.address.toLowerCase()) {
+        await client.setIssuer(issuerAccount.address);
+      }
+    } catch (err) {
+      console.warn(
+        `[orchestrator] Could not set SessionRegistry issuer to ${issuerAccount.address}: ${
+          err instanceof Error ? err.message.split("\n")[0] : "unknown error"
+        }. Root must authorise it (setIssuer) for issuance to work.`,
+      );
+    }
   }
 
   return {
