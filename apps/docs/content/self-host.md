@@ -179,7 +179,13 @@ Compromise blast radius is the session's remaining `maxValue` on whitelisted tar
 export LACREW_ISSUER_PRIVATE_KEY=0x…   # the key the orchestrator holds
 ```
 
-On a local chain where `PRIVATE_KEY` is root, the orchestrator authorises this key at boot (`setIssuer`). On a real chain, root authorises it out of band — `setIssuer(<issuer address>)` from the root wallet — and the orchestrator holds only the issuer key. A compromise of that key can issue session keys (already bounded by scope, `maxValue`, and expiry the chain enforces) but cannot change the issuer, move the treasury, or touch governance; only root can `setIssuer`.
+On a local chain where `PRIVATE_KEY` is root, the orchestrator authorises this key at boot (`setIssuer`). On a real chain, root authorises it out of band — from the root wallet — and the orchestrator holds only the issuer key:
+
+```bash
+# PRIVATE_KEY here is root; run once to authorise the issuer address.
+lacrew session-set-issuer 0x<issuer address> --rpc
+lacrew session-issuer --rpc   # read it back
+``` A compromise of that key can issue session keys (already bounded by scope, `maxValue`, and expiry the chain enforces) but cannot change the issuer, move the treasury, or touch governance; only root can `setIssuer`.
 
 ## Model provider
 
