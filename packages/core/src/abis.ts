@@ -1427,6 +1427,17 @@ export const escalationRouterAbi = [
   },
   {
     "type": "error",
+    "name": "SessionTimeWindowDenied",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SessionValueExceeded",
     "inputs": [
       {
@@ -3922,6 +3933,60 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "issueScopedTimed",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "scopeMask",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxValue",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowedTargets",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "windowStart",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "windowEnd",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "issuer",
     "inputs": [],
     "outputs": [
@@ -4048,6 +4113,16 @@ export const sessionRegistryAbi = [
         "name": "exists",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "windowStart",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "windowEnd",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -4083,6 +4158,30 @@ export const sessionRegistryAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withinTimeWindow",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -4214,6 +4313,22 @@ export const sessionRegistryAbi = [
         "name": "scopeMask",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidWindow",
+    "inputs": [
+      {
+        "name": "windowStart",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "windowEnd",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

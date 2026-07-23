@@ -451,6 +451,8 @@ export class OnchainLacrewClient {
           `0x${string}`,
           boolean,
           boolean,
+          number,
+          number,
         ];
         const [, key, expiresAtRaw, scopeMask, maxValue, allowedTarget, revoked, exists] = row;
         if (!exists) continue;
@@ -710,6 +712,12 @@ export class OnchainLacrewClient {
     maxValue?: bigint;
     /** Sole allowed target; defaults to zero (any policy-allowed target). */
     allowedTarget?: `0x${string}`;
+    /**
+     * Daily allowed window in seconds since midnight UTC, `[start, end)`. Carries
+     * a flow's time-window scope onto the key so the chain refuses a propose
+     * outside it. Omit for a key valid at any time.
+     */
+    window?: { start: number; end: number };
   }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
     const addr = this.addresses.sessionRegistry;
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
@@ -717,23 +725,52 @@ export class OnchainLacrewClient {
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
     const allowedTarget =
       input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
-    const { request, result } = await this.publicClient.simulateContract({
-      address: addr,
-      abi: sessionRegistryAbi,
-      functionName: "issue",
-      args: [
-        input.agent,
-        input.key,
-        BigInt(input.expiresAtSec),
-        input.scopeMask,
-        maxValue,
-        allowedTarget,
-      ],
-      account: wallet.account!,
-    });
-    const hash = await wallet.writeContract(request);
+    // A windowed key uses issueScopedTimed (targets as an array); an unwindowed
+    // one keeps the simpler `issue` path. Each branch simulates and writes on its
+    // own, so the two request shapes never meet in one union.
+    let hash: `0x${string}`;
+    let sessionId: bigint;
+    if (input.window) {
+      const { request, result } = await this.publicClient.simulateContract({
+        address: addr,
+        abi: sessionRegistryAbi,
+        functionName: "issueScopedTimed",
+        args: [
+          input.agent,
+          input.key,
+          BigInt(input.expiresAtSec),
+          input.scopeMask,
+          maxValue,
+          allowedTarget === "0x0000000000000000000000000000000000000000"
+            ? []
+            : [allowedTarget],
+          input.window.start,
+          input.window.end,
+        ],
+        account: wallet.account!,
+      });
+      hash = await wallet.writeContract(request);
+      sessionId = result as bigint;
+    } else {
+      const { request, result } = await this.publicClient.simulateContract({
+        address: addr,
+        abi: sessionRegistryAbi,
+        functionName: "issue",
+        args: [
+          input.agent,
+          input.key,
+          BigInt(input.expiresAtSec),
+          input.scopeMask,
+          maxValue,
+          allowedTarget,
+        ],
+        account: wallet.account!,
+      });
+      hash = await wallet.writeContract(request);
+      sessionId = result as bigint;
+    }
     await this.publicClient.waitForTransactionReceipt({ hash });
-    return { sessionId: (result as bigint).toString(), txHash: hash };
+    return { sessionId: sessionId.toString(), txHash: hash };
   }
 
   async revokeSession(sessionId: string): Promise<{ txHash: `0x${string}` }> {

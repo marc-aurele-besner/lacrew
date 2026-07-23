@@ -37,7 +37,9 @@ contract SessionRegistryTest is Test {
             uint256 mv,
             address at,
             bool revoked,
-            bool exists
+            bool exists,
+            uint32 windowStart,
+            uint32 windowEnd
         ) = registry.sessions(id);
         assertEq(agent, worker);
         assertEq(k, key);
@@ -47,6 +49,8 @@ contract SessionRegistryTest is Test {
         assertEq(at, target);
         assertFalse(revoked);
         assertTrue(exists);
+        assertEq(windowStart, 0);
+        assertEq(windowEnd, 0);
 
         (bool valid, uint256 lim, address allowed, uint256 sh) = registry.keyLimits(worker, key);
         assertTrue(valid);

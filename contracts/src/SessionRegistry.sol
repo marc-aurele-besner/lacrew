@@ -31,6 +31,11 @@ contract SessionRegistry {
         address allowedTarget;
         bool revoked;
         bool exists;
+        // Daily allowed window in seconds since midnight UTC, `[windowStart,
+        // windowEnd)`. Both zero = no window (any time). Enforced by
+        // EscalationRouter on propose, the same shape as TimeWindowPolicy.
+        uint32 windowStart;
+        uint32 windowEnd;
     }
 
     address public immutable humanRoot;
@@ -68,6 +73,7 @@ contract SessionRegistry {
     /// @dev An empty mask would be a session that can do nothing; an unknown bit
     ///      is almost always a caller encoding scopes against a newer vocabulary.
     error InvalidScopeMask(uint256 scopeMask);
+    error InvalidWindow(uint32 windowStart, uint32 windowEnd);
 
     modifier onlyRootOrIssuer() {
         if (msg.sender != humanRoot && msg.sender != issuer) revert NotAuthorized(msg.sender);
@@ -103,7 +109,7 @@ contract SessionRegistry {
             targets = new address[](1);
             targets[0] = allowedTarget;
         }
-        return _issue(agent, key, expiresAt, scopeMask, maxValue, targets);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, targets, 0, 0);
     }
 
     /// @notice Issue a session pinned to several targets (empty = any policy-allowed target).
@@ -117,7 +123,25 @@ contract SessionRegistry {
         uint256 maxValue,
         address[] calldata allowedTargets
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
-        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets, 0, 0);
+    }
+
+    /// @notice Issue a session that may only propose within a daily UTC window.
+    /// @param windowStart Inclusive start, seconds since midnight UTC.
+    /// @param windowEnd Exclusive end (`> windowStart`, `<= 86400`). Both zero = any time.
+    /// @dev Carries a flow's time-window scope onto the key itself, so the chain —
+    ///      not just the orchestrator — refuses a propose outside the window.
+    function issueScopedTimed(
+        address agent,
+        address key,
+        uint64 expiresAt,
+        uint256 scopeMask,
+        uint256 maxValue,
+        address[] calldata allowedTargets,
+        uint32 windowStart,
+        uint32 windowEnd
+    ) external onlyRootOrIssuer returns (uint256 sessionId) {
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets, windowStart, windowEnd);
     }
 
     function _issue(
@@ -126,11 +150,18 @@ contract SessionRegistry {
         uint64 expiresAt,
         uint256 scopeMask,
         uint256 maxValue,
-        address[] memory allowedTargets
+        address[] memory allowedTargets,
+        uint32 windowStart,
+        uint32 windowEnd
     ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
         if (scopeMask == 0 || scopeMask & ~SessionScopes.ALL != 0) revert InvalidScopeMask(scopeMask);
+        // A window is optional (both zero disables it); when set it must be a
+        // real slice of a day, matching TimeWindowPolicy's `[start, end)` rule.
+        if (windowStart != 0 || windowEnd != 0) {
+            if (windowEnd <= windowStart || windowEnd > 1 days) revert InvalidWindow(windowStart, windowEnd);
+        }
 
         // Revoke any prior active session for this key binding.
         uint256 prior = activeKeySession[agent][key];
@@ -158,7 +189,9 @@ contract SessionRegistry {
             maxValue: maxValue,
             allowedTarget: first,
             revoked: false,
-            exists: true
+            exists: true,
+            windowStart: windowStart,
+            windowEnd: windowEnd
         });
         _byAgent[agent].push(sessionId);
         activeKeySession[agent][key] = sessionId;
@@ -208,6 +241,19 @@ contract SessionRegistry {
             return (false, 0, address(0), 0);
         }
         return (true, s.maxValue, s.allowedTarget, s.scopeMask);
+    }
+
+    /// @notice Whether an active key may propose at the current time.
+    /// @dev True when the key has no window, or `block.timestamp`'s time of day is
+    ///      in `[windowStart, windowEnd)`. A missing/invalid session is left to
+    ///      `keyLimits` to reject, so this returns true rather than double-judging.
+    function withinTimeWindow(address agent, address key) external view returns (bool) {
+        uint256 id = activeKeySession[agent][key];
+        if (id == 0) return true;
+        Session storage s = sessions[id];
+        if (s.windowEnd == 0) return true;
+        uint256 tod = block.timestamp % 1 days;
+        return tod >= s.windowStart && tod < s.windowEnd;
     }
 
     /// @notice Targets pinned to a session (empty = any policy-allowed target).

@@ -64,6 +64,7 @@ contract EscalationRouter {
     error SessionValueExceeded(address agent, uint256 value, uint256 maxValue);
     error SessionTargetDenied(address agent, address target, address allowedTarget);
     error SessionScopeDenied(address agent, uint256 required, uint256 granted);
+    error SessionTimeWindowDenied(address agent);
     error ZeroAddress();
 
     constructor(address orgRegistry_, address policy_) {
@@ -248,6 +249,11 @@ contract EscalationRouter {
         // target); `allowedTarget` is reported only for the revert reason.
         if (!sessionRegistry.isTargetAllowed(agent, msg.sender, target)) {
             revert SessionTargetDenied(agent, target, allowedTarget);
+        }
+        // A key issued with a daily window can only propose inside it — the flow's
+        // time-window scope enforced by the chain, not just the orchestrator.
+        if (!sessionRegistry.withinTimeWindow(agent, msg.sender)) {
+            revert SessionTimeWindowDenied(agent);
         }
     }
 
