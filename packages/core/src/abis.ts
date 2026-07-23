@@ -3760,6 +3760,19 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "escalationRouter",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "humanRoot",
     "inputs": [],
     "outputs": [
@@ -3974,6 +3987,16 @@ export const sessionRegistryAbi = [
         "name": "windowEnd",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "maxProposals",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "ratePeriod",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -4049,6 +4072,58 @@ export const sessionRegistryAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateLimits",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "maxProposals",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "ratePeriod",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "windowStart",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "count",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recordProposal",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -4148,6 +4223,19 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "setEscalationRouter",
+    "inputs": [
+      {
+        "name": "escalationRouter_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setIssuer",
     "inputs": [
       {
@@ -4182,6 +4270,19 @@ export const sessionRegistryAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "EscalationRouterUpdated",
+    "inputs": [
+      {
+        "name": "escalationRouter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -4307,6 +4408,22 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidRateLimit",
+    "inputs": [
+      {
+        "name": "maxProposals",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "ratePeriod",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidScopeMask",
     "inputs": [
       {
@@ -4340,6 +4457,27 @@ export const sessionRegistryAbi = [
         "name": "caller",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateLimitExceeded",
+    "inputs": [
+      {
+        "name": "agent",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "key",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxProposals",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

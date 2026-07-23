@@ -119,6 +119,12 @@ contract EscalationRouter {
         IOrgRegistry.Node memory agentNode = orgRegistry.getNode(agent);
         if (!agentNode.active) revert InactiveAgent(agent);
         uint256 scopeMask = _requireValidSession(agent, target, value);
+        // Count this propose against the key's rate limit (no-op unless wired and
+        // the key has one). Reverts here roll back the count, so only a propose
+        // that actually proceeds is charged.
+        if (address(sessionRegistry) != address(0)) {
+            sessionRegistry.recordProposal(agent, msg.sender);
+        }
 
         verdict = _policyFor(agent).check(agent, target, value, data);
 

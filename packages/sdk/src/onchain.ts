@@ -721,6 +721,11 @@ export class OnchainLacrewClient {
      * outside it. Omit for a key valid at any time.
      */
     window?: { start: number; end: number };
+    /**
+     * Propose rate limit: at most `maxProposals` per `ratePeriod` seconds,
+     * enforced by EscalationRouter. Omit for an unlimited key.
+     */
+    rate?: { maxProposals: number; ratePeriod: number };
   }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
     const addr = this.addresses.sessionRegistry;
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
@@ -728,12 +733,12 @@ export class OnchainLacrewClient {
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
     const allowedTarget =
       input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
-    // A windowed key uses issueScopedTimed (targets as an array); an unwindowed
-    // one keeps the simpler `issue` path. Each branch simulates and writes on its
-    // own, so the two request shapes never meet in one union.
+    // A key with a window or rate limit uses issueScopedTimed (targets as an
+    // array); a plain one keeps the simpler `issue` path. Each branch simulates
+    // and writes on its own, so the two request shapes never meet in one union.
     let hash: `0x${string}`;
     let sessionId: bigint;
-    if (input.window) {
+    if (input.window || input.rate) {
       const { request, result } = await this.publicClient.simulateContract({
         address: addr,
         abi: sessionRegistryAbi,
@@ -747,8 +752,10 @@ export class OnchainLacrewClient {
           allowedTarget === "0x0000000000000000000000000000000000000000"
             ? []
             : [allowedTarget],
-          input.window.start,
-          input.window.end,
+          input.window?.start ?? 0,
+          input.window?.end ?? 0,
+          input.rate?.maxProposals ?? 0,
+          input.rate?.ratePeriod ?? 0,
         ],
         account: wallet.account!,
       });

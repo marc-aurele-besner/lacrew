@@ -51,7 +51,26 @@ contract SessionRegistry {
     mapping(uint256 => address[]) private _sessionTargets;
     mapping(uint256 => mapping(address => bool)) private _targetAllowed;
 
+    /// @notice Per-session propose rate limit and its running window counter.
+    /// @dev `maxProposals == 0` disables it. The counter resets when the current
+    ///      window (`ratePeriod` seconds from `windowStart`) has elapsed.
+    struct RateLimit {
+        uint32 maxProposals;
+        uint32 ratePeriod;
+        uint64 windowStart;
+        uint32 count;
+    }
+
+    /// @dev sessionId => rate limit config + counter.
+    mapping(uint256 => RateLimit) public rateLimits;
+
+    /// @notice The only contract allowed to record proposals (the EscalationRouter).
+    /// @dev Zero = rate-limiting not wired; recordProposal is then a no-op, the
+    ///      same opt-in shape as the router's `setSessionRegistry`.
+    address public escalationRouter;
+
     event IssuerUpdated(address indexed issuer);
+    event EscalationRouterUpdated(address indexed escalationRouter);
     event SessionIssued(
         uint256 indexed sessionId,
         address indexed agent,
@@ -74,6 +93,8 @@ contract SessionRegistry {
     ///      is almost always a caller encoding scopes against a newer vocabulary.
     error InvalidScopeMask(uint256 scopeMask);
     error InvalidWindow(uint32 windowStart, uint32 windowEnd);
+    error InvalidRateLimit(uint32 maxProposals, uint32 ratePeriod);
+    error RateLimitExceeded(address agent, address key, uint32 maxProposals);
 
     modifier onlyRootOrIssuer() {
         if (msg.sender != humanRoot && msg.sender != issuer) revert NotAuthorized(msg.sender);
@@ -93,6 +114,15 @@ contract SessionRegistry {
         emit IssuerUpdated(issuer_);
     }
 
+    /// @notice Wire the EscalationRouter so it (and only it) can record proposals
+    ///         against a session's rate limit. Root-only; unset = no rate-limiting.
+    function setEscalationRouter(address escalationRouter_) external {
+        if (msg.sender != humanRoot) revert NotAuthorized(msg.sender);
+        if (escalationRouter_ == address(0)) revert ZeroAddress();
+        escalationRouter = escalationRouter_;
+        emit EscalationRouterUpdated(escalationRouter_);
+    }
+
     /// @notice Register an ephemeral key for `agent` until `expiresAt` (unix seconds).
     /// @param maxValue Max propose value (`type(uint256).max` = unlimited).
     /// @param allowedTarget Sole allowed target (`address(0)` = any policy-allowed target).
@@ -109,7 +139,7 @@ contract SessionRegistry {
             targets = new address[](1);
             targets[0] = allowedTarget;
         }
-        return _issue(agent, key, expiresAt, scopeMask, maxValue, targets, 0, 0);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, targets, 0, 0, 0, 0);
     }
 
     /// @notice Issue a session pinned to several targets (empty = any policy-allowed target).
@@ -123,14 +153,17 @@ contract SessionRegistry {
         uint256 maxValue,
         address[] calldata allowedTargets
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
-        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets, 0, 0);
+        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets, 0, 0, 0, 0);
     }
 
-    /// @notice Issue a session that may only propose within a daily UTC window.
+    /// @notice Issue a session with the full onchain scope ceiling: an optional
+    ///         daily UTC window and an optional propose rate limit.
     /// @param windowStart Inclusive start, seconds since midnight UTC.
     /// @param windowEnd Exclusive end (`> windowStart`, `<= 86400`). Both zero = any time.
-    /// @dev Carries a flow's time-window scope onto the key itself, so the chain —
-    ///      not just the orchestrator — refuses a propose outside the window.
+    /// @param maxProposals Max proposals per `ratePeriod` (`0` = unlimited).
+    /// @param ratePeriod Rate window in seconds (required when maxProposals > 0).
+    /// @dev Carries a flow's time-window and rate scopes onto the key, so the
+    ///      chain — not just the orchestrator — enforces them on propose.
     function issueScopedTimed(
         address agent,
         address key,
@@ -139,9 +172,13 @@ contract SessionRegistry {
         uint256 maxValue,
         address[] calldata allowedTargets,
         uint32 windowStart,
-        uint32 windowEnd
+        uint32 windowEnd,
+        uint32 maxProposals,
+        uint32 ratePeriod
     ) external onlyRootOrIssuer returns (uint256 sessionId) {
-        return _issue(agent, key, expiresAt, scopeMask, maxValue, allowedTargets, windowStart, windowEnd);
+        return _issue(
+            agent, key, expiresAt, scopeMask, maxValue, allowedTargets, windowStart, windowEnd, maxProposals, ratePeriod
+        );
     }
 
     function _issue(
@@ -152,7 +189,9 @@ contract SessionRegistry {
         uint256 maxValue,
         address[] memory allowedTargets,
         uint32 windowStart,
-        uint32 windowEnd
+        uint32 windowEnd,
+        uint32 maxProposals,
+        uint32 ratePeriod
     ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
@@ -161,6 +200,11 @@ contract SessionRegistry {
         // real slice of a day, matching TimeWindowPolicy's `[start, end)` rule.
         if (windowStart != 0 || windowEnd != 0) {
             if (windowEnd <= windowStart || windowEnd > 1 days) revert InvalidWindow(windowStart, windowEnd);
+        }
+        // A rate limit is optional; a cap with no period (or a period with no cap)
+        // is a caller error, not a disabled limit.
+        if (maxProposals != 0 || ratePeriod != 0) {
+            if (maxProposals == 0 || ratePeriod == 0) revert InvalidRateLimit(maxProposals, ratePeriod);
         }
 
         // Revoke any prior active session for this key binding.
@@ -195,6 +239,11 @@ contract SessionRegistry {
         });
         _byAgent[agent].push(sessionId);
         activeKeySession[agent][key] = sessionId;
+
+        if (maxProposals != 0) {
+            // windowStart 0 / count 0: the first recorded proposal opens the window.
+            rateLimits[sessionId] = RateLimit(maxProposals, ratePeriod, 0, 0);
+        }
 
         emit SessionIssued(sessionId, agent, key, expiresAt, scopeMask, maxValue, first);
         if (_sessionTargets[sessionId].length > 1) {
@@ -256,6 +305,28 @@ contract SessionRegistry {
         // slither-disable-next-line weak-prng
         uint256 tod = block.timestamp % 1 days;
         return tod >= s.windowStart && tod < s.windowEnd;
+    }
+
+    /// @notice Count a proposal against an active key's rate limit, reverting when
+    ///         the limit is exceeded. Called by the EscalationRouter on `propose`.
+    /// @dev No-op when rate-limiting is unwired, the key has no session, or the
+    ///      session has no rate limit. The counter increments before the check,
+    ///      so a reverting propose rolls the increment back and does not count.
+    function recordProposal(address agent, address key) external {
+        if (escalationRouter == address(0)) return;
+        if (msg.sender != escalationRouter) revert NotAuthorized(msg.sender);
+        uint256 id = activeKeySession[agent][key];
+        if (id == 0) return;
+        RateLimit storage r = rateLimits[id];
+        if (r.maxProposals == 0) return;
+        if (r.windowStart == 0 || block.timestamp >= r.windowStart + r.ratePeriod) {
+            // First proposal, or the prior window has elapsed: start a new one.
+            r.windowStart = uint64(block.timestamp);
+            r.count = 1;
+        } else {
+            r.count += 1;
+            if (r.count > r.maxProposals) revert RateLimitExceeded(agent, key, r.maxProposals);
+        }
     }
 
     /// @notice Targets pinned to a session (empty = any policy-allowed target).
