@@ -2,10 +2,10 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {OrgRegistry} from "../src/OrgRegistry.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 import {EscalationRouter} from "../src/EscalationRouter.sol";
 import {EpochStreamer} from "../src/EpochStreamer.sol";
 import {SpendCapPolicy} from "../src/policies/SpendCapPolicy.sol";
@@ -13,15 +13,6 @@ import {WhitelistPolicy} from "../src/policies/WhitelistPolicy.sol";
 import {PolicyStack} from "../src/policies/PolicyStack.sol";
 import {IOrgRegistry} from "../src/interfaces/IOrgRegistry.sol";
 import {IPolicyModule, Verdict} from "../src/interfaces/IPolicyModule.sol";
-
-/// 18-decimal asset so the suite covers a decimals profile MockUSDC cannot.
-contract MockWETH is ERC20 {
-    constructor() ERC20("Mock WETH", "mWETH") {}
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
 
 /// @notice Multi-asset treasuries (PRD F0.4).
 /// @dev A Treasury binds one immutable ERC-20, so an org funds N assets by
