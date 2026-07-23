@@ -458,6 +458,14 @@ export class OnchainLacrewClient {
           row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
+        // Rate lives in its own mapping, not the Session struct — one more read.
+        const rl = (await this.publicClient.readContract({
+          address: addr,
+          abi: sessionRegistryAbi,
+          functionName: "rateLimits",
+          args: [id],
+        })) as readonly [number, number, bigint, number];
+        const maxProposals = rl[0];
         out.push({
           agent: a,
           keyId: id.toString(),
@@ -468,6 +476,8 @@ export class OnchainLacrewClient {
           allowedTarget,
           // A zero end means no window; otherwise report the daily [start, end).
           window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
+          // A zero cap means no rate limit; otherwise report maxProposals / ratePeriod.
+          rate: maxProposals === 0 ? undefined : { maxProposals, ratePeriod: rl[1] },
           revoked: revoked || expiresAtSec <= nowSec,
         });
       }
