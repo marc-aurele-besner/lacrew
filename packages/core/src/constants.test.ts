@@ -6,7 +6,12 @@ import {
   ADDRESS_ENV_VARS,
   ANVIL_CHAIN_ID,
   SEPOLIA_CHAIN_ID,
+  PRIMARY_ASSET_SYMBOL,
+  primaryAssetStack,
+  listAssetStacks,
+  resolveAssetStack,
 } from "./constants.js";
+import type { AssetStack, ChainAddresses } from "./types.js";
 
 describe("getAddresses", () => {
   it("returns anvil deployment shape", () => {
@@ -102,5 +107,61 @@ describe("hasDeployment", () => {
       if (prev === undefined) delete process.env[ADDRESS_ENV_VARS.orgRegistry];
       else process.env[ADDRESS_ENV_VARS.orgRegistry] = prev;
     }
+  });
+});
+
+describe("asset stacks (F0.4 multi-asset)", () => {
+  const weth: AssetStack = {
+    symbol: "WETH",
+    token: "0x00000000000000000000000000000000000000E7",
+    decimals: 18,
+    treasury: "0x0000000000000000000000000000000000000EE7",
+    escalationRouter: "0x0000000000000000000000000000000000000E12",
+    epochStreamer: "0x0000000000000000000000000000000000000E13",
+  };
+
+  function addressesWith(assets?: AssetStack[]): ChainAddresses {
+    return { ...getAddresses(ANVIL_CHAIN_ID), assets };
+  }
+
+  it("treats the flat fields as the primary (USDC) stack", () => {
+    const base = getAddresses(ANVIL_CHAIN_ID);
+    const primary = primaryAssetStack(base);
+    assert.equal(primary.symbol, PRIMARY_ASSET_SYMBOL);
+    assert.equal(primary.decimals, 6);
+    assert.equal(primary.treasury, base.treasury);
+    assert.equal(primary.epochStreamer, base.epochStreamer);
+    assert.equal(primary.token, base.mockUSDC);
+  });
+
+  it("resolves the primary stack when no selector is given", () => {
+    const addrs = addressesWith([weth]);
+    const stack = resolveAssetStack(addrs);
+    assert.equal(stack.symbol, PRIMARY_ASSET_SYMBOL);
+    assert.equal(stack.treasury, addrs.treasury);
+  });
+
+  it("resolves an extra stack by symbol (case-insensitive) or token", () => {
+    const addrs = addressesWith([weth]);
+    assert.equal(resolveAssetStack(addrs, "WETH").treasury, weth.treasury);
+    assert.equal(resolveAssetStack(addrs, "weth").epochStreamer, weth.epochStreamer);
+    assert.equal(resolveAssetStack(addrs, weth.token).treasury, weth.treasury);
+    assert.equal(resolveAssetStack(addrs, weth.token.toLowerCase()).treasury, weth.treasury);
+  });
+
+  it("lists the primary first, then the extras", () => {
+    const stacks = listAssetStacks(addressesWith([weth]));
+    assert.equal(stacks.length, 2);
+    assert.equal(stacks[0]?.symbol, PRIMARY_ASSET_SYMBOL);
+    assert.equal(stacks[1]?.symbol, "WETH");
+    // A bare address book has exactly the primary stack.
+    assert.equal(listAssetStacks(addressesWith(undefined)).length, 1);
+  });
+
+  it("throws for an unknown asset rather than falling back to the primary", () => {
+    const addrs = addressesWith([weth]);
+    // Silently budgeting the primary treasury would move the wrong token.
+    assert.throws(() => resolveAssetStack(addrs, "DAI"), /No asset stack "DAI"/);
+    assert.throws(() => resolveAssetStack(addrs, "DAI"), /Known assets: USDC, WETH/);
   });
 });

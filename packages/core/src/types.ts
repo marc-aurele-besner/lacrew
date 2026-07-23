@@ -197,6 +197,38 @@ export interface SessionKey {
   revoked?: boolean;
 }
 
+/**
+ * One asset's enforcement stack.
+ *
+ * A `Treasury` binds one immutable ERC-20 (SPEC §4.1), so an org funds N assets
+ * by deploying one Treasury + EscalationRouter + EpochStreamer per asset over a
+ * single shared `OrgRegistry`. The org chart stays one tree; enforcement is
+ * asset-scoped. Multi-asset above the contracts is therefore address
+ * *resolution* — "point at this asset's stack" — not a token argument on
+ * `setGrant`.
+ *
+ * Policy stacks are asset-denominated: a `SpendCapPolicy` compares raw
+ * `uint256`, so a 100 USDC cap (`100e6`) is dust against an 18-decimal asset.
+ * `decimals` is carried so callers denominate caps and grants correctly.
+ */
+export interface AssetStack {
+  /** Display symbol, e.g. "USDC", "WETH". Case-insensitive selector key. */
+  symbol: string;
+  /** ERC-20 the stack is denominated in; also a selector key. */
+  token: `0x${string}`;
+  /** Token decimals — grants and caps are denominated in these units. */
+  decimals: number;
+  /** Treasury holding this asset and streaming its allowances. */
+  treasury: `0x${string}`;
+  /** Router enforcing this asset's policy stack and pending intents. */
+  escalationRouter: `0x${string}`;
+  /** Payroll streamer feeding this asset's allowances. */
+  epochStreamer: `0x${string}`;
+  spendCapPolicy?: `0x${string}`;
+  whitelistPolicy?: `0x${string}`;
+  policyStack?: `0x${string}`;
+}
+
 export interface ChainAddresses {
   chainId: number;
   orgRegistry: `0x${string}`;
@@ -221,4 +253,14 @@ export interface ChainAddresses {
   manager?: `0x${string}`;
   worker?: `0x${string}`;
   x402Target?: `0x${string}`;
+  /**
+   * Additional asset stacks beyond the primary one.
+   *
+   * The flat `treasury` / `escalationRouter` / `epochStreamer` fields above are
+   * the **primary** asset stack (USDC on the reference deploy). Each entry here
+   * is a full independent stack — its own Treasury, EscalationRouter and
+   * EpochStreamer over the shared `orgRegistry` — for a different token. Resolve
+   * one with `resolveAssetStack(addresses, symbolOrToken)`.
+   */
+  assets?: AssetStack[];
 }

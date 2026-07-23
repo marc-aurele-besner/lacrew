@@ -1,6 +1,6 @@
 /** Protocol constants and deployment address resolution. */
 
-import type { ChainAddresses } from "./types.js";
+import type { AssetStack, ChainAddresses } from "./types.js";
 import { DEPLOYMENTS } from "./deployments.generated.js";
 
 export const PROTOCOL_NAME = "LaCrew";
@@ -77,7 +77,10 @@ export const ADDRESS_ENV_VARS = {
   manager: "LACREW_MANAGER",
   worker: "LACREW_WORKER",
   x402Target: "LACREW_X402_TARGET",
-} as const satisfies Record<Exclude<keyof ChainAddresses, "chainId">, string>;
+} as const satisfies Record<
+  Exclude<keyof ChainAddresses, "chainId" | "assets">,
+  string
+>;
 
 /**
  * Resolve contract addresses for a chain.
@@ -115,7 +118,7 @@ export function getAddresses(chainId: number): ChainAddresses {
 
   const resolved: ChainAddresses = { ...base, chainId };
   for (const [field, envVar] of Object.entries(ADDRESS_ENV_VARS) as Array<
-    [Exclude<keyof ChainAddresses, "chainId">, string]
+    [Exclude<keyof ChainAddresses, "chainId" | "assets">, string]
   >) {
     const override = envAddress(envVar);
     if (!override) continue;
@@ -123,6 +126,63 @@ export function getAddresses(chainId: number): ChainAddresses {
     resolved[field] = override;
   }
   return resolved;
+}
+
+/** USDC is 6 decimals on every chain; the reference deploy's primary asset. */
+export const PRIMARY_ASSET_SYMBOL = "USDC";
+export const PRIMARY_ASSET_DECIMALS = 6;
+
+/**
+ * The primary asset stack — the flat `treasury` / `escalationRouter` /
+ * `epochStreamer` fields, which the reference deploy denominates in USDC.
+ * `epochStreamer` may be absent on a bare address book; the stack then carries
+ * the zero address for it, the same fallback `getAllowances`/`runEpoch` apply.
+ */
+export function primaryAssetStack(addresses: ChainAddresses): AssetStack {
+  return {
+    symbol: PRIMARY_ASSET_SYMBOL,
+    token: addresses.mockUSDC ?? ZERO,
+    decimals: PRIMARY_ASSET_DECIMALS,
+    treasury: addresses.treasury,
+    escalationRouter: addresses.escalationRouter,
+    epochStreamer: addresses.epochStreamer ?? ZERO,
+    spendCapPolicy: addresses.spendCapPolicy,
+    whitelistPolicy: addresses.whitelistPolicy,
+    policyStack: addresses.policyStack,
+  };
+}
+
+/** Every asset stack for a chain: the primary (flat fields) first, then extras. */
+export function listAssetStacks(addresses: ChainAddresses): AssetStack[] {
+  return [primaryAssetStack(addresses), ...(addresses.assets ?? [])];
+}
+
+/**
+ * Resolve one asset's enforcement stack.
+ *
+ * Omit `selector` for the primary (USDC) stack. Otherwise match by symbol
+ * (case-insensitive) or token address, throwing when none matches — silently
+ * falling back to the primary would budget or read the wrong asset's treasury.
+ */
+export function resolveAssetStack(
+  addresses: ChainAddresses,
+  selector?: string,
+): AssetStack {
+  if (selector === undefined || selector === "") {
+    return primaryAssetStack(addresses);
+  }
+  const stacks = listAssetStacks(addresses);
+  const needle = selector.toLowerCase();
+  const match = stacks.find(
+    (s) => s.symbol.toLowerCase() === needle || s.token.toLowerCase() === needle,
+  );
+  if (!match) {
+    const known = stacks.map((s) => s.symbol).join(", ");
+    throw new Error(
+      `No asset stack "${selector}" on chain ${addresses.chainId}. Known assets: ${known}.`,
+    );
+  }
+  return match;
 }
 
 /** Ethereum Sepolia — first public testnet. */

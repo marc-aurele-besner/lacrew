@@ -4,12 +4,36 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createOnchainClient } from "./onchain.js";
 import { http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getAddresses, ANVIL_CHAIN_ID } from "@lacrew/core";
+import { getAddresses, ANVIL_CHAIN_ID, type ChainAddresses } from "@lacrew/core";
 
 const rpc = process.env.ANVIL_RPC;
+
+/**
+ * Read the on-disk Anvil deployment (which carries `assets` only after a
+ * `DEPLOY_SECOND_ASSET=1` deploy). Read from the file rather than getAddresses
+ * so the multi-asset test exercises a real two-stack deployment without the
+ * committed single-asset generated addresses needing to carry the extra stack.
+ */
+function loadAnvilDeployment(): ChainAddresses | null {
+  try {
+    const path = new URL(
+      "../../../contracts/deployments/31337.json",
+      import.meta.url,
+    );
+    return JSON.parse(readFileSync(path, "utf8")) as ChainAddresses;
+  } catch {
+    return null;
+  }
+}
+
+const anvilDeployment = loadAnvilDeployment();
+const wethStack = anvilDeployment?.assets?.find((a) => a.symbol === "WETH");
+// Multi-asset assertions need both a live chain and a deployed second stack.
+const multiAssetSkip = !rpc || !wethStack || !anvilDeployment?.worker;
 
 // Anvil deterministic accounts 0 and 8 — used only to construct wallet clients;
 // no network is touched by these constructor assertions.
@@ -76,6 +100,59 @@ describe("createOnchainClient", () => {
       const tree = await client.getOrgTree();
       assert.ok(tree.length >= 1);
       assert.equal(tree[0]?.kind, "human_root");
+    },
+  );
+});
+
+describe("multi-asset budgeting (F0.4)", () => {
+  it(
+    "streams and reads a second asset independently of USDC",
+    { skip: multiAssetSkip },
+    async () => {
+      const addresses = anvilDeployment!;
+      const worker = addresses.worker!;
+      const weth = wethStack!;
+      const client = createOnchainClient({
+        transport: http(rpc!),
+        account: MAIN, // humanRoot = Anvil #0 = the EpochStreamer operator
+        chainId: ANVIL_CHAIN_ID,
+        addresses,
+      });
+
+      const [usdcBefore] = await client.getAllowances(worker); // primary stack
+      const [wethBefore] = await client.getAllowances(worker, "WETH");
+      assert.ok(usdcBefore && wethBefore);
+
+      const { epoch } = await client.runEpoch("WETH");
+      assert.ok(epoch >= 1);
+
+      const [usdcAfter] = await client.getAllowances(worker);
+      const [wethAfter] = await client.getAllowances(worker, "WETH");
+      assert.ok(usdcAfter && wethAfter);
+
+      // The WETH allowance grew by exactly one epoch's grant (1 WETH, 18 dec)...
+      assert.equal(wethAfter.balance - wethBefore.balance, 10n ** 18n);
+      // ...denominated in the WETH token the stack binds...
+      assert.equal(wethAfter.token.toLowerCase(), weth.token.toLowerCase());
+      // ...while USDC bookkeeping, read from its own treasury, did not move.
+      assert.equal(usdcAfter.balance, usdcBefore.balance);
+      assert.notEqual(usdcAfter.token.toLowerCase(), weth.token.toLowerCase());
+    },
+  );
+
+  it(
+    "rejects an unknown asset rather than budgeting the primary treasury",
+    { skip: multiAssetSkip },
+    async () => {
+      const client = createOnchainClient({
+        transport: http(rpc!),
+        chainId: ANVIL_CHAIN_ID,
+        addresses: anvilDeployment!,
+      });
+      await assert.rejects(
+        () => client.getAllowances(anvilDeployment!.worker!, "DAI"),
+        /No asset stack "DAI"/,
+      );
     },
   );
 });

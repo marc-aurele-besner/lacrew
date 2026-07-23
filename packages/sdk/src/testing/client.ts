@@ -79,6 +79,21 @@ export class LacrewClient {
     }
   }
 
+  /**
+   * The offline client models a single asset stack. Selecting a specific asset
+   * needs the per-asset addresses only an onchain client resolves, so a request
+   * for one throws rather than silently returning the single asset's figures as
+   * though they were another token's.
+   */
+  private requireSingleAsset(asset?: string): void {
+    if (asset !== undefined && asset !== "") {
+      throw new Error(
+        `Multi-asset budgeting requires an onchain client (createOnchainClient); ` +
+          `the offline client models a single asset and cannot resolve "${asset}".`,
+      );
+    }
+  }
+
   /** List org nodes. */
   async getOrgTree(): Promise<OrgNode[]> {
     if (!this.useMock) {
@@ -89,7 +104,8 @@ export class LacrewClient {
   }
 
   /** Allowances for all nodes (or a single node). */
-  async getAllowances(node?: `0x${string}`): Promise<Allowance[]> {
+  async getAllowances(node?: `0x${string}`, asset?: string): Promise<Allowance[]> {
+    this.requireSingleAsset(asset);
     if (!this.useMock) {
       // TODO: Read Treasury.allowanceBalance for each node.
       throw new Error("Onchain allowance reads are not implemented yet");
@@ -433,7 +449,9 @@ export class LacrewClient {
     account: `0x${string}`;
     amount: bigint;
     tier?: GovernanceTier;
+    asset?: string;
   }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireSingleAsset(input.asset);
     this.requireMock("governance");
     const proposal = this.createMockProposal(
       input.tier ?? "high",
@@ -570,13 +588,15 @@ export class LacrewClient {
 
   // ── Mock payroll epochs (mirrors EpochStreamer semantics) ───────────────
 
-  async getCurrentEpoch(): Promise<number> {
+  async getCurrentEpoch(asset?: string): Promise<number> {
+    this.requireSingleAsset(asset);
     this.requireMock("epoch reads");
     return this.epoch;
   }
 
   /** Stream one epoch: every active allowance gains its per-epoch cap. */
-  async runEpoch(): Promise<{ epoch: number }> {
+  async runEpoch(asset?: string): Promise<{ epoch: number }> {
+    this.requireSingleAsset(asset);
     this.requireMock("epoch runs");
     this.epoch += 1;
     for (const allowance of this.allowances) {

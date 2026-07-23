@@ -5,6 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {OrgRegistry} from "../src/OrgRegistry.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
+import {MockWETH} from "../src/mocks/MockWETH.sol";
 import {SpendCapPolicy} from "../src/policies/SpendCapPolicy.sol";
 import {WhitelistPolicy} from "../src/policies/WhitelistPolicy.sol";
 import {RateLimitPolicy} from "../src/policies/RateLimitPolicy.sol";
@@ -23,6 +24,7 @@ import {IPolicyModule} from "../src/interfaces/IPolicyModule.sol";
 ///      On Anvil (31337), manager is Anvil account #1 so MANAGER_PRIVATE_KEY can sign resolve.
 contract DeployMockOrg is Script {
     uint256 internal constant USDC = 1e6;
+    uint256 internal constant WETH = 1e18;
     /// @dev 20% platform take rate on marketplace sales.
     uint16 internal constant PLATFORM_FEE_BPS = 2000;
     /// @dev Anvil default account #1 — known key in lacrew/.env.example (demo only).
@@ -48,6 +50,19 @@ contract DeployMockOrg is Script {
         address x402Target;
     }
 
+    /// Flat, serializable view of one extra asset stack for the deployment JSON.
+    struct AssetStackOut {
+        string symbol;
+        address token;
+        uint8 decimals;
+        address treasury;
+        address escalationRouter;
+        address epochStreamer;
+        address spendCapPolicy;
+        address whitelistPolicy;
+        address policyStack;
+    }
+
     function run() external {
         address humanRoot = vm.envOr("HUMAN_ROOT", msg.sender);
         uint256 fundAmount = vm.envOr("TREASURY_FUND_USDC", uint256(100_000 * USDC));
@@ -55,25 +70,29 @@ contract DeployMockOrg is Script {
         address x402Target = address(uint160(uint256(keccak256("lacrew.x402"))));
         address manager = vm.envOr(
             "MANAGER_ADDRESS",
-            block.chainid == 31337
-                ? ANVIL_MANAGER
-                : address(uint160(uint256(keccak256("lacrew.manager"))))
+            block.chainid == 31337 ? ANVIL_MANAGER : address(uint160(uint256(keccak256("lacrew.manager"))))
         );
+
+        // A second asset stack (18-decimal MockWETH) over the same OrgRegistry,
+        // for exercising multi-asset orgs (SPEC §4.1). Off by default so the
+        // canonical single-asset deploy is unchanged.
+        bool wantSecondAsset = vm.envOr("DEPLOY_SECOND_ASSET", false);
 
         vm.startBroadcast();
         Deployed memory d = _deploy(humanRoot, manager, worker, x402Target, fundAmount);
+        AssetStackOut memory weth;
+        if (wantSecondAsset) {
+            weth = _deploySecondAsset(d, humanRoot);
+        }
         vm.stopBroadcast();
 
-        _writeDeployments(d);
+        _writeDeployments(d, wantSecondAsset, weth);
     }
 
-    function _deploy(
-        address humanRoot,
-        address manager,
-        address worker,
-        address x402Target,
-        uint256 fundAmount
-    ) private returns (Deployed memory d) {
+    function _deploy(address humanRoot, address manager, address worker, address x402Target, uint256 fundAmount)
+        private
+        returns (Deployed memory d)
+    {
         d.humanRoot = humanRoot;
         d.manager = manager;
         d.worker = worker;
@@ -94,8 +113,7 @@ contract DeployMockOrg is Script {
         // Default window is the full UTC day (always ALLOW) so demos work at any hour;
         // set TIME_WINDOW_START / TIME_WINDOW_END (seconds since midnight UTC) to constrain.
         d.timeWindow = new TimeWindowPolicy(
-            vm.envOr("TIME_WINDOW_START", uint256(0)),
-            vm.envOr("TIME_WINDOW_END", uint256(1 days))
+            vm.envOr("TIME_WINDOW_START", uint256(0)), vm.envOr("TIME_WINDOW_END", uint256(1 days))
         );
         d.workerStack = _workerStack(d.whitelist, d.spendCap, rateLimit, d.timeWindow);
         d.managerStack = _managerStack(d.whitelist, d.spendCap);
@@ -168,17 +186,77 @@ contract DeployMockOrg is Script {
         return new PolicyStack(modules);
     }
 
-    function _managerStack(WhitelistPolicy whitelist, SpendCapPolicy spendCap)
-        private
-        returns (PolicyStack)
-    {
+    function _managerStack(WhitelistPolicy whitelist, SpendCapPolicy spendCap) private returns (PolicyStack) {
         IPolicyModule[] memory modules = new IPolicyModule[](2);
         modules[0] = whitelist;
         modules[1] = spendCap;
         return new PolicyStack(modules);
     }
 
-    function _writeDeployments(Deployed memory d) private {
+    /// @notice Deploy a second asset stack (18-decimal MockWETH) over the same
+    ///         OrgRegistry, so the org funds two tokens independently (SPEC §4.1).
+    /// @dev The tree, session registry and governance are shared; only the
+    ///      Treasury + EscalationRouter + EpochStreamer + policy stack are new.
+    function _deploySecondAsset(Deployed memory d, address humanRoot) private returns (AssetStackOut memory a) {
+        uint256 fundAmount = vm.envOr("TREASURY_FUND_WETH", uint256(100 * WETH));
+
+        MockWETH weth = new MockWETH();
+
+        WhitelistPolicy whitelist = new WhitelistPolicy();
+        whitelist.setAllowed(d.x402Target, true);
+
+        // Caps are asset-denominated: a USDC cap (50e6) would be dust in 18
+        // decimals, so this stack is capped in WETH units of its own.
+        SpendCapPolicy spendCap = new SpendCapPolicy(2 * WETH);
+        spendCap.setAgentCap(d.manager, 20 * WETH);
+        spendCap.setAgentCap(humanRoot, type(uint256).max);
+
+        IPolicyModule[] memory modules = new IPolicyModule[](2);
+        modules[0] = whitelist;
+        modules[1] = spendCap;
+        PolicyStack stack = new PolicyStack(modules);
+
+        EscalationRouter router = new EscalationRouter(address(d.registry), address(stack));
+        Treasury treasury = new Treasury(address(d.registry), address(weth), address(router));
+        router.setTreasury(address(treasury));
+        router.setNodePolicy(d.worker, address(stack));
+        router.setNodePolicy(d.manager, address(stack));
+        // Reuse the shared SessionRegistry so session-gated proposes work per asset.
+        router.setSessionRegistry(address(d.sessionRegistry));
+
+        weth.mint(msg.sender, fundAmount);
+        weth.approve(address(treasury), fundAmount);
+        treasury.deposit(fundAmount);
+
+        EpochStreamer streamer = new EpochStreamer(address(treasury), humanRoot);
+        streamer.setGrant(d.worker, 1 * WETH);
+        treasury.setStreamer(address(streamer));
+
+        // Governance owns the WETH stack too; the grant is seeded first, since
+        // setGrant is governor-gated once the governor is set.
+        treasury.setGovernor(address(d.gov));
+        router.setGovernor(address(d.gov));
+        streamer.setGovernor(address(d.gov));
+        whitelist.setGovernor(address(d.gov));
+        spendCap.setGovernor(address(d.gov));
+
+        a = AssetStackOut({
+            symbol: "WETH",
+            token: address(weth),
+            decimals: 18,
+            treasury: address(treasury),
+            escalationRouter: address(router),
+            epochStreamer: address(streamer),
+            spendCapPolicy: address(spendCap),
+            whitelistPolicy: address(whitelist),
+            policyStack: address(stack)
+        });
+
+        console2.log("WETH treasury", address(treasury));
+        console2.log("WETH epochStreamer", address(streamer));
+    }
+
+    function _writeDeployments(Deployed memory d, bool hasSecondAsset, AssetStackOut memory weth) private {
         string memory obj = "deploy";
         vm.serializeUint(obj, "chainId", block.chainid);
         vm.serializeAddress(obj, "mockUSDC", address(d.usdc));
@@ -200,7 +278,24 @@ contract DeployMockOrg is Script {
         string memory json = vm.serializeAddress(obj, "x402Target", d.x402Target);
 
         vm.createDir("deployments", true);
-        vm.writeJson(json, string.concat("deployments/", vm.toString(block.chainid), ".json"));
+        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
+        vm.writeJson(json, path);
+
+        // Set the `assets` key to a raw JSON array of the extra asset stacks.
+        // Written after the main object so the array nests as JSON, not a string.
+        if (hasSecondAsset) {
+            string memory a = "asset_weth";
+            vm.serializeString(a, "symbol", weth.symbol);
+            vm.serializeAddress(a, "token", weth.token);
+            vm.serializeUint(a, "decimals", uint256(weth.decimals));
+            vm.serializeAddress(a, "treasury", weth.treasury);
+            vm.serializeAddress(a, "escalationRouter", weth.escalationRouter);
+            vm.serializeAddress(a, "epochStreamer", weth.epochStreamer);
+            vm.serializeAddress(a, "spendCapPolicy", weth.spendCapPolicy);
+            vm.serializeAddress(a, "whitelistPolicy", weth.whitelistPolicy);
+            string memory assetJson = vm.serializeAddress(a, "policyStack", weth.policyStack);
+            vm.writeJson(string.concat("[", assetJson, "]"), path, ".assets");
+        }
 
         console2.log("EscalationRouter", address(d.router));
         console2.log("SessionRegistry", address(d.sessionRegistry));
