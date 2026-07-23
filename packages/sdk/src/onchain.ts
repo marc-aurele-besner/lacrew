@@ -454,7 +454,8 @@ export class OnchainLacrewClient {
           number,
           number,
         ];
-        const [, key, expiresAtRaw, scopeMask, maxValue, allowedTarget, revoked, exists] = row;
+        const [, key, expiresAtRaw, scopeMask, maxValue, allowedTarget, revoked, exists, windowStart, windowEnd] =
+          row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
         out.push({
@@ -465,6 +466,8 @@ export class OnchainLacrewClient {
           scopes: sessionScopesFromMask(scopeMask),
           maxValue: maxValue.toString(),
           allowedTarget,
+          // A zero end means no window; otherwise report the daily [start, end).
+          window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
           revoked: revoked || expiresAtSec <= nowSec,
         });
       }
