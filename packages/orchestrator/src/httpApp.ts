@@ -173,6 +173,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       scopes?: string[];
       maxValue?: string;
       allowedTarget?: string;
+      window?: { start: number; end: number };
+      rate?: { maxProposals: number; ratePeriod: number };
     }>(c);
 
     let scopes: SessionScope[] | undefined;
@@ -191,10 +193,27 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       scopes = body.scopes as SessionScope[];
     }
 
+    // Validated here so a bad window/rate is a 400, not a chain revert far from
+    // the caller. The chain checks them again at issue.
+    if (body.window !== undefined) {
+      const { start, end } = body.window;
+      if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start || end > 86400) {
+        return jsonBig(c, { error: "invalid_window: need integers 0 <= start < end <= 86400" }, 400);
+      }
+    }
+    if (body.rate !== undefined) {
+      const { maxProposals, ratePeriod } = body.rate;
+      if (!Number.isInteger(maxProposals) || !Number.isInteger(ratePeriod) || maxProposals <= 0 || ratePeriod <= 0) {
+        return jsonBig(c, { error: "invalid_rate: need positive integers maxProposals and ratePeriod" }, 400);
+      }
+    }
+
     const session = await runtime.boot(body.agent as `0x${string}` | undefined, {
       scopes,
       maxValue: body.maxValue ? BigInt(body.maxValue) : undefined,
       allowedTarget: body.allowedTarget as `0x${string}` | undefined,
+      window: body.window,
+      rate: body.rate,
     });
     return jsonBig(c, { session });
   });

@@ -288,4 +288,24 @@ describe("orchestrator Hono app", () => {
     assert.equal(res.status, 400);
     assert.equal(body.error, "scopes_must_be_a_non_empty_array");
   });
+
+  it("accepts a valid daily window and rate limit", async () => {
+    const { res } = await boot(buildApp(), {
+      window: { start: 9 * 3600, end: 17 * 3600 },
+      rate: { maxProposals: 5, ratePeriod: 3600 },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("rejects a window whose end is not after its start", async () => {
+    const { res, body } = await boot(buildApp(), { window: { start: 17 * 3600, end: 9 * 3600 } });
+    assert.equal(res.status, 400);
+    assert.match(body.error, /^invalid_window/);
+  });
+
+  it("rejects a rate limit with a non-positive cap", async () => {
+    const { res, body } = await boot(buildApp(), { rate: { maxProposals: 0, ratePeriod: 3600 } });
+    assert.equal(res.status, 400);
+    assert.match(body.error, /^invalid_rate/);
+  });
 });

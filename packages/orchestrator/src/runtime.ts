@@ -372,6 +372,7 @@ export class CrewRuntime {
         // them, and the row could be stale.
         maxValue: limits.maxValue.toString(),
         allowedTarget: limits.allowedTarget,
+        window: limits.window,
         revoked: false,
       };
       if (isSessionExpired(session)) continue;
@@ -392,7 +393,13 @@ export class CrewRuntime {
       }
 
       this.sessions.set(
-        this.sessionCacheKey(session.agent, limits.maxValue, limits.allowedTarget),
+        this.sessionCacheKey(
+          session.agent,
+          limits.maxValue,
+          limits.allowedTarget,
+          limits.window,
+          limits.rate,
+        ),
         { session, privateKey },
       );
       restored += 1;
@@ -426,18 +433,57 @@ export class CrewRuntime {
   private async readKeyLimits(
     agent: `0x${string}`,
     key: `0x${string}`,
-  ): Promise<{ valid: boolean; maxValue: bigint; allowedTarget: `0x${string}` } | null> {
+  ): Promise<{
+    valid: boolean;
+    maxValue: bigint;
+    allowedTarget: `0x${string}`;
+    window?: { start: number; end: number };
+    rate?: { maxProposals: number; ratePeriod: number };
+  } | null> {
     if (!isOnchainClient(this.client)) return null;
     const registry = this.client.addresses.sessionRegistry;
     if (!registry) return null;
+    const client = this.client;
     try {
-      const [valid, maxValue, allowedTarget] = (await this.client.publicClient.readContract({
+      const [valid, maxValue, allowedTarget] = (await client.publicClient.readContract({
         address: registry,
         abi: sessionRegistryAbi,
         functionName: "keyLimits",
         args: [agent, key],
       })) as [boolean, bigint, `0x${string}`, bigint];
-      return { valid, maxValue, allowedTarget };
+      if (!valid) return { valid, maxValue, allowedTarget };
+      // Window and rate are separate from keyLimits, but the cache key needs them:
+      // a reclaimed windowed/rate-limited key keyed without them could be reused
+      // for a looser request. Read them for the active session behind this key.
+      const id = (await client.publicClient.readContract({
+        address: registry,
+        abi: sessionRegistryAbi,
+        functionName: "activeKeySession",
+        args: [agent, key],
+      })) as bigint;
+      const session = (await client.publicClient.readContract({
+        address: registry,
+        abi: sessionRegistryAbi,
+        functionName: "sessions",
+        args: [id],
+      })) as readonly unknown[];
+      const rl = (await client.publicClient.readContract({
+        address: registry,
+        abi: sessionRegistryAbi,
+        functionName: "rateLimits",
+        args: [id],
+      })) as readonly unknown[];
+      const windowStart = Number(session[8]);
+      const windowEnd = Number(session[9]);
+      const maxProposals = Number(rl[0]);
+      const ratePeriod = Number(rl[1]);
+      return {
+        valid,
+        maxValue,
+        allowedTarget,
+        window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
+        rate: maxProposals === 0 ? undefined : { maxProposals, ratePeriod },
+      };
     } catch {
       return null;
     }
@@ -459,6 +505,10 @@ export class CrewRuntime {
       allowedTarget?: `0x${string}`;
       /** What the key may do. Defaults to the full vocabulary. */
       scopes?: SessionScope[];
+      /** Daily UTC window `[start, end)` in seconds; the chain refuses proposes outside it. */
+      window?: { start: number; end: number };
+      /** Propose rate limit; the chain refuses more than `maxProposals` per `ratePeriod`. */
+      rate?: { maxProposals: number; ratePeriod: number };
     },
   ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
@@ -469,7 +519,13 @@ export class CrewRuntime {
     // make narrowing unobservable outside the one call that asked for it.
     const scopes = limits?.scopes ?? this.scopePolicyFor(forAgent);
     if (limits?.scopes) this.sessionScopePolicy.set(forAgent.toLowerCase(), limits.scopes);
-    const key = this.sessionCacheKey(forAgent, ceiling, limits?.allowedTarget);
+    const key = this.sessionCacheKey(
+      forAgent,
+      ceiling,
+      limits?.allowedTarget,
+      limits?.window,
+      limits?.rate,
+    );
     const held = this.sessions.get(key);
     // A cached session is only reusable when its scopes match what was asked
     // for. Reusing a wider one would hand back authority this call did not
@@ -496,6 +552,8 @@ export class CrewRuntime {
         scopeMask: ephemeral.scopeMask,
         maxValue,
         allowedTarget,
+        window: limits?.window,
+        rate: limits?.rate,
       });
       // Root sponsors gas so the session key can submit propose (Phase 0; AA/paymaster later).
       const fundTxHash = await this.fundSessionKey(ephemeral.keyAddress!);
@@ -507,6 +565,7 @@ export class CrewRuntime {
         scopes: ephemeral.scopes,
         maxValue: maxValue.toString(),
         allowedTarget,
+        window: limits?.window,
         revoked: false,
       };
       this.sessions.set(key, { session, privateKey: ephemeral.privateKey });
@@ -568,6 +627,8 @@ export class CrewRuntime {
     agent: `0x${string}`,
     maxValue?: bigint,
     allowedTarget?: `0x${string}`,
+    window?: { start: number; end: number },
+    rate?: { maxProposals: number; ratePeriod: number },
   ): string {
     // The target is part of the key for the same reason maxValue is: a cached key
     // pinned to a different target would either be rejected onchain or, worse,
@@ -579,7 +640,12 @@ export class CrewRuntime {
     // sessions onchain — landed in two cache entries, and the second issued a
     // redundant session (and paid gas for it) to say the same thing.
     const ceiling = maxValue ?? this.sessionMaxValue();
-    return `${agent.toLowerCase()}:${ceiling.toString()}:${target}`;
+    // Window and rate are part of the key too: a session narrowed to business
+    // hours or a proposal cap must never be handed back to a boot that asked for
+    // neither — that would reuse a tighter key as if it were looser.
+    const w = window ? `${window.start}-${window.end}` : "any";
+    const r = rate ? `${rate.maxProposals}/${rate.ratePeriod}` : "none";
+    return `${agent.toLowerCase()}:${ceiling.toString()}:${target}:${w}:${r}`;
   }
 
   /**
