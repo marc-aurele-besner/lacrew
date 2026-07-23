@@ -104,6 +104,14 @@ export type OnchainClientOptions = {
    * Falls back to `account` when omitted.
    */
   resolverAccount?: Account;
+  /**
+   * Optional account for session-key issuance/revocation (`SessionRegistry`).
+   * Falls back to `account` when omitted. Splitting it lets the issuer be a key
+   * the process running proposals does not hold — the registry gates `issue` on
+   * root-or-issuer, so root can authorise this account via `setIssuer` and keep
+   * the root key itself out of the orchestrator.
+   */
+  issuerAccount?: Account;
   chain?: Chain;
   chainId?: number;
   addresses?: ChainAddresses;
@@ -115,6 +123,7 @@ export class OnchainLacrewClient {
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient | null;
   readonly resolverWalletClient: WalletClient | null;
+  readonly issuerWalletClient: WalletClient | null;
   readonly addresses: ChainAddresses;
   readonly chainId: number;
   private readonly transport: Transport;
@@ -144,6 +153,13 @@ export class OnchainLacrewClient {
     this.resolverWalletClient = options.resolverAccount
       ? createWalletClient({
           account: options.resolverAccount,
+          transport: options.transport,
+          chain: options.chain,
+        })
+      : this.walletClient;
+    this.issuerWalletClient = options.issuerAccount
+      ? createWalletClient({
+          account: options.issuerAccount,
           transport: options.transport,
           chain: options.chain,
         })
@@ -697,7 +713,7 @@ export class OnchainLacrewClient {
   }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
     const addr = this.addresses.sessionRegistry;
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
-    const wallet = this.requireWallet();
+    const wallet = this.requireIssuerWallet();
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
     const allowedTarget =
       input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
@@ -723,7 +739,7 @@ export class OnchainLacrewClient {
   async revokeSession(sessionId: string): Promise<{ txHash: `0x${string}` }> {
     const addr = this.addresses.sessionRegistry;
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
-    const wallet = this.requireWallet();
+    const wallet = this.requireIssuerWallet();
     const hash = await wallet.writeContract({
       address: addr,
       abi: sessionRegistryAbi,
@@ -734,6 +750,38 @@ export class OnchainLacrewClient {
     });
     await this.publicClient.waitForTransactionReceipt({ hash });
     return { txHash: hash };
+  }
+
+  /**
+   * Point `SessionRegistry` at a dedicated issuer (root-only). Lets the human
+   * root authorise an orchestrator's issuer key without handing it the root key:
+   * after this, `issue`/`revoke` accept that key, and only root can change it.
+   */
+  async setIssuer(issuer: `0x${string}`): Promise<{ txHash: `0x${string}` }> {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: addr,
+      abi: sessionRegistryAbi,
+      functionName: "setIssuer",
+      args: [issuer],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return { txHash: hash };
+  }
+
+  /** Current `SessionRegistry` issuer (root-or-this may issue/revoke). */
+  async getIssuer(): Promise<`0x${string}`> {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    return (await this.publicClient.readContract({
+      address: addr,
+      abi: sessionRegistryAbi,
+      functionName: "issuer",
+    })) as `0x${string}`;
   }
 
   /** Current payroll epoch from EpochStreamer (0 if not deployed). */
@@ -1208,6 +1256,15 @@ export class OnchainLacrewClient {
       );
     }
     return this.resolverWalletClient;
+  }
+
+  private requireIssuerWallet(): WalletClient {
+    if (!this.issuerWalletClient?.account) {
+      throw new Error(
+        "Onchain session issuance requires an account (createOnchainClient({ account }) or issuerAccount)",
+      );
+    }
+    return this.issuerWalletClient;
   }
 
   private async readIntent(id: bigint): Promise<Intent> {

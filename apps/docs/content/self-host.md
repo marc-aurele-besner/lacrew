@@ -171,6 +171,16 @@ curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
 
 Compromise blast radius is the session's remaining `maxValue` on whitelisted targets until expiry or root/issuer revoke. Root keys never leave the operator's wallet.
 
+### Dedicated issuer key
+
+`SessionRegistry.issue`/`revoke` accept root **or** a designated issuer. By default the orchestrator's `PRIVATE_KEY` signs issuance, but on a real chain that key should not be root. Set `LACREW_ISSUER_PRIVATE_KEY` to a dedicated key so the orchestrator can mint bounded, expiring session keys without holding root:
+
+```bash
+export LACREW_ISSUER_PRIVATE_KEY=0x…   # the key the orchestrator holds
+```
+
+On a local chain where `PRIVATE_KEY` is root, the orchestrator authorises this key at boot (`setIssuer`). On a real chain, root authorises it out of band — `setIssuer(<issuer address>)` from the root wallet — and the orchestrator holds only the issuer key. A compromise of that key can issue session keys (already bounded by scope, `maxValue`, and expiry the chain enforces) but cannot change the issuer, move the treasury, or touch governance; only root can `setIssuer`.
+
 ## Model provider
 
 Orchestrator model calls go through `ModelProvider` (never a hard-wired vendor SDK):
