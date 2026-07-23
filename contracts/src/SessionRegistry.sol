@@ -252,6 +252,8 @@ contract SessionRegistry {
         if (id == 0) return true;
         Session storage s = sessions[id];
         if (s.windowEnd == 0) return true;
+        // Time-of-day check, not randomness — same suppression as TimeWindowPolicy.
+        // slither-disable-next-line weak-prng
         uint256 tod = block.timestamp % 1 days;
         return tod >= s.windowStart && tod < s.windowEnd;
     }
