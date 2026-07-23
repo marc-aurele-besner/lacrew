@@ -188,6 +188,11 @@ export interface SessionKey {
    * by EscalationRouter. Omitted when the key has no window (any time).
    */
   window?: { start: number; end: number };
+  /**
+   * Propose rate limit enforced by EscalationRouter: at most `maxProposals` per
+   * `ratePeriod` seconds. Omitted when the key has no rate limit.
+   */
+  rate?: { maxProposals: number; ratePeriod: number };
   /** true when revoked onchain or locally. */
   revoked?: boolean;
 }
