@@ -5,6 +5,7 @@
  */
 
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
+import type { SessionScope } from "@lacrew/core";
 import type { CrewRuntime } from "./runtime.js";
 
 /**
@@ -19,6 +20,7 @@ export function createRuntimeMcpBackend(
     ceiling?: `0x${string}`;
     window?: { start: number; end: number };
     rate?: { maxProposals: number; ratePeriod: number };
+    scopes?: SessionScope[];
   } = {},
 ): McpToolBackend {
   return {
@@ -34,6 +36,7 @@ export function createRuntimeMcpBackend(
         ceiling: actor.ceiling,
         window: actor.window,
         rate: actor.rate,
+        scopes: actor.scopes,
       });
       return { intentId, verdict, txHash };
     },

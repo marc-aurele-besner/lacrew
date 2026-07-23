@@ -138,6 +138,14 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
         errors.push("scope.rate needs positive integers maxProposals and ratePeriod");
       }
     }
+    const s = def.scope.scopes;
+    if (s !== undefined) {
+      // Shape only — the session-scope vocabulary lives in @lacrew/core and is
+      // checked by the orchestrator, so this package stays chain-free.
+      if (!Array.isArray(s) || s.length === 0 || s.some((x) => typeof x !== "string" || !x.trim())) {
+        errors.push("scope.scopes must be a non-empty array of scope strings");
+      }
+    }
   }
 
   const ids = new Set<string>();

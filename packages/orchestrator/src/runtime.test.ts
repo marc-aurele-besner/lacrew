@@ -46,6 +46,25 @@ describe("session ceilings", () => {
     assert.equal(again.keyId, tight.keyId);
   });
 
+  it("a per-run scope narrowing does not stick to the agent's policy", async () => {
+    // A flow's scope narrows its own run's key, never the agent — otherwise the
+    // next internal boot would inherit a scope the flow, not the operator, chose.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const run = await runtime.boot(A, { scopes: ["propose:intent"], persistScopePolicy: false });
+    assert.deepEqual(run.scopes, ["propose:intent"]);
+    const later = await runtime.boot(A, {});
+    assert.equal(later.scopes.length, 2, "a later boot gets the full default, not the narrowed set");
+    assert.notEqual(run.keyId, later.keyId);
+  });
+
+  it("an operator's explicit narrowing does stick to the agent", async () => {
+    // The default: a deliberate narrowing must persist, or internal boots re-widen it.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    await runtime.boot(A, { scopes: ["propose:intent"] });
+    const later = await runtime.boot(A, {});
+    assert.deepEqual(later.scopes, ["propose:intent"]);
+  });
+
   it("has no ceiling to derive without an onchain policy", async () => {
     // Mock mode has no SpendCapPolicy to read, so no ceiling can be claimed.
     const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });

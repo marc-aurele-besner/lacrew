@@ -266,6 +266,23 @@ test("scope validates a session window and rate limit", () => {
   });
   assert.equal(badRate.ok, false);
   assert.ok(badRate.errors.some((e) => e.includes("scope.rate")));
+
+  const goodScopes = validateFlow({
+    id: "w4",
+    name: "W4",
+    scope: { level: "org", scopes: ["propose:intent"] },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.ok(goodScopes.ok, goodScopes.errors.join("; "));
+
+  const badScopes = validateFlow({
+    id: "w5",
+    name: "W5",
+    scope: { level: "org", scopes: [] },
+    steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
+  });
+  assert.equal(badScopes.ok, false);
+  assert.ok(badScopes.errors.some((e) => e.includes("scope.scopes")));
 });
 
 test("org step escalates to a proposal and routes on the verdict", async () => {

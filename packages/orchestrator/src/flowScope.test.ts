@@ -50,18 +50,29 @@ describe("flow scope", () => {
     for (const n of TREE) assert.ok(visibleTo(def, n.account, TREE));
   });
 
-  it("carries the scope's window and rate onto the run's session limits", () => {
-    assert.deepEqual(scopeSessionLimits(withScope()), { window: undefined, rate: undefined });
+  it("carries the scope's window, rate, and scopes onto the run's session limits", () => {
+    assert.deepEqual(scopeSessionLimits(withScope()), {
+      window: undefined,
+      rate: undefined,
+      scopes: undefined,
+    });
     const limited = withScope({
       level: "team",
       ref: MANAGER,
       window: { start: 32400, end: 61200 },
       rate: { maxProposals: 5, ratePeriod: 3600 },
+      scopes: ["propose:intent"],
     });
     assert.deepEqual(scopeSessionLimits(limited), {
       window: { start: 32400, end: 61200 },
       rate: { maxProposals: 5, ratePeriod: 3600 },
+      scopes: ["propose:intent"],
     });
+  });
+
+  it("rejects a flow scope that declares an unknown session scope", () => {
+    const bad = withScope({ level: "org", scopes: ["spend:everything"] });
+    assert.throws(() => scopeSessionLimits(bad), /unknown session scopes: spend:everything/);
   });
 
   it("scopes a team flow to the subtree, not to siblings", () => {

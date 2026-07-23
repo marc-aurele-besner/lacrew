@@ -70,13 +70,14 @@ export class FlowBuilder {
   scope(
     level: FlowScope["level"],
     ref?: string,
-    limits?: Pick<FlowScope, "window" | "rate">,
+    limits?: Pick<FlowScope, "window" | "rate" | "scopes">,
   ): this {
     this.def.scope = {
       level,
       ...(ref === undefined ? {} : { ref }),
       ...(limits?.window ? { window: limits.window } : {}),
       ...(limits?.rate ? { rate: limits.rate } : {}),
+      ...(limits?.scopes ? { scopes: limits.scopes } : {}),
     };
     return this;
   }

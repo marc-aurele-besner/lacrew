@@ -12,7 +12,7 @@
  */
 
 import type { FlowDefinition, FlowScope, Verdict } from "@lacrew/flows";
-import type { OrgNode } from "@lacrew/core";
+import { isSessionScope, SESSION_SCOPES, type OrgNode, type SessionScope } from "@lacrew/core";
 
 const VERDICT_RANK: Record<Verdict, number> = { ALLOW: 0, ESCALATE: 1, DENY: 2 };
 
@@ -114,7 +114,20 @@ export function ceilingAgent(def: FlowDefinition): `0x${string}` | undefined {
 export function scopeSessionLimits(def: FlowDefinition): {
   window?: { start: number; end: number };
   rate?: { maxProposals: number; ratePeriod: number };
+  scopes?: SessionScope[];
 } {
   const scope = scopeOf(def);
-  return { window: scope.window, rate: scope.rate };
+  let scopes: SessionScope[] | undefined;
+  if (scope.scopes !== undefined) {
+    // The vocabulary is validated here, not in @lacrew/flows: a bad scope must
+    // fail the run with a clear error rather than reach the chain as a mask revert.
+    const unknown = scope.scopes.filter((s) => !isSessionScope(s));
+    if (unknown.length > 0) {
+      throw new Error(
+        `flow "${def.id}" declares unknown session scopes: ${unknown.join(", ")} (known: ${SESSION_SCOPES.join(", ")})`,
+      );
+    }
+    scopes = scope.scopes as SessionScope[];
+  }
+  return { window: scope.window, rate: scope.rate, scopes };
 }
