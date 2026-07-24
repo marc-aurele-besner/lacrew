@@ -1309,6 +1309,27 @@ export class CrewRuntime {
     return result;
   }
 
+  /** Batch grant change in one governance proposal (cadence-rescale). */
+  async proposeSetGrants(input: {
+    entries: Array<{ account: `0x${string}`; amount: bigint }>;
+    tier?: GovernanceTier;
+    asset?: string;
+  }): Promise<{ proposalId: string; count: number; txHash?: `0x${string}` }> {
+    const result = await this.client.proposeSetGrants(input);
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        count: result.count,
+        action: "setGrants",
+        asset: input.asset,
+        txHash: "txHash" in result ? result.txHash : undefined,
+      },
+    });
+    return result;
+  }
+
   async proposeSetNodePolicy(input: {
     node: `0x${string}`;
     policyModule: `0x${string}`;
