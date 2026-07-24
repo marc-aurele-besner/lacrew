@@ -520,6 +520,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...result, mode: runtime.mode });
   });
 
+  app.get("/treasury/balances", async (c) => {
+    // Real per-asset holdings read from each Treasury; [] in mock mode, so the
+    // cloud can replace its demo holdings book with figures the chain holds.
+    const balances = await runtime.getTreasuryBalances();
+    return jsonBig(c, { balances, mode: runtime.mode });
+  });
+
   app.get("/epoch", async (c) => {
     const q = queue.status();
     // Optional ?asset=SYMBOL|token reads that asset's own EpochStreamer.

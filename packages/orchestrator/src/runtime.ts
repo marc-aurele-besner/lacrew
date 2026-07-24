@@ -32,6 +32,7 @@ import {
   type ProtocolEvent,
   type SessionKey,
   type SessionScope,
+  type TreasuryBalance,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -1494,6 +1495,11 @@ export class CrewRuntime {
 
   async getCurrentEpoch(asset?: string): Promise<number> {
     return this.client.getCurrentEpoch(asset);
+  }
+
+  /** Real per-asset treasury holdings ([] in mock mode — no real treasury). */
+  async getTreasuryBalances(): Promise<TreasuryBalance[]> {
+    return this.client.getTreasuryBalances();
   }
 
   /**
