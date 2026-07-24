@@ -81,6 +81,38 @@ describe("InMemoryQueue", () => {
     }
   });
 
+  it("records a preset cron as the schedule when no interval override is set", async () => {
+    const prev = process.env.EPOCH_INTERVAL_MS;
+    delete process.env.EPOCH_INTERVAL_MS;
+    const q = new InMemoryQueue();
+    try {
+      await q.start({ onEpoch: async () => {} });
+      await q.scheduleEpoch("0 0 * * 0"); // weekly
+      assert.equal(q.status().epochSchedule, "0 0 * * 0");
+      // In-process queues persist nothing, so boot has no prior cadence to honor.
+      assert.equal(await q.getScheduledEpochCron(), null);
+    } finally {
+      await q.stop();
+      if (prev === undefined) delete process.env.EPOCH_INTERVAL_MS;
+      else process.env.EPOCH_INTERVAL_MS = prev;
+    }
+  });
+
+  it("leaves an arbitrary (non-preset) cron unscheduled in memory", async () => {
+    const prev = process.env.EPOCH_INTERVAL_MS;
+    delete process.env.EPOCH_INTERVAL_MS;
+    const q = new InMemoryQueue();
+    try {
+      await q.start({ onEpoch: async () => {} });
+      await q.scheduleEpoch("5 4 * * 2"); // valid cron, not a known preset
+      assert.equal(q.status().epochSchedule, null);
+    } finally {
+      await q.stop();
+      if (prev === undefined) delete process.env.EPOCH_INTERVAL_MS;
+      else process.env.EPOCH_INTERVAL_MS = prev;
+    }
+  });
+
   it("stops sweeping after stop()", async () => {
     const prev = process.env.FLOW_CRON_POLL_MS;
     process.env.FLOW_CRON_POLL_MS = "20";

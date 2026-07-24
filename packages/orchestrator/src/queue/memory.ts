@@ -3,6 +3,18 @@ import type { QueueHandlers, QueueJobName, QueueProvider, QueueStatus } from "./
 /** Sweep cadence for cron flows — fine for minute-resolution schedules. */
 const DEFAULT_FLOW_CRON_POLL_MS = 20_000;
 
+/** Poll interval for the preset epoch crons, so a reschedule is observable
+ *  without Postgres. Arbitrary crons aren't parsed here — durable mode owns that. */
+const PRESET_CRON_MS: Record<string, number> = {
+  "0 * * * *": 3_600_000,
+  "0 0 * * *": 86_400_000,
+  "0 0 * * 0": 604_800_000,
+  "0 0 1 * *": 2_629_746_000,
+};
+
+/** setInterval clamps to a signed 32-bit delay; longer schedules can't tick here. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 function flowCronPollMs(): number {
   const ms = Number(process.env.FLOW_CRON_POLL_MS ?? 0);
   return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_FLOW_CRON_POLL_MS;
@@ -52,23 +64,31 @@ export class InMemoryQueue implements QueueProvider {
   }
 
   /**
-   * Recurring epoch for demos without Postgres.
-   * Opt-in via EPOCH_INTERVAL_MS (>0). Cron string is ignored for memory
-   * (pg-boss owns real cron); HTTP POST /epoch remains available.
+   * Recurring epoch for demos without Postgres. Re-entrant, so it also serves
+   * runtime reschedules. `EPOCH_INTERVAL_MS` (>0) forces a fast dev loop and
+   * wins; otherwise a preset cron yields its poll interval so the reschedule is
+   * observable. Arbitrary crons (or intervals past setInterval's range) record
+   * the schedule for status but don't tick here — HTTP POST /epoch still runs.
    */
-  async scheduleEpoch(_cron: string): Promise<void> {
+  async scheduleEpoch(cron: string): Promise<void> {
     if (this.epochTimer) {
       clearInterval(this.epochTimer);
       this.epochTimer = null;
     }
 
-    const ms = Number(process.env.EPOCH_INTERVAL_MS ?? 0);
-    if (!Number.isFinite(ms) || ms <= 0) {
-      this.epochSchedule = null;
-      return;
-    }
+    const override = Number(process.env.EPOCH_INTERVAL_MS ?? 0);
+    const hasOverride = Number.isFinite(override) && override > 0;
+    const presetMs = PRESET_CRON_MS[cron.trim().replace(/\s+/g, " ")] ?? null;
+    const ms = hasOverride ? override : presetMs;
 
-    this.epochSchedule = `interval:${ms}`;
+    this.epochSchedule = hasOverride
+      ? `interval:${override}`
+      : presetMs != null
+        ? cron.trim().replace(/\s+/g, " ")
+        : null;
+
+    if (ms == null || ms > MAX_TIMER_MS) return;
+
     this.epochTimer = setInterval(() => {
       void this.run("epoch").catch((err) => {
         // eslint-disable-next-line no-console
@@ -76,6 +96,12 @@ export class InMemoryQueue implements QueueProvider {
       });
     }, ms);
     this.epochTimer.unref?.();
+  }
+
+  async getScheduledEpochCron(): Promise<string | null> {
+    // In-process only: nothing persists across restarts, so boot has no prior
+    // cadence to honor — the env default reapplies on each start.
+    return null;
   }
 
   /**

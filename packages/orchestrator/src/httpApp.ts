@@ -44,6 +44,15 @@ async function bodyOf<T>(c: Context): Promise<T> {
   return (await c.req.json().catch(() => ({}))) as T;
 }
 
+/** One standard cron field: `*`, numbers, ranges, lists, and steps. */
+const CRON_FIELD = /^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/;
+
+/** Cheap 5-field cron pre-check; the durable queue is the semantic backstop. */
+function isValidCron(expr: string): boolean {
+  const fields = expr.split(" ").filter(Boolean);
+  return fields.length === 5 && fields.every((f) => CRON_FIELD.test(f));
+}
+
 export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   const { runtime, queue, model, flows, mcpBackend, mcpUseMock, authToken } = options;
   const app = new Hono();
@@ -582,6 +591,37 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       },
       epochError && epochRuns.length === 0 ? 400 : 200,
     );
+  });
+
+  app.post("/epoch/schedule", async (c) => {
+    // Reschedule the recurring epoch at runtime. The cadence is a workspace
+    // setting owned by the cloud; it pushes the chosen cron here, and the
+    // durable queue persists it so the schedule survives restart.
+    const body = await bodyOf<{ cron?: string }>(c);
+    const cron =
+      typeof body.cron === "string" ? body.cron.trim().replace(/\s+/g, " ") : "";
+    if (!isValidCron(cron)) {
+      return jsonBig(
+        c,
+        { error: "invalid_cron", detail: "Expected a 5-field cron expression." },
+        400,
+      );
+    }
+    try {
+      await queue.scheduleEpoch(cron);
+    } catch (err) {
+      return jsonBig(
+        c,
+        { error: err instanceof Error ? err.message : "reschedule_failed" },
+        400,
+      );
+    }
+    const q = queue.status();
+    return jsonBig(c, {
+      schedule: q.epochSchedule ?? null,
+      queue: q.provider,
+      mode: runtime.mode,
+    });
   });
 
   return app;
