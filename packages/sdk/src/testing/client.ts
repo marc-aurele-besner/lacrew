@@ -492,26 +492,38 @@ export class LacrewClient {
 
   /**
    * Mock electorate, mirroring the deploy fixture (`DeployMockOrg`): a human
-   * root seat and a manager agent seat, both weight 1. Labelled `Mocked` — the
-   * real values live in `votingPower` / `seatRole` onchain.
+   * root seat with weight 2 (seeded by the constructor so the human outweighs
+   * agent seats) and a manager agent seat with weight 1. Labelled `Mocked` —
+   * the real values live in `votingPower` / `seatRole` onchain.
    */
   async readGovernanceSeats(): Promise<GovernanceSeat[]> {
     this.requireMock("governance");
     return [
-      { voter: MOCK_ROOT, power: "1", role: "human" },
+      { voter: MOCK_ROOT, power: "2", role: "human" },
       { voter: MOCK_MANAGER, power: "1", role: "agent" },
     ];
   }
 
-  /** Mocked quorum, matching the contract's deployed defaults. */
+  /** Mocked quorum and timing, matching the contract's deployed defaults. */
   async readGovernanceConfig(): Promise<GovernanceConfig> {
     this.requireMock("governance");
-    return { quorumYes: "2", quorumHumanYes: "1", humanRoot: MOCK_ROOT };
+    return {
+      quorumYes: "2",
+      quorumHumanYes: "1",
+      humanRoot: MOCK_ROOT,
+      totalVotingPower: "3",
+      totalHumanVotingPower: "2",
+      effectiveQuorumYes: "2",
+      effectiveQuorumHumanYes: "1",
+      votingPeriod: 3 * 24 * 3600,
+      highTierTimelock: 24 * 3600,
+      unanimityFastPath: true,
+    };
   }
 
   /**
-   * Mock vote: a supporting call casts the demo quorum (root human seat +
-   * manager agent seat), mirroring the runtime's dual-seat onchain behavior.
+   * Mock vote: a supporting call casts the root's weight-2 human seat,
+   * which alone clears both quorums — mirroring the bootstrap-safe defaults.
    */
   async voteGovernance(
     proposalId: string,
@@ -523,9 +535,9 @@ export class LacrewClient {
     if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
     if (support) {
       proposal.yesVotes += 2;
-      proposal.yesHumanVotes = (proposal.yesHumanVotes ?? 0) + 1;
+      proposal.yesHumanVotes = (proposal.yesHumanVotes ?? 0) + 2;
     } else {
-      proposal.noVotes += 1;
+      proposal.noVotes += 2;
     }
     this.audit.push({
       type: "ProposalVoted",

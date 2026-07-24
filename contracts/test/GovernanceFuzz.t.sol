@@ -17,7 +17,7 @@ contract GovernanceFuzzTest is Test {
 
     function setUp() public {
         registry = new OrgRegistry(root);
-        gov = new GovernanceModule(root);
+        gov = new GovernanceModule(root, 2);
         vm.prank(root);
         registry.setGovernor(address(gov));
         vm.startPrank(root);

@@ -100,7 +100,9 @@ contract DeployMockOrg is Script {
 
         d.usdc = new MockUSDC();
         d.registry = new OrgRegistry(humanRoot);
-        d.gov = new GovernanceModule(humanRoot);
+        // Root seeds with weight 2 vs agent weight 1: the human outweighs any single
+        // agent seat and a solo founder clears the low-tier quorum of 2 alone.
+        d.gov = new GovernanceModule(humanRoot, vm.envOr("ROOT_VOTE_POWER", uint256(2)));
 
         d.whitelist = new WhitelistPolicy();
         d.whitelist.setAllowed(x402Target, true);
@@ -157,9 +159,9 @@ contract DeployMockOrg is Script {
         d.marketplace.setSettlementRouter(address(d.router));
         d.whitelist.setAllowed(address(d.marketplace), true);
 
-        // Human root decides high-tier final say; manager is review-only agent seat.
-        // Low-tier quorum 2 still requires root + manager dual-sign for hires.
-        d.gov.setVotingPower(humanRoot, 1, GovernanceModule.SeatRole.Human);
+        // Root (weight 2, seeded in the constructor) decides high-tier final say and
+        // clears the low-tier quorum of 2 alone; the manager is a review-only agent
+        // seat whose vote can carry a low-tier proposal alongside future human seats.
         d.gov.setVotingPower(manager, 1, GovernanceModule.SeatRole.Agent);
         d.gov.setQuorumYes(2);
         d.gov.setQuorumHumanYes(1);

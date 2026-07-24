@@ -1401,7 +1401,8 @@ export class CrewRuntime {
 
   /**
    * Vote on a proposal. With MANAGER_PRIVATE_KEY set and support=true, also casts
-   * the manager seat (DeployMockOrg: root weight 1 + manager weight 1, quorum 2).
+   * the manager seat (DeployMockOrg: root weight 2 + manager weight 1, quorum 2 —
+   * the root clears quorum alone; the manager vote is recorded agent review).
    */
   async voteGovernance(
     proposalId: string,
