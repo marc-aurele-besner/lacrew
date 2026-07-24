@@ -46,16 +46,35 @@ export interface GovernanceSeat {
 
 /** Quorum thresholds and the root that may change them. All weights, not counts. */
 export interface GovernanceConfig {
-  /** All-seat yes-weight required for low tier. */
+  /** Configured all-seat yes-weight for low tier. */
   quorumYes: string;
-  /** Human-seat yes-weight required for high tier. */
+  /** Configured human-seat yes-weight for high tier. */
   quorumHumanYes: string;
   /**
-   * The only address that may call `setVotingPower` / `setQuorum*`. Note this
-   * is NOT itself routed through governance: the root can re-weight the
-   * electorate unilaterally, including granting itself quorum-clearing weight.
+   * The address that may call `setVotingPower` / `setQuorum*` / `setTiming`
+   * directly. Note this is NOT itself routed through governance: the root can
+   * re-weight the electorate unilaterally, including granting itself
+   * quorum-clearing weight. The module also accepts these calls from itself,
+   * so a High-tier proposal can retune parameters.
    */
   humanRoot: `0x${string}`;
+  /** Sum of all seat weight currently granted. */
+  totalVotingPower?: string;
+  /** Sum of human-seat weight; also defines unanimity for the fast path. */
+  totalHumanVotingPower?: string;
+  /**
+   * Quorum `execute()` actually enforces: the configured value clamped to the
+   * seated weight, so a bootstrap org is never asked for voters that do not
+   * exist. Display these, not the configured values, as the bar to clear.
+   */
+  effectiveQuorumYes?: string;
+  effectiveQuorumHumanYes?: string;
+  /** Voting window in seconds applied to proposals at creation. */
+  votingPeriod?: number;
+  /** High-tier delay in seconds after the voting deadline. May be zero. */
+  highTierTimelock?: number;
+  /** When true, unanimous human yes-weight executes high tier without waiting. */
+  unanimityFastPath?: boolean;
 }
 
 export interface OrgNode {

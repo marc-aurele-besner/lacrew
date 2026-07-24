@@ -1303,27 +1303,58 @@ export class OnchainLacrewClient {
    * one seat with power 5 clears a `quorumYes` of 2 alone.
    */
   async readGovernanceConfig(): Promise<GovernanceConfig> {
-    const [quorumYes, quorumHumanYes, humanRoot] = await Promise.all([
+    const read = <T>(
+      functionName:
+        | "quorumYes"
+        | "quorumHumanYes"
+        | "humanRoot"
+        | "totalVotingPower"
+        | "totalHumanVotingPower"
+        | "effectiveQuorumYes"
+        | "effectiveQuorumHumanYes"
+        | "votingPeriod"
+        | "highTierTimelock"
+        | "unanimityFastPath",
+    ) =>
       this.publicClient.readContract({
         address: this.addresses.governanceModule,
         abi: governanceModuleAbi,
-        functionName: "quorumYes",
-      }) as Promise<bigint>,
-      this.publicClient.readContract({
-        address: this.addresses.governanceModule,
-        abi: governanceModuleAbi,
-        functionName: "quorumHumanYes",
-      }) as Promise<bigint>,
-      this.publicClient.readContract({
-        address: this.addresses.governanceModule,
-        abi: governanceModuleAbi,
-        functionName: "humanRoot",
-      }) as Promise<`0x${string}`>,
+        functionName,
+      }) as Promise<T>;
+    const [
+      quorumYes,
+      quorumHumanYes,
+      humanRoot,
+      totalVotingPower,
+      totalHumanVotingPower,
+      effectiveQuorumYes,
+      effectiveQuorumHumanYes,
+      votingPeriod,
+      highTierTimelock,
+      unanimityFastPath,
+    ] = await Promise.all([
+      read<bigint>("quorumYes"),
+      read<bigint>("quorumHumanYes"),
+      read<`0x${string}`>("humanRoot"),
+      read<bigint>("totalVotingPower"),
+      read<bigint>("totalHumanVotingPower"),
+      read<bigint>("effectiveQuorumYes"),
+      read<bigint>("effectiveQuorumHumanYes"),
+      read<bigint>("votingPeriod"),
+      read<bigint>("highTierTimelock"),
+      read<boolean>("unanimityFastPath"),
     ]);
     return {
       quorumYes: quorumYes.toString(),
       quorumHumanYes: quorumHumanYes.toString(),
       humanRoot,
+      totalVotingPower: totalVotingPower.toString(),
+      totalHumanVotingPower: totalHumanVotingPower.toString(),
+      effectiveQuorumYes: effectiveQuorumYes.toString(),
+      effectiveQuorumHumanYes: effectiveQuorumHumanYes.toString(),
+      votingPeriod: Number(votingPeriod),
+      highTierTimelock: Number(highTierTimelock),
+      unanimityFastPath,
     };
   }
 

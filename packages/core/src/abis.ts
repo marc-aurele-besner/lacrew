@@ -1483,13 +1483,18 @@ export const governanceModuleAbi = [
         "name": "humanRoot_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "rootPower_",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "HIGH_TIER_TIMELOCK",
+    "name": "MAX_TIMELOCK",
     "inputs": [],
     "outputs": [
       {
@@ -1502,7 +1507,46 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
-    "name": "VOTING_PERIOD",
+    "name": "MAX_VOTING_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_VOTING_PERIOD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "effectiveQuorumHumanYes",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "effectiveQuorumYes",
     "inputs": [],
     "outputs": [
       {
@@ -1546,6 +1590,19 @@ export const governanceModuleAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "highTierTimelock",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1747,6 +1804,37 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
+    "name": "setTiming",
+    "inputs": [
+      {
+        "name": "votingPeriod_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "highTierTimelock_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setUnanimityFastPath",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setVotingPower",
     "inputs": [
       {
@@ -1767,6 +1855,45 @@ export const governanceModuleAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "totalHumanVotingPower",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalVotingPower",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unanimityFastPath",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1798,6 +1925,19 @@ export const governanceModuleAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "votingPeriod",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1928,6 +2068,38 @@ export const governanceModuleAbi = [
   },
   {
     "type": "event",
+    "name": "TimingUpdated",
+    "inputs": [
+      {
+        "name": "votingPeriod",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "highTierTimelock",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "UnanimityFastPathUpdated",
+    "inputs": [
+      {
+        "name": "enabled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Voted",
     "inputs": [
       {
@@ -2022,6 +2194,22 @@ export const governanceModuleAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidTiming",
+    "inputs": [
+      {
+        "name": "votingPeriod",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "highTierTimelock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoVotingPower",
     "inputs": [
       {
@@ -2074,6 +2262,11 @@ export const governanceModuleAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SelfTargetNotHighTier",
+    "inputs": []
   },
   {
     "type": "error",
