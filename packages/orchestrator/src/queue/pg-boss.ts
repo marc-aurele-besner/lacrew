@@ -62,8 +62,18 @@ export class PgBossQueue implements QueueProvider {
 
   async scheduleEpoch(cron: string): Promise<void> {
     if (!this.boss || !this.ready) throw new Error("PgBossQueue not started");
+    // pg-boss keys schedules by queue name, so this upserts the single "epoch"
+    // schedule — the same call serves boot wiring and runtime reschedules.
     await this.boss.schedule("epoch", cron, {});
     this.epochSchedule = cron;
+  }
+
+  async getScheduledEpochCron(): Promise<string | null> {
+    if (!this.boss || !this.ready) throw new Error("PgBossQueue not started");
+    // Schedules live in Postgres, so a runtime-set cadence survives restart and
+    // boot can read it back rather than reapplying the env default over it.
+    const schedules = await this.boss.getSchedules();
+    return schedules.find((s) => s.name === "epoch")?.cron ?? null;
   }
 
   /**

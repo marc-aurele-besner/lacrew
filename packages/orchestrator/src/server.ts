@@ -128,7 +128,10 @@ async function main(): Promise<void> {
   });
 
   // pg-boss: EPOCH_CRON (default hourly). memory: EPOCH_INTERVAL_MS (>0) opt-in.
-  await queue.scheduleEpoch(process.env.EPOCH_CRON ?? "0 * * * *");
+  // A cadence set at runtime persists in the durable queue, so honor an existing
+  // schedule rather than clobbering it with the env default on every restart.
+  const existingEpochCron = await queue.getScheduledEpochCron();
+  await queue.scheduleEpoch(existingEpochCron ?? process.env.EPOCH_CRON ?? "0 * * * *");
   // Cron-triggered flows (F1.17) sweep every minute through the queue, so a
   // multi-replica deployment fires each due flow once rather than once each.
   await queue.scheduleFlowCron("* * * * *");

@@ -348,3 +348,42 @@ describe("orchestrator Hono app", () => {
     assert.match(body.error, /^invalid_rate/);
   });
 });
+
+describe("POST /epoch/schedule", () => {
+  it("reschedules the epoch to a valid cron", async () => {
+    const res = await buildApp().request("/epoch/schedule", {
+      method: "POST",
+      body: JSON.stringify({ cron: "0 0 * * 0" }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { schedule: string | null; queue: string };
+    assert.equal(body.schedule, "0 0 * * 0");
+    assert.equal(body.queue, "memory");
+  });
+
+  it("normalizes whitespace in the cron before scheduling", async () => {
+    const res = await buildApp().request("/epoch/schedule", {
+      method: "POST",
+      body: JSON.stringify({ cron: "  0   0   *  * 0 " }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { schedule: string }).schedule, "0 0 * * 0");
+  });
+
+  it("rejects a malformed cron", async () => {
+    const res = await buildApp().request("/epoch/schedule", {
+      method: "POST",
+      body: JSON.stringify({ cron: "not a cron" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error: string }).error, "invalid_cron");
+  });
+
+  it("rejects a cron with the wrong field count", async () => {
+    const res = await buildApp().request("/epoch/schedule", {
+      method: "POST",
+      body: JSON.stringify({ cron: "0 0 * *" }),
+    });
+    assert.equal(res.status, 400);
+  });
+});

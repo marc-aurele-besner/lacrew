@@ -27,8 +27,18 @@ export interface QueueProvider {
   stop(): Promise<void>;
   /** Enqueue a one-shot job. */
   enqueue(name: QueueJobName, data?: Record<string, unknown>): Promise<string | null>;
-  /** Schedule recurring epoch jobs (cron). No-op for memory unless polled. */
+  /**
+   * Schedule recurring epoch jobs (cron). Re-entrant: calling again replaces the
+   * active schedule, so it doubles as the runtime reschedule path. No-op for
+   * memory unless a preset cron or EPOCH_INTERVAL_MS yields a poll interval.
+   */
   scheduleEpoch(cron: string): Promise<void>;
+  /**
+   * The persisted epoch cron, if one is already scheduled. Durable providers
+   * survive restarts, so boot can honor a runtime-set cadence instead of
+   * clobbering it with the env default. Returns null when nothing is scheduled.
+   */
+  getScheduledEpochCron(): Promise<string | null>;
   /**
    * Schedule the recurring sweep that fires due cron flows. Durable providers
    * must dispatch it to exactly one worker per tick — running the sweep in
