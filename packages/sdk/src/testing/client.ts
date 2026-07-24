@@ -8,6 +8,7 @@ import {
   MOCK_MANAGER,
   MOCK_ROOT,
   type Allowance,
+  type EpochGrant,
   type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceSeat,
@@ -601,6 +602,19 @@ export class LacrewClient {
     this.requireSingleAsset(asset);
     this.requireMock("epoch reads");
     return this.epoch;
+  }
+
+  /**
+   * Configured per-epoch grants (mirrors EpochStreamer.recipients + grantAmount).
+   * The mock streams `cap` each epoch, so `cap` is the per-epoch grant here;
+   * uncapped nodes stream nothing and aren't recipients. Base-unit strings.
+   */
+  async getGrants(asset?: string): Promise<EpochGrant[]> {
+    this.requireSingleAsset(asset);
+    this.requireMock("grant reads");
+    return this.allowances
+      .filter((a) => (a.cap ?? 0n) > 0n)
+      .map((a) => ({ account: a.node, amount: (a.cap ?? 0n).toString() }));
   }
 
   /** Stream one epoch: every active allowance gains its per-epoch cap. */

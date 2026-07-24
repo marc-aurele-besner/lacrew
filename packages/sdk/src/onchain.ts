@@ -35,6 +35,7 @@ import {
   resolveAssetStack,
   sessionScopesFromMask,
   type Allowance,
+  type EpochGrant,
   type ChainAddresses,
   type TreasuryBalance,
   type GovernanceConfig,
@@ -925,6 +926,34 @@ export class OnchainLacrewClient {
       functionName: "currentEpoch",
     })) as bigint;
     return Number(epoch);
+  }
+
+  /**
+   * Every configured per-epoch grant on an asset's EpochStreamer — its
+   * `recipients()` and each one's `grantAmount`. Amounts are base-unit strings
+   * so a cadence-change rescale stays exact. Empty when the streamer is unset or
+   * has no recipients. `asset` selects the stack; omit it for the primary asset.
+   */
+  async getGrants(asset?: string): Promise<EpochGrant[]> {
+    const addr = this.assetStreamer(asset);
+    if (!addr) return [];
+    const recipients = (await this.publicClient.readContract({
+      address: addr,
+      abi: epochStreamerAbi,
+      functionName: "recipients",
+    })) as `0x${string}`[];
+    if (recipients.length === 0) return [];
+    const amounts = (await Promise.all(
+      recipients.map((node) =>
+        this.publicClient.readContract({
+          address: addr,
+          abi: epochStreamerAbi,
+          functionName: "grantAmount",
+          args: [node],
+        }),
+      ),
+    )) as bigint[];
+    return recipients.map((account, i) => ({ account, amount: amounts[i]!.toString() }));
   }
 
   /**

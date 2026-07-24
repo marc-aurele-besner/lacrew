@@ -349,6 +349,23 @@ describe("orchestrator Hono app", () => {
   });
 });
 
+describe("GET /governance/grants", () => {
+  it("returns configured per-epoch grants as base-unit strings", async () => {
+    const res = await buildApp().request("/governance/grants");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      grants: Array<{ account: string; amount: string }>;
+    };
+    assert.ok(Array.isArray(body.grants));
+    // Mock org seeds at least one funded node; amounts are exact strings.
+    assert.ok(body.grants.length >= 1);
+    for (const g of body.grants) {
+      assert.match(g.account, /^0x[a-fA-F0-9]{40}$/);
+      assert.match(g.amount, /^\d+$/);
+    }
+  });
+});
+
 describe("POST /epoch/schedule", () => {
   it("reschedules the epoch to a valid cron", async () => {
     const res = await buildApp().request("/epoch/schedule", {

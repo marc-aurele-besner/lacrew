@@ -87,6 +87,16 @@ export interface Allowance {
   cap: bigint | null;
 }
 
+/**
+ * One node's per-epoch grant on an EpochStreamer — the amount streamed into its
+ * allowance each payroll run. `amount` is the asset's base units as an exact
+ * string (never a float), so it can be rescaled with BigInt when cadence changes.
+ */
+export interface EpochGrant {
+  account: `0x${string}`;
+  amount: string;
+}
+
 /** Human-readable preflight of the agent's intended action (PRD F1.16). */
 export type IntentSimulation = {
   status: "ok" | "warning" | "revert";
