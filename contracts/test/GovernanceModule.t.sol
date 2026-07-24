@@ -16,7 +16,7 @@ contract GovernanceModuleTest is Test {
 
     function setUp() public {
         registry = new OrgRegistry(root);
-        gov = new GovernanceModule(root);
+        gov = new GovernanceModule(root, 2);
         vm.prank(root);
         registry.setGovernor(address(gov));
 
@@ -226,6 +226,207 @@ contract GovernanceModuleTest is Test {
         vm.warp(block.timestamp + 3 days + 1 days + 1);
         gov.execute(id);
         assertEq(registry.getNode(worker).account, worker);
+    }
+
+    /// Fresh org, one human, default quorums: no deadlock, no waiting.
+    function test_soloRootBootstrapExecutesLowTierImmediately() public {
+        address solo = makeAddr("solo-root");
+        OrgRegistry soloRegistry = new OrgRegistry(solo);
+        GovernanceModule soloGov = new GovernanceModule(solo, 2);
+        vm.prank(solo);
+        soloRegistry.setGovernor(address(soloGov));
+
+        address worker = makeAddr("first-hire");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, solo)
+        );
+        uint256 id = soloGov.propose(GovernanceModule.Tier.Low, address(soloRegistry), data);
+
+        vm.prank(solo);
+        soloGov.vote(id, true);
+        soloGov.execute(id);
+        assertEq(soloRegistry.getNode(worker).account, worker);
+    }
+
+    /// Unanimity fast path: a solo root's high-tier proposal skips the timelock.
+    function test_soloRootHighTierSkipsTimelockOnUnanimity() public {
+        address solo = makeAddr("solo-root-high");
+        OrgRegistry soloRegistry = new OrgRegistry(solo);
+        GovernanceModule soloGov = new GovernanceModule(solo, 2);
+        vm.prank(solo);
+        soloRegistry.setGovernor(address(soloGov));
+
+        address managerHire = makeAddr("first-manager");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (managerHire, IOrgRegistry.NodeKind.ManagerAgent, solo)
+        );
+        uint256 id = soloGov.propose(GovernanceModule.Tier.High, address(soloRegistry), data);
+
+        vm.prank(solo);
+        soloGov.vote(id, true);
+        soloGov.execute(id);
+        assertEq(soloRegistry.getNode(managerHire).account, managerHire);
+    }
+
+    /// Effective quorum clamps to seated weight: even a weight-1 root is not
+    /// deadlocked behind quorumYes = 2 when no other seats exist.
+    function test_effectiveQuorumClampsToSeatedWeight() public {
+        address solo = makeAddr("light-root");
+        OrgRegistry soloRegistry = new OrgRegistry(solo);
+        GovernanceModule soloGov = new GovernanceModule(solo, 1);
+        vm.prank(solo);
+        soloRegistry.setGovernor(address(soloGov));
+        assertEq(soloGov.effectiveQuorumYes(), 1);
+
+        address worker = makeAddr("clamped-hire");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, solo)
+        );
+        uint256 id = soloGov.propose(GovernanceModule.Tier.Low, address(soloRegistry), data);
+        vm.prank(solo);
+        soloGov.vote(id, true);
+        soloGov.execute(id);
+        assertEq(soloRegistry.getNode(worker).account, worker);
+
+        // Seating more weight restores the configured quorum.
+        vm.prank(solo);
+        soloGov.setVotingPower(makeAddr("second-seat"), 3, GovernanceModule.SeatRole.Agent);
+        assertEq(soloGov.effectiveQuorumYes(), 2);
+    }
+
+    /// The fast path needs ALL human weight — one silent human keeps the timelock.
+    function test_fastPathBlockedWhileAnotherHumanHasNotVoted() public {
+        address worker = makeAddr("guarded-worker");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.prank(voter1);
+        gov.vote(id, true);
+        // voter2 (human, weight 1) has not voted: 3 of 4 human weight is not unanimity.
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.TimelockNotElapsed.selector, id, eta)
+        );
+        gov.execute(id);
+
+        vm.prank(voter2);
+        gov.vote(id, true);
+        gov.execute(id);
+        assertEq(registry.getNode(worker).account, worker);
+    }
+
+    function test_fastPathCanBeDisabled() public {
+        vm.prank(root);
+        gov.setUnanimityFastPath(false);
+
+        address worker = makeAddr("slow-worker");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(voter2);
+        gov.vote(id, true);
+
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.TimelockNotElapsed.selector, id, eta)
+        );
+        gov.execute(id);
+
+        vm.warp(eta + 1);
+        gov.execute(id);
+        assertEq(registry.getNode(worker).account, worker);
+    }
+
+    function test_setTimingBoundsAndEffect() public {
+        vm.prank(root);
+        gov.setTiming(1 hours, 0);
+
+        address worker = makeAddr("fast-timing");
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (worker, IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+        (, , , , , , , , uint256 deadline, uint256 eta, ) = gov.proposals(id);
+        assertEq(deadline, block.timestamp + 1 hours);
+        assertEq(eta, deadline);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.InvalidTiming.selector, 30 minutes, 0)
+        );
+        vm.prank(root);
+        gov.setTiming(30 minutes, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.InvalidTiming.selector, 1 days, 31 days)
+        );
+        vm.prank(root);
+        gov.setTiming(1 days, 31 days);
+
+        address stranger = makeAddr("timing-stranger");
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.NotHumanRoot.selector, stranger)
+        );
+        vm.prank(stranger);
+        gov.setTiming(2 days, 1 days);
+    }
+
+    /// Parameter changes can route through governance itself — but only High tier,
+    /// so agent seats can never re-weight the electorate on a low-tier vote.
+    function test_selfTargetRequiresHighTier() public {
+        bytes memory data = abi.encodeCall(GovernanceModule.setQuorumYes, (3));
+        vm.expectRevert(GovernanceModule.SelfTargetNotHighTier.selector);
+        gov.propose(GovernanceModule.Tier.Low, address(gov), data);
+    }
+
+    function test_governanceCanRetuneItselfHighTier() public {
+        bytes memory data = abi.encodeCall(GovernanceModule.setTiming, (2 days, 12 hours));
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(gov), data);
+
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(voter2);
+        gov.vote(id, true);
+        gov.execute(id);
+
+        assertEq(gov.votingPeriod(), 2 days);
+        assertEq(gov.highTierTimelock(), 12 hours);
+    }
+
+    function test_totalsTrackSeatChanges() public {
+        // setUp: root 2 (constructor) + voter1 1 + voter2 1 humans, agent 1.
+        assertEq(gov.totalVotingPower(), 5);
+        assertEq(gov.totalHumanVotingPower(), 4);
+
+        vm.prank(root);
+        gov.setVotingPower(voter1, 3, GovernanceModule.SeatRole.Human);
+        assertEq(gov.totalVotingPower(), 7);
+        assertEq(gov.totalHumanVotingPower(), 6);
+
+        // Revoke and reclassify.
+        vm.startPrank(root);
+        gov.setVotingPower(voter1, 0, GovernanceModule.SeatRole.None);
+        gov.setVotingPower(agent, 2, GovernanceModule.SeatRole.Human);
+        vm.stopPrank();
+        assertEq(gov.totalVotingPower(), 5);
+        assertEq(gov.totalHumanVotingPower(), 5);
+        assertEq(uint8(gov.seatRole(voter1)), uint8(GovernanceModule.SeatRole.None));
     }
 
     function test_executeRemoveNodeRewiresViaGovernance() public {
