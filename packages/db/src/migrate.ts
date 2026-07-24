@@ -4,6 +4,7 @@
  */
 
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDb, getDatabaseUrl } from "./client.js";
@@ -48,11 +49,25 @@ async function main(): Promise<void> {
   console.log("[@lacrew/db] migrations applied");
 }
 
-const isCli =
-  process.argv[1] &&
-  (process.argv[1].endsWith("migrate.ts") || process.argv[1].endsWith("migrate.js"));
+/**
+ * True only when this file is the process entrypoint.
+ *
+ * Matching on the filename alone fires whenever *any* migrate.ts is the
+ * entrypoint — @lacrew.xyz/tenancy has one, and importing @lacrew/db from it
+ * silently ran these migrations as a side effect. realpath both sides so a
+ * pnpm-linked copy still matches itself.
+ */
+function isEntrypoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
 
-if (isCli) {
+if (isEntrypoint()) {
   main().catch((err) => {
     console.error(err);
     process.exitCode = 1;
