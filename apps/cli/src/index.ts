@@ -246,6 +246,12 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "treasury": {
+      // Real per-asset holdings (total / liquid / reserved) from each Treasury.
+      printJson(await client.getTreasuryBalances());
+      return;
+    }
+
     case "intents": {
       printJson(await client.getPendingIntents());
       return;
@@ -650,6 +656,7 @@ Commands:
   version                   Print CLI version
   org [--rpc [url]]         Print org tree (mock or onchain)
   allowances [--asset <sym>] [--rpc]  Print allowances (per asset with --asset)
+  treasury [--rpc]          Print per-asset treasury holdings (total/liquid/reserved)
   intents [--rpc]           List pending escalations
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
   sessions [--rpc]          List session keys (onchain SessionRegistry when --rpc)

@@ -212,6 +212,15 @@ describe("orchestrator Hono app", () => {
     assert.equal(proposalsBody.proposals.length, 1);
   });
 
+  it("serves per-asset treasury balances (empty in mock mode, not invented)", async () => {
+    const res = await buildApp().request("/treasury/balances");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { balances: unknown[]; mode: string };
+    // The offline runtime holds no real treasury, so it reports no holdings
+    // rather than a fabricated book.
+    assert.deepEqual(body.balances, []);
+  });
+
   it("threads an asset selector through grant/epoch and rejects non-primary in mock mode", async () => {
     const app = buildApp();
     const worker = "0x000000000000000000000000000000000000dEaD";
