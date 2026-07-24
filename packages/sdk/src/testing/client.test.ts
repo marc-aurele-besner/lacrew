@@ -106,6 +106,20 @@ describe("LacrewClient resolve recursion", () => {
     assert.equal(nodes.find((n) => n.account === MOCK_MANAGER)?.active, true);
   });
 
+  it("reports configured per-epoch grants as exact base-unit strings", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const grants = await client.getGrants();
+    // Every capped node is a recipient; each amount matches its cap exactly.
+    const allowances = await client.getAllowances();
+    const capped = allowances.filter((a) => (a.cap ?? 0n) > 0n);
+    assert.equal(grants.length, capped.length);
+    for (const g of grants) {
+      assert.equal(typeof g.amount, "string");
+      const cap = allowances.find((a) => a.node === g.account)?.cap ?? 0n;
+      assert.equal(g.amount, cap.toString());
+    }
+  });
+
   it("streams mock epochs into allowances", async () => {
     const client = createLacrewClient({ useMock: true });
     assert.equal(await client.getCurrentEpoch(), 0);

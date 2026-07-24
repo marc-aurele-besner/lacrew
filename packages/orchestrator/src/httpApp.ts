@@ -536,6 +536,23 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { balances, mode: runtime.mode });
   });
 
+  app.get("/governance/grants", async (c) => {
+    // Configured per-epoch grants for an asset's EpochStreamer — the current
+    // budget the cloud reads to rescale when the workspace cadence changes.
+    // Optional ?asset=SYMBOL|token; omit for the primary (USDC) stack.
+    const asset = c.req.query("asset") || undefined;
+    try {
+      const grants = await runtime.getGrants(asset);
+      return jsonBig(c, { grants, asset, mode: runtime.mode });
+    } catch (err) {
+      return jsonBig(
+        c,
+        { error: err instanceof Error ? err.message : "grants_read_failed" },
+        400,
+      );
+    }
+  });
+
   app.get("/epoch", async (c) => {
     const q = queue.status();
     // Optional ?asset=SYMBOL|token reads that asset's own EpochStreamer.

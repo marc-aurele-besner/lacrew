@@ -33,6 +33,7 @@ import {
   type SessionKey,
   type SessionScope,
   type TreasuryBalance,
+  type EpochGrant,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -1495,6 +1496,11 @@ export class CrewRuntime {
 
   async getCurrentEpoch(asset?: string): Promise<number> {
     return this.client.getCurrentEpoch(asset);
+  }
+
+  /** Per-epoch grants configured on an asset's EpochStreamer (for cadence rescale). */
+  async getGrants(asset?: string): Promise<EpochGrant[]> {
+    return this.client.getGrants(asset);
   }
 
   /** Real per-asset treasury holdings ([] in mock mode — no real treasury). */
