@@ -155,4 +155,35 @@ describe("multi-asset budgeting (F0.4)", () => {
       );
     },
   );
+
+  it(
+    "reads real per-asset treasury holdings from each Treasury",
+    { skip: multiAssetSkip },
+    async () => {
+      const client = createOnchainClient({
+        transport: http(rpc!),
+        chainId: ANVIL_CHAIN_ID,
+        addresses: anvilDeployment!,
+      });
+      const balances = await client.getTreasuryBalances();
+      const usdc = balances.find((b) => b.symbol === "USDC");
+      const weth = balances.find((b) => b.symbol === "WETH");
+      assert.ok(usdc && weth, "both asset stacks are reported");
+
+      // Funded amounts from DeployMockOrg (TREASURY_FUND_USDC / _WETH defaults).
+      // total is token.balanceOf(treasury) — streaming moves liquid→reserved but
+      // never changes it, so it is stable regardless of epochs other tests ran.
+      assert.equal(usdc.decimals, 6);
+      assert.equal(usdc.total, 100_000n * 10n ** 6n);
+      assert.equal(weth.decimals, 18);
+      assert.equal(weth.total, 100n * 10n ** 18n);
+
+      // The conservation identity each Treasury maintains: liquid = total - reserved.
+      for (const b of [usdc, weth]) {
+        assert.equal(b.liquid + b.reserved, b.total, `${b.symbol} liquid+reserved=total`);
+      }
+      // The two stacks are denominated in different tokens.
+      assert.notEqual(usdc.token.toLowerCase(), weth.token.toLowerCase());
+    },
+  );
 });

@@ -229,6 +229,23 @@ export interface AssetStack {
   policyStack?: `0x${string}`;
 }
 
+/**
+ * One asset's treasury holdings, read from that asset's own `Treasury`.
+ *
+ * `total` is `token.balanceOf(treasury)` — everything the treasury holds;
+ * `reserved` is `totalReserved()` — the sum already committed to node
+ * allowances; `liquid` is `liquidBalance()` — the unreserved remainder. All are
+ * in the asset's own base units (see `decimals`).
+ */
+export interface TreasuryBalance {
+  symbol: string;
+  token: `0x${string}`;
+  decimals: number;
+  total: bigint;
+  liquid: bigint;
+  reserved: bigint;
+}
+
 export interface ChainAddresses {
   chainId: number;
   orgRegistry: `0x${string}`;

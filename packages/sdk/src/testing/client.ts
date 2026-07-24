@@ -16,6 +16,7 @@ import {
   type OrgNode,
   type ProtocolEvent,
   type SessionKey,
+  type TreasuryBalance,
   type Verdict,
 } from "@lacrew/core";
 import type { ResolveResult } from "../types.js";
@@ -114,6 +115,14 @@ export class LacrewClient {
       ? this.allowances.filter((a) => a.node.toLowerCase() === node.toLowerCase())
       : this.allowances;
     return rows.map((a) => ({ ...a }));
+  }
+
+  /**
+   * The offline client holds no real treasury, so it reports no holdings rather
+   * than inventing a balance — real per-asset figures need an onchain client.
+   */
+  async getTreasuryBalances(): Promise<TreasuryBalance[]> {
+    return [];
   }
 
   /** Pending escalations awaiting approval. */

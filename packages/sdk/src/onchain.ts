@@ -7,6 +7,7 @@ import {
   createPublicClient,
   createWalletClient,
   encodeFunctionData,
+  erc20Abi,
   keccak256,
   toBytes,
   type Account,
@@ -30,10 +31,12 @@ import {
   policyModuleAbi,
   marketplacePaymentsAbi,
   mockUsdcAbi,
+  listAssetStacks,
   resolveAssetStack,
   sessionScopesFromMask,
   type Allowance,
   type ChainAddresses,
+  type TreasuryBalance,
   type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceProposalState,
@@ -261,6 +264,52 @@ export class OnchainLacrewClient {
       ]);
       if (balance === 0n && n.kind === "human_root") continue;
       out.push({ node: n.account, token, balance, epoch, cap });
+    }
+    return out;
+  }
+
+  /**
+   * Real per-asset treasury holdings, read from each asset stack's own
+   * `Treasury`: `total` = `token.balanceOf(treasury)`, `reserved` =
+   * `totalReserved()`, `liquid` = `liquidBalance()`. One row per stack (the
+   * primary/USDC stack first, then any extras), so the cloud can replace its
+   * demo holdings book with figures the chain actually holds.
+   */
+  async getTreasuryBalances(): Promise<TreasuryBalance[]> {
+    const out: TreasuryBalance[] = [];
+    for (const stack of listAssetStacks(this.addresses)) {
+      if (
+        !stack.treasury ||
+        stack.treasury === "0x0000000000000000000000000000000000000000"
+      ) {
+        continue;
+      }
+      const [total, liquid, reserved] = await Promise.all([
+        this.publicClient.readContract({
+          address: stack.token,
+          abi: erc20Abi,
+          functionName: "balanceOf",
+          args: [stack.treasury],
+        }) as Promise<bigint>,
+        this.publicClient.readContract({
+          address: stack.treasury,
+          abi: treasuryAbi,
+          functionName: "liquidBalance",
+        }) as Promise<bigint>,
+        this.publicClient.readContract({
+          address: stack.treasury,
+          abi: treasuryAbi,
+          functionName: "totalReserved",
+        }) as Promise<bigint>,
+      ]);
+      out.push({
+        symbol: stack.symbol,
+        token: stack.token,
+        decimals: stack.decimals,
+        total,
+        liquid,
+        reserved,
+      });
     }
     return out;
   }
