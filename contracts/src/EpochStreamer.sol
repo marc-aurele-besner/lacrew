@@ -30,6 +30,7 @@ contract EpochStreamer {
     error ZeroAddress();
     error EmptySchedule();
     error GovernorAlreadySet();
+    error LengthMismatch();
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator(msg.sender);
@@ -59,6 +60,21 @@ contract EpochStreamer {
     /// @notice Set (or clear with amount=0) the per-epoch grant for `node`.
     function setGrant(address node, uint256 amount) external {
         if (msg.sender != operator && msg.sender != governor) revert NotAuthorized(msg.sender);
+        _setGrant(node, amount);
+    }
+
+    /// @notice Batch form of `setGrant` — set/clear many grants at once, so a
+    ///         cadence-change rescale is one call (and, through governance, one
+    ///         proposal) instead of N. Same authorization; arrays must align.
+    function setGrants(address[] calldata nodes, uint256[] calldata amounts) external {
+        if (msg.sender != operator && msg.sender != governor) revert NotAuthorized(msg.sender);
+        if (nodes.length != amounts.length) revert LengthMismatch();
+        for (uint256 i = 0; i < nodes.length; i++) {
+            _setGrant(nodes[i], amounts[i]);
+        }
+    }
+
+    function _setGrant(address node, uint256 amount) private {
         if (node == address(0)) revert ZeroAddress();
         if (amount == 0) {
             if (_isRecipient[node]) {

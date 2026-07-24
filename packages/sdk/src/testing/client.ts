@@ -52,6 +52,7 @@ type MockProposalAction =
   | { kind: "setActive"; account: `0x${string}`; active: boolean }
   | { kind: "reparent"; account: `0x${string}`; newParent: `0x${string}` }
   | { kind: "setGrant"; account: `0x${string}`; amount: bigint }
+  | { kind: "setGrants"; entries: Array<{ account: `0x${string}`; amount: bigint }> }
   | { kind: "raw" };
 
 export class LacrewClient {
@@ -472,6 +473,23 @@ export class LacrewClient {
     return { proposalId: proposal.id, account: input.account };
   }
 
+  async proposeSetGrants(input: {
+    entries: Array<{ account: `0x${string}`; amount: bigint }>;
+    tier?: GovernanceTier;
+    asset?: string;
+  }): Promise<{ proposalId: string; count: number }> {
+    this.requireSingleAsset(input.asset);
+    this.requireMock("governance");
+    if (input.entries.length === 0) throw new Error("no grants to set");
+    const proposal = this.createMockProposal(
+      input.tier ?? "high",
+      input.entries[0]!.account,
+      { kind: "setGrants", entries: input.entries },
+      { count: String(input.entries.length), action: "setGrants" },
+    );
+    return { proposalId: proposal.id, count: input.entries.length };
+  }
+
   /**
    * Mock electorate, mirroring the deploy fixture (`DeployMockOrg`): a human
    * root seat and a manager agent seat, both weight 1. Labelled `Mocked` — the
@@ -585,6 +603,13 @@ export class LacrewClient {
         (a) => a.node.toLowerCase() === action.account.toLowerCase(),
       );
       if (allowance) allowance.cap = action.amount;
+    } else if (action?.kind === "setGrants") {
+      for (const entry of action.entries) {
+        const allowance = this.allowances.find(
+          (a) => a.node.toLowerCase() === entry.account.toLowerCase(),
+        );
+        if (allowance) allowance.cap = entry.amount;
+      }
     }
 
     proposal.state = "executed";

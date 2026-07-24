@@ -80,4 +80,48 @@ contract EpochStreamerTest is Test {
         vm.expectRevert(abi.encodeWithSelector(EpochStreamer.NotAuthorized.selector, makeAddr("stranger")));
         streamer.setGrant(newbie, 1);
     }
+
+    function test_setGrantsBatchSetsAndClears() public {
+        address a = makeAddr("a");
+        address b = makeAddr("b");
+        address[] memory nodes = new address[](3);
+        uint256[] memory amounts = new uint256[](3);
+        nodes[0] = a;
+        amounts[0] = 10 * ONE;
+        nodes[1] = b;
+        amounts[1] = 20 * ONE;
+        nodes[2] = worker; // clear the seeded worker in the same batch
+        amounts[2] = 0;
+
+        vm.prank(operator);
+        streamer.setGrants(nodes, amounts);
+
+        assertEq(streamer.grantAmount(a), 10 * ONE);
+        assertEq(streamer.grantAmount(b), 20 * ONE);
+        assertEq(streamer.grantAmount(worker), 0);
+        // worker removed, a and b added, manager unchanged.
+        assertEq(streamer.recipients().length, 3);
+    }
+
+    function test_setGrantsRejectsLengthMismatch() public {
+        address[] memory nodes = new address[](2);
+        uint256[] memory amounts = new uint256[](1);
+        nodes[0] = makeAddr("a");
+        nodes[1] = makeAddr("b");
+        amounts[0] = 1;
+        vm.prank(operator);
+        vm.expectRevert(EpochStreamer.LengthMismatch.selector);
+        streamer.setGrants(nodes, amounts);
+    }
+
+    function test_setGrantsRejectsStranger() public {
+        address[] memory nodes = new address[](1);
+        uint256[] memory amounts = new uint256[](1);
+        nodes[0] = makeAddr("a");
+        amounts[0] = 1;
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(EpochStreamer.NotAuthorized.selector, stranger));
+        streamer.setGrants(nodes, amounts);
+    }
 }

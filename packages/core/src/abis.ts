@@ -3526,6 +3526,24 @@ export const epochStreamerAbi = [
   },
   {
     "type": "function",
+    "name": "setGrants",
+    "inputs": [
+      {
+        "name": "nodes",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "amounts",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setOperator",
     "inputs": [
       {
@@ -3633,6 +3651,11 @@ export const epochStreamerAbi = [
   {
     "type": "error",
     "name": "GovernorAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LengthMismatch",
     "inputs": []
   },
   {

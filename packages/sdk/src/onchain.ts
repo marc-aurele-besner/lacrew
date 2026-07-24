@@ -1137,6 +1137,34 @@ export class OnchainLacrewClient {
     return { ...result, account: input.account };
   }
 
+  /**
+   * Set many per-epoch grants in one governance proposal (EpochStreamer.setGrants).
+   * A cadence-change rescale that touches N nodes becomes one proposal to approve
+   * instead of N. `amount` is base units of the asset's own decimals.
+   */
+  async proposeSetGrants(input: {
+    entries: Array<{ account: `0x${string}`; amount: bigint }>;
+    tier?: GovernanceTier;
+    asset?: string;
+  }): Promise<{ proposalId: string; count: number; txHash: `0x${string}` }> {
+    const addr = this.assetStreamer(input.asset);
+    if (!addr) {
+      throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
+    }
+    if (input.entries.length === 0) throw new Error("no grants to set");
+    const data = encodeFunctionData({
+      abi: epochStreamerAbi,
+      functionName: "setGrants",
+      args: [input.entries.map((e) => e.account), input.entries.map((e) => e.amount)],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: addr,
+      data,
+    });
+    return { ...result, count: input.entries.length };
+  }
+
   /** Propose EscalationRouter.setNodePolicy (high tier — policy upgrade). */
   async proposeSetNodePolicy(input: {
     node: `0x${string}`;

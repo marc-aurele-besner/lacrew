@@ -454,6 +454,33 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
+  app.post("/governance/propose-set-grants", async (c) => {
+    // Batch grant change in one proposal — the cadence-rescale path. Entries
+    // carry base-unit amount strings; amount 0 clears that node's grant.
+    const body = await bodyOf<{
+      entries?: Array<{ account?: `0x${string}`; amount?: string | number }>;
+      tier?: "low" | "high";
+      asset?: string;
+    }>(c);
+    const raw = body.entries ?? [];
+    if (raw.length === 0) {
+      return jsonBig(c, { error: "entries_required" }, 400);
+    }
+    if (raw.some((e) => !e.account || e.amount === undefined || e.amount === "")) {
+      return jsonBig(c, { error: "each_entry_needs_account_and_amount" }, 400);
+    }
+    const entries = raw.map((e) => ({ account: e.account!, amount: BigInt(e.amount!) }));
+    try {
+      const result = await runtime.proposeSetGrants({ entries, tier: body.tier, asset: body.asset });
+      return jsonBig(c, { ...result, mode: runtime.mode, asset: body.asset });
+    } catch (err) {
+      if (body.asset) {
+        return jsonBig(c, { error: err instanceof Error ? err.message : "propose_failed" }, 400);
+      }
+      throw err;
+    }
+  });
+
   app.post("/governance/propose-set-node-policy", async (c) => {
     const body = await bodyOf<{
       node?: `0x${string}`;

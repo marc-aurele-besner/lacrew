@@ -349,6 +349,43 @@ describe("orchestrator Hono app", () => {
   });
 });
 
+describe("POST /governance/propose-set-grants", () => {
+  const entry = (account: string, amount: string) => ({ account, amount });
+
+  it("creates one proposal for a batch of grants", async () => {
+    const res = await buildApp().request("/governance/propose-set-grants", {
+      method: "POST",
+      body: JSON.stringify({
+        entries: [
+          entry("0x2222222222222222222222222222222222222222", "10000000"),
+          entry("0x3333333333333333333333333333333333333333", "20000000"),
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { proposalId: string; count: number };
+    assert.ok(body.proposalId);
+    assert.equal(body.count, 2);
+  });
+
+  it("rejects an empty batch", async () => {
+    const res = await buildApp().request("/governance/propose-set-grants", {
+      method: "POST",
+      body: JSON.stringify({ entries: [] }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error: string }).error, "entries_required");
+  });
+
+  it("rejects an entry missing its amount", async () => {
+    const res = await buildApp().request("/governance/propose-set-grants", {
+      method: "POST",
+      body: JSON.stringify({ entries: [{ account: "0x2222222222222222222222222222222222222222" }] }),
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
 describe("GET /governance/grants", () => {
   it("returns configured per-epoch grants as base-unit strings", async () => {
     const res = await buildApp().request("/governance/grants");

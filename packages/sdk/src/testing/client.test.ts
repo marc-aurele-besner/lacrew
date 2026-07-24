@@ -72,6 +72,27 @@ describe("LacrewClient resolve recursion", () => {
     await assert.rejects(() => client.executeGovernance(high.proposalId), /not active/);
   });
 
+  it("sets many grants in one proposal (batch rescale)", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const entries = [
+      { account: MOCK_WORKER, amount: 10n * 10n ** 6n },
+      { account: MOCK_MANAGER, amount: 20n * 10n ** 6n },
+    ];
+    const { proposalId, count } = await client.proposeSetGrants({ entries });
+    assert.equal(count, 2);
+    await client.voteGovernance(proposalId, true);
+    const { proposal } = await client.executeGovernance(proposalId);
+    assert.equal(proposal.state, "executed");
+
+    const grants = await client.getGrants();
+    const amountFor = (acct: string) =>
+      grants.find((g) => g.account.toLowerCase() === acct.toLowerCase())?.amount;
+    assert.equal(amountFor(MOCK_WORKER), (10n * 10n ** 6n).toString());
+    assert.equal(amountFor(MOCK_MANAGER), (20n * 10n ** 6n).toString());
+
+    await assert.rejects(() => client.proposeSetGrants({ entries: [] }), /no grants/);
+  });
+
   it("fire rewires children to the fired node's parent", async () => {
     const client = createLacrewClient({ useMock: true });
     const fire = await client.proposeFire({ account: MOCK_MANAGER });
