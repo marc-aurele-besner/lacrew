@@ -34,7 +34,13 @@ export async function runDbMigrations(): Promise<MigrateResult> {
 
 async function main(): Promise<void> {
   if (!getDatabaseUrl()) {
-    console.error("[@lacrew/db] DATABASE_URL is not set — skip migrate");
+    // Asking to migrate with no database is a config mistake, not a no-op —
+    // exit non-zero so a deploy step never reports success on a stale schema.
+    console.error(
+      "[@lacrew/db] DATABASE_URL is not set — nothing to migrate.\n" +
+        "  Set it in lacrew/.env (read by this script) or export it, e.g.\n" +
+        "  DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew",
+    );
     process.exitCode = 1;
     return;
   }
