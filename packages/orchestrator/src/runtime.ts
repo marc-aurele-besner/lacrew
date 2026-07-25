@@ -1216,6 +1216,32 @@ export class CrewRuntime {
     }
   }
 
+  /**
+   * Withdraw everything accrued to this runtime's own signing account. The
+   * contract pays `msg.sender`, so the payout can only land on the wallet
+   * that registered this deployment's listings — a caller cannot point it at
+   * someone else's balance. The owed amount is read first: a zero balance is
+   * refused here as `nothing_owed` rather than surfacing as a raw revert.
+   */
+  async marketplaceWithdraw(): Promise<{
+    txHash: string;
+    seller: `0x${string}`;
+    withdrawn: string;
+  }> {
+    if (!isOnchainClient(this.client)) throw new Error("marketplace_requires_chain");
+    const seller = this.client.walletClient?.account?.address;
+    if (!seller) throw new Error("marketplace_requires_chain");
+    const owed = await this.client.marketplaceEarnings(seller);
+    if (owed === 0n) throw new Error("nothing_owed");
+    const { txHash } = await this.client.withdrawMarketplaceEarnings();
+    this.pushAudit({
+      type: "MarketplaceWithdrawn",
+      at: new Date().toISOString(),
+      payload: { seller, amount: owed.toString(), txHash },
+    });
+    return { txHash, seller, withdrawn: owed.toString() };
+  }
+
   async proposeHire(input: {
     label: string;
     kind?: "manager_agent" | "worker_agent";

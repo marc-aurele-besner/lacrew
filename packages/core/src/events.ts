@@ -17,7 +17,8 @@ export type ProtocolEventType =
   | "FlowSaved"
   | "FlowRun"
   | "MarketplacePurchase"
-  | "MarketplaceListed";
+  | "MarketplaceListed"
+  | "MarketplaceWithdrawn";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;
