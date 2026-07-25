@@ -301,6 +301,31 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...quote, ...entitlement, mode: runtime.mode, chainId: runtime.chainId });
   });
 
+  /**
+   * Batch receipt reads: `buyers` is a comma-separated address list, answered
+   * with a per-buyer map plus `purchased` (true when any buyer holds a
+   * receipt). Lets a control plane gate paid-content delivery on "does any
+   * agent in this org hold an entitlement?" in one round trip.
+   */
+  app.get("/marketplace/entitlement", async (c) => {
+    const catalogId = c.req.query("catalogId");
+    if (!catalogId) return jsonBig(c, { error: "catalogId_required" }, 400);
+    const buyers = (c.req.query("buyers") ?? "")
+      .split(",")
+      .map((b) => b.trim())
+      .filter(Boolean);
+    if (buyers.length === 0) return jsonBig(c, { error: "buyers_required" }, 400);
+    if (buyers.length > 100) return jsonBig(c, { error: "too_many_buyers" }, 400);
+    if (!buyers.every((b) => /^0x[0-9a-fA-F]{40}$/.test(b))) {
+      return jsonBig(c, { error: "buyers_must_be_addresses" }, 400);
+    }
+    const result = await runtime.marketplaceEntitlements(
+      catalogId,
+      buyers as `0x${string}`[],
+    );
+    return jsonBig(c, { catalogId, ...result, mode: runtime.mode, chainId: runtime.chainId });
+  });
+
   app.get("/marketplace/earnings", async (c) => {
     const payee = c.req.query("payee") as `0x${string}` | undefined;
     if (!payee) return jsonBig(c, { error: "payee_required" }, 400);
