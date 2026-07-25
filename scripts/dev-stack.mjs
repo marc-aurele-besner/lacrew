@@ -170,6 +170,15 @@ async function main() {
   log("deploy", "deploying contracts (DeployMockOrg)");
   await run("deploy", "pnpm", ["--filter", "@lacrew/cli", "exec", "tsx", "src/index.ts", "deploy", "--anvil"]);
 
+  // The deploy regenerated @lacrew/core's src (ABIs + DEPLOYMENTS), but the
+  // orchestrator resolves the package to its built dist — without a rebuild
+  // it boots on the *previous* build's address book. Flat addresses happen to
+  // match anyway (fresh-Anvil deploys are nonce-deterministic), which is what
+  // made this invisible until a DEPLOY_SECOND_ASSET stack silently vanished
+  // from /assets.
+  log("deploy", "rebuilding @lacrew/core (bakes the fresh address book)");
+  await run("deploy", "pnpm", ["--filter", "@lacrew/core", "build"]);
+
   log("orchestrator", "starting");
   // `dev:once`, not `dev`: here the orchestrator is infrastructure for the
   // loop, and hot-reloading it on every save restarts the chain-facing process
