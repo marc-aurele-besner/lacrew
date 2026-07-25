@@ -1097,6 +1097,24 @@ export class CrewRuntime {
   }
 
   /**
+   * Per-buyer receipt reads in one call, so a consumer asking "does any of
+   * these accounts hold an entitlement?" (e.g. every agent in an org) does not
+   * need a round trip per address. A chainless runtime reports every buyer
+   * unentitled — it can read no receipts, and inventing one would deliver a
+   * paid product for free.
+   */
+  async marketplaceEntitlements(
+    catalogId: string,
+    buyers: `0x${string}`[],
+  ): Promise<{ entitlements: Record<string, boolean>; purchased: boolean }> {
+    const entitlements: Record<string, boolean> = {};
+    for (const buyer of buyers) {
+      entitlements[buyer] = (await this.marketplaceEntitlement(catalogId, buyer)).purchased;
+    }
+    return { entitlements, purchased: Object.values(entitlements).some(Boolean) };
+  }
+
+  /**
    * Buy a listing with org funds. This is an ordinary policy-checked intent, so
    * an over-cap purchase comes back `ESCALATE` and pays nobody until a human
    * approves — callers must not treat anything but `ALLOW` as a completed buy.

@@ -53,6 +53,34 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(await res.json(), { error: "catalogId_required" });
   });
 
+  it("answers batch entitlement with every buyer unentitled in mock mode", async () => {
+    const res = await buildApp().request(
+      "/marketplace/entitlement?catalogId=flow-x&buyers=0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(body.catalogId, "flow-x");
+    assert.equal(body.purchased, false);
+    assert.deepEqual(body.entitlements, {
+      "0x0000000000000000000000000000000000000001": false,
+      "0x0000000000000000000000000000000000000002": false,
+    });
+  });
+
+  it("requires buyers on batch entitlement", async () => {
+    const res = await buildApp().request("/marketplace/entitlement?catalogId=flow-x");
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "buyers_required" });
+  });
+
+  it("rejects non-address buyers on batch entitlement", async () => {
+    const res = await buildApp().request(
+      "/marketplace/entitlement?catalogId=flow-x&buyers=not-an-address",
+    );
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "buyers_must_be_addresses" });
+  });
+
   it("requires payee on earnings", async () => {
     const res = await buildApp().request("/marketplace/earnings");
     assert.equal(res.status, 400);
