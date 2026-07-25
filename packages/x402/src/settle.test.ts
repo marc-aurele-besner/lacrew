@@ -40,6 +40,9 @@ import {
 const rpc = process.env.X402_FORK_RPC;
 const skip = !rpc;
 
+// Base mainnet USDC — present by construction, narrowed once for the tests.
+const baseUsdc = USDC.base!;
+
 /** Aave v3 Base aUSDC — a large, stable USDC holder used only as a faucet. */
 const USDC_WHALE = "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB" as const;
 const ERC20 = parseAbi([
@@ -71,7 +74,7 @@ async function fundUsdc(to: `0x${string}`, amount: bigint): Promise<void> {
   await testClient.setBalance({ address: USDC_WHALE, value: 10n ** 18n });
   const hash = await testClient.writeContract({
     account: USDC_WHALE,
-    address: USDC.base.address,
+    address: baseUsdc.address,
     abi: ERC20,
     functionName: "transfer",
     args: [to, amount],
@@ -93,11 +96,11 @@ function freshAccount() {
 test("the fork exposes real Base USDC metadata", { skip }, async () => {
   const { publicClient } = clients();
   assert.equal(await publicClient.getChainId(), 8453);
-  const domain = await resolveDomain(publicClient, USDC.base.address, 8453);
+  const domain = await resolveDomain(publicClient, baseUsdc.address, 8453);
   // The hardcoded hints must match the deployed contract, or every signature
   // this package produces would be invalid onchain.
-  assert.equal(domain.name, USDC.base.name);
-  assert.equal(domain.version, USDC.base.version);
+  assert.equal(domain.name, baseUsdc.name);
+  assert.equal(domain.version, baseUsdc.version);
 });
 
 test(
@@ -183,7 +186,7 @@ test(
 
     const balanceOf = (address: `0x${string}`) =>
       publicClient.readContract({
-        address: USDC.base.address,
+        address: baseUsdc.address,
         abi: ERC20,
         functionName: "balanceOf",
         args: [address],
@@ -231,7 +234,7 @@ test(
     await fundUsdc(payer.address, 5_000_000n);
     await testClient.setBalance({ address: relayer.address, value: 10n ** 18n });
 
-    const domain = await resolveDomain(publicClient, USDC.base.address, 8453);
+    const domain = await resolveDomain(publicClient, baseUsdc.address, 8453);
     const authorization = buildAuthorization({
       from: payer.address,
       to: payee.address,
@@ -240,7 +243,7 @@ test(
     const signature = await signAuthorization(payer, domain, authorization);
 
     // Raise the amount after signing — the classic malicious-relayer move.
-    const tampered = buildSettlementTxFromPayload(USDC.base.address, {
+    const tampered = buildSettlementTxFromPayload(baseUsdc.address, {
       x402Version: X402_VERSION,
       scheme: "exact",
       network: "base",
@@ -265,7 +268,7 @@ test(
     );
     assert.equal(
       await publicClient.readContract({
-        address: USDC.base.address,
+        address: baseUsdc.address,
         abi: ERC20,
         functionName: "balanceOf",
         args: [payee.address],

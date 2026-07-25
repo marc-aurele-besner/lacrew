@@ -30,11 +30,15 @@ const NOW = 1_800_000_000;
 const payee = "0x4444444444444444444444444444444444444444" as const;
 const account = privateKeyToAccount(generatePrivateKey());
 
+// Known deployments — present by construction, narrowed once for the tests.
+const baseUsdc = USDC.base!;
+const baseSepoliaUsdc = USDC["base-sepolia"]!;
+
 const domain: Eip712Domain = {
-  name: USDC.base.name,
-  version: USDC.base.version,
-  chainId: USDC.base.chainId,
-  verifyingContract: USDC.base.address,
+  name: baseUsdc.name,
+  version: baseUsdc.version,
+  chainId: baseUsdc.chainId,
+  verifyingContract: baseUsdc.address,
 };
 
 const requirements = createPaymentRequirements({
@@ -65,15 +69,44 @@ test("requirements carry the token's real EIP-712 domain hints", () => {
   // yields a signature that fails onchain with no useful error.
   assert.equal(requirements.extra?.name, "USD Coin");
   assert.equal(requirements.extra?.version, "2");
-  assert.equal(requirements.asset, USDC.base.address);
+  assert.equal(requirements.asset, baseUsdc.address);
   assert.equal(requirements.scheme, "exact");
-  assert.notEqual(USDC.base.name, USDC["base-sepolia"].name);
+  assert.notEqual(baseUsdc.name, baseSepoliaUsdc.name);
 });
 
 test("network lookup is bidirectional", () => {
   assert.equal(networkForChainId(8453), "base");
   assert.equal(networkForChainId(84532), "base-sepolia");
+  assert.equal(networkForChainId(31337), "anvil");
   assert.throws(() => networkForChainId(1), /No x402 network configured/);
+});
+
+test("anvil requires an explicit asset — a local MockUSDC has no fixed address", () => {
+  assert.throws(
+    () =>
+      createPaymentRequirements({
+        network: "anvil",
+        payTo: payee,
+        maxAmountRequired: 1_000_000n,
+        resource: "https://api.example.com/report",
+      }),
+    /No known settlement asset for network "anvil"/,
+  );
+  const local = createPaymentRequirements({
+    network: "anvil",
+    payTo: payee,
+    maxAmountRequired: 1_000_000n,
+    resource: "https://api.example.com/report",
+    asset: {
+      address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      decimals: 6,
+      name: "Mock USDC",
+      version: "1",
+      chainId: 31337,
+    },
+  });
+  assert.equal(local.network, "anvil");
+  assert.equal(local.extra?.name, "Mock USDC");
 });
 
 test("wire encoding round-trips without losing precision", () => {
@@ -212,10 +245,10 @@ test("a signature bound to a different domain is rejected", async () => {
   // The same authorization signed for Base Sepolia must not settle on Base.
   const auth = authFor();
   const otherDomain: Eip712Domain = {
-    name: USDC["base-sepolia"].name,
-    version: USDC["base-sepolia"].version,
-    chainId: USDC["base-sepolia"].chainId,
-    verifyingContract: USDC["base-sepolia"].address,
+    name: baseSepoliaUsdc.name,
+    version: baseSepoliaUsdc.version,
+    chainId: baseSepoliaUsdc.chainId,
+    verifyingContract: baseSepoliaUsdc.address,
   };
   const result = await verifyAuthorization({
     domain,
