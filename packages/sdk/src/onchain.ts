@@ -350,6 +350,19 @@ export class OnchainLacrewClient {
       : undefined;
   }
 
+  /**
+   * Resolve an asset's SpendCapPolicy address, or undefined when the stack
+   * carries none. Caps are asset-denominated, so a cap must land on the
+   * selected asset's own policy — writing a WETH cap to the USDC stack would
+   * compare 18-decimal values against a 6-decimal ceiling.
+   */
+  private assetSpendCap(asset?: string): `0x${string}` | undefined {
+    const addr = resolveAssetStack(this.addresses, asset).spendCapPolicy;
+    return addr && addr !== "0x0000000000000000000000000000000000000000"
+      ? addr
+      : undefined;
+  }
+
   /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */
   async getPendingIntents(): Promise<Intent[]> {
     const next = (await this.publicClient.readContract({
@@ -1205,13 +1218,20 @@ export class OnchainLacrewClient {
     return { ...result, target: input.target };
   }
 
-  /** Propose SpendCapPolicy.setAgentCap (high tier). */
+  /**
+   * Propose SpendCapPolicy.setAgentCap (high tier).
+   *
+   * `asset` selects which asset's SpendCapPolicy the cap targets (symbol or
+   * token address); omit it for the primary asset. `cap` is denominated in
+   * that asset's own decimals.
+   */
   async proposeSetAgentCap(input: {
     agent: `0x${string}`;
     cap: bigint;
     tier?: GovernanceTier;
+    asset?: string;
   }): Promise<{ proposalId: string; agent: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.addresses.spendCapPolicy;
+    const addr = this.assetSpendCap(input.asset);
     if (!addr) throw new Error("spendCapPolicy address missing");
     const data = encodeFunctionData({
       abi: spendCapPolicyAbi,

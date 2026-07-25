@@ -1,7 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { http } from "viem";
 import { CrewRuntime, createRuntimeFromEnv } from "./runtime.js";
-import { ADDRESS_ENV_VARS, ANVIL_CHAIN_ID, MOCK_WORKER } from "@lacrew/core";
+import {
+  ADDRESS_ENV_VARS,
+  ANVIL_CHAIN_ID,
+  MOCK_WORKER,
+  type ChainAddresses,
+} from "@lacrew/core";
+import { createOnchainClient } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 
 describe("CrewRuntime", () => {
@@ -75,6 +82,59 @@ describe("session ceilings", () => {
     const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
     assert.equal(await runtime.ceilingMaxValue(A, A), undefined);
     assert.equal(await runtime.ceilingMaxValue(A, undefined), undefined);
+  });
+});
+
+describe("listAssets", () => {
+  it("returns [] in mock mode rather than inventing a stack list", () => {
+    // The mock client models a single unnamed asset and holds no address
+    // book; a fabricated list would drive a picker over stacks that do not
+    // exist onchain.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    assert.deepEqual(runtime.listAssets(), []);
+  });
+
+  it("lists the address book's stacks, primary first, in onchain mode", () => {
+    const addr = (n: string) => `0x${n.repeat(40)}` as `0x${string}`;
+    const addresses: ChainAddresses = {
+      chainId: ANVIL_CHAIN_ID,
+      orgRegistry: addr("1"),
+      treasury: addr("2"),
+      escalationRouter: addr("3"),
+      governanceModule: addr("4"),
+      spendCapPolicy: addr("5"),
+      mockUSDC: addr("6"),
+      assets: [
+        {
+          symbol: "WETH",
+          token: addr("7"),
+          decimals: 18,
+          treasury: addr("8"),
+          escalationRouter: addr("9"),
+          epochStreamer: addr("a"),
+        },
+      ],
+    };
+    const runtime = new CrewRuntime({
+      client: createOnchainClient({
+        // Never dialed: listAssets is a pure read of the address book.
+        transport: http("http://127.0.0.1:1"),
+        chainId: ANVIL_CHAIN_ID,
+        addresses,
+      }),
+      mode: "onchain",
+      chainId: ANVIL_CHAIN_ID,
+      workerAgent: addr("b"),
+      managerAgent: addr("c"),
+      spendTarget: addr("d"),
+    });
+    const [primary, extra] = runtime.listAssets();
+    assert.ok(primary && extra, "expected the primary stack plus one extra");
+    assert.equal(primary.symbol, "USDC");
+    assert.equal(primary.decimals, 6);
+    assert.equal(primary.token, addresses.mockUSDC);
+    assert.equal(extra.symbol, "WETH");
+    assert.equal(extra.decimals, 18);
   });
 });
 

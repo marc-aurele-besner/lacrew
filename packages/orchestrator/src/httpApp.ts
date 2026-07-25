@@ -520,17 +520,37 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       agent?: `0x${string}`;
       cap?: string | number;
       tier?: "low" | "high";
+      asset?: string;
     }>(c);
     if (!body.agent || body.cap === undefined || body.cap === "") {
       return jsonBig(c, { error: "agent_and_cap_required" }, 400);
     }
     const cap = BigInt(body.cap);
-    const result = await runtime.proposeSetAgentCap({
-      agent: body.agent,
-      cap,
-      tier: body.tier,
-    });
-    return jsonBig(c, { ...result, mode: runtime.mode, cap: cap.toString() });
+    try {
+      const result = await runtime.proposeSetAgentCap({
+        agent: body.agent,
+        cap,
+        tier: body.tier,
+        asset: body.asset || undefined,
+      });
+      return jsonBig(c, {
+        ...result,
+        mode: runtime.mode,
+        cap: cap.toString(),
+        asset: body.asset || undefined,
+      });
+    } catch (err) {
+      // The asset selector is operator input — an unknown asset is a 400,
+      // not the generic 500 the primary path keeps for chain/config failures.
+      if (body.asset) {
+        return jsonBig(
+          c,
+          { error: err instanceof Error ? err.message : "propose_failed" },
+          400,
+        );
+      }
+      throw err;
+    }
   });
 
   app.post("/governance/vote", async (c) => {
@@ -561,6 +581,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // cloud can replace its demo holdings book with figures the chain holds.
     const balances = await runtime.getTreasuryBalances();
     return jsonBig(c, { balances, mode: runtime.mode });
+  });
+
+  app.get("/assets", async (c) => {
+    // The asset stacks this org can budget in (primary first). Drives the
+    // cloud's grant/cap asset picker; [] in mock mode — the list is read from
+    // the deployment's address book, never invented.
+    return jsonBig(c, { assets: runtime.listAssets(), mode: runtime.mode });
   });
 
   app.get("/governance/grants", async (c) => {
