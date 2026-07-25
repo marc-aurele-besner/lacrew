@@ -47,6 +47,7 @@ import type {
 } from "@lacrew/adapter-agents-mcp";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 import { worstVerdict } from "./flowScope.js";
+import { decideAutoExecute } from "./governanceSweep.js";
 import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
@@ -1547,6 +1548,43 @@ export class CrewRuntime {
       payload: { proposalId, txHash, state: proposal.state },
     });
     return { txHash, proposal };
+  }
+
+  /**
+   * Execute every proposal the chain would accept right now (F0.6 sweep).
+   * The chain stays the enforcer — `decideAutoExecute` mirrors its rules only
+   * to avoid burning gas on reverts, and a failed execute is logged and
+   * skipped, never retried in the same pass. Chainless runtimes do nothing:
+   * there is no timelock to lapse on a mock ledger.
+   */
+  async executeDueProposals(): Promise<{
+    executed: Array<{ proposalId: string; txHash?: `0x${string}` }>;
+    checked: number;
+  }> {
+    if (!isOnchainClient(this.client)) return { executed: [], checked: 0 };
+    const [proposals, config] = await Promise.all([
+      this.client.getProposals(),
+      this.client.readGovernanceConfig(),
+    ]);
+    const now = Math.floor(Date.now() / 1000);
+    const executed: Array<{ proposalId: string; txHash?: `0x${string}` }> = [];
+    for (const p of proposals) {
+      const decision = decideAutoExecute(p, config, now);
+      if (!decision.execute) continue;
+      try {
+        const result = await this.executeGovernance(p.id);
+        executed.push({ proposalId: p.id, txHash: result.txHash });
+        console.log(
+          `[@lacrew/orchestrator] auto-executed proposal ${p.id} (${decision.via})` +
+            (result.txHash ? ` tx ${result.txHash}` : ""),
+        );
+      } catch (err) {
+        // The mirror was wrong or the state moved under us; the chain said no
+        // and that answer stands until the next sweep re-reads it.
+        console.error(`[@lacrew/orchestrator] auto-execute of proposal ${p.id} failed:`, err);
+      }
+    }
+    return { executed, checked: proposals.length };
   }
 
   /** Run the next payroll epoch (EpochStreamer onchain; mock streams caps). */
