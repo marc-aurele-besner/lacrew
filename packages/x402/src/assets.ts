@@ -19,8 +19,12 @@ export type KnownAsset = {
   chainId: number;
 };
 
-/** USDC per network, verified against the deployed contracts. */
-export const USDC: Record<X402Network, KnownAsset> = {
+/**
+ * USDC per network, verified against the deployed contracts. `anvil` has no
+ * entry: a local MockUSDC address differs per deployment, so local callers
+ * pass the asset explicitly (from their deployment JSON).
+ */
+export const USDC: Partial<Record<X402Network, KnownAsset>> = {
   base: {
     address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     decimals: 6,
@@ -40,6 +44,7 @@ export const USDC: Record<X402Network, KnownAsset> = {
 export const CHAIN_IDS: Record<X402Network, number> = {
   base: 8453,
   "base-sepolia": 84532,
+  anvil: 31337,
 };
 
 export function networkForChainId(chainId: number): X402Network {
@@ -72,6 +77,11 @@ export function createPaymentRequirements(
   opts: CreateRequirementsOptions,
 ): PaymentRequirements {
   const asset = opts.asset ?? USDC[opts.network];
+  if (!asset) {
+    throw new Error(
+      `No known settlement asset for network "${opts.network}" — pass one explicitly.`,
+    );
+  }
   return {
     scheme: "exact",
     network: opts.network,

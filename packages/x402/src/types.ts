@@ -13,7 +13,7 @@ export const X402_VERSION = 1;
 export type X402Scheme = "exact";
 
 /** Networks this package knows how to settle on. */
-export type X402Network = "base" | "base-sepolia";
+export type X402Network = "base" | "base-sepolia" | "anvil";
 
 /**
  * EIP-3009 authorization. Serialized as strings on the wire, which is why the
