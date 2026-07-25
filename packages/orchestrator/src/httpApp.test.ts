@@ -107,6 +107,12 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(await res.json(), { error: "catalogId_required" });
   });
 
+  it("refuses to withdraw without a chain instead of faking a payout", async () => {
+    const res = await buildApp().request("/marketplace/withdraw", { method: "POST" });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "marketplace_requires_chain" });
+  });
+
   it("refuses to register a listing without a chain", async () => {
     const res = await buildApp().request("/marketplace/list", {
       method: "POST",

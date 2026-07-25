@@ -348,6 +348,23 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
+  /**
+   * Withdraw this runtime's own accrued seller balance. No payee input: the
+   * contract pays `msg.sender`, so accepting one would only misdescribe where
+   * the money can go.
+   */
+  app.post("/marketplace/withdraw", async (c) => {
+    try {
+      const result = await runtime.marketplaceWithdraw();
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "withdraw_failed";
+      const status =
+        message === "marketplace_requires_chain" ? 409 : message === "nothing_owed" ? 409 : 400;
+      return jsonBig(c, { error: message }, status);
+    }
+  });
+
   app.post("/marketplace/purchase", async (c) => {
     const body = await bodyOf<{
       catalogId?: string;
