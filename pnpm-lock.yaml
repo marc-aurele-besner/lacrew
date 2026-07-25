@@ -66,6 +66,12 @@ importers:
       '@lacrew/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
+      '@lacrew/x402':
+        specifier: workspace:*
+        version: link:../../packages/x402
+      viem:
+        specifier: ^2.55.2
+        version: 2.55.2(typescript@5.9.3)(zod@4.4.3)
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
