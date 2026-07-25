@@ -19,11 +19,13 @@ import {
   escalationRouterAbi,
   getAddresses,
   hasDeployment,
+  listAssetStacks,
   sessionRegistryAbi,
   ADDRESS_ENV_VARS,
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
+  type AssetStack,
   type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceSeat,
@@ -1380,6 +1382,8 @@ export class CrewRuntime {
     agent: `0x${string}`;
     cap: bigint;
     tier?: GovernanceTier;
+    /** Asset stack the cap targets (symbol or token); omit for primary (USDC). */
+    asset?: string;
   }): Promise<{ proposalId: string; agent: `0x${string}`; txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) {
       throw new Error("proposeSetAgentCap requires onchain mode");
@@ -1393,6 +1397,7 @@ export class CrewRuntime {
         agent: result.agent,
         cap: input.cap.toString(),
         action: "setAgentCap",
+        asset: input.asset,
         txHash: result.txHash,
       },
     });
@@ -1528,6 +1533,18 @@ export class CrewRuntime {
   /** Real per-asset treasury holdings ([] in mock mode — no real treasury). */
   async getTreasuryBalances(): Promise<TreasuryBalance[]> {
     return this.client.getTreasuryBalances();
+  }
+
+  /**
+   * The asset stacks this org can budget in — the primary (USDC) stack plus
+   * any extras from the deployment's address book. [] in mock mode: the mock
+   * client models a single unnamed asset and holds no address book, and an
+   * invented list would let the cloud offer a picker over stacks that do not
+   * exist onchain.
+   */
+  listAssets(): AssetStack[] {
+    if (!isOnchainClient(this.client)) return [];
+    return listAssetStacks(this.client.addresses);
   }
 
   /**

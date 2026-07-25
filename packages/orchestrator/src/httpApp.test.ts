@@ -221,6 +221,30 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(body.balances, []);
   });
 
+  it("serves the asset-stack list (empty in mock mode, not invented)", async () => {
+    const res = await buildApp().request("/assets");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { assets: unknown[]; mode: string };
+    // The offline runtime has no address book to read stacks from, so it
+    // reports none rather than a fabricated picker list.
+    assert.deepEqual(body.assets, []);
+    assert.equal(body.mode, "mock");
+  });
+
+  it("rejects an asset-selected agent cap as operator input in mock mode", async () => {
+    const res = await buildApp().request("/governance/propose-set-agent-cap", {
+      method: "POST",
+      body: JSON.stringify({
+        agent: "0x000000000000000000000000000000000000dEaD",
+        cap: "1000000000000000000",
+        asset: "WETH",
+      }),
+    });
+    // The mock (single-asset) runtime cannot resolve a WETH stack: with an
+    // asset supplied that is the caller's input, a 400 — not a 500.
+    assert.equal(res.status, 400);
+  });
+
   it("threads an asset selector through grant/epoch and rejects non-primary in mock mode", async () => {
     const app = buildApp();
     const worker = "0x000000000000000000000000000000000000dEaD";
