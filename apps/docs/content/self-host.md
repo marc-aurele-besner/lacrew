@@ -235,6 +235,20 @@ lacrew.xyz API forwards the same `LACREW_ORCH_TOKEN` env automatically; the
 example crews send it when `ORCH_TOKEN` is set. Always set the token when the
 port is reachable beyond localhost.
 
+## Governance auto-execute (opt-in)
+
+By default a proposal that has cleared its quorum — and, for high tier, its
+timelock or the unanimity fast path — still waits for an operator to call
+execute. Set `LACREW_AUTO_EXECUTE=1` and the orchestrator executes it on the
+next minute sweep (the same queue-dispatched tick cron flows use, so a
+multi-replica deployment fires it once, not once per replica).
+
+Off by default on purpose: executing governance without a human press is a
+policy decision. The sweep mirrors the contract's acceptance rules only to
+avoid burning gas on reverts — the chain stays the enforcer, and the sweep
+never spends gas to finalize a defeated ballot. `/health` and the boot log
+report `gov-auto-execute=on` when enabled.
+
 ## Docker (orchestrator)
 
 ```bash

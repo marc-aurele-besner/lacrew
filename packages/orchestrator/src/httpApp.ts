@@ -9,6 +9,7 @@ import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
 import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
 import { isAuthorized } from "./auth.js";
+import { autoExecuteEnabled } from "./governanceSweep.js";
 import type { CrewRuntime } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
@@ -98,6 +99,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       },
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
+      governance: { autoExecute: autoExecuteEnabled() },
       runtimeStore: runtime.runtimeStoreName,
     }),
   );

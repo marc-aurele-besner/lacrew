@@ -18,6 +18,7 @@ import { createFlowsSurface } from "./flows.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
+import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 
 const port = Number(process.env.PORT ?? 8788);
@@ -124,7 +125,20 @@ async function main(): Promise<void> {
       return result;
     },
     onTick: async () => runtime.tick(),
-    onFlowCron: async () => flows.runCronDue(),
+    onFlowCron: async () => {
+      const result = await flows.runCronDue();
+      // The governance auto-executor (F0.6) rides the same minute sweep: the
+      // queue already dispatches it to exactly one replica per tick. Opt-in —
+      // executing governance without a human press is a policy decision.
+      if (autoExecuteEnabled()) {
+        try {
+          await runtime.executeDueProposals();
+        } catch (err) {
+          console.error("[@lacrew/orchestrator] governance auto-execute sweep failed:", err);
+        }
+      }
+      return result;
+    },
   });
 
   // pg-boss: EPOCH_CRON (default hourly). memory: EPOCH_INTERVAL_MS (>0) opt-in.
@@ -149,6 +163,7 @@ async function main(): Promise<void> {
         (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
         ` model=${model.name}` +
         ` auth=${authToken ? "on" : "off"}` +
+        (autoExecuteEnabled() ? " gov-auto-execute=on" : "") +
         ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}` +
         ` migrations=${migrationsRan ? "ok" : "skipped"}`,
     );
