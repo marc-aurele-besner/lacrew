@@ -90,6 +90,18 @@ const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 
 export type RuntimeMode = "mock" | "onchain";
 
+/**
+ * One module in a node's desired stack, as `proposeNodePolicyStack` takes it.
+ * Whitelist / spend-cap carry no params — they reuse the org's shared modules,
+ * whose values are already per-target / per-agent. Rate and window params are
+ * constructor-immutable onchain, so specifying them means deploying a module.
+ */
+export type NodeStackModuleSpec =
+  | { kind: "whitelist" }
+  | { kind: "spend_cap" }
+  | { kind: "rate_limit"; maxActions: number; windowSeconds: number }
+  | { kind: "time_window"; startSecondOfDay: number; endSecondOfDay: number };
+
 const AUDIT_RING_MAX = 200;
 /** How long a persisted-audit read is reused; the dashboard polls every 3s. */
 const AUDIT_STORE_TTL_MS = 2_000;
@@ -1399,6 +1411,115 @@ export class CrewRuntime {
       },
     });
     return result;
+  }
+
+  /**
+   * Deploy a node's desired policy stack and propose binding it.
+   *
+   * RateLimitPolicy and TimeWindowPolicy carry their params as constructor
+   * immutables, so "give this node a 5/day limit" means deploying a module
+   * with those params — there is nothing to mutate. Whitelist and spend-cap
+   * entries reuse the org's shared modules (their params are already
+   * per-target / per-agent). Deploys are permissionless and inert; authority
+   * stays with governance: binding rides a setNodePolicy proposal, plus a
+   * setNodeRateRecorder proposal when the stack carries its own rate module —
+   * without that binding the module's windows never fill and its limit never
+   * trips.
+   */
+  async proposeNodePolicyStack(input: {
+    node: `0x${string}`;
+    modules: NodeStackModuleSpec[];
+    tier?: GovernanceTier;
+  }): Promise<{
+    node: `0x${string}`;
+    stack: `0x${string}`;
+    deployed: Array<{ kind: string; address: `0x${string}` }>;
+    proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }>;
+  }> {
+    if (!isOnchainClient(this.client)) {
+      throw new Error("policy_deploy_requires_chain");
+    }
+    if (input.modules.length === 0) {
+      throw new Error("modules_required");
+    }
+    const addresses = this.client.addresses;
+    const members: `0x${string}`[] = [];
+    const deployed: Array<{ kind: string; address: `0x${string}` }> = [];
+    let customRate: `0x${string}` | undefined;
+
+    for (const spec of input.modules) {
+      if (spec.kind === "whitelist") {
+        if (!addresses.whitelistPolicy) throw new Error("whitelistPolicy address missing");
+        members.push(addresses.whitelistPolicy);
+      } else if (spec.kind === "spend_cap") {
+        if (!addresses.spendCapPolicy) throw new Error("spendCapPolicy address missing");
+        members.push(addresses.spendCapPolicy);
+      } else if (spec.kind === "rate_limit") {
+        const mod = await this.client.deployRateLimitPolicy({
+          maxActions: spec.maxActions,
+          windowSeconds: spec.windowSeconds,
+        });
+        members.push(mod.address);
+        deployed.push({ kind: "rate_limit", address: mod.address });
+        customRate = mod.address;
+      } else if (spec.kind === "time_window") {
+        const mod = await this.client.deployTimeWindowPolicy({
+          startSecondOfDay: spec.startSecondOfDay,
+          endSecondOfDay: spec.endSecondOfDay,
+        });
+        members.push(mod.address);
+        deployed.push({ kind: "time_window", address: mod.address });
+      } else {
+        throw new Error(`unknown module kind "${(spec as { kind: string }).kind}"`);
+      }
+    }
+
+    const stack = await this.client.deployPolicyStack(members);
+
+    const proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }> = [];
+    const bind = await this.client.proposeSetNodePolicy({
+      node: input.node,
+      policyModule: stack.address,
+      tier: input.tier,
+    });
+    proposals.push({ action: "setNodePolicy", proposalId: bind.proposalId, txHash: bind.txHash });
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: bind.proposalId,
+        node: input.node,
+        policyModule: stack.address,
+        action: "setNodePolicy",
+        txHash: bind.txHash,
+      },
+    });
+
+    if (customRate) {
+      const recorder = await this.client.proposeSetNodeRateRecorder({
+        node: input.node,
+        rateRecorder: customRate,
+        tier: input.tier,
+      });
+      proposals.push({
+        action: "setNodeRateRecorder",
+        proposalId: recorder.proposalId,
+        txHash: recorder.txHash,
+      });
+      this.pushAudit({
+        type: "ProposalCreated",
+        at: new Date().toISOString(),
+        payload: {
+          proposalId: recorder.proposalId,
+          node: input.node,
+          rateRecorder: customRate,
+          action: "setNodeRateRecorder",
+          txHash: recorder.txHash,
+        },
+      });
+    }
+
+    return { node: input.node, stack: stack.address, deployed, proposals };
   }
 
   async proposeSetWhitelist(input: {

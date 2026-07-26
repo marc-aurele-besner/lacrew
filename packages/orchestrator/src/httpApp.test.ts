@@ -265,6 +265,57 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.mode, "mock");
   });
 
+  it("refuses to deploy a node stack without a chain instead of faking proposals", async () => {
+    const res = await buildApp().request("/governance/propose-node-stack", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        node: "0x000000000000000000000000000000000000dEaD",
+        modules: [
+          { kind: "whitelist" },
+          { kind: "rate_limit", maxActions: 5, windowSeconds: 86400 },
+        ],
+      }),
+    });
+    // A deploy cannot be mocked honestly: 409, never an invented stack address.
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "policy_deploy_requires_chain" });
+  });
+
+  it("validates node-stack input before touching the chain", async () => {
+    const app = buildApp();
+    const post = (payload: unknown) =>
+      app.request("/governance/propose-node-stack", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+    const noNode = await post({ modules: [{ kind: "whitelist" }] });
+    assert.equal(noNode.status, 400);
+    assert.deepEqual(await noNode.json(), { error: "node_required" });
+
+    const node = "0x000000000000000000000000000000000000dEaD";
+    const empty = await post({ node, modules: [] });
+    assert.deepEqual(await empty.json(), { error: "modules_required" });
+
+    const badRate = await post({
+      node,
+      modules: [{ kind: "rate_limit", maxActions: 0, windowSeconds: 3600 }],
+    });
+    assert.deepEqual(await badRate.json(), { error: "invalid_rate_limit_params" });
+
+    // Mirrors TimeWindowPolicy's constructor guard: end must exceed start.
+    const badWindow = await post({
+      node,
+      modules: [{ kind: "time_window", startSecondOfDay: 3600, endSecondOfDay: 3600 }],
+    });
+    assert.deepEqual(await badWindow.json(), { error: "invalid_time_window_params" });
+
+    const badKind = await post({ node, modules: [{ kind: "teleport" }] });
+    assert.deepEqual(await badKind.json(), { error: "unknown_module_kind" });
+  });
+
   it("serves node policies (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/policies");
     assert.equal(res.status, 200);

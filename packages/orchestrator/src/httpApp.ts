@@ -10,7 +10,7 @@ import type { FlowDefinition } from "@lacrew/flows";
 import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
-import type { CrewRuntime } from "./runtime.js";
+import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
 import type { QueueProvider } from "./queue/index.js";
@@ -540,6 +540,75 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       tier: body.tier,
     });
     return jsonBig(c, { ...result, mode: runtime.mode });
+  });
+
+  app.post("/governance/propose-node-stack", async (c) => {
+    // Deploy a node's desired stack (fresh rate/window modules with the given
+    // params, shared whitelist/spend-cap) and propose binding it — the route
+    // that makes a custom rate limit or time window a governance amendment
+    // rather than a workspace annotation. Deploys are inert until governance
+    // executes the bind, so this holds no authority the chain doesn't check.
+    const body = await bodyOf<{
+      node?: string;
+      modules?: Array<Record<string, unknown>>;
+      tier?: "low" | "high";
+    }>(c);
+    if (!body.node || !/^0x[0-9a-fA-F]{40}$/.test(body.node)) {
+      return jsonBig(c, { error: "node_required" }, 400);
+    }
+    if (!Array.isArray(body.modules) || body.modules.length === 0 || body.modules.length > 8) {
+      return jsonBig(c, { error: "modules_required" }, 400);
+    }
+    const specs: NodeStackModuleSpec[] = [];
+    for (const m of body.modules) {
+      if (m.kind === "whitelist" || m.kind === "spend_cap") {
+        specs.push({ kind: m.kind });
+      } else if (m.kind === "rate_limit") {
+        const maxActions = Number(m.maxActions);
+        const windowSeconds = Number(m.windowSeconds);
+        if (
+          !Number.isInteger(maxActions) ||
+          maxActions < 1 ||
+          maxActions > 1_000_000 ||
+          !Number.isInteger(windowSeconds) ||
+          windowSeconds < 1 ||
+          windowSeconds > 7 * 86_400
+        ) {
+          return jsonBig(c, { error: "invalid_rate_limit_params" }, 400);
+        }
+        specs.push({ kind: "rate_limit", maxActions, windowSeconds });
+      } else if (m.kind === "time_window") {
+        const start = Number(m.startSecondOfDay);
+        const end = Number(m.endSecondOfDay);
+        // Mirrors TimeWindowPolicy's constructor guard (end > start, end ≤ 1 day)
+        // so a bad window is refused here instead of as a deploy revert.
+        if (
+          !Number.isInteger(start) ||
+          !Number.isInteger(end) ||
+          start < 0 ||
+          end <= start ||
+          end > 86_400
+        ) {
+          return jsonBig(c, { error: "invalid_time_window_params" }, 400);
+        }
+        specs.push({ kind: "time_window", startSecondOfDay: start, endSecondOfDay: end });
+      } else {
+        return jsonBig(c, { error: "unknown_module_kind" }, 400);
+      }
+    }
+    try {
+      const result = await runtime.proposeNodePolicyStack({
+        node: body.node as `0x${string}`,
+        modules: specs,
+        tier: body.tier,
+      });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "propose_node_stack_failed";
+      // No chain → 409 (nothing can be deployed honestly); anything else on
+      // this route traces to input or wiring the caller can see.
+      return jsonBig(c, { error: message }, message === "policy_deploy_requires_chain" ? 409 : 400);
+    }
   });
 
   app.post("/governance/propose-set-whitelist", async (c) => {
