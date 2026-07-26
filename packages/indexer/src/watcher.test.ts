@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { EventWatcher, logToProtocolEvent } from "./watcher.js";
+import { EventWatcher, logToProtocolEvent, transferToDepositEvent } from "./watcher.js";
+import type { AssetStack } from "@lacrew/core";
 import { loadStore } from "./store.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -8,6 +9,48 @@ import { tmpdir } from "node:os";
 
 const AT = "2026-07-18T00:00:00.000Z";
 const TX = "0xabc";
+
+describe("transferToDepositEvent", () => {
+  const stack = {
+    symbol: "USDC",
+    token: "0x1111111111111111111111111111111111111111",
+    decimals: 6,
+    treasury: "0x2222222222222222222222222222222222222222",
+    escalationRouter: "0x0000000000000000000000000000000000000000",
+    epochStreamer: "0x0000000000000000000000000000000000000000",
+  } as AssetStack;
+
+  it("folds a transfer into the treasury as a deposit with its denomination", () => {
+    const event = transferToDepositEvent(
+      { from: "0xf", to: stack.treasury.toUpperCase(), value: 100_000_000n },
+      stack,
+      AT,
+      TX,
+    );
+    assert.equal(event?.type, "TreasuryDeposit");
+    assert.deepEqual(event?.payload, {
+      from: "0xf",
+      amount: "100000000",
+      token: stack.token,
+      symbol: "USDC",
+      decimals: 6,
+      treasury: stack.treasury,
+      txHash: TX,
+    });
+  });
+
+  it("refuses a transfer to anything but this stack's treasury", () => {
+    // The subscription filters on `to`, but a deposit attributed to the wrong
+    // treasury would be a fabricated inflow — the address is re-checked.
+    const event = transferToDepositEvent(
+      { from: "0xf", to: "0x3333333333333333333333333333333333333333", value: 1n },
+      stack,
+      AT,
+      TX,
+    );
+    assert.equal(event, null);
+  });
+});
 
 describe("logToProtocolEvent", () => {
   it("maps IntentCreated with stringified id", () => {

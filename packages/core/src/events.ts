@@ -14,6 +14,12 @@ export type ProtocolEventType =
   | "ProposalDefeated"
   | "SessionIssued"
   | "SessionRevoked"
+  /**
+   * An ERC-20 transfer INTO an asset stack's Treasury — money arriving. The
+   * contract emits nothing for a plain transfer, so the indexer derives this
+   * from the token's own Transfer log filtered to the treasury address.
+   */
+  | "TreasuryDeposit"
   | "FlowSaved"
   | "FlowRun"
   | "MarketplacePurchase"
