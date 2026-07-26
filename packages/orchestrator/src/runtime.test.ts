@@ -119,6 +119,49 @@ describe("least-privilege session scopes", () => {
     assert.deepEqual(asked, [AGENT]);
   });
 
+  it("narrows an under-cap spend once the agent's rate allowance is spent", async () => {
+    // The value is inside the cap, so the cap alone would allow it — but a live
+    // rate window with nothing left escalates, and any ESCALATE dominates.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const runtime = new CrewRuntime({
+      client: policyReadingClient({
+        modules: [
+          ...CAP_50,
+          {
+            address: "0x00000000000000000000000000000000000000ra",
+            kind: "rate_limit",
+            maxActions: 10,
+            windowSeconds: 3600,
+            windowStartSec: nowSec - 600,
+            actionsUsed: 10,
+          },
+        ],
+      }),
+    });
+    assert.deepEqual(await runtime.scopesForSpend(AGENT, 10n), ["propose:intent"]);
+  });
+
+  it("keeps the full set when the rate window is about to lapse", async () => {
+    // Under 60s left: the propose could be mined after the reset, and a narrowed
+    // key would revert a call the policy allows by then.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const runtime = new CrewRuntime({
+      client: policyReadingClient({
+        modules: [
+          {
+            address: "0x00000000000000000000000000000000000000ra",
+            kind: "rate_limit",
+            maxActions: 10,
+            windowSeconds: 3600,
+            windowStartSec: nowSec - 3580,
+            actionsUsed: 10,
+          },
+        ],
+      }),
+    });
+    assert.equal((await runtime.scopesForSpend(AGENT, 10n)).length, 2);
+  });
+
   it("reports the decision without changing the agent's standing policy", async () => {
     const runtime = new CrewRuntime({ client: policyReadingClient({ modules: CAP_50 }) });
     await runtime.scopesForSpend(AGENT, 75n);
