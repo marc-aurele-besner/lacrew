@@ -227,6 +227,33 @@ export function transferToDepositEvent(
   };
 }
 
+/**
+ * A token Transfer-from-treasury log as a TreasuryOutflow event. Same
+ * re-check discipline as deposits: an outflow pinned on the wrong treasury
+ * would accuse it of moving money it never held.
+ */
+export function transferToOutflowEvent(
+  args: Record<string, unknown>,
+  stack: AssetStack,
+  at: string,
+  txHash: string | null,
+): ProtocolEvent | null {
+  if (String(args.from).toLowerCase() !== stack.treasury.toLowerCase()) return null;
+  return {
+    type: "TreasuryOutflow",
+    at,
+    payload: {
+      to: args.to as string,
+      amount: String(args.value),
+      token: stack.token,
+      symbol: stack.symbol,
+      decimals: stack.decimals,
+      treasury: stack.treasury,
+      txHash,
+    },
+  };
+}
+
 export type WatcherOptions = {
   rpcUrl: string;
   chainId?: number;
@@ -280,16 +307,18 @@ export class EventWatcher {
     );
   }
 
-  /** Fold one token Transfer-to-treasury log into a TreasuryDeposit event. */
-  private async processDepositLog(
+  /** Fold one token Transfer log touching a treasury into a deposit/outflow event. */
+  private async processTransferLog(
     log: DecodedLog,
     stack: AssetStack,
+    direction: "deposit" | "outflow",
     opts: { skipJsonAudit?: boolean } = {},
   ): Promise<void> {
     const args = log.args;
     if (!args) return;
     const { at, source: atSource } = await this.blockTime(log.blockNumber);
-    const event = transferToDepositEvent(args, stack, at, log.transactionHash ?? null);
+    const build = direction === "deposit" ? transferToDepositEvent : transferToOutflowEvent;
+    const event = build(args, stack, at, log.transactionHash ?? null);
     if (!event) return;
     event.atSource = atSource;
     if (!opts.skipJsonAudit) this.store.audit.push(event);
@@ -328,22 +357,25 @@ export class EventWatcher {
       await this.processLog(log, { skipJsonAudit });
     }
 
-    // Deposits ride the tokens' own Transfer logs, filtered per treasury.
-    let deposits = 0;
+    // Deposits and outflows ride the tokens' own Transfer logs, filtered per
+    // treasury in each direction.
+    let transfers = 0;
     for (const stack of this.depositStacks()) {
-      const logs = await this.client.getLogs({
-        address: stack.token,
-        event: erc20TransferEvent,
-        args: { to: stack.treasury },
-        fromBlock,
-        toBlock: "latest",
-      });
-      for (const log of logs as DecodedLog[]) {
-        await this.processDepositLog(log, stack, { skipJsonAudit });
-        deposits += 1;
+      for (const direction of ["deposit", "outflow"] as const) {
+        const logs = await this.client.getLogs({
+          address: stack.token,
+          event: erc20TransferEvent,
+          args: direction === "deposit" ? { to: stack.treasury } : { from: stack.treasury },
+          fromBlock,
+          toBlock: "latest",
+        });
+        for (const log of logs as DecodedLog[]) {
+          await this.processTransferLog(log, stack, direction, { skipJsonAudit });
+          transfers += 1;
+        }
       }
     }
-    return collected.length + deposits;
+    return collected.length + transfers;
   }
 
   start(): void {
@@ -367,20 +399,24 @@ export class EventWatcher {
       );
     }
 
-    // One filtered subscription per asset stack: the token's Transfer log with
-    // `to` pinned to that stack's own treasury.
+    // Two filtered subscriptions per asset stack: the token's Transfer log
+    // with `to` (deposits) or `from` (outflows) pinned to that stack's own
+    // treasury.
     for (const stack of this.depositStacks()) {
-      this.unwatchers.push(
-        this.client.watchEvent({
-          address: stack.token,
-          event: erc20TransferEvent,
-          args: { to: stack.treasury },
-          onError,
-          onLogs: (logs) => {
-            for (const log of logs as DecodedLog[]) void this.processDepositLog(log, stack);
-          },
-        }),
-      );
+      for (const direction of ["deposit", "outflow"] as const) {
+        this.unwatchers.push(
+          this.client.watchEvent({
+            address: stack.token,
+            event: erc20TransferEvent,
+            args: direction === "deposit" ? { to: stack.treasury } : { from: stack.treasury },
+            onError,
+            onLogs: (logs) => {
+              for (const log of logs as DecodedLog[])
+                void this.processTransferLog(log, stack, direction);
+            },
+          }),
+        );
+      }
     }
 
     console.log(

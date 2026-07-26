@@ -20,6 +20,13 @@ export type ProtocolEventType =
    * from the token's own Transfer log filtered to the treasury address.
    */
   | "TreasuryDeposit"
+  /**
+   * An ERC-20 transfer OUT of an asset stack's Treasury, derived the same
+   * way. A legitimate spend shares its txHash with an ActionExecuted /
+   * AllowanceSpent event; an outflow matching no spend is the strongest
+   * theft signal the trail can carry (Guardian correlates them).
+   */
+  | "TreasuryOutflow"
   | "FlowSaved"
   | "FlowRun"
   | "MarketplacePurchase"
