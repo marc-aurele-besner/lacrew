@@ -494,6 +494,20 @@ export class OnchainLacrewClient {
     return out;
   }
 
+  /**
+   * The rate recorder EscalationRouter binds for this node — zero address
+   * means the global fallback records for it.
+   */
+  async readNodeRateRecorder(node: `0x${string}`, asset?: string): Promise<`0x${string}`> {
+    const router = resolveAssetStack(this.addresses, asset).escalationRouter;
+    return (await this.publicClient.readContract({
+      address: router,
+      abi: escalationRouterAbi,
+      functionName: "rateRecorderOf",
+      args: [node],
+    })) as `0x${string}`;
+  }
+
   /** A read that returns undefined when the contract has no such function. */
   private async tryRead<T>(
     address: `0x${string}`,
