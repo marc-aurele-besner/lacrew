@@ -566,6 +566,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       node?: string;
       modules?: Array<Record<string, unknown>>;
       tier?: "low" | "high";
+      asset?: string;
     }>(c);
     if (!body.node || !/^0x[0-9a-fA-F]{40}$/.test(body.node)) {
       return jsonBig(c, { error: "node_required" }, 400);
@@ -615,8 +616,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         node: body.node as `0x${string}`,
         modules: specs,
         tier: body.tier,
+        asset: body.asset || undefined,
       });
-      return jsonBig(c, { ...result, mode: runtime.mode });
+      return jsonBig(c, { ...result, asset: body.asset || undefined, mode: runtime.mode });
     } catch (err) {
       const message = err instanceof Error ? err.message : "propose_node_stack_failed";
       // No chain → 409 (nothing can be deployed honestly); anything else on
@@ -630,16 +632,30 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       target?: `0x${string}`;
       allowed?: boolean;
       tier?: "low" | "high";
+      asset?: string;
     }>(c);
     if (!body.target || typeof body.allowed !== "boolean") {
       return jsonBig(c, { error: "target_and_allowed_required" }, 400);
     }
-    const result = await runtime.proposeSetWhitelist({
-      target: body.target,
-      allowed: body.allowed,
-      tier: body.tier,
-    });
-    return jsonBig(c, { ...result, mode: runtime.mode });
+    try {
+      const result = await runtime.proposeSetWhitelist({
+        target: body.target,
+        allowed: body.allowed,
+        tier: body.tier,
+        asset: body.asset || undefined,
+      });
+      return jsonBig(c, { ...result, asset: body.asset || undefined, mode: runtime.mode });
+    } catch (err) {
+      // A failing asset selector is operator input, like the agent-cap route.
+      if (body.asset) {
+        return jsonBig(
+          c,
+          { error: err instanceof Error ? err.message : "propose_set_whitelist_failed" },
+          400,
+        );
+      }
+      throw err;
+    }
   });
 
   app.post("/governance/propose-set-agent-cap", async (c) => {

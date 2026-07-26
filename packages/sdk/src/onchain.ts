@@ -383,6 +383,16 @@ export class OnchainLacrewClient {
       : undefined;
   }
 
+  /**
+   * Resolve an asset's WhitelistPolicy address, or undefined when the stack
+   * carries none. Whitelists are per-stack: each asset's router consults its
+   * own module, so a target allowed for USDC says nothing about WETH.
+   */
+  private assetWhitelist(asset?: string): `0x${string}` | undefined {
+    const addr = resolveAssetStack(this.addresses, asset).whitelistPolicy;
+    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
+  }
+
   /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */
   async getPendingIntents(): Promise<Intent[]> {
     const next = (await this.publicClient.readContract({
@@ -1614,6 +1624,8 @@ export class OnchainLacrewClient {
     node: `0x${string}`;
     policyModule: `0x${string}`;
     tier?: GovernanceTier;
+    /** Selects which stack's EscalationRouter binds the policy; omit = primary. */
+    asset?: string;
   }): Promise<{ proposalId: string; node: `0x${string}`; txHash: `0x${string}` }> {
     const data = encodeFunctionData({
       abi: escalationRouterAbi,
@@ -1622,7 +1634,7 @@ export class OnchainLacrewClient {
     });
     const result = await this.proposeGovernance({
       tier: input.tier ?? "high",
-      target: this.addresses.escalationRouter,
+      target: resolveAssetStack(this.addresses, input.asset).escalationRouter,
       data,
     });
     return { ...result, node: input.node };
@@ -1638,6 +1650,8 @@ export class OnchainLacrewClient {
     node: `0x${string}`;
     rateRecorder: `0x${string}`;
     tier?: GovernanceTier;
+    /** Selects which stack's EscalationRouter binds the recorder; omit = primary. */
+    asset?: string;
   }): Promise<{ proposalId: string; node: `0x${string}`; txHash: `0x${string}` }> {
     const data = encodeFunctionData({
       abi: escalationRouterAbi,
@@ -1646,7 +1660,7 @@ export class OnchainLacrewClient {
     });
     const result = await this.proposeGovernance({
       tier: input.tier ?? "high",
-      target: this.addresses.escalationRouter,
+      target: resolveAssetStack(this.addresses, input.asset).escalationRouter,
       data,
     });
     return { ...result, node: input.node };
@@ -1731,9 +1745,11 @@ export class OnchainLacrewClient {
     target: `0x${string}`;
     allowed: boolean;
     tier?: GovernanceTier;
+    /** Selects which stack's WhitelistPolicy the change binds; omit = primary. */
+    asset?: string;
   }): Promise<{ proposalId: string; target: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.addresses.whitelistPolicy;
-    if (!addr) throw new Error("whitelistPolicy address missing");
+    const addr = this.assetWhitelist(input.asset);
+    if (!addr) throw new Error("whitelistPolicy address missing for the selected asset");
     const data = encodeFunctionData({
       abi: whitelistPolicyAbi,
       functionName: "setAllowed",
