@@ -129,6 +129,24 @@ export type IntentSimulation = {
    */
   gasEstimate?: string;
   assetChanges: Array<{ asset: string; delta: string; direction: "in" | "out" }>;
+  /**
+   * Balance movements MEASURED by executing the approval inside a simulated
+   * block (eth_simulateV1): every org asset token probed on the parties the
+   * intent names, before vs. after, exact base units. Distinct from
+   * `assetChanges`, which is the heuristic reading of the intent's own value —
+   * these are what the chain would actually do, including anything the target
+   * call moves on the side. Absent when the node cannot simulate a block —
+   * absent is "not measured", never "no movement".
+   */
+  measuredChanges?: Array<{
+    account: `0x${string}`;
+    /** Which party this is from the intent's point of view. */
+    label: "treasury" | "agent" | "target" | "router";
+    asset: string;
+    /** Signed base-unit delta as an exact string. */
+    delta: string;
+    decimals: number;
+  }>;
   warnings: string[];
 };
 

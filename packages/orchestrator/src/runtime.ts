@@ -982,6 +982,14 @@ export class CrewRuntime {
             );
           } else if (approval?.ok) {
             simulation.warnings.push("Approval dry-run succeeded (eth_call).");
+            // Measured movements from executing the approval in a simulated
+            // block — what the chain would actually do, including anything
+            // the target's own code moves. Null (node can't simulate) simply
+            // leaves the heuristic standing alone, honestly unmeasured.
+            const measured = await onchain
+              .simulateApprovalStateDiffs(intent.id)
+              .catch(() => null);
+            if (measured) simulation.measuredChanges = measured;
           }
         }
         return { ...intent, simulation };

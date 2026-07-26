@@ -789,6 +789,129 @@ export class OnchainLacrewClient {
     }
   }
 
+  /**
+   * Measure what approving this intent would actually move (PRD F1.16).
+   *
+   * One simulated block (eth_simulateV1): the resolve call first, then
+   * balanceOf reads against the block's post-state — so the reads see exactly
+   * the world the approval would leave behind, including anything the
+   * target's own code moves on the side. Probed parties are the ones the
+   * intent names (treasury, agent, target, router) across every org asset
+   * token; pre-state balances come from plain eth_call.
+   *
+   * Null when the node does not support eth_simulateV1 or the resolve itself
+   * reverts — "not measured" must stay distinct from "no movement".
+   */
+  async simulateApprovalStateDiffs(intentId: string): Promise<
+    | Array<{
+        account: `0x${string}`;
+        label: "treasury" | "agent" | "target" | "router";
+        asset: string;
+        delta: string;
+        decimals: number;
+      }>
+    | null
+  > {
+    const resolver = this.resolverWalletClient?.account;
+    if (!resolver) return null;
+    let intent: Intent;
+    try {
+      intent = await this.readIntent(BigInt(intentId));
+    } catch {
+      return null;
+    }
+
+    const stacks = listAssetStacks(this.addresses).filter(
+      (s) => s.token && s.token !== "0x0000000000000000000000000000000000000000",
+    );
+    if (stacks.length === 0) return null;
+
+    const parties: Array<{ account: `0x${string}`; label: "treasury" | "agent" | "target" | "router" }> = [];
+    const seen = new Set<string>();
+    const addParty = (
+      account: `0x${string}` | undefined,
+      label: "treasury" | "agent" | "target" | "router",
+    ) => {
+      if (!account || account === "0x0000000000000000000000000000000000000000") return;
+      if (seen.has(account.toLowerCase())) return;
+      seen.add(account.toLowerCase());
+      parties.push({ account, label });
+    };
+    for (const s of stacks) addParty(s.treasury, "treasury");
+    addParty(intent.agent, "agent");
+    addParty(intent.target, "target");
+    // The router should never end up holding funds; probing it is how we
+    // notice if it ever does.
+    addParty(this.addresses.escalationRouter, "router");
+
+    const probes: Array<{ token: (typeof stacks)[number]; party: (typeof parties)[number] }> = [];
+    for (const token of stacks) for (const party of parties) probes.push({ token, party });
+
+    const balanceCall = (token: `0x${string}`, holder: `0x${string}`) => ({
+      to: token,
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [holder] }),
+    });
+
+    try {
+      const pre = (await Promise.all(
+        probes.map((p) =>
+          this.publicClient.readContract({
+            address: p.token.token,
+            abi: erc20Abi,
+            functionName: "balanceOf",
+            args: [p.party.account],
+          }),
+        ),
+      )) as bigint[];
+
+      const simCalls: Array<{ from?: `0x${string}`; to: `0x${string}`; data: `0x${string}` }> = [
+        {
+          from: resolver.address,
+          to: this.addresses.escalationRouter,
+          data: encodeFunctionData({
+            abi: escalationRouterAbi,
+            functionName: "resolve",
+            args: [BigInt(intentId), true],
+          }),
+        },
+        ...probes.map((p) => balanceCall(p.token.token, p.party.account)),
+      ];
+      const [block] = await this.publicClient.simulateBlocks({
+        blocks: [{ calls: simCalls }],
+      });
+
+      const calls = block?.calls ?? [];
+      if (calls[0]?.status !== "success") return null;
+
+      const out: Array<{
+        account: `0x${string}`;
+        label: "treasury" | "agent" | "target" | "router";
+        asset: string;
+        delta: string;
+        decimals: number;
+      }> = [];
+      probes.forEach((p, i) => {
+        const post = calls[i + 1];
+        if (post?.status !== "success" || !post.data || post.data === "0x") return;
+        const after = BigInt(post.data);
+        const delta = after - pre[i]!;
+        if (delta === 0n) return;
+        out.push({
+          account: p.party.account,
+          label: p.party.label,
+          asset: p.token.symbol,
+          delta: delta.toString(),
+          decimals: p.token.decimals,
+        });
+      });
+      return out;
+    } catch {
+      // No eth_simulateV1 on this node (or the block build failed): the
+      // heuristic simulation stands alone, honestly unmeasured.
+      return null;
+    }
+  }
+
   async resolveIntent(
     intentId: string,
     approved: boolean,
