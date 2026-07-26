@@ -199,41 +199,97 @@ export function sessionScopesFromMask(mask: bigint): SessionScope[] {
   return SESSION_SCOPES.filter((scope) => (mask & BigInt(SESSION_SCOPE_BIT[scope])) !== 0n);
 }
 
+/** What a propose would be checked against, for `policyForcesEscalation`. */
+export interface EscalationProofContext {
+  /** The call's value, in the stack's base units. */
+  value: bigint;
+  /** Unix seconds the propose is expected to be mined at. */
+  nowSec: number;
+  /**
+   * How much of a live rate window must remain before its ESCALATE is relied on.
+   *
+   * A rate limit's verdict is time-dependent: the window resets, and `check`
+   * goes back to ALLOW. Reading it here and mining the propose later means the
+   * verdict can flip in between, which would leave a narrowed key unable to
+   * settle a call the policy now allows. The margin is how much of that gap the
+   * proof refuses to bet on.
+   */
+  rateWindowMarginSec: number;
+}
+
 /**
- * Whether a spend cap in this policy stack forces `value` to escalate.
+ * Whether this policy stack provably escalates the described call.
  *
- * Mirrors two contract facts, and is only sound because of both:
- * `SpendCapPolicy.check` escalates exactly when `value > capOf(agent)`, and
- * `PolicyStack.check` returns ESCALATE if *any* member escalates. So one
- * over-cap module settles the verdict no matter what else is in the stack —
- * including modules this reader could not classify, which can only ever be
- * equally or more restrictive.
+ * Sound only because of two contract facts together: `PolicyStack.check` returns
+ * ESCALATE if *any* member escalates, and `EscalationRouter.proposeIntent`
+ * reaches `_requireSpendScope` only on ALLOW. So a single escalating member
+ * settles the verdict no matter what else is in the stack — including modules
+ * this reader could not classify, which can only ever be more restrictive.
  *
- * Nested stacks are walked because a stack may hold a stack, and a cap buried
- * one level down is enforced just as hard as a top-level one.
+ * Only two of the reference modules can produce ESCALATE, and both are checked:
+ * `SpendCapPolicy` (value over `capOf`) and `RateLimitPolicy` (allowance spent
+ * inside a live window). `WhitelistPolicy` and `TimeWindowPolicy` return DENY
+ * instead, which short-circuits the stack and reverts the propose — that call
+ * never reaches a scope check, so there is no narrowing to justify.
  *
- * False means "not proven", never "will be allowed": a stack with no readable
- * cap returns false, because the caller's job is to act only on the proof.
+ * Nested stacks are walked, since a module one level down is enforced just as
+ * hard as a top-level one.
+ *
+ * False means "not proven", never "will be allowed": anything unread leaves the
+ * caller with no proof to act on, which is the safe direction.
  */
-export function spendCapForcesEscalation(
+export function policyForcesEscalation(
   modules: readonly PolicyModuleInfo[],
-  value: bigint,
+  ctx: EscalationProofContext,
 ): boolean {
   for (const module of modules) {
     if (module.kind === "spend_cap" && module.cap !== undefined) {
       // A cap that does not parse is treated as unread rather than as zero,
       // which would claim every call escalates.
       try {
-        if (value > BigInt(module.cap)) return true;
+        if (ctx.value > BigInt(module.cap)) return true;
       } catch {
-        // fall through to the nested walk
+        // not a readable cap; keep walking
       }
     }
+
+    if (module.kind === "rate_limit" && rateLimitForcesEscalation(module, ctx)) return true;
+
     if (module.modules && module.modules.length > 0) {
-      if (spendCapForcesEscalation(module.modules, value)) return true;
+      if (policyForcesEscalation(module.modules, ctx)) return true;
     }
   }
   return false;
+}
+
+/**
+ * `RateLimitPolicy.check` escalates only while a window is live *and* its count
+ * has reached `maxActions`. Both conditions have to be readable, and the window
+ * has to have enough life left that it cannot lapse before the propose lands.
+ */
+function rateLimitForcesEscalation(
+  module: PolicyModuleInfo,
+  ctx: EscalationProofContext,
+): boolean {
+  const { maxActions, windowSeconds, windowStartSec, actionsUsed } = module;
+  if (
+    maxActions === undefined ||
+    windowSeconds === undefined ||
+    windowStartSec === undefined ||
+    actionsUsed === undefined
+  ) {
+    return false;
+  }
+  // No window recorded yet: the contract's first branch returns ALLOW.
+  if (windowStartSec <= 0) return false;
+  // Allowance left inside the window is an ALLOW too.
+  if (actionsUsed < maxActions) return false;
+
+  const windowEndsSec = windowStartSec + windowSeconds;
+  // Already lapsed: `check` starts a fresh window and allows.
+  if (ctx.nowSec >= windowEndsSec) return false;
+  // Close enough to lapsing that the propose could land after the reset.
+  return windowEndsSec - ctx.nowSec > ctx.rateWindowMarginSec;
 }
 
 /**
@@ -380,6 +436,14 @@ export interface PolicyModuleInfo {
   maxActions?: number;
   /** rate_limit: window length in seconds. */
   windowSeconds?: number;
+  /**
+   * rate_limit: start of the queried node's current window, unix seconds, or 0
+   * when it has never proposed. Per-node state, like `cap` — the module's limits
+   * are shared, the usage against them is not.
+   */
+  windowStartSec?: number;
+  /** rate_limit: proposals the queried node has already made in that window. */
+  actionsUsed?: number;
   /** time_window: daily UTC window start, in seconds of day. */
   startSecondOfDay?: number;
   /** time_window: daily UTC window end (exclusive), in seconds of day. */

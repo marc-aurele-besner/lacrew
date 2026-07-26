@@ -38,7 +38,7 @@ import {
   type EpochGrant,
   type NodePolicyStack,
   narrowScopesForEscalation,
-  spendCapForcesEscalation,
+  policyForcesEscalation,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -64,6 +64,16 @@ import {
 /** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
 /** Full authority: what a session gets when the caller does not narrow it. */
 const DEFAULT_SESSION_SCOPES: readonly SessionScope[] = SESSION_SCOPES;
+
+/**
+ * How much of a live rate window must remain before its ESCALATE is trusted to
+ * narrow a key. A rate limit's verdict resets with the window, so the gap between
+ * reading it and the propose being mined is a window in which ESCALATE can become
+ * ALLOW — and a key narrowed on the stale answer would revert a call the policy
+ * now permits. A minute is far longer than a propose takes to land, and costs
+ * only the narrowing on calls made in the last seconds of a window.
+ */
+const RATE_WINDOW_MARGIN_SEC = 60;
 
 /** Order-insensitive comparison, matching how the onchain mask is built. */
 function sameScopes(a: readonly string[], b: readonly string[]): boolean {
@@ -656,14 +666,15 @@ export class CrewRuntime {
    *
    * A propose whose verdict is provably ESCALATE never reaches
    * `EscalationRouter._requireSpendScope`, so settlement authority on that key
-   * is authority the call cannot use. Reading the agent's bound stack turns
-   * that into a fact rather than a guess: one over-cap `SpendCapPolicy` decides
-   * the verdict, because any ESCALATE dominates in `PolicyStack.check`.
+   * is authority the call cannot use. Reading the agent's bound stack turns that
+   * into a fact rather than a guess: one escalating member decides the verdict,
+   * because any ESCALATE dominates in `PolicyStack.check`. Either an over-cap
+   * `SpendCapPolicy` or a `RateLimitPolicy` whose allowance is spent will do it.
    *
    * Every uncertainty keeps the standing scopes — off-chain client, unreadable
-   * stack, no cap in it, value inside the cap. A key too narrow to settle a
-   * call the org would have allowed is an outage, so the one-sided failure
-   * direction is deliberate.
+   * stack, nothing in it that escalates, a value inside the cap, or a rate window
+   * about to lapse. A key too narrow to settle a call the org would have allowed
+   * is an outage, so the one-sided failure direction is deliberate.
    */
   async scopesForSpend(agent: `0x${string}`, value: bigint): Promise<SessionScope[]> {
     const standing = this.scopePolicyFor(agent);
@@ -680,7 +691,12 @@ export class CrewRuntime {
 
     const stack = stacks[0];
     if (!stack) return standing;
-    return narrowScopesForEscalation(standing, spendCapForcesEscalation(stack.modules, value));
+    const forced = policyForcesEscalation(stack.modules, {
+      value,
+      nowSec: Math.floor(Date.now() / 1000),
+      rateWindowMarginSec: RATE_WINDOW_MARGIN_SEC,
+    });
+    return narrowScopesForEscalation(standing, forced);
   }
 
   /** Distinct limit sets need distinct keys; see the `sessions` map comment. */
