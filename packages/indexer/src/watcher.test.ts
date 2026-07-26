@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { EventWatcher, logToProtocolEvent, transferToDepositEvent } from "./watcher.js";
+import {
+  EventWatcher,
+  logToProtocolEvent,
+  transferToDepositEvent,
+  transferToOutflowEvent,
+} from "./watcher.js";
 import type { AssetStack } from "@lacrew/core";
 import { loadStore } from "./store.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -37,6 +42,29 @@ describe("transferToDepositEvent", () => {
       treasury: stack.treasury,
       txHash: TX,
     });
+  });
+
+  it("folds a transfer out of the treasury as an outflow carrying its destination", () => {
+    const event = transferToOutflowEvent(
+      { from: stack.treasury.toUpperCase(), to: "0xdead", value: 5_000_000n },
+      stack,
+      AT,
+      TX,
+    );
+    assert.equal(event?.type, "TreasuryOutflow");
+    assert.equal(event?.payload.to, "0xdead");
+    assert.equal(event?.payload.amount, "5000000");
+    assert.equal(event?.payload.symbol, "USDC");
+  });
+
+  it("refuses an outflow whose source is not this stack's treasury", () => {
+    const event = transferToOutflowEvent(
+      { from: "0x3333333333333333333333333333333333333333", to: "0xdead", value: 1n },
+      stack,
+      AT,
+      TX,
+    );
+    assert.equal(event, null);
   });
 
   it("refuses a transfer to anything but this stack's treasury", () => {
