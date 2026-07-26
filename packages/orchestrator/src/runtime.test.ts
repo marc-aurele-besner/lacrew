@@ -7,6 +7,7 @@ import {
   ANVIL_CHAIN_ID,
   MOCK_WORKER,
   type ChainAddresses,
+  type PolicyModuleInfo,
 } from "@lacrew/core";
 import { createOnchainClient } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
@@ -34,6 +35,94 @@ describe("CrewRuntime", () => {
     await runtime.resolve(tick.intentId, true);
     const afterResolve = await runtime.audit();
     assert.ok(afterResolve.some((e) => e.type === "IntentResolved"));
+  });
+});
+
+/**
+ * A client that reads as onchain (`publicClient` present) and answers the one
+ * read the scope decision makes. Nothing here registers a session — the
+ * decision is a read, and testing it needs no key.
+ */
+function policyReadingClient(opts: {
+  modules: PolicyModuleInfo[];
+  /** Collects the nodes each read asked about. */
+  capturedNodes?: `0x${string}`[];
+  throws?: boolean;
+}) {
+  const client = createLacrewClient({ useMock: true }) as unknown as Record<string, unknown>;
+  return {
+    ...client,
+    publicClient: {},
+    addresses: { chainId: ANVIL_CHAIN_ID },
+    async getNodePolicies({ nodes }: { nodes?: `0x${string}`[] }) {
+      if (opts.throws) throw new Error("rpc_unreachable");
+      const node = nodes?.[0] ?? MOCK_WORKER;
+      opts.capturedNodes?.push(node);
+      return [{ node, policyModule: node, source: "node" as const, modules: opts.modules }];
+    },
+  } as unknown as ConstructorParameters<typeof CrewRuntime>[0]["client"];
+}
+
+describe("least-privilege session scopes", () => {
+  const AGENT = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
+  const CAP_50: PolicyModuleInfo[] = [
+    {
+      address: "0x00000000000000000000000000000000000000c1",
+      kind: "spend_cap",
+      cap: "50",
+    },
+  ];
+
+  it("drops settlement authority from a spend the chain must escalate", async () => {
+    // 75 > cap 50, so the router escalates and never reaches _requireSpendScope:
+    // settlement authority on this key is authority the call cannot use.
+    const runtime = new CrewRuntime({ client: policyReadingClient({ modules: CAP_50 }) });
+    assert.deepEqual(await runtime.scopesForSpend(AGENT, 75n), ["propose:intent"]);
+  });
+
+  it("keeps settlement authority for a spend inside the cap", async () => {
+    // This one can be ALLOWed and settled inline; a narrowed key would revert it.
+    const runtime = new CrewRuntime({ client: policyReadingClient({ modules: CAP_50 }) });
+    assert.equal((await runtime.scopesForSpend(AGENT, 10n)).length, 2);
+  });
+
+  it("keeps the full set when the stack holds no cap to prove anything with", async () => {
+    const runtime = new CrewRuntime({ client: policyReadingClient({ modules: [] }) });
+    assert.equal((await runtime.scopesForSpend(AGENT, 75n)).length, 2);
+  });
+
+  it("keeps the full set when the policy read fails", async () => {
+    // An unreachable RPC must not narrow a key into an outage.
+    const runtime = new CrewRuntime({
+      client: policyReadingClient({ modules: CAP_50, throws: true }),
+    });
+    assert.equal((await runtime.scopesForSpend(AGENT, 75n)).length, 2);
+  });
+
+  it("narrows nothing on an off-chain client, which has no stack to read", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    assert.equal((await runtime.scopesForSpend(AGENT, 75n)).length, 2);
+  });
+
+  it("reads the stack of the agent being spent for", async () => {
+    // Only AGENT is capped here. Narrowing therefore proves the read was scoped
+    // to the paying agent rather than to whatever node the client walks first —
+    // reading another node's cap would narrow keys by someone else's limit.
+    const asked: `0x${string}`[] = [];
+    const runtime = new CrewRuntime({
+      client: policyReadingClient({
+        modules: CAP_50,
+        capturedNodes: asked,
+      }),
+    });
+    assert.deepEqual(await runtime.scopesForSpend(AGENT, 75n), ["propose:intent"]);
+    assert.deepEqual(asked, [AGENT]);
+  });
+
+  it("reports the decision without changing the agent's standing policy", async () => {
+    const runtime = new CrewRuntime({ client: policyReadingClient({ modules: CAP_50 }) });
+    await runtime.scopesForSpend(AGENT, 75n);
+    assert.equal((await runtime.scopesForSpend(AGENT, 10n)).length, 2);
   });
 });
 
