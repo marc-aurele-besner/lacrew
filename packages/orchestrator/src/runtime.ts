@@ -52,6 +52,7 @@ import { issueSession, isSessionExpired, revokeSession, createEphemeralSession }
 import { worstVerdict } from "./flowScope.js";
 import { decideAutoExecute } from "./governanceSweep.js";
 import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
+import { planNodeStack, stackUnchanged } from "./policyPlan.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
   createMemoryRuntimeStore,
@@ -1530,7 +1531,10 @@ export class CrewRuntime {
     node: `0x${string}`;
     stack: `0x${string}`;
     deployed: Array<{ kind: string; address: `0x${string}` }>;
+    reused: Array<{ kind: string; address: `0x${string}` }>;
     proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }>;
+    /** True when the chain already binds exactly this — nothing was proposed. */
+    unchanged?: boolean;
   }> {
     if (!isOnchainClient(this.client)) {
       throw new Error("policy_deploy_requires_chain");
@@ -1539,11 +1543,19 @@ export class CrewRuntime {
       throw new Error("modules_required");
     }
     const addresses = this.client.addresses;
+
+    // What the chain binds for this node today: identical rate/window modules
+    // are reused instead of redeployed, and a composition that already matches
+    // proposes nothing — a submit is a statement of intent, not a build log.
+    const [current] = await this.client.getNodePolicies({ nodes: [input.node] });
+    const plan = planNodeStack(input.modules, current);
+
     const members: `0x${string}`[] = [];
     const deployed: Array<{ kind: string; address: `0x${string}` }> = [];
+    const reused: Array<{ kind: string; address: `0x${string}` }> = [];
     let customRate: `0x${string}` | undefined;
 
-    for (const spec of input.modules) {
+    for (const { spec, reuse } of plan) {
       if (spec.kind === "whitelist") {
         if (!addresses.whitelistPolicy) throw new Error("whitelistPolicy address missing");
         members.push(addresses.whitelistPolicy);
@@ -1551,28 +1563,62 @@ export class CrewRuntime {
         if (!addresses.spendCapPolicy) throw new Error("spendCapPolicy address missing");
         members.push(addresses.spendCapPolicy);
       } else if (spec.kind === "rate_limit") {
-        const mod = await this.client.deployRateLimitPolicy({
-          maxActions: spec.maxActions,
-          windowSeconds: spec.windowSeconds,
-        });
-        members.push(mod.address);
-        deployed.push({ kind: "rate_limit", address: mod.address });
-        customRate = mod.address;
+        const address =
+          reuse ??
+          (
+            await this.client.deployRateLimitPolicy({
+              maxActions: spec.maxActions,
+              windowSeconds: spec.windowSeconds,
+            })
+          ).address;
+        members.push(address);
+        (reuse ? reused : deployed).push({ kind: "rate_limit", address });
+        customRate = address;
       } else if (spec.kind === "time_window") {
-        const mod = await this.client.deployTimeWindowPolicy({
-          startSecondOfDay: spec.startSecondOfDay,
-          endSecondOfDay: spec.endSecondOfDay,
-        });
-        members.push(mod.address);
-        deployed.push({ kind: "time_window", address: mod.address });
+        const address =
+          reuse ??
+          (
+            await this.client.deployTimeWindowPolicy({
+              startSecondOfDay: spec.startSecondOfDay,
+              endSecondOfDay: spec.endSecondOfDay,
+            })
+          ).address;
+        members.push(address);
+        (reuse ? reused : deployed).push({ kind: "time_window", address });
       } else {
         throw new Error(`unknown module kind "${(spec as { kind: string }).kind}"`);
       }
     }
 
+    const proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }> = [];
+
+    // The recorder binding is checked even when the stack is unchanged: a
+    // stack whose rate module never records is the exact silent failure the
+    // per-node recorder exists to prevent.
+    const recorderCurrent = customRate
+      ? await this.client.readNodeRateRecorder(input.node)
+      : undefined;
+    const recorderOk =
+      !customRate || recorderCurrent?.toLowerCase() === customRate.toLowerCase();
+
+    if (stackUnchanged(members, current)) {
+      if (recorderOk) {
+        return {
+          node: input.node,
+          stack: current!.policyModule,
+          deployed,
+          reused,
+          proposals,
+          unchanged: true,
+        };
+      }
+      const recorder = await this.proposeRecorderBinding(input.node, customRate!, input.tier);
+      proposals.push(recorder);
+      return { node: input.node, stack: current!.policyModule, deployed, reused, proposals };
+    }
+
     const stack = await this.client.deployPolicyStack(members);
 
-    const proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }> = [];
     const bind = await this.client.proposeSetNodePolicy({
       node: input.node,
       policyModule: stack.address,
@@ -1591,31 +1637,41 @@ export class CrewRuntime {
       },
     });
 
-    if (customRate) {
-      const recorder = await this.client.proposeSetNodeRateRecorder({
-        node: input.node,
-        rateRecorder: customRate,
-        tier: input.tier,
-      });
-      proposals.push({
-        action: "setNodeRateRecorder",
-        proposalId: recorder.proposalId,
-        txHash: recorder.txHash,
-      });
-      this.pushAudit({
-        type: "ProposalCreated",
-        at: new Date().toISOString(),
-        payload: {
-          proposalId: recorder.proposalId,
-          node: input.node,
-          rateRecorder: customRate,
-          action: "setNodeRateRecorder",
-          txHash: recorder.txHash,
-        },
-      });
+    if (customRate && !recorderOk) {
+      proposals.push(await this.proposeRecorderBinding(input.node, customRate, input.tier));
     }
 
-    return { node: input.node, stack: stack.address, deployed, proposals };
+    return { node: input.node, stack: stack.address, deployed, reused, proposals };
+  }
+
+  /** Propose EscalationRouter.setNodeRateRecorder and audit it (shared tail). */
+  private async proposeRecorderBinding(
+    node: `0x${string}`,
+    rateRecorder: `0x${string}`,
+    tier?: GovernanceTier,
+  ): Promise<{ action: string; proposalId: string; txHash?: `0x${string}` }> {
+    if (!isOnchainClient(this.client)) throw new Error("policy_deploy_requires_chain");
+    const recorder = await this.client.proposeSetNodeRateRecorder({
+      node,
+      rateRecorder,
+      tier,
+    });
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: recorder.proposalId,
+        node,
+        rateRecorder,
+        action: "setNodeRateRecorder",
+        txHash: recorder.txHash,
+      },
+    });
+    return {
+      action: "setNodeRateRecorder",
+      proposalId: recorder.proposalId,
+      txHash: recorder.txHash,
+    };
   }
 
   async proposeSetWhitelist(input: {
