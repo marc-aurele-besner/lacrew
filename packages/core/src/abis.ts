@@ -1018,6 +1018,25 @@ export const escalationRouterAbi = [
   },
   {
     "type": "function",
+    "name": "rateRecorderOf",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IRateRecorder"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "resolve",
     "inputs": [
       {
@@ -1071,6 +1090,24 @@ export const escalationRouterAbi = [
       },
       {
         "name": "policyModule",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setNodeRateRecorder",
+    "inputs": [
+      {
+        "name": "node",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "rateRecorder_",
         "type": "address",
         "internalType": "address"
       }
@@ -1255,6 +1292,25 @@ export const escalationRouterAbi = [
       },
       {
         "name": "policyModule",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodeRateRecorderUpdated",
+    "inputs": [
+      {
+        "name": "node",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "rateRecorder",
         "type": "address",
         "indexed": true,
         "internalType": "address"

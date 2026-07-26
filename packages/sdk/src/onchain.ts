@@ -30,8 +30,11 @@ import {
   whitelistPolicyAbi,
   policyModuleAbi,
   policyStackAbi,
+  policyStackBytecode,
   rateLimitPolicyAbi,
+  rateLimitPolicyBytecode,
   timeWindowPolicyAbi,
+  timeWindowPolicyBytecode,
   marketplacePaymentsAbi,
   mockUsdcAbi,
   listAssetStacks,
@@ -1475,6 +1478,104 @@ export class OnchainLacrewClient {
       data,
     });
     return { ...result, node: input.node };
+  }
+
+  /**
+   * Propose EscalationRouter.setNodeRateRecorder (high tier — policy upgrade).
+   * Required alongside setNodePolicy whenever a node's stack carries its own
+   * RateLimitPolicy: without the recorder binding the module's windows never
+   * fill and its limit never trips.
+   */
+  async proposeSetNodeRateRecorder(input: {
+    node: `0x${string}`;
+    rateRecorder: `0x${string}`;
+    tier?: GovernanceTier;
+  }): Promise<{ proposalId: string; node: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: escalationRouterAbi,
+      functionName: "setNodeRateRecorder",
+      args: [input.node, input.rateRecorder],
+    });
+    const result = await this.proposeGovernance({
+      tier: input.tier ?? "high",
+      target: this.addresses.escalationRouter,
+      data,
+    });
+    return { ...result, node: input.node };
+  }
+
+  /** Deploy a contract from bytecode carried in @lacrew/core and return its address. */
+  private async deployFromBytecode(
+    abi: readonly unknown[],
+    bytecode: `0x${string}`,
+    args: readonly unknown[],
+  ): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.deployContract({
+      abi: abi as never,
+      bytecode,
+      args: args as never,
+      account: wallet.account!,
+      chain: this.chain ?? null,
+    });
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (!receipt.contractAddress) {
+      throw new Error("deployment returned no contract address");
+    }
+    return { address: receipt.contractAddress, txHash: hash };
+  }
+
+  /**
+   * Deploy a RateLimitPolicy with custom params and lock its recorder to this
+   * org's EscalationRouter, so only the router can count actions into it.
+   *
+   * Deployment is permissionless and inert: the module constrains nothing
+   * until governance binds it into a node's stack (setNodePolicy) and points
+   * the node's recording at it (setNodeRateRecorder) — both governor-gated.
+   */
+  async deployRateLimitPolicy(input: {
+    maxActions: number;
+    windowSeconds: number;
+    asset?: string;
+  }): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
+    const router = resolveAssetStack(this.addresses, input.asset).escalationRouter;
+    if (!router || router === "0x0000000000000000000000000000000000000000") {
+      throw new Error("escalationRouter address missing — cannot bind the recorder");
+    }
+    const deployed = await this.deployFromBytecode(rateLimitPolicyAbi, rateLimitPolicyBytecode, [
+      BigInt(input.maxActions),
+      BigInt(input.windowSeconds),
+    ]);
+    const wallet = this.requireWallet();
+    const { request } = await this.publicClient.simulateContract({
+      address: deployed.address,
+      abi: rateLimitPolicyAbi,
+      functionName: "setRecorder",
+      args: [router],
+      account: wallet.account!,
+    });
+    const setHash = await wallet.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash: setHash });
+    return deployed;
+  }
+
+  /** Deploy a TimeWindowPolicy with a custom daily UTC window (immutable params). */
+  async deployTimeWindowPolicy(input: {
+    startSecondOfDay: number;
+    endSecondOfDay: number;
+  }): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
+    return this.deployFromBytecode(timeWindowPolicyAbi, timeWindowPolicyBytecode, [
+      BigInt(input.startSecondOfDay),
+      BigInt(input.endSecondOfDay),
+    ]);
+  }
+
+  /** Deploy a PolicyStack over existing modules (order = check() order). */
+  async deployPolicyStack(
+    modules: `0x${string}`[],
+  ): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
+    if (modules.length === 0) throw new Error("a PolicyStack needs at least one module");
+    return this.deployFromBytecode(policyStackAbi, policyStackBytecode, [modules]);
   }
 
   /** Propose WhitelistPolicy.setAllowed (high tier). */

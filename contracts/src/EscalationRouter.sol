@@ -37,6 +37,10 @@ contract EscalationRouter {
     mapping(uint256 => Intent) public intents;
     /// @notice Optional per-node policy stack override (falls back to `policy`).
     mapping(address => IPolicyModule) public policyOf;
+    /// @notice Optional per-node rate recorder (falls back to `rateRecorder`).
+    /// A node bound to its own RateLimitPolicy needs its executed actions
+    /// counted in that module's windows; the global recorder never sees them.
+    mapping(address => IRateRecorder) public rateRecorderOf;
 
     event IntentCreated(uint256 indexed intentId, address indexed agent, address awaitingApprover);
     event IntentEscalated(uint256 indexed intentId, address indexed from, address indexed to);
@@ -51,6 +55,7 @@ contract EscalationRouter {
     event RateRecorderUpdated(address indexed rateRecorder);
     event SessionRegistryUpdated(address indexed sessionRegistry);
     event NodePolicyUpdated(address indexed node, address indexed policyModule);
+    event NodeRateRecorderUpdated(address indexed node, address indexed rateRecorder);
     event GovernorUpdated(address indexed governor);
 
     error IntentNotFound(uint256 intentId);
@@ -107,6 +112,15 @@ contract EscalationRouter {
         if (node == address(0)) revert ZeroAddress();
         policyOf[node] = IPolicyModule(policyModule);
         emit NodePolicyUpdated(node, policyModule);
+    }
+
+    /// @notice Bind a node's own rate recorder (its custom RateLimitPolicy).
+    /// Pass address(0) to clear (fall back to the global `rateRecorder`).
+    function setNodeRateRecorder(address node, address rateRecorder_) external {
+        _onlyGovernorOrBootstrap();
+        if (node == address(0)) revert ZeroAddress();
+        rateRecorderOf[node] = IRateRecorder(rateRecorder_);
+        emit NodeRateRecorderUpdated(node, rateRecorder_);
     }
 
     /// @notice Propose an action; ALLOW executes spend+call, ESCALATE creates an intent, DENY reverts.
@@ -225,8 +239,10 @@ contract EscalationRouter {
     }
 
     function _recordRate(address agent) private {
-        if (address(rateRecorder) != address(0)) {
-            rateRecorder.record(agent);
+        IRateRecorder recorder = rateRecorderOf[agent];
+        if (address(recorder) == address(0)) recorder = rateRecorder;
+        if (address(recorder) != address(0)) {
+            recorder.record(agent);
         }
     }
 
