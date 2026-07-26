@@ -36,6 +36,7 @@ import {
   type SessionScope,
   type TreasuryBalance,
   type EpochGrant,
+  type NodePolicyStack,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -1627,6 +1628,32 @@ export class CrewRuntime {
   listAssets(): AssetStack[] {
     if (!isOnchainClient(this.client)) return [];
     return listAssetStacks(this.client.addresses);
+  }
+
+  /**
+   * Per-node policy-stack composition read from the chain — which module
+   * EscalationRouter binds for each node and what each module in it enforces
+   * (caps, whitelist targets, rate, window). [] in mock mode: the offline
+   * client has no policy contracts to read, and an invented stack would be a
+   * claim about what an agent is allowed to spend. An asset selector in mock
+   * mode throws (→ 400 at the route) like every other asset-scoped read.
+   */
+  async getNodePolicies(
+    opts: { asset?: string; node?: `0x${string}` } = {},
+  ): Promise<NodePolicyStack[]> {
+    if (!isOnchainClient(this.client)) {
+      if (opts.asset) {
+        throw new Error(
+          `Policy reads for a specific asset require an onchain client; ` +
+            `the offline client cannot resolve "${opts.asset}".`,
+        );
+      }
+      return [];
+    }
+    return this.client.getNodePolicies({
+      asset: opts.asset,
+      nodes: opts.node ? [opts.node] : undefined,
+    });
   }
 
   /**
