@@ -104,6 +104,73 @@ describe("createOnchainClient", () => {
   );
 });
 
+describe("node policy read-back (F2.5)", () => {
+  it(
+    "reads each node's bound stack with classified modules and real params",
+    { skip: !rpc || !anvilDeployment?.worker },
+    async () => {
+      const addresses = anvilDeployment!;
+      const client = createOnchainClient({
+        transport: http(rpc!),
+        chainId: ANVIL_CHAIN_ID,
+        addresses,
+      });
+      const policies = await client.getNodePolicies();
+      assert.ok(policies.length >= 3, "root + manager + worker at minimum");
+
+      // The worker's per-node override is the deploy's 4-module stack:
+      // [timeWindow, whitelist, spendCap, rateLimit] in check() order.
+      const worker = policies.find(
+        (p) => p.node.toLowerCase() === addresses.worker!.toLowerCase(),
+      );
+      assert.ok(worker);
+      assert.equal(worker.source, "node");
+      assert.equal(worker.policyModule.toLowerCase(), addresses.policyStack!.toLowerCase());
+      assert.deepEqual(
+        worker.modules.map((m) => m.kind),
+        ["time_window", "whitelist", "spend_cap", "rate_limit"],
+      );
+
+      // Params come from the chain, not a fixture: DeployMockOrg's values.
+      const [window, whitelist, cap, rate] = worker.modules;
+      assert.equal(cap!.defaultCap, (50n * 10n ** 6n).toString());
+      assert.equal(cap!.cap, (50n * 10n ** 6n).toString());
+      assert.equal(cap!.capIsExplicit, false);
+      assert.equal(rate!.maxActions, 10);
+      assert.equal(rate!.windowSeconds, 3600);
+      assert.equal(typeof window!.startSecondOfDay, "number");
+      assert.ok(
+        whitelist!.allowedTargets!.some(
+          (t) => t.toLowerCase() === addresses.x402Target!.toLowerCase(),
+        ),
+        "whitelist targets include the deploy's x402 target",
+      );
+
+      // The manager's stack drops rate limit + time window and carries an
+      // explicit 200 USDC cap.
+      const manager = policies.find(
+        (p) => p.node.toLowerCase() === addresses.manager!.toLowerCase(),
+      );
+      assert.ok(manager);
+      assert.deepEqual(
+        manager.modules.map((m) => m.kind),
+        ["whitelist", "spend_cap"],
+      );
+      const managerCap = manager.modules.find((m) => m.kind === "spend_cap");
+      assert.equal(managerCap!.cap, (200n * 10n ** 6n).toString());
+      assert.equal(managerCap!.capIsExplicit, true);
+
+      // The root has no override: it inherits the router default, and the
+      // read says so rather than presenting the fallback as a binding.
+      const root = policies.find(
+        (p) => p.node.toLowerCase() === addresses.humanRoot!.toLowerCase(),
+      );
+      assert.ok(root);
+      assert.equal(root.source, "default");
+    },
+  );
+});
+
 describe("multi-asset budgeting (F0.4)", () => {
   it(
     "streams and reads a second asset independently of USDC",
