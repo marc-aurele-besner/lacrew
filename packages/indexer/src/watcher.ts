@@ -20,6 +20,8 @@ import {
 import {
   getAddresses,
   escalationRouterAbi,
+  listAssetStacks,
+  type AssetStack,
   type ChainAddresses,
   type Intent,
   type ProtocolEvent,
@@ -59,6 +61,14 @@ const sessionEvents = [
   ),
   parseAbiItem("event SessionRevoked(uint256 indexed sessionId, address indexed by)"),
 ];
+/**
+ * Deposits are derived, not emitted: a plain ERC-20 transfer into the
+ * Treasury runs no treasury code, so the token's own Transfer log — filtered
+ * to the treasury address — is the only onchain record money arrived.
+ */
+const erc20TransferEvent = parseAbiItem(
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+);
 
 type DecodedLog = Log & { eventName?: string; args?: Record<string, unknown> };
 
@@ -189,6 +199,34 @@ export function logToProtocolEvent(
   }
 }
 
+/**
+ * A token Transfer-to-treasury log as a TreasuryDeposit event. Null when the
+ * destination is not this stack's treasury — the subscription filters on
+ * `to`, but a deposit attributed to the wrong treasury is a fabricated
+ * inflow, so the address is re-checked rather than trusted.
+ */
+export function transferToDepositEvent(
+  args: Record<string, unknown>,
+  stack: AssetStack,
+  at: string,
+  txHash: string | null,
+): ProtocolEvent | null {
+  if (String(args.to).toLowerCase() !== stack.treasury.toLowerCase()) return null;
+  return {
+    type: "TreasuryDeposit",
+    at,
+    payload: {
+      from: args.from as string,
+      amount: String(args.value),
+      token: stack.token,
+      symbol: stack.symbol,
+      decimals: stack.decimals,
+      treasury: stack.treasury,
+      txHash,
+    },
+  };
+}
+
 export type WatcherOptions = {
   rpcUrl: string;
   chainId?: number;
@@ -234,6 +272,35 @@ export class EventWatcher {
     return list;
   }
 
+  /** Asset stacks whose token + treasury are both real (deposit watch targets). */
+  private depositStacks(): AssetStack[] {
+    const zero = "0x0000000000000000000000000000000000000000";
+    return listAssetStacks(this.addresses).filter(
+      (s) => s.token && s.token !== zero && s.treasury && s.treasury !== zero,
+    );
+  }
+
+  /** Fold one token Transfer-to-treasury log into a TreasuryDeposit event. */
+  private async processDepositLog(
+    log: DecodedLog,
+    stack: AssetStack,
+    opts: { skipJsonAudit?: boolean } = {},
+  ): Promise<void> {
+    const args = log.args;
+    if (!args) return;
+    const { at, source: atSource } = await this.blockTime(log.blockNumber);
+    const event = transferToDepositEvent(args, stack, at, log.transactionHash ?? null);
+    if (!event) return;
+    event.atSource = atSource;
+    if (!opts.skipJsonAudit) this.store.audit.push(event);
+    saveStore(this.storePath, this.store);
+    await writeToSinks(this.sinks, {
+      event,
+      txHash: log.transactionHash ?? null,
+      logIndex: log.logIndex ?? null,
+    });
+  }
+
   /**
    * Index historical logs from `fromBlock` to latest. Idempotent: Postgres
    * dedups on (tx_hash, log_index); the JSON audit is rewritten from scratch
@@ -260,7 +327,23 @@ export class EventWatcher {
     for (const log of collected) {
       await this.processLog(log, { skipJsonAudit });
     }
-    return collected.length;
+
+    // Deposits ride the tokens' own Transfer logs, filtered per treasury.
+    let deposits = 0;
+    for (const stack of this.depositStacks()) {
+      const logs = await this.client.getLogs({
+        address: stack.token,
+        event: erc20TransferEvent,
+        args: { to: stack.treasury },
+        fromBlock,
+        toBlock: "latest",
+      });
+      for (const log of logs as DecodedLog[]) {
+        await this.processDepositLog(log, stack, { skipJsonAudit });
+        deposits += 1;
+      }
+    }
+    return collected.length + deposits;
   }
 
   start(): void {
@@ -284,8 +367,24 @@ export class EventWatcher {
       );
     }
 
+    // One filtered subscription per asset stack: the token's Transfer log with
+    // `to` pinned to that stack's own treasury.
+    for (const stack of this.depositStacks()) {
+      this.unwatchers.push(
+        this.client.watchEvent({
+          address: stack.token,
+          event: erc20TransferEvent,
+          args: { to: stack.treasury },
+          onError,
+          onLogs: (logs) => {
+            for (const log of logs as DecodedLog[]) void this.processDepositLog(log, stack);
+          },
+        }),
+      );
+    }
+
     console.log(
-      `[@lacrew/indexer] watching router/gov/treasury/sessions → ${this.storePath}` +
+      `[@lacrew/indexer] watching router/gov/treasury/sessions/deposits → ${this.storePath}` +
         (this.sinks.length > 0 ? ` + ${this.sinks.map((s) => s.name).join(", ")}` : ""),
     );
   }
