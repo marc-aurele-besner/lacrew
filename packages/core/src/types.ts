@@ -199,6 +199,66 @@ export function sessionScopesFromMask(mask: bigint): SessionScope[] {
   return SESSION_SCOPES.filter((scope) => (mask & BigInt(SESSION_SCOPE_BIT[scope])) !== 0n);
 }
 
+/**
+ * Whether a spend cap in this policy stack forces `value` to escalate.
+ *
+ * Mirrors two contract facts, and is only sound because of both:
+ * `SpendCapPolicy.check` escalates exactly when `value > capOf(agent)`, and
+ * `PolicyStack.check` returns ESCALATE if *any* member escalates. So one
+ * over-cap module settles the verdict no matter what else is in the stack —
+ * including modules this reader could not classify, which can only ever be
+ * equally or more restrictive.
+ *
+ * Nested stacks are walked because a stack may hold a stack, and a cap buried
+ * one level down is enforced just as hard as a top-level one.
+ *
+ * False means "not proven", never "will be allowed": a stack with no readable
+ * cap returns false, because the caller's job is to act only on the proof.
+ */
+export function spendCapForcesEscalation(
+  modules: readonly PolicyModuleInfo[],
+  value: bigint,
+): boolean {
+  for (const module of modules) {
+    if (module.kind === "spend_cap" && module.cap !== undefined) {
+      // A cap that does not parse is treated as unread rather than as zero,
+      // which would claim every call escalates.
+      try {
+        if (value > BigInt(module.cap)) return true;
+      } catch {
+        // fall through to the nested walk
+      }
+    }
+    if (module.modules && module.modules.length > 0) {
+      if (spendCapForcesEscalation(module.modules, value)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Drop `spend:whitelist` when the chain cannot reach settlement anyway.
+ *
+ * `EscalationRouter.proposeIntent` requires `propose:intent` on every call and
+ * reaches `_requireSpendScope` only on an ALLOW verdict. When the verdict is
+ * provably ESCALATE, a key carrying settlement authority is authority the call
+ * can never use — so the narrower key does the same work.
+ *
+ * Derived from `standing` rather than assembled from scratch, which makes
+ * widening impossible: the result is always a subset of what the agent already
+ * had. Returns `standing` unchanged when there is nothing to prove or nothing
+ * left to drop — an empty mask is refused at issue, so narrowing to nothing
+ * would be an outage rather than a restriction.
+ */
+export function narrowScopesForEscalation(
+  standing: readonly SessionScope[],
+  forcesEscalation: boolean,
+): SessionScope[] {
+  if (!forcesEscalation) return [...standing];
+  const narrowed = standing.filter((scope) => scope !== "spend:whitelist");
+  return narrowed.length > 0 ? narrowed : [...standing];
+}
+
 export interface SessionKey {
   agent: `0x${string}`;
   /** Session id (onchain uint as string, or mock UUID). */
