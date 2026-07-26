@@ -677,13 +677,24 @@ export class OnchainLacrewClient {
       }
       case "whitelist":
         return { address, kind: "whitelist", allowedTargets: shape.allowedTargets };
-      case "rate_limit":
+      case "rate_limit": {
+        // The limits are the module's; the usage against them is the node's, so
+        // this read repeats per node the way `capOf` does.
+        const [windowStart, count] = (await this.publicClient.readContract({
+          address,
+          abi: rateLimitPolicyAbi,
+          functionName: "windows",
+          args: [node],
+        })) as readonly [bigint, number];
         return {
           address,
           kind: "rate_limit",
           maxActions: shape.maxActions,
           windowSeconds: shape.windowSeconds,
+          windowStartSec: Number(windowStart),
+          actionsUsed: Number(count),
         };
+      }
       case "time_window":
         return {
           address,
