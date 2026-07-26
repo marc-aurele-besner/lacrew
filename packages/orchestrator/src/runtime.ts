@@ -20,6 +20,7 @@ import {
   getAddresses,
   hasDeployment,
   listAssetStacks,
+  resolveAssetStack,
   sessionRegistryAbi,
   ADDRESS_ENV_VARS,
   MOCK_MANAGER,
@@ -1527,6 +1528,8 @@ export class CrewRuntime {
     node: `0x${string}`;
     modules: NodeStackModuleSpec[];
     tier?: GovernanceTier;
+    /** Selects which asset stack's router + shared modules the bind targets. */
+    asset?: string;
   }): Promise<{
     node: `0x${string}`;
     stack: `0x${string}`;
@@ -1542,12 +1545,17 @@ export class CrewRuntime {
     if (input.modules.length === 0) {
       throw new Error("modules_required");
     }
-    const addresses = this.client.addresses;
+    // Per-asset: every address below comes from the selected stack — its own
+    // router, whitelist and spend-cap. Omitted = primary, byte-identical.
+    const stackAddrs = resolveAssetStack(this.client.addresses, input.asset);
 
     // What the chain binds for this node today: identical rate/window modules
     // are reused instead of redeployed, and a composition that already matches
     // proposes nothing — a submit is a statement of intent, not a build log.
-    const [current] = await this.client.getNodePolicies({ nodes: [input.node] });
+    const [current] = await this.client.getNodePolicies({
+      nodes: [input.node],
+      asset: input.asset,
+    });
     const plan = planNodeStack(input.modules, current);
 
     const members: `0x${string}`[] = [];
@@ -1557,11 +1565,11 @@ export class CrewRuntime {
 
     for (const { spec, reuse } of plan) {
       if (spec.kind === "whitelist") {
-        if (!addresses.whitelistPolicy) throw new Error("whitelistPolicy address missing");
-        members.push(addresses.whitelistPolicy);
+        if (!stackAddrs.whitelistPolicy) throw new Error("whitelistPolicy address missing");
+        members.push(stackAddrs.whitelistPolicy);
       } else if (spec.kind === "spend_cap") {
-        if (!addresses.spendCapPolicy) throw new Error("spendCapPolicy address missing");
-        members.push(addresses.spendCapPolicy);
+        if (!stackAddrs.spendCapPolicy) throw new Error("spendCapPolicy address missing");
+        members.push(stackAddrs.spendCapPolicy);
       } else if (spec.kind === "rate_limit") {
         const address =
           reuse ??
@@ -1569,6 +1577,7 @@ export class CrewRuntime {
             await this.client.deployRateLimitPolicy({
               maxActions: spec.maxActions,
               windowSeconds: spec.windowSeconds,
+              asset: input.asset,
             })
           ).address;
         members.push(address);
@@ -1596,7 +1605,7 @@ export class CrewRuntime {
     // stack whose rate module never records is the exact silent failure the
     // per-node recorder exists to prevent.
     const recorderCurrent = customRate
-      ? await this.client.readNodeRateRecorder(input.node)
+      ? await this.client.readNodeRateRecorder(input.node, input.asset)
       : undefined;
     const recorderOk =
       !customRate || recorderCurrent?.toLowerCase() === customRate.toLowerCase();
@@ -1612,7 +1621,12 @@ export class CrewRuntime {
           unchanged: true,
         };
       }
-      const recorder = await this.proposeRecorderBinding(input.node, customRate!, input.tier);
+      const recorder = await this.proposeRecorderBinding(
+        input.node,
+        customRate!,
+        input.tier,
+        input.asset,
+      );
       proposals.push(recorder);
       return { node: input.node, stack: current!.policyModule, deployed, reused, proposals };
     }
@@ -1623,6 +1637,7 @@ export class CrewRuntime {
       node: input.node,
       policyModule: stack.address,
       tier: input.tier,
+      asset: input.asset,
     });
     proposals.push({ action: "setNodePolicy", proposalId: bind.proposalId, txHash: bind.txHash });
     this.pushAudit({
@@ -1638,7 +1653,9 @@ export class CrewRuntime {
     });
 
     if (customRate && !recorderOk) {
-      proposals.push(await this.proposeRecorderBinding(input.node, customRate, input.tier));
+      proposals.push(
+        await this.proposeRecorderBinding(input.node, customRate, input.tier, input.asset),
+      );
     }
 
     return { node: input.node, stack: stack.address, deployed, reused, proposals };
@@ -1649,12 +1666,14 @@ export class CrewRuntime {
     node: `0x${string}`,
     rateRecorder: `0x${string}`,
     tier?: GovernanceTier,
+    asset?: string,
   ): Promise<{ action: string; proposalId: string; txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) throw new Error("policy_deploy_requires_chain");
     const recorder = await this.client.proposeSetNodeRateRecorder({
       node,
       rateRecorder,
       tier,
+      asset,
     });
     this.pushAudit({
       type: "ProposalCreated",
@@ -1678,8 +1697,15 @@ export class CrewRuntime {
     target: `0x${string}`;
     allowed: boolean;
     tier?: GovernanceTier;
+    asset?: string;
   }): Promise<{ proposalId: string; target: `0x${string}`; txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) {
+      if (input.asset) {
+        throw new Error(
+          `Whitelist changes for a specific asset require an onchain client; ` +
+            `the offline client cannot resolve "${input.asset}".`,
+        );
+      }
       throw new Error("proposeSetWhitelist requires onchain mode");
     }
     const result = await this.client.proposeSetWhitelist(input);

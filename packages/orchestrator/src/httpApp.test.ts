@@ -384,6 +384,21 @@ describe("orchestrator Hono app", () => {
     assert.match(((await res.json()) as { error?: string }).error ?? "", /asset/i);
   });
 
+  it("rejects an asset-selected whitelist change in mock mode", async () => {
+    const res = await buildApp().request("/governance/propose-set-whitelist", {
+      method: "POST",
+      body: JSON.stringify({
+        target: "0x000000000000000000000000000000000000dEaD",
+        allowed: true,
+        asset: "WETH",
+      }),
+    });
+    // Whitelists are per-stack; the mock cannot resolve one, and the selector
+    // is the caller's input — 400, not 500.
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error?: string }).error ?? "", /asset/i);
+  });
+
   it("rejects an asset-selected agent cap as operator input in mock mode", async () => {
     const res = await buildApp().request("/governance/propose-set-agent-cap", {
       method: "POST",
