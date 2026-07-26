@@ -275,6 +275,78 @@ export interface TreasuryBalance {
   reserved: bigint;
 }
 
+/**
+ * What a policy module was identified as by probing its distinctive getters.
+ *
+ * `IPolicyModule` carries no `kind()` discriminator, so classification probes
+ * each candidate getter (`moduleCount` → stack, `defaultCap` → spend cap, …)
+ * and reports `unknown` — with the address, never a guess — when none answers.
+ */
+export type PolicyModuleKind =
+  | "spend_cap"
+  | "whitelist"
+  | "rate_limit"
+  | "time_window"
+  | "stack"
+  | "unknown";
+
+/**
+ * One policy module in a node's stack, with the parameters it enforces.
+ *
+ * Amounts are base-unit strings (same rule as `EpochGrant.amount`) so they
+ * survive JSON and stay exact. Fields are per-kind: only the ones for `kind`
+ * are set.
+ */
+export interface PolicyModuleInfo {
+  address: `0x${string}`;
+  kind: PolicyModuleKind;
+  /** spend_cap: module-wide fallback cap (base units). */
+  defaultCap?: string;
+  /**
+   * spend_cap: the per-call ceiling `check()` will actually enforce for the
+   * queried node (`capOf` — the inherited default is every bit as binding as
+   * an explicit cap).
+   */
+  cap?: string;
+  /** spend_cap: whether `cap` is an explicit per-agent cap (`hasAgentCap`). */
+  capIsExplicit?: boolean;
+  /**
+   * whitelist: targets currently allowed. The mapping is not enumerable, so
+   * candidates come from `TargetAllowed` logs and each is re-read from state —
+   * a since-revoked target is never reported as live.
+   */
+  allowedTargets?: `0x${string}`[];
+  /** rate_limit: max proposals per window. */
+  maxActions?: number;
+  /** rate_limit: window length in seconds. */
+  windowSeconds?: number;
+  /** time_window: daily UTC window start, in seconds of day. */
+  startSecondOfDay?: number;
+  /** time_window: daily UTC window end (exclusive), in seconds of day. */
+  endSecondOfDay?: number;
+  /** stack: nested members in `check()` order (a stack may nest a stack). */
+  modules?: PolicyModuleInfo[];
+}
+
+/**
+ * The policy stack EscalationRouter enforces for one org node.
+ *
+ * `source` records how the binding resolved: a per-node `policyOf` override,
+ * or the router's default `policy` — the fallback the contract applies
+ * silently (`_policyFor`), which the read makes visible.
+ */
+export interface NodePolicyStack {
+  node: `0x${string}`;
+  /** The bound IPolicyModule (a PolicyStack or a single module). */
+  policyModule: `0x${string}`;
+  source: "node" | "default";
+  /**
+   * The binding expanded: a PolicyStack's members in `check()` order, or a
+   * single-element list when the bound module is not a stack.
+   */
+  modules: PolicyModuleInfo[];
+}
+
 export interface ChainAddresses {
   chainId: number;
   orgRegistry: `0x${string}`;

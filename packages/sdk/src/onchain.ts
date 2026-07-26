@@ -29,6 +29,9 @@ import {
   spendCapPolicyAbi,
   whitelistPolicyAbi,
   policyModuleAbi,
+  policyStackAbi,
+  rateLimitPolicyAbi,
+  timeWindowPolicyAbi,
   marketplacePaymentsAbi,
   mockUsdcAbi,
   listAssetStacks,
@@ -45,7 +48,9 @@ import {
   type GovernanceSeatRole,
   type GovernanceTier,
   type Intent,
+  type NodePolicyStack,
   type OrgNode,
+  type PolicyModuleInfo,
   type ProtocolEvent,
   type SessionKey,
   type Verdict,
@@ -99,6 +104,18 @@ const VERDICT_MAP: Record<number, Verdict> = {
   1: "ESCALATE",
   2: "DENY",
 };
+
+/**
+ * Cached static facts about one policy module address — everything about it
+ * that does not depend on which node is being asked about.
+ */
+type ModuleShape =
+  | { kind: "stack"; members: `0x${string}`[] }
+  | { kind: "spend_cap"; defaultCap: string }
+  | { kind: "whitelist"; allowedTargets: `0x${string}`[] }
+  | { kind: "rate_limit"; maxActions: number; windowSeconds: number }
+  | { kind: "time_window"; startSecondOfDay: number; endSecondOfDay: number }
+  | { kind: "unknown" };
 
 export type OnchainClientOptions = {
   transport: Transport;
@@ -411,6 +428,269 @@ export class OnchainLacrewClient {
     })) as number;
 
     return VERDICT_MAP[verdict] ?? "DENY";
+  }
+
+  /**
+   * Per-node policy-stack composition, read from the chain.
+   *
+   * For each node: resolve the module EscalationRouter will consult —
+   * `policyOf(node)`, falling back to the router default `policy()` exactly as
+   * the contract's `_policyFor` does, since it exposes no effective-policy
+   * view — then expand it. A PolicyStack's members are enumerated via
+   * `moduleCount()` / `modules(i)`; each module is classified by probing its
+   * distinctive getters (IPolicyModule carries no kind discriminator) and
+   * reported `unknown` rather than guessed when none answers. Spend-cap
+   * entries carry the queried node's own `capOf` — the ceiling `check()` will
+   * actually compare a call against.
+   *
+   * `asset` selects the stack whose router is read (omit for the primary
+   * asset); `nodes` limits the read (omit to cover the whole org tree).
+   */
+  async getNodePolicies(
+    opts: { nodes?: `0x${string}`[]; asset?: string } = {},
+  ): Promise<NodePolicyStack[]> {
+    const zero = "0x0000000000000000000000000000000000000000";
+    const router = resolveAssetStack(this.addresses, opts.asset).escalationRouter;
+    if (!router || router === zero) return [];
+    const nodes = opts.nodes ?? (await this.getOrgTree()).map((n) => n.account);
+    if (nodes.length === 0) return [];
+
+    const defaultPolicy = (await this.publicClient.readContract({
+      address: router,
+      abi: escalationRouterAbi,
+      functionName: "policy",
+    })) as `0x${string}`;
+
+    // Static module facts (kind, params, stack membership) are per-address and
+    // nodes share stacks, so classification is cached across the walk; only
+    // the per-node capOf/hasAgentCap reads repeat.
+    const shapes = new Map<string, ModuleShape>();
+
+    const out: NodePolicyStack[] = [];
+    for (const node of nodes) {
+      const bound = (await this.publicClient.readContract({
+        address: router,
+        abi: escalationRouterAbi,
+        functionName: "policyOf",
+        args: [node],
+      })) as `0x${string}`;
+      const policyModule = bound !== zero ? bound : defaultPolicy;
+      const source = bound !== zero ? ("node" as const) : ("default" as const);
+      if (policyModule === zero) {
+        out.push({ node, policyModule, source, modules: [] });
+        continue;
+      }
+      const info = await this.describePolicyModule(policyModule, node, shapes, 0);
+      out.push({
+        node,
+        policyModule,
+        source,
+        modules: info.kind === "stack" ? (info.modules ?? []) : [info],
+      });
+    }
+    return out;
+  }
+
+  /** A read that returns undefined when the contract has no such function. */
+  private async tryRead<T>(
+    address: `0x${string}`,
+    abi: readonly unknown[],
+    functionName: string,
+    args?: readonly unknown[],
+  ): Promise<T | undefined> {
+    try {
+      return (await this.publicClient.readContract({
+        address,
+        abi: abi as never,
+        functionName: functionName as never,
+        args: args as never,
+      })) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Classify one module address by probing distinctive getters, most specific
+   * first (`moduleCount` → nested stack, `defaultCap` → spend cap,
+   * `startSecondOfDay` → time window, `maxActions` → rate limit, `allowed` →
+   * whitelist). Static parameters ride along so a shared stack is read once.
+   */
+  private async readModuleShape(address: `0x${string}`): Promise<ModuleShape> {
+    const count = await this.tryRead<bigint>(address, policyStackAbi, "moduleCount");
+    if (count !== undefined) {
+      const members = (await Promise.all(
+        Array.from({ length: Number(count) }, (_, i) =>
+          this.publicClient.readContract({
+            address,
+            abi: policyStackAbi,
+            functionName: "modules",
+            args: [BigInt(i)],
+          }),
+        ),
+      )) as `0x${string}`[];
+      return { kind: "stack", members };
+    }
+    const defaultCap = await this.tryRead<bigint>(address, spendCapPolicyAbi, "defaultCap");
+    if (defaultCap !== undefined) {
+      return { kind: "spend_cap", defaultCap: defaultCap.toString() };
+    }
+    const start = await this.tryRead<number | bigint>(
+      address,
+      timeWindowPolicyAbi,
+      "startSecondOfDay",
+    );
+    if (start !== undefined) {
+      const end = (await this.publicClient.readContract({
+        address,
+        abi: timeWindowPolicyAbi,
+        functionName: "endSecondOfDay",
+      })) as number | bigint;
+      return {
+        kind: "time_window",
+        startSecondOfDay: Number(start),
+        endSecondOfDay: Number(end),
+      };
+    }
+    const maxActions = await this.tryRead<number | bigint>(
+      address,
+      rateLimitPolicyAbi,
+      "maxActions",
+    );
+    if (maxActions !== undefined) {
+      const windowSeconds = (await this.publicClient.readContract({
+        address,
+        abi: rateLimitPolicyAbi,
+        functionName: "windowSeconds",
+      })) as number | bigint;
+      return {
+        kind: "rate_limit",
+        maxActions: Number(maxActions),
+        windowSeconds: Number(windowSeconds),
+      };
+    }
+    const allowedZero = await this.tryRead<boolean>(address, whitelistPolicyAbi, "allowed", [
+      "0x0000000000000000000000000000000000000000",
+    ]);
+    if (allowedZero !== undefined) {
+      return { kind: "whitelist", allowedTargets: await this.readWhitelistTargets(address) };
+    }
+    return { kind: "unknown" };
+  }
+
+  /**
+   * Targets a WhitelistPolicy currently allows. The mapping is not enumerable,
+   * so candidates come from `TargetAllowed` logs and each is re-read from
+   * state (same rule as `readGovernanceSeats`) — a target revoked after its
+   * last log entry is never reported as live.
+   */
+  private async readWhitelistTargets(address: `0x${string}`): Promise<`0x${string}`[]> {
+    const logs = await this.publicClient.getLogs({
+      address,
+      event: {
+        type: "event",
+        name: "TargetAllowed",
+        inputs: [
+          { name: "target", type: "address", indexed: true },
+          { name: "allowed", type: "bool", indexed: false },
+        ],
+      },
+      fromBlock: 0n,
+      toBlock: "latest",
+    });
+    const candidates: `0x${string}`[] = [];
+    const seen = new Set<string>();
+    for (const log of logs) {
+      const target = (log as { args?: { target?: `0x${string}` } }).args?.target;
+      if (target && !seen.has(target.toLowerCase())) {
+        seen.add(target.toLowerCase());
+        candidates.push(target);
+      }
+    }
+    if (candidates.length === 0) return [];
+    const live = (await Promise.all(
+      candidates.map((target) =>
+        this.publicClient.readContract({
+          address,
+          abi: whitelistPolicyAbi,
+          functionName: "allowed",
+          args: [target],
+        }),
+      ),
+    )) as boolean[];
+    return candidates.filter((_, i) => live[i]);
+  }
+
+  /**
+   * Expand one module into its reported form for `node`. Nested stacks recurse
+   * (a PolicyStack is itself an IPolicyModule) with a depth guard so a
+   * pathological self-referencing deployment cannot loop; past the guard a
+   * stack is reported unexpanded.
+   */
+  private async describePolicyModule(
+    address: `0x${string}`,
+    node: `0x${string}`,
+    cache: Map<string, ModuleShape>,
+    depth: number,
+  ): Promise<PolicyModuleInfo> {
+    const key = address.toLowerCase();
+    let shape = cache.get(key);
+    if (!shape) {
+      shape = await this.readModuleShape(address);
+      cache.set(key, shape);
+    }
+    switch (shape.kind) {
+      case "stack": {
+        const modules =
+          depth < 3
+            ? await Promise.all(
+                shape.members.map((m) => this.describePolicyModule(m, node, cache, depth + 1)),
+              )
+            : [];
+        return { address, kind: "stack", modules };
+      }
+      case "spend_cap": {
+        const [cap, capIsExplicit] = await Promise.all([
+          this.publicClient.readContract({
+            address,
+            abi: spendCapPolicyAbi,
+            functionName: "capOf",
+            args: [node],
+          }) as Promise<bigint>,
+          this.publicClient.readContract({
+            address,
+            abi: spendCapPolicyAbi,
+            functionName: "hasAgentCap",
+            args: [node],
+          }) as Promise<boolean>,
+        ]);
+        return {
+          address,
+          kind: "spend_cap",
+          defaultCap: shape.defaultCap,
+          cap: cap.toString(),
+          capIsExplicit,
+        };
+      }
+      case "whitelist":
+        return { address, kind: "whitelist", allowedTargets: shape.allowedTargets };
+      case "rate_limit":
+        return {
+          address,
+          kind: "rate_limit",
+          maxActions: shape.maxActions,
+          windowSeconds: shape.windowSeconds,
+        };
+      case "time_window":
+        return {
+          address,
+          kind: "time_window",
+          startSecondOfDay: shape.startSecondOfDay,
+          endSecondOfDay: shape.endSecondOfDay,
+        };
+      default:
+        return { address, kind: "unknown" };
+    }
   }
 
   /**

@@ -265,6 +265,30 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.mode, "mock");
   });
 
+  it("serves node policies (empty in mock mode, not invented)", async () => {
+    const res = await buildApp().request("/policies");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { policies: unknown[]; mode: string };
+    // The offline runtime has no policy contracts to read; an invented stack
+    // would be a claim about what an agent is allowed to spend.
+    assert.deepEqual(body.policies, []);
+    assert.equal(body.mode, "mock");
+  });
+
+  it("rejects a malformed ?node= on /policies as operator input", async () => {
+    const res = await buildApp().request("/policies?node=not-an-address");
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error?: string }).error, "invalid_node");
+  });
+
+  it("rejects an asset-selected policy read in mock mode", async () => {
+    const res = await buildApp().request("/policies?asset=WETH");
+    // The mock (single-asset) runtime cannot resolve a WETH stack: with an
+    // asset supplied that is the caller's input, a 400 — not a 500.
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error?: string }).error ?? "", /asset/i);
+  });
+
   it("rejects an asset-selected agent cap as operator input in mock mode", async () => {
     const res = await buildApp().request("/governance/propose-set-agent-cap", {
       method: "POST",

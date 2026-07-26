@@ -634,6 +634,35 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { assets: runtime.listAssets(), mode: runtime.mode });
   });
 
+  app.get("/policies", async (c) => {
+    // Per-node policy-stack composition (the module EscalationRouter binds per
+    // node, plus each module's kind and enforced params) read from the chain —
+    // what the cloud shows as a node's real stack instead of "unknown".
+    // [] in mock mode; ?asset=SYMBOL|token selects a stack, ?node=0x… one node.
+    const asset = c.req.query("asset") || undefined;
+    const node = c.req.query("node") || undefined;
+    if (node && !/^0x[0-9a-fA-F]{40}$/.test(node)) {
+      return jsonBig(c, { error: "invalid_node" }, 400);
+    }
+    try {
+      const policies = await runtime.getNodePolicies({
+        asset,
+        node: node as `0x${string}` | undefined,
+      });
+      return jsonBig(c, { policies, asset, mode: runtime.mode });
+    } catch (err) {
+      // A failing selector is operator input; a bare read failure is not.
+      if (asset || node) {
+        return jsonBig(
+          c,
+          { error: err instanceof Error ? err.message : "policies_read_failed" },
+          400,
+        );
+      }
+      throw err;
+    }
+  });
+
   app.get("/governance/grants", async (c) => {
     // Configured per-epoch grants for an asset's EpochStreamer — the current
     // budget the cloud reads to rescale when the workspace cadence changes.
