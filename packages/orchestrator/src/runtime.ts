@@ -37,6 +37,8 @@ import {
   type TreasuryBalance,
   type EpochGrant,
   type NodePolicyStack,
+  narrowScopesForEscalation,
+  spendCapForcesEscalation,
 } from "@lacrew/core";
 import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -637,6 +639,38 @@ export class CrewRuntime {
     return this.sessionScopePolicy.get(agent.toLowerCase()) ?? [...DEFAULT_SESSION_SCOPES];
   }
 
+  /**
+   * The narrowest scopes that can still carry a spend of `value` by `agent`.
+   *
+   * A propose whose verdict is provably ESCALATE never reaches
+   * `EscalationRouter._requireSpendScope`, so settlement authority on that key
+   * is authority the call cannot use. Reading the agent's bound stack turns
+   * that into a fact rather than a guess: one over-cap `SpendCapPolicy` decides
+   * the verdict, because any ESCALATE dominates in `PolicyStack.check`.
+   *
+   * Every uncertainty keeps the standing scopes — off-chain client, unreadable
+   * stack, no cap in it, value inside the cap. A key too narrow to settle a
+   * call the org would have allowed is an outage, so the one-sided failure
+   * direction is deliberate.
+   */
+  async scopesForSpend(agent: `0x${string}`, value: bigint): Promise<SessionScope[]> {
+    const standing = this.scopePolicyFor(agent);
+    // Nothing to drop: skip the chain reads entirely.
+    if (!standing.includes("spend:whitelist")) return standing;
+    if (!isOnchainClient(this.client)) return standing;
+
+    let stacks: NodePolicyStack[];
+    try {
+      stacks = await this.client.getNodePolicies({ nodes: [agent] });
+    } catch {
+      return standing;
+    }
+
+    const stack = stacks[0];
+    if (!stack) return standing;
+    return narrowScopesForEscalation(standing, spendCapForcesEscalation(stack.modules, value));
+  }
+
   /** Distinct limit sets need distinct keys; see the `sessions` map comment. */
   private sessionCacheKey(
     agent: `0x${string}`,
@@ -790,11 +824,15 @@ export class CrewRuntime {
     const value = input.value;
 
     const ceilingValue = await this.ceilingMaxValue(agent, input.ceiling);
+    // A flow's explicit scopes win; otherwise ask for the least this spend can
+    // be carried out with, which is propose-only whenever the chain will
+    // certainly escalate it.
+    const scopes = input.scopes ?? (await this.scopesForSpend(agent, value));
     const session = await this.boot(agent, {
       maxValue: ceilingValue,
       window: input.window,
       rate: input.rate,
-      scopes: input.scopes,
+      scopes,
       // A flow's scope narrows this run's key, not the agent's standing policy.
       persistScopePolicy: false,
     });
@@ -1146,7 +1184,15 @@ export class CrewRuntime {
     // Session keys are pinned to one target, so the default (x402) key cannot
     // reach the marketplace. Issue one scoped to the marketplace and to exactly
     // this listing's price — the chain then caps the purchase at what was quoted.
-    await this.boot(input.agent, { maxValue: quote.gross, allowedTarget: market });
+    // A listing priced over the agent's cap can only escalate, so that key does
+    // not need settlement authority either; `persistScopePolicy: false` keeps the
+    // narrowing on this purchase rather than re-scoping the agent.
+    await this.boot(input.agent, {
+      maxValue: quote.gross,
+      allowedTarget: market,
+      scopes: await this.scopesForSpend(input.agent, quote.gross),
+      persistScopePolicy: false,
+    });
     const result = await this.client.proposeMarketplacePurchase({
       agent: input.agent,
       catalogId: input.catalogId,
