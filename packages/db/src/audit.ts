@@ -1,6 +1,6 @@
 /** Query helpers for the orchestrator audit trail (keeps Drizzle inside @lacrew/db). */
 
-import { desc } from "drizzle-orm";
+import { count, desc, gte } from "drizzle-orm";
 import { auditEvents } from "./schema/audit.js";
 import type { DbHandle } from "./client.js";
 
@@ -45,6 +45,23 @@ export async function insertChainAuditEvent(
       logIndex: event.logIndex,
     })
     .onConflictDoNothing();
+}
+
+/**
+ * Event counts by type since `sinceIso` (inclusive) — the read a usage meter
+ * is built from. Counting happens over the full persisted trail, so unlike
+ * the bounded in-memory ring it is complete for the period.
+ */
+export async function countAuditEventsByType(
+  handle: DbHandle,
+  sinceIso: string,
+): Promise<Array<{ type: string; count: number }>> {
+  const rows = await handle.db
+    .select({ type: auditEvents.type, count: count() })
+    .from(auditEvents)
+    .where(gte(auditEvents.at, new Date(sinceIso)))
+    .groupBy(auditEvents.type);
+  return rows.map((row) => ({ type: row.type, count: Number(row.count) }));
 }
 
 /** Most recent events, oldest → newest. */

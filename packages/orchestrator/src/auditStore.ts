@@ -5,6 +5,7 @@
  */
 
 import {
+  countAuditEventsByType,
   createDb,
   getDatabaseUrl,
   insertAuditEvent,
@@ -19,6 +20,13 @@ export interface AuditStore {
   append(event: ProtocolEvent): Promise<void>;
   /** Most recent events, oldest → newest (ready to replay into the ring). */
   recent(limit: number): Promise<ProtocolEvent[]>;
+  /**
+   * Event counts by type since `sinceIso`, over the full persisted trail.
+   * Null when the store cannot answer completely (memory store, or a read
+   * failure) — the caller falls back to its bounded ring and must say so,
+   * because a partial count served as a total is a billing lie.
+   */
+  countByTypeSince(sinceIso: string): Promise<Record<string, number> | null>;
   close(): Promise<void>;
 }
 
@@ -28,6 +36,7 @@ export function createMemoryAuditStore(): AuditStore {
     name: "memory",
     append: async () => {},
     recent: async () => [],
+    countByTypeSince: async () => null,
     close: async () => {},
   };
 }
@@ -57,6 +66,15 @@ export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit recent failed:", err);
         return [];
+      }
+    },
+    countByTypeSince: async (sinceIso) => {
+      try {
+        const rows = await countAuditEventsByType(db(), sinceIso);
+        return Object.fromEntries(rows.map((row) => [row.type, row.count]));
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] audit count failed:", err);
+        return null;
       }
     },
     close: async () => {

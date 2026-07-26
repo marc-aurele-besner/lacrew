@@ -316,6 +316,50 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(await badKind.json(), { error: "unknown_module_kind" });
   });
 
+  it("serves usage counts from real operations, flagged incomplete off the ring", async () => {
+    const app = buildApp();
+    // Two real operations: a tick that escalates (IntentCreated + SessionIssued)
+    // and its approval (IntentResolved).
+    const tick = await app.request("/tick", { method: "POST", body: "{}" });
+    const { intentId } = (await tick.json()) as { intentId: string };
+    await app.request("/intents/resolve", {
+      method: "POST",
+      body: JSON.stringify({ intentId, approved: true }),
+    });
+
+    const res = await app.request("/usage");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      counts: Record<string, number>;
+      complete: boolean;
+      store: string;
+      since: string;
+    };
+    assert.equal(body.counts.IntentCreated, 1);
+    assert.equal(body.counts.IntentResolved, 1);
+    assert.ok((body.counts.SessionIssued ?? 0) >= 1);
+    // No database behind this app: the ring answered, and it must say so —
+    // a bounded count served as a period total is a billing lie.
+    assert.equal(body.complete, false);
+    assert.equal(body.store, "memory");
+    assert.ok(!Number.isNaN(Date.parse(body.since)));
+  });
+
+  it("rejects an unparseable ?since= on /usage", async () => {
+    const res = await buildApp().request("/usage?since=last-tuesday");
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "invalid_since" });
+  });
+
+  it("counts nothing before ?since=", async () => {
+    const app = buildApp();
+    await app.request("/tick", { method: "POST", body: "{}" });
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const res = await app.request(`/usage?since=${encodeURIComponent(future)}`);
+    const body = (await res.json()) as { counts: Record<string, number> };
+    assert.deepEqual(body.counts, {});
+  });
+
   it("serves node policies (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/policies");
     assert.equal(res.status, 200);

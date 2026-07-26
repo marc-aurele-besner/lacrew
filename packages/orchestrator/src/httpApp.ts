@@ -272,6 +272,20 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.get("/audit", async (c) => jsonBig(c, { events: await runtime.audit() }));
 
+  app.get("/usage", async (c) => {
+    // Raw operation counts by audit-event type for a period (?since=ISO, or
+    // the current UTC month). The cloud folds these into billing meters;
+    // billing semantics deliberately do not live in this package. `complete`
+    // says whether the full persisted trail answered or only the bounded
+    // in-memory ring — a partial count served as a total is a billing lie.
+    const since = c.req.query("since") || undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      return jsonBig(c, { error: "invalid_since" }, 400);
+    }
+    const usage = await runtime.usage(since);
+    return jsonBig(c, { ...usage, mode: runtime.mode });
+  });
+
   app.get("/org", async (c) =>
     jsonBig(c, {
       nodes: await runtime.getClient().getOrgTree(),

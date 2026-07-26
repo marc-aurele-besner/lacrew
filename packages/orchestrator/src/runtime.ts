@@ -983,6 +983,40 @@ export class CrewRuntime {
    * onchain a minute ago was missing from the trail that is supposed to prove
    * it happened. Cached briefly since the dashboard polls this every 3s.
    */
+  /**
+   * Operation counts since `since` (default: start of the current UTC month) —
+   * the read a billing meter is built from, served as raw event-type counts so
+   * billing semantics stay out of the public package. Counted from the full
+   * persisted trail when a database is wired (`complete: true`); otherwise
+   * from the bounded in-memory ring, flagged incomplete so nobody bills
+   * against a window that silently forgot its oldest events.
+   */
+  async usage(since?: string): Promise<{
+    since: string;
+    counts: Record<string, number>;
+    complete: boolean;
+    store: string;
+  }> {
+    const now = new Date();
+    const sinceIso =
+      since ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+    const persisted = await this.auditStore.countByTypeSince(sinceIso);
+    if (persisted) {
+      return { since: sinceIso, counts: persisted, complete: true, store: this.auditStore.name };
+    }
+    // The ring, not the merged audit() view: that merge also carries the
+    // client's own copy of each event (different timestamps defeat its dedupe
+    // key), and a meter that counts one intent twice overbills it.
+    const cutoff = Date.parse(sinceIso);
+    const counts: Record<string, number> = {};
+    for (const event of this.localAudit) {
+      if (Date.parse(event.at) >= cutoff) {
+        counts[event.type] = (counts[event.type] ?? 0) + 1;
+      }
+    }
+    return { since: sinceIso, counts, complete: false, store: "memory" };
+  }
+
   async audit(): Promise<ProtocolEvent[]> {
     const [remote, persisted] = await Promise.all([
       this.client.getAuditTrail(),
