@@ -20,6 +20,7 @@ import {
 } from "@lacrew/core";
 import { http, parseEther, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
@@ -221,6 +222,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "flows") {
     await cmdFlows(rest);
+    return;
+  }
+  if (cmd === "crews") {
+    cmdCrews(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -725,6 +730,8 @@ Commands:
   flows <sub>               Agent logic pipelines — templates, list, save,
                             run (--local offline, --as <agent>), runs, code
                             (see: lacrew flows help)
+  crews <sub>               Vertical crew blueprints — list, show <id>,
+                            plan <id> (the calls that stand a crew up)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint
