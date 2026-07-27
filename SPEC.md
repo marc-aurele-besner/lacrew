@@ -1,6 +1,6 @@
 # LaCrew Protocol Specification
 
-**Version:** 0.1.0 (draft) · **License:** Apache-2.0 · **Solidity:** ^0.8.28
+**Version:** 0.1.1 (draft) · **License:** Apache-2.0 · **Solidity:** ^0.8.28
 
 The treasury and governance layer for AI agent organizations: an onchain org
 chart where every agent has a budget, overages climb an approval chain, and
@@ -46,11 +46,15 @@ reference:
 | --- | --- |
 | `SpendCapPolicy` | Per-agent cap on `value`; over-cap → ESCALATE. Mutator `setAgentCap` is admin- or governor-gated. |
 | `WhitelistPolicy` | Unlisted `target` → DENY. Mutator `setAllowed` is admin- or governor-gated. |
-| `RateLimitPolicy` | Sliding-window action count per agent; over-rate → ESCALATE. The router records via `IRateRecorder.record(agent)`. |
+| `RateLimitPolicy` | Sliding-window action count per agent; over-rate → ESCALATE. The router records via `IRateRecorder.record(agent)` — into the node's own recorder when one is bound (`rateRecorderOf`), else the global one. Params are constructor immutables: a different limit is a different module. |
 | `TimeWindowPolicy` | Outside the configured UTC window → DENY. |
 
 Stacks bind per node through `EscalationRouter.setNodePolicy(node, module)`
-(governor-gated once a governor is set).
+(governor-gated once a governor is set). A node whose stack carries its own
+`RateLimitPolicy` additionally needs `setNodeRateRecorder(node, module)`
+(same gating): recording is what fills the module's windows, and a custom
+rate module the router never records into silently never trips — the
+per-node recorder exists to make that failure impossible.
 
 ## 3. OrgRegistry — the tree
 
@@ -108,8 +112,13 @@ then its policy stack:
 function propose(address agent, address target, uint256 value, bytes calldata data)
     external returns (uint256 intentId, Verdict verdict);
 function resolve(uint256 intentId, bool approved) external;
-function setNodePolicy(address node, address policyModule) external;  // governor
+function setNodePolicy(address node, address policyModule) external;       // governor
+function setNodeRateRecorder(address node, address rateRecorder) external; // governor
 ```
+
+Rate recording resolves per node: `rateRecorderOf[node]` when bound, the
+global `rateRecorder` otherwise; both `propose`-time escalations and
+finalized actions are charged against the window.
 
 - **ALLOW** → the action finalizes immediately: allowance spent, `target`
   called, `ActionExecuted` emitted.
