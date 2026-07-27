@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts src/passkey.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
