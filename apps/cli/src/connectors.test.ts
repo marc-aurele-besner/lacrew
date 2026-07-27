@@ -27,10 +27,18 @@ function capture(args: string[]): { out: string; err: string; code: number | und
 }
 
 describe("lacrew connectors", () => {
-  it("lists the presets that ship, with their credential", () => {
+  it("lists the presets that ship, with their credential modes", () => {
     const { out } = capture(["list"]);
     assert.match(out, /github\s+—\s+GitHub REST API/);
-    assert.match(out, /credential: GH_TOKEN/);
+    assert.match(out, /auth: github-app \| token \(default github-app\)/);
+  });
+
+  it("shows both credential modes, App first, with the env vars each needs", () => {
+    const { out } = capture(["show", "github"]);
+    assert.match(out, /github-app {2}\(default\)\s+—\s+GitHub App installation/);
+    assert.match(out, /env: GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID/);
+    assert.match(out, /token\s+—\s+Personal access token/);
+    assert.match(out, /env: GH_TOKEN/);
   });
 
   it("shows every route and marks the one that must be admitted", () => {
@@ -56,6 +64,27 @@ describe("lacrew connectors", () => {
     assert.equal(parsed[0]!.id, "github");
     const merge = parsed[0]!.routes.find((r) => r.name === "merge_pull_request")!;
     assert.equal(merge.policyTarget, MERGE_AUTHORITY);
+    // Default mode, so an operator who does not choose gets the App.
+    assert.equal(parsed[0]!.auth.kind, "github-app");
+  });
+
+  it("emits the PAT form only when it is asked for", () => {
+    const { out } = capture([
+      "config",
+      "github",
+      "--auth",
+      "token",
+      "--policy-target",
+      `merge_pull_request=${MERGE_AUTHORITY}`,
+    ]);
+    const parsed = JSON.parse(out) as Connector[];
+    assert.deepEqual(parsed[0]!.auth, { kind: "bearer", tokenEnv: "GH_TOKEN" });
+  });
+
+  it("refuses a credential mode the preset does not support", () => {
+    const { err, code } = capture(["config", "github", "--auth", "oauth"]);
+    assert.match(err, /connector_preset_unknown_auth_mode:github\.oauth/);
+    assert.equal(code, 1);
   });
 
   it("refuses to emit a merge route nothing admits", () => {
