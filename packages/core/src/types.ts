@@ -147,6 +147,22 @@ export type IntentSimulation = {
     delta: string;
     decimals: number;
   }>;
+  /**
+   * The approval's internal call tree (debug_traceCall callTracer), flattened
+   * depth-first and bounded: which contracts execute, in order, with the
+   * native value each frame carried and any revert it hit. Absent when the
+   * node exposes no tracer — absent is "not traced", never "no calls".
+   */
+  callTrace?: Array<{
+    depth: number;
+    type: string;
+    from: `0x${string}`;
+    to: `0x${string}`;
+    /** Native value the frame carried, base units as a string ("0" common). */
+    value: string;
+    gasUsed?: string;
+    error?: string;
+  }>;
   warnings: string[];
 };
 

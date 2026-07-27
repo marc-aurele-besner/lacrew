@@ -991,6 +991,10 @@ export class CrewRuntime {
               .simulateApprovalStateDiffs(intent.id)
               .catch(() => null);
             if (measured) simulation.measuredChanges = measured;
+            // Which contracts the approval would actually execute, in order —
+            // the last piece an approver needs beside verdict and movements.
+            const trace = await onchain.traceApprovalCalls(intent.id).catch(() => null);
+            if (trace) simulation.callTrace = trace;
           }
         }
         return { ...intent, simulation };
