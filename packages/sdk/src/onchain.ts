@@ -922,6 +922,84 @@ export class OnchainLacrewClient {
     }
   }
 
+  /**
+   * The approval's internal call tree (PRD F1.16): debug_traceCall with the
+   * callTracer over resolve(id, true), flattened depth-first. Bounded (depth
+   * 6, 64 frames) because an approver reads this, not a debugger. Null when
+   * the node has no tracer or the trace fails — "not traced" stays distinct
+   * from "no calls".
+   */
+  async traceApprovalCalls(intentId: string): Promise<
+    | Array<{
+        depth: number;
+        type: string;
+        from: `0x${string}`;
+        to: `0x${string}`;
+        value: string;
+        gasUsed?: string;
+        error?: string;
+      }>
+    | null
+  > {
+    const resolver = this.resolverWalletClient?.account;
+    if (!resolver) return null;
+    type Frame = {
+      type?: string;
+      from?: `0x${string}`;
+      to?: `0x${string}`;
+      value?: string;
+      gasUsed?: string;
+      error?: string;
+      calls?: Frame[];
+    };
+    try {
+      const root = (await this.publicClient.request({
+        // debug_traceCall is a node extension, not standard eth_ namespace.
+        method: "debug_traceCall" as never,
+        params: [
+          {
+            from: resolver.address,
+            to: this.addresses.escalationRouter,
+            data: encodeFunctionData({
+              abi: escalationRouterAbi,
+              functionName: "resolve",
+              args: [BigInt(intentId), true],
+            }),
+          },
+          "latest",
+          { tracer: "callTracer" },
+        ] as never,
+      })) as Frame;
+      const out: Array<{
+        depth: number;
+        type: string;
+        from: `0x${string}`;
+        to: `0x${string}`;
+        value: string;
+        gasUsed?: string;
+        error?: string;
+      }> = [];
+      const walk = (frame: Frame, depth: number) => {
+        if (out.length >= 64 || depth > 6) return;
+        if (!frame.to || !frame.from) return;
+        out.push({
+          depth,
+          type: frame.type ?? "CALL",
+          from: frame.from,
+          to: frame.to,
+          value: frame.value ? BigInt(frame.value).toString() : "0",
+          ...(frame.gasUsed ? { gasUsed: BigInt(frame.gasUsed).toString() } : {}),
+          ...(frame.error ? { error: frame.error } : {}),
+        });
+        for (const child of frame.calls ?? []) walk(child, depth + 1);
+      };
+      walk(root, 0);
+      return out.length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  }
+
   async resolveIntent(
     intentId: string,
     approved: boolean,
