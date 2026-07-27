@@ -334,7 +334,7 @@ export type FlowTemplate = {
   id: string;
   name: string;
   description: string;
-  category: "treasury" | "escalation" | "content" | "trading" | "governance";
+  category: "treasury" | "escalation" | "content" | "trading" | "dev" | "governance";
   author: string;
   definition: FlowDefinition;
 };
