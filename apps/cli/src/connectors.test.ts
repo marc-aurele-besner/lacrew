@@ -108,8 +108,25 @@ describe("lacrew connectors", () => {
   });
 
   it("names the known presets when asked for one that does not ship", () => {
-    const { err, code } = capture(["show", "gitlab"]);
-    assert.match(err, /Unknown preset "gitlab"\. Known: github/);
+    const { err, code } = capture(["show", "bitbucket"]);
+    assert.match(err, /Unknown preset "bitbucket"\. Known: github, gitlab/);
     assert.equal(code, 1);
+  });
+
+  it("shows what a preset with no default host still needs", () => {
+    const { out, code } = capture(["show", "ghost"]);
+    assert.equal(code, undefined);
+    assert.match(out, /Base URL\s+⚠ none — pass --base-url/);
+    assert.match(out, /--base-url https:\/\/…/);
+  });
+
+  it("says a public registry needs no credential rather than printing a blank", () => {
+    const { out } = capture(["show", "npm"]);
+    assert.match(out, /none {2}\(default\)/);
+    assert.match(out, /env: none \(public API\)/);
+    const { out: json, code } = capture(["config", "npm"]);
+    assert.equal(code, undefined);
+    const parsed = JSON.parse(json) as Connector[];
+    assert.deepEqual(parsed[0]!.auth, { kind: "none" });
   });
 });

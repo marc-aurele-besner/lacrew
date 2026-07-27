@@ -262,6 +262,40 @@ test("a non-2xx response is reported, not thrown away", async () => {
   assert.deepEqual(result.body, { message: "Not Found" });
 });
 
+test("a constant header cannot be used to smuggle in a second credential", () => {
+  // Constant headers exist for version pins. One that could set auth material
+  // would be a second way to authenticate, sitting in a field an operator reads
+  // as harmless metadata.
+  const shadowing = validateConnector({
+    id: "sneaky",
+    baseUrl: "https://example.com",
+    auth: { kind: "bearer", tokenEnv: "TOKEN" },
+    headers: { Authorization: "Bearer other" },
+    routes: [{ name: "get_thing", method: "GET", path: "/thing", effect: "read" }],
+  });
+  assert.equal(shadowing.length, 1);
+  assert.match(shadowing[0]!, /would override the credential/);
+
+  // Also when the credential rides in a named header rather than authorization.
+  const shadowingNamed = validateConnector({
+    id: "sneaky",
+    baseUrl: "https://example.com",
+    auth: { kind: "header", header: "x-api-key", valueEnv: "TOKEN" },
+    headers: { "X-Api-Key": "leaked" },
+    routes: [{ name: "get_thing", method: "GET", path: "/thing", effect: "read" }],
+  });
+  assert.equal(shadowingNamed.length, 1);
+
+  const empty = validateConnector({
+    id: "blank",
+    baseUrl: "https://example.com",
+    auth: { kind: "none" },
+    headers: { "Notion-Version": "  " },
+    routes: [{ name: "get_thing", method: "GET", path: "/thing", effect: "read" }],
+  });
+  assert.ok(empty.some((e) => /has no value/.test(e)));
+});
+
 test("validation rejects the connectors an operator gets wrong", () => {
   assert.deepEqual(validateConnector(githubConnector()), []);
 

@@ -92,6 +92,13 @@ export type Connector = {
   /** Absolute https:// base. http:// is allowed only for loopback (local dev). */
   baseUrl: string;
   auth: ConnectorAuth;
+  /**
+   * Constant headers sent with every call — an API version pin (`Notion-Version`)
+   * or a content negotiation the service requires. Operator-declared and fixed:
+   * a flow cannot set one, and none of them may carry auth material, which is
+   * why `authorization` and the auth header itself are refused here.
+   */
+  headers?: Record<string, string>;
   routes: ConnectorRoute[];
   /** Per-call timeout; defaults to 20s so a hung endpoint cannot hold a run open. */
   timeoutMs?: number;
@@ -228,6 +235,27 @@ export function validateConnector(connector: Connector): string[] {
     }
   }
   if (!connector.routes?.length) errors.push(`connector "${connector.id}" has no routes`);
+
+  const authHeaderName =
+    connector.auth?.kind === "bearer"
+      ? "authorization"
+      : connector.auth?.kind === "header"
+        ? connector.auth.header?.trim().toLowerCase()
+        : undefined;
+  for (const [name, value] of Object.entries(connector.headers ?? {})) {
+    if (!/^[A-Za-z0-9-]+$/.test(name)) {
+      errors.push(`connector "${connector.id}" header "${name}" is not a header name`);
+      continue;
+    }
+    if (typeof value !== "string" || value.trim() === "") {
+      errors.push(`connector "${connector.id}" header "${name}" has no value`);
+    }
+    // A constant header that could set credentials would be a second, unaudited
+    // way to authenticate — and one the operator reads as harmless metadata.
+    if (name.toLowerCase() === "authorization" || name.toLowerCase() === authHeaderName) {
+      errors.push(`connector "${connector.id}" header "${name}" would override the credential`);
+    }
+  }
 
   const seen = new Set<string>();
   for (const route of connector.routes ?? []) {
@@ -403,6 +431,10 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
             headers: {
               accept: "application/json",
               ...(hasBody ? { "content-type": "application/json" } : {}),
+              // Auth last: validation already refuses a constant header that
+              // would shadow it, and the ordering keeps that true if validation
+              // changes.
+              ...(connector.headers ?? {}),
               ...(await authHeaders(connector, env, githubApp)),
             },
             ...(hasBody ? { body: JSON.stringify(payload) } : {}),

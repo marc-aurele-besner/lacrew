@@ -43,6 +43,15 @@ function routeLine(preset: ConnectorPreset, name: string): string {
   return `  ${route.effect === "write" ? "write" : "read "}  ${preset.id}.${route.name}  ${route.method} ${route.path}${gate}`;
 }
 
+/** The env vars one credential mode reads — none, for a public API. */
+function modeEnvVars(auth: ConnectorPreset["auth"][number]): string[] {
+  if (auth.mode === "none") return [];
+  if (auth.mode === "github-app") {
+    return [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv];
+  }
+  return [auth.env];
+}
+
 function printList(): void {
   console.log("Connector presets\n");
   for (const preset of connectorPresets) {
@@ -67,18 +76,24 @@ function printShow(id: string): void {
   }
   console.log(`${preset.title}  (${preset.id})\n`);
   console.log(preset.summary);
-  console.log(`\nBase URL   ${preset.baseUrl}`);
+  console.log(
+    `\nBase URL   ${preset.baseUrl ?? `⚠ none — pass --base-url. ${preset.baseUrlNote ?? ""}`}`,
+  );
+  if (preset.headers) {
+    console.log(
+      `Headers    ${Object.entries(preset.headers)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ")}`,
+    );
+  }
 
   // Modes are listed best-posture first, and the default is the first, so an
   // operator who reads top-down lands on the one they should be using.
   console.log("\nCredential modes");
   preset.auth.forEach((auth, i) => {
-    const envVars =
-      auth.mode === "github-app"
-        ? [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv]
-        : [auth.env];
+    const envVars = modeEnvVars(auth);
     console.log(`  ${auth.mode}${i === 0 ? "  (default)" : ""}  —  ${auth.label}`);
-    console.log(`      env: ${envVars.join(", ")}`);
+    console.log(`      env: ${envVars.length > 0 ? envVars.join(", ") : "none (public API)"}`);
     console.log(`      ${auth.note}`);
   });
 
@@ -91,17 +106,21 @@ function printShow(id: string): void {
   }
 
   const gated = preset.routes.filter((r) => r.policyTarget?.required);
-  if (gated.length > 0) {
+  const needsBaseUrl = preset.baseUrl === undefined;
+  if (gated.length > 0 || needsBaseUrl) {
     console.log("\nBind before registering");
+    if (needsBaseUrl) console.log("  --base-url https://…");
     for (const route of gated) {
       console.log(`  --policy-target ${route.name}=0x…`);
     }
-    console.log("  Or leave the write out entirely:");
-    console.log(`  --omit ${gated.map((r) => r.name).join(" --omit ")}`);
+    if (gated.length > 0) {
+      console.log("  Or leave the write out entirely:");
+      console.log(`  --omit ${gated.map((r) => r.name).join(" --omit ")}`);
+    }
   }
 
   console.log(
-    `\nEmit it:  lacrew connectors config ${preset.id}${gated.map((r) => ` --policy-target ${r.name}=0x…`).join("")}`,
+    `\nEmit it:  lacrew connectors config ${preset.id}${needsBaseUrl ? " --base-url https://…" : ""}${gated.map((r) => ` --policy-target ${r.name}=0x…`).join("")}`,
   );
 }
 
@@ -129,6 +148,9 @@ function printConfig(id: string, args: string[]): void {
     ...(authMode ? { authMode } : {}),
     ...(flagValue(args, "--base-url") ? { baseUrl: flagValue(args, "--base-url") } : {}),
     ...(flagValue(args, "--token-env") ? { tokenEnv: flagValue(args, "--token-env") } : {}),
+    ...(flagValue(args, "--credential-header")
+      ? { credentialHeader: flagValue(args, "--credential-header") }
+      : {}),
     ...(flagValue(args, "--id") ? { id: flagValue(args, "--id") } : {}),
     ...(Object.keys(policyTargets).length > 0 ? { policyTargets } : {}),
     ...(omitRoutes.length > 0 ? { omitRoutes } : {}),
@@ -179,8 +201,10 @@ Flags for config:
   --auth <mode>                 Credential mode (see: connectors show <id>)
   --policy-target <route>=0x…   Admit a write route (repeatable)
   --omit <route>                Leave a route out (repeatable)
-  --base-url <url>              Self-hosted instance (e.g. GitHub Enterprise)
+  --base-url <url>              Self-hosted instance (e.g. GitHub Enterprise);
+                                required for a preset with no default host
   --token-env <NAME>            Read a token-mode credential from another env var
+  --credential-header <name>    Send a token-mode credential in another header
   --id <name>                   Register under a different connector id
 
 Register it:

@@ -146,7 +146,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           id: p.id,
           title: p.title,
           summary: p.summary,
-          baseUrl: p.baseUrl,
+          // Null rather than absent, with the note beside it: a preset whose
+          // host is the operator's own (a Ghost blog) will not build without
+          // one, and a catalog that simply omitted the field would read as
+          // "no base URL needed".
+          baseUrl: p.baseUrl ?? null,
+          ...(p.baseUrl === undefined ? { baseUrlRequired: true, baseUrlNote: p.baseUrlNote } : {}),
+          ...(p.headers ? { headers: p.headers } : {}),
           auth: p.auth,
           routes: p.routes.map((r) => ({
             name: r.name,

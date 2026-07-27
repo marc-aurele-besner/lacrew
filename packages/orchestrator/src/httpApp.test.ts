@@ -61,6 +61,39 @@ describe("orchestrator Hono app", () => {
     );
   });
 
+  it("says which presets need a host and which need no credential at all", async () => {
+    const res = await buildApp().request("/connectors");
+    const body = (await res.json()) as {
+      available: Array<{
+        id: string;
+        baseUrl: string | null;
+        baseUrlRequired?: boolean;
+        baseUrlNote?: string;
+        headers?: Record<string, string>;
+        auth: Array<{ mode: string }>;
+      }>;
+    };
+
+    // Ghost runs on the operator's own domain. Omitting the field would read as
+    // "no base URL needed" to a catalog built on this response, when in fact
+    // the preset will not build without one.
+    const ghost = body.available.find((p) => p.id === "ghost")!;
+    assert.equal(ghost.baseUrl, null);
+    assert.equal(ghost.baseUrlRequired, true);
+    assert.match(ghost.baseUrlNote!, /ghost\/api\/admin/);
+
+    const npm = body.available.find((p) => p.id === "npm")!;
+    assert.deepEqual(
+      npm.auth.map((a) => a.mode),
+      ["none"],
+    );
+    assert.equal(npm.baseUrlRequired, undefined);
+
+    // A version pin is part of the connector, so a catalog must be able to see
+    // it without registering one.
+    assert.equal(body.available.find((p) => p.id === "notion")!.headers?.["Notion-Version"], "2022-06-28");
+  });
+
   it("reports a registered connector's wiring without any credential in it", async () => {
     const registry = createConnectorRegistry({
       connectors: [
