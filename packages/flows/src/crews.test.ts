@@ -13,7 +13,7 @@ import {
 } from "./crews.js";
 import { createMockFlowBackend, runFlow } from "./run.js";
 import { flowTemplates, getFlowTemplate } from "./templates.js";
-import { validateFlow } from "./validate.js";
+import { stepEdges, validateFlow } from "./validate.js";
 
 const ADDR = (n: number): string => `0x${n.toString(16).padStart(40, "0")}`;
 
@@ -140,6 +140,29 @@ test("a bound crew flow runs end to end against the mock backend", async () => {
   assert.equal(result.status, "completed");
   assert.ok(result.steps.some((s) => s.kind === "gate"));
   assert.ok(result.steps.every((s) => s.status === "ok"));
+});
+
+test("publication is asked of policy before it is ever proposed", () => {
+  // Verified on Anvil: proposing against an unadmitted target reverts with
+  // SessionTargetDenied, which fails the run — the sign-off package the deny
+  // path exists to produce is never written. Asking first returns DENY and the
+  // branch routes on it, so the gate is only reachable once policy admits the
+  // endpoint.
+  const def = getFlowTemplate("content-weekly-brief")!.definition;
+  const check = def.steps.find((s) => s.id === "publish-check");
+  assert.equal(check?.kind, "tool");
+  assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
+
+  const reachesGate = def.steps.filter((s) =>
+    JSON.stringify(stepEdges(s)).includes('"publish"'),
+  );
+  assert.deepEqual(
+    reachesGate.map((s) => s.id),
+    ["publish-allowed"],
+    "the publish gate must only be reachable from the policy branch",
+  );
+  const branch = def.steps.find((s) => s.id === "publish-allowed");
+  assert.equal(branch?.kind === "branch" && branch.onFalse, "signoff");
 });
 
 test("the plan hires managers before their reports and never loses a seat", () => {

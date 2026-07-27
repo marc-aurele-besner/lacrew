@@ -3,19 +3,20 @@
  *
  * Each one is a pipeline a design partner described in their intake, written so
  * the money in it rides the policy stack rather than a promise: the DeFi desk's
- * clip size is a gate, the fixer's retry budget is a gate, and the content
- * crew's publish step is a gate against a target that is deliberately *not*
- * whitelisted — so "never auto-publish" is a DENY the flow routes to a human
- * rather than a rule someone remembered to follow.
+ * clip size is a gate, and the fixer's retry budget is a gate. The content
+ * crew's publish step *asks* policy first, because its endpoint is deliberately
+ * unadmitted — a propose against a target the run's session key does not cover
+ * reverts onchain, and a reverted run never reaches the human handoff that was
+ * the whole point. Asking returns DENY and the flow routes on it.
  *
  * Seats and targets appear as `{{crew.<role>}}` / `{{target.<id>}}` because a
  * template cannot know addresses that only exist once the crew is hired.
  * `bindCrewFlow` resolves them at install time and throws on anything unbound.
  *
  * Where a step routes on a model's answer, the model is asked for exactly one
- * word: `switch` compares the whole resolved output for equality, so a verdict
- * wrapped in prose would silently fall to the default branch. The reasoning is
- * written by a later step, where prose belongs.
+ * word and the edge compares for equality. `switch` matches the whole resolved
+ * output, and a `contains` branch would match "do not SEND" as readily as
+ * "SEND", so reasoning is written by a later step where prose belongs.
  */
 
 import { flow } from "./builder.js";
@@ -47,7 +48,7 @@ const deskOpportunityScan: FlowTemplate = {
     })
     .branch("worth-it", {
       label: "Worth trading?",
-      when: { source: "{{steps.screen.text}}", op: "contains", value: "TRADE" },
+      when: { source: "{{steps.screen.text}}", op: "equals", value: "TRADE" },
       onTrue: "plan",
       onFalse: "pass-note",
     })
@@ -98,12 +99,12 @@ const deskExecuteTrade: FlowTemplate = {
       system:
         "You check trade plans for missing guards before they are proposed. You do not simulate; you check that the plan states what it must.",
       prompt:
-        "Plan and simulation result: {{input}}\n\nCheck that the plan states a max slippage, a deadline, an admitted venue, and a size. Then reply on the final line with exactly one word: SEND or FIX.",
+        "Plan and simulation result: {{input}}\n\nDoes the plan state a max slippage, a deadline, an admitted venue, and a size? Reply with exactly one word and nothing else: SEND or FIX.",
       next: "ready",
     })
     .branch("ready", {
       label: "Cleared pre-flight?",
-      when: { source: "{{steps.preflight.text}}", op: "contains", value: "SEND" },
+      when: { source: "{{steps.preflight.text}}", op: "equals", value: "SEND" },
       onTrue: "trade",
       onFalse: "fix-note",
     })
@@ -136,7 +137,7 @@ const deskExecuteTrade: FlowTemplate = {
     .model("fix-note", {
       label: "Send the plan back",
       prompt:
-        "Pre-flight refused the plan: {{steps.preflight.text}}\n\nWrite one line telling the planner exactly which guard is missing.",
+        "Pre-flight refused this plan: {{input}}\n\nWrite one line telling the planner exactly which guard is missing: slippage, deadline, venue, or size.",
       next: null,
     })
     .build(),
@@ -228,12 +229,18 @@ const deskVenueOnboarding: FlowTemplate = {
       system:
         "You review trading venues before a desk is allowed to touch them. You are looking for reasons to say no.",
       prompt:
-        "Candidate venue: {{input}}\n\nWork through factory provenance, pool depth, fee mechanics, oracle dependencies, and upgradeability. Then reply on the final line with exactly one word: ADMIT or REFUSE.",
+        "Candidate venue: {{input}}\n\nWork through factory provenance, pool depth, fee mechanics, oracle dependencies, and upgradeability. State what you found for each.",
+      next: "verdict",
+    })
+    .model("verdict", {
+      label: "Admit or refuse",
+      prompt:
+        "Diligence findings: {{steps.diligence.text}}\n\nReply with exactly one word and nothing else: ADMIT or REFUSE.",
       next: "clear",
     })
     .branch("clear", {
       label: "Cleared diligence?",
-      when: { source: "{{steps.diligence.text}}", op: "contains", value: "ADMIT" },
+      when: { source: "{{steps.verdict.text}}", op: "equals", value: "ADMIT" },
       onTrue: "whitelist",
       onFalse: "refuse-note",
     })
@@ -443,12 +450,12 @@ const contentWeeklyBrief: FlowTemplate = {
   id: "tpl-content-weekly-brief",
   name: "Content: weekly article pipeline",
   description:
-    "Ideate, put the shortlist to a vote among the specialist seats, draft in the account's voice, review, build the image pack, and stop at the publish gate — which is denied by design until a human takes it.",
+    "Ideate, put the shortlist to a vote among the specialist seats, draft in the account's voice, review, build the image pack, then ask policy whether publishing is allowed — it is not, by design, so the run ends in a human sign-off package.",
   category: "content",
   author: "LaCrew",
   definition: flow("content-weekly-brief", "Content: weekly article pipeline")
     .describe(
-      "Run input is the account brief: which account (personal or org), its voice, and this week's themes. Run it once per account — the whole point is that the two brands never share a draft. The publish gate targets an endpoint the crew is not whitelisted for, so the DENY path is the human handoff, not an error.",
+      "Run input is the account brief: which account (personal or org), its voice, and this week's themes. Run it once per account — the whole point is that the two brands never share a draft. Publication is asked of policy before it is attempted: an unadmitted endpoint answers DENY and the flow assembles the sign-off package. Proposing against it instead would revert at the session key, and a reverted run writes no package at all.",
     )
     .trigger("cron")
     .schedule("0 8 * * 1")
@@ -511,10 +518,22 @@ const contentWeeklyBrief: FlowTemplate = {
       label: "Build the image pack",
       prompt:
         "Article: {{steps.draft.json}}\nImage budget verdict: {{steps.image-budget.verdict}}\n\nProduce the image pack: for the hero and each in-body slot, a generation prompt, alt text, a filename, and where it sits in the post. If the budget verdict was not ALLOW, say which images are prompts-only until someone approves the spend.",
-      next: "publish",
+      next: "publish-check",
+    })
+    .tool(
+      "publish-check",
+      "lacrew_check_policy",
+      { target: "{{target.publish-endpoint}}", value: "1000000" },
+      { label: "Ask policy whether publishing is allowed", next: "publish-allowed" },
+    )
+    .branch("publish-allowed", {
+      label: "Is the publishing endpoint admitted?",
+      when: { source: "{{steps.publish-check.json}}", op: "contains", value: "\"ALLOW\"" },
+      onTrue: "publish",
+      onFalse: "signoff",
     })
     .gate("publish", {
-      label: "Request publication",
+      label: "Pay the publication fee",
       target: "{{target.publish-endpoint}}",
       value: "1000000",
       onAllow: "published",
@@ -524,7 +543,7 @@ const contentWeeklyBrief: FlowTemplate = {
     .model("signoff", {
       label: "Package for human sign-off",
       prompt:
-        "Publication was not authorised: {{steps.publish.json}}\nArticle: {{steps.draft.json}}\nEditor changelog: {{steps.voice-review.json}}\nImage pack: {{steps.image-pack.text}}\n\nAssemble the sign-off package: title and subtitle, where the body and image pack live, what each reviewer changed, and publish status — which is `draft`. State plainly that nothing was published.",
+        "Publication was not authorised — policy answered {{steps.publish-check.json}}\nArticle: {{steps.draft.json}}\nEditor changelog: {{steps.voice-review.json}}\nImage pack: {{steps.image-pack.text}}\n\nAssemble the sign-off package: title and subtitle, where the body and image pack live, what each reviewer changed, and publish status — which is `draft`. State plainly that nothing was published.",
       next: null,
     })
     .model("published", {
@@ -568,7 +587,7 @@ const contentDailySocial: FlowTemplate = {
     })
     .branch("clear", {
       label: "Cleared?",
-      when: { source: "{{steps.brand-check.text}}", op: "contains", value: "CLEAR" },
+      when: { source: "{{steps.brand-check.text}}", op: "equals", value: "CLEAR" },
       onTrue: "queue",
       onFalse: "rewrite",
     })

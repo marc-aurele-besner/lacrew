@@ -109,12 +109,29 @@ It executes nothing. Each step carries:
 lacrew crews plan content-studio --out plan.json
 ```
 
+## A gate names a target; the session key must cover it
+
+A run proposes through a session key, and the orchestrator issues that key
+pinned to the org's configured spend target. `EscalationRouter` refuses a
+propose against any other target with `SessionTargetDenied` — a revert, not a
+verdict, so the run ends in `error` and no `onDeny` edge fires.
+
+That is why a crew whose seats pay several targets needs the run's session
+scoped to cover them, and why a flow that expects a refusal asks
+`lacrew_check_policy` first instead of proposing and reading the verdict off the
+failure. The check reads the policy stack directly: no session, no revert, a
+real `ALLOW` / `ESCALATE` / `DENY` to branch on.
+
 ## The publish gate
 
 The content studio's publishing endpoint is listed with `whitelisted: false`.
-That is not an omission: the weekly pipeline ends in a gate against that target,
-so publication comes back DENY and the flow's deny path assembles a human
-sign-off package. Turning drafts into posts means admitting the target — a
-high-tier proposal, timelocked and vetoable, visible to both human seats.
+That is not an omission: the weekly pipeline asks policy about that target, gets
+DENY, and routes to a step that assembles the human sign-off package. The gate
+that would actually pay the publication fee sits behind that branch, reachable
+only once the endpoint is admitted — a high-tier proposal, timelocked and
+vetoable, visible to both human seats.
 
-"Never auto-publish" is a policy verdict, not a rule someone remembered.
+Verified on Anvil: `lacrew_check_policy` against an unadmitted endpoint returns
+`{"verdict":"DENY"}`, the branch takes the false edge, and the run completes on
+the sign-off step. "Never auto-publish" is a policy verdict, not a rule someone
+remembered.

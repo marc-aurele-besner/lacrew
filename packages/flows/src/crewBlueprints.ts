@@ -770,6 +770,7 @@ const contentStudio: CrewBlueprint = {
     "Publishing. This crew produces drafts, image packs, and review changelogs; the publish path stays closed until a human opens it by proposal.",
     "Analytics. Reading what performed is a later addition, not part of the v1 loop.",
     "Editorial quality as an onchain property. LaCrew bounds what the crew spends and where — never what it writes.",
+    "Paying several targets from one run without scoping its session key to cover them: a propose against a target the key is not issued for reverts at EscalationRouter rather than returning a verdict.",
     "A single voice across both brands. Two accounts means two briefs, two runs, and two sets of credentials.",
   ],
 };
