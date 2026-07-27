@@ -237,7 +237,8 @@ curl -s -X POST http://127.0.0.1:8788/model/complete \
   -H 'content-type: application/json' \
   -d '{"prompt":"Summarize pending escalations"}' | jq .
 
-# OpenRouter when OPENROUTER_API_KEY is set — see .env.example
+# Anthropic, OpenAI, or OpenRouter once a key is set — see .env.example.
+# First key wins in that order; LACREW_MODEL_PROVIDER pins one explicitly.
 curl -s http://127.0.0.1:8788/health | jq .model
 ```
 
