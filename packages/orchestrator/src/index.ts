@@ -3,6 +3,17 @@ export { getOrchToken, isAuthorized } from "./auth.js";
 export { createOrchestratorApp, type OrchestratorAppOptions } from "./httpApp.js";
 export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
+  createConnectorRegistry,
+  loadConnectorsFromEnv,
+  validateConnector,
+  type Connector,
+  type ConnectorAuth,
+  type ConnectorCallResult,
+  type ConnectorRegistry,
+  type ConnectorRegistryOptions,
+  type ConnectorRoute,
+} from "./connectors.js";
+export {
   createAuditStoreFromEnv,
   createMemoryAuditStore,
   createPgAuditStore,

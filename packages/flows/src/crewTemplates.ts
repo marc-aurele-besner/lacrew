@@ -277,32 +277,73 @@ const botPrTriage: FlowTemplate = {
   id: "tpl-bot-pr-triage",
   name: "Bot PR triage",
   description:
-    "Classify one dependency-bot PR as merge, fix, hold, or reject, and reserve the fix budget through the policy stack before any repair work starts.",
+    "Read one dependency-bot PR from GitHub, classify it, and either merge it, reserve the budget for a fix, or hand it to a human. The merge is asked of policy first and refused by the connector independently — admitting or revoking one address turns the crew's merge authority on or off org-wide.",
   category: "dev",
   author: "LaCrew",
   definition: flow("bot-pr-triage", "Bot PR triage")
     .describe(
-      "Run input is one PR: repo, bot author, dependency, semver jump, CI status, labels. The merge itself is a GitHub action carried by the merger's own credentials — what rides the chain here is the money the fix loop would spend.",
+      'Run input is JSON: {"owner":"…","repo":"…","number":7}. The PR is fetched through the `github` connector rather than pasted in, so the crew reads what is actually there. Merging asks `lacrew_check_policy` about the merge-authority address and routes on the verdict; the connector re-checks it before the call, so a flow that skipped the question still cannot merge.',
     )
     .source({ templateId: "tpl-bot-pr-triage", author: "LaCrew" })
+    .tool(
+      "pr",
+      "github.get_pull_request",
+      { owner: "{{input.owner}}", repo: "{{input.repo}}", number: "{{input.number}}" },
+      { label: "Fetch the pull request", next: "classify" },
+    )
     .model("classify", {
       label: "Classify the PR",
       system:
         "You triage dependency-bot pull requests. Patch and minor bumps with green CI are routine; majors, workflow-file edits, and unknown authors are not.",
       prompt:
-        "PR: {{input}}\n\nReply with exactly one word: MERGE (safe, CI green, allowed labels), FIX (would merge but something is broken), HOLD (needs a human), or REJECT (author is not a known bot, or the diff touches CI workflows or secrets).",
+        "Pull request: {{steps.pr.json}}\n\nReply with exactly one word and nothing else: MERGE (safe, CI green, allowed labels), FIX (would merge but something is broken), HOLD (needs a human), or REJECT (author is not a known bot, or the diff touches CI workflows or secrets).",
       next: "route",
     })
     .switch("route", {
       label: "Route the verdict",
       when: { source: "{{steps.classify.text}}" },
       cases: [
-        { value: "MERGE", next: "merge-note" },
+        { value: "MERGE", next: "merge-check" },
         { value: "FIX", next: "fix-budget" },
         { value: "HOLD", next: "hold-note" },
         { value: "REJECT", next: "reject-note" },
       ],
       onDefault: "hold-note",
+    })
+    .tool(
+      "merge-check",
+      "lacrew_check_policy",
+      { target: "{{target.merge-authority}}", value: "0" },
+      { label: "May this crew merge?", next: "may-merge" },
+    )
+    .branch("may-merge", {
+      label: "Merge authority admitted?",
+      when: { source: "{{steps.merge-check.json}}", op: "contains", value: '"ALLOW"' },
+      onTrue: "merge",
+      onFalse: "merge-blocked",
+    })
+    .tool(
+      "merge",
+      "github.merge_pull_request",
+      {
+        owner: "{{input.owner}}",
+        repo: "{{input.repo}}",
+        number: "{{input.number}}",
+        merge_method: "squash",
+      },
+      { label: "Merge the PR", next: "merge-note" },
+    )
+    .model("merge-note", {
+      label: "Record the merge",
+      prompt:
+        "Merge result: {{steps.merge.json}}\nPR: {{steps.pr.json}}\n\nWrite the one-line record for the weekly digest: repo, dependency, version jump, and the check that justified merging. If the call did not return success, say that plainly and do not describe it as merged.",
+      next: null,
+    })
+    .model("merge-blocked", {
+      label: "Merge authority refused",
+      prompt:
+        "Policy answered {{steps.merge-check.json}} for the merge-authority address, so nothing was merged.\nPR: {{steps.pr.json}}\n\nWrite one line for the maintainer: which PR is waiting, and that admitting the merge-authority address is a governance change, not a retry.",
+      next: null,
     })
     .gate("fix-budget", {
       label: "Reserve the triage budget",
@@ -317,37 +358,31 @@ const botPrTriage: FlowTemplate = {
       action: "invoke",
       agent: "{{crew.fixer}}",
       flowId: "dep-fix-loop",
-      prompt: "{{input}}",
+      prompt: "{{steps.pr.json}}",
       next: "fix-note",
     })
     .model("fix-note", {
       label: "Report the fix attempt",
       prompt:
-        "Fixer result: {{steps.delegate-fix.json}}\nPR: {{input}}\n\nWrite the PR comment: what was changed, why, and what a reviewer should check before the merge.",
-      next: null,
-    })
-    .model("merge-note", {
-      label: "Draft the merge record",
-      prompt:
-        "PR: {{input}}\n\nWrite the one-line merge record for the weekly digest: repo, dependency, version jump, and the check that justified merging.",
+        "Fixer result: {{steps.delegate-fix.json}}\nPR: {{steps.pr.json}}\n\nWrite the PR comment: what was changed, why, and what a reviewer should check before the merge.",
       next: null,
     })
     .model("hold-note", {
       label: "Escalate to a human",
       prompt:
-        "PR: {{input}}\nTriage: {{steps.classify.text}}\n\nWrite the two-line note for the maintainer's queue: what makes this a human decision, and the smallest thing that would unblock it.",
+        "PR: {{steps.pr.json}}\nTriage: {{steps.classify.text}}\n\nWrite the two-line note for the maintainer's queue: what makes this a human decision, and the smallest thing that would unblock it.",
       next: null,
     })
     .model("reject-note", {
       label: "Record the refusal",
       prompt:
-        "PR: {{input}}\n\nThis PR was refused. Write one line naming the disqualifier — unknown author, workflow-file edit, or a path the crew may not touch — and say plainly that nothing was merged.",
+        "PR: {{steps.pr.json}}\n\nThis PR was refused. Write one line naming the disqualifier — unknown author, workflow-file edit, or a path the crew may not touch — and say plainly that nothing was merged.",
       next: null,
     })
     .model("budget-note", {
       label: "Ask for fix budget",
       prompt:
-        "The fix budget did not clear policy: {{steps.fix-budget.json}}\nPR: {{input}}\n\nWrite the two-sentence request the review lead reads: what the repair costs, what it unblocks, and what happens if it waits.",
+        "The fix budget did not clear policy: {{steps.fix-budget.json}}\nPR: {{steps.pr.json}}\n\nWrite the two-sentence request the review lead reads: what the repair costs, what it unblocks, and what happens if it waits.",
       next: null,
     })
     .build(),

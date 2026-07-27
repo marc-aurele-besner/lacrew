@@ -168,6 +168,7 @@ const defiDesk: CrewBlueprint = {
       note: "Deliberately unadmitted. The rebalancer will attempt a cross-chain move and be denied until governance admits a specific bridge.",
     },
   ],
+  connectors: [],
   externalScopes: [
     {
       id: "rpc-keys",
@@ -263,6 +264,7 @@ const defiDesk: CrewBlueprint = {
     "Latency-critical MEV and competitive arbitrage. Approval is human-timescale by construction, and a strategy that only wins with privileged mempool access should be passed on rather than automated here.",
     "Calldata semantics. Slippage bounds, deadlines, and approval amounts are checked in simulation and pre-flight, not by a policy module.",
     "Bridging. No bridge is admitted day one; the rebalancer's cross-chain step exists to be denied until one is.",
+    "Market data and execution as connectors. The desk's flows reason over a candidate handed to them and gate the trade; reading pools and submitting swaps still happens in the operator's own tooling until RPC and venue connectors are registered.",
     "Trading inventory as an allowance. Working capital sits in the treasury under governance, not in a seat's per-epoch stream.",
   ],
 };
@@ -332,8 +334,14 @@ const githubExperts: CrewBlueprint = {
         "Reads the diff and the release notes, classifies risk, checks CI, and decides merge, fix, hold, or reject.",
       capUsdc: usdc(15),
       grantUsdc: usdc(40),
-      spends: ["model-api"],
-      tools: ["lacrew_check_policy", "lacrew_propose_intent", "lacrew_invoke_agent"],
+      spends: ["model-api", "merge-authority"],
+      tools: [
+        "lacrew_check_policy",
+        "lacrew_propose_intent",
+        "lacrew_invoke_agent",
+        "github.get_pull_request",
+        "github.merge_pull_request",
+      ],
       flows: ["bot-pr-triage"],
     },
     {
@@ -397,6 +405,20 @@ const githubExperts: CrewBlueprint = {
       kind: "service",
       whitelisted: true,
       note: "Where a failing build is reproduced before a patch is written.",
+    },
+    {
+      id: "merge-authority",
+      label: "Merge authority",
+      kind: "payout",
+      whitelisted: true,
+      note: "Not a payee — an address standing for permission to merge. The triage flow asks policy about it before merging and the connector re-checks it, so revoking this one address turns the crew's merge authority off org-wide in a single governance action, without touching GitHub.",
+    },
+  ],
+  connectors: [
+    {
+      id: "github",
+      routes: ["get_pull_request", "merge_pull_request"],
+      note: "Reads the PR being triaged and merges the ones that clear both the classifier and the merge-authority check. Fine-grained token in GH_TOKEN; the merge route is a write and carries the merge-authority policy target.",
     },
   ],
   externalScopes: [
@@ -671,6 +693,7 @@ const contentStudio: CrewBlueprint = {
       note: "Deliberately unadmitted. The pipeline's publish gate returns DENY, and the deny path is the human sign-off package. Opening it is a high-tier proposal both human seats can see.",
     },
   ],
+  connectors: [],
   externalScopes: [
     {
       id: "social-credentials",
@@ -769,6 +792,7 @@ const contentStudio: CrewBlueprint = {
   outOfScope: [
     "Publishing. This crew produces drafts, image packs, and review changelogs; the publish path stays closed until a human opens it by proposal.",
     "Analytics. Reading what performed is a later addition, not part of the v1 loop.",
+    "Reaching the CMS or the scheduler. The pipeline produces the package and asks policy about publishing; a connector for the draft surface is registered by the operator when they want the drafts filed automatically.",
     "Editorial quality as an onchain property. LaCrew bounds what the crew spends and where — never what it writes.",
     "Paying several targets from one run without scoping its session key to cover them: a propose against a target the key is not issued for reverts at EscalationRouter rather than returning a verdict.",
     "A single voice across both brands. Two accounts means two briefs, two runs, and two sets of credentials.",

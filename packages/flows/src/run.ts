@@ -15,15 +15,40 @@ const MAX_STEPS = 64;
 type StepOutputs = Record<string, { text?: string; json?: string; verdict?: string }>;
 
 /**
- * Interpolate `{{input}}`, `{{steps.<id>.text|json|verdict}}` into a string.
- * Unknown references render as empty strings so prompts stay usable mid-build.
+ * Interpolate `{{input}}`, `{{input.<key>}}`, and
+ * `{{steps.<id>.text|json|verdict}}` into a string. Unknown references render
+ * as empty strings so prompts stay usable mid-build.
+ *
+ * `{{input.<key>}}` reads a field of a JSON run input, which is what a tool
+ * call needs: a route wants an owner, a repo, and a number as separate args,
+ * and the alternative — asking a model to re-extract each one from a blob it
+ * was already given — is three completions and three chances to be wrong.
+ * A non-JSON input yields empty for keyed refs; `{{input}}` still returns it
+ * verbatim.
  */
 export function interpolate(
   template: string,
   ctx: { input?: string; steps: StepOutputs },
 ): string {
+  let inputFields: Record<string, unknown> | null | undefined;
+  const field = (key: string): string => {
+    if (inputFields === undefined) {
+      try {
+        const parsed: unknown = JSON.parse(ctx.input ?? "");
+        inputFields = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        inputFields = null;
+      }
+    }
+    const value = inputFields?.[key];
+    if (value === undefined || value === null) return "";
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
+  };
+
   return template.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, path: string) => {
     if (path === "input") return ctx.input ?? "";
+    const keyed = /^input\.([\w-]+)$/.exec(path);
+    if (keyed?.[1]) return field(keyed[1]);
     const m = /^steps\.([\w-]+)\.(text|json|verdict)$/.exec(path);
     if (m?.[1] && m[2]) return ctx.steps[m[1]]?.[m[2] as "text" | "json" | "verdict"] ?? "";
     return "";
@@ -451,6 +476,22 @@ export function createMockFlowBackend(): FlowBackend {
             mocked: true,
           };
         default:
+          // A connector tool (`<connector>.<route>`) is the operator's, not this
+          // package's: offline the call cannot happen, so the step reports that
+          // it did not rather than failing the run or inventing a response.
+          // Anything else is a typo in a `lacrew_*` name and must still throw.
+          if (/^[a-z][a-z0-9-]*\.[a-z][a-z0-9_]*$/.test(name)) {
+            const [connector, route] = name.split(".") as [string, string];
+            return {
+              connector,
+              route,
+              ok: false,
+              status: 0,
+              body: null,
+              note: "no connector registered — nothing was called",
+              mocked: true,
+            };
+          }
           throw new Error(`Unknown mock tool: ${name}`);
       }
     },

@@ -8,6 +8,7 @@
  * Queue: QueueProvider — pg-boss when DATABASE_URL set, else in-memory.
  */
 
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 import { checkDbReady, getDatabaseUrl, runDbMigrations } from "@lacrew/db";
@@ -15,6 +16,7 @@ import { getOrchToken } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createFlowsSurface } from "./flows.js";
+import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
@@ -62,7 +64,29 @@ async function main(): Promise<void> {
   }
   const runtime = boot.runtime;
   const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
-  const flows = createFlowsSurface({ runtime, model, mcpBackend });
+  // A bad connector config stops the boot rather than starting an orchestrator
+  // whose crews silently cannot reach the world they were configured for.
+  const connectorDefs = loadConnectorsFromEnv(process.env, (path) =>
+    readFileSync(path, "utf8"),
+  );
+  const connectors =
+    connectorDefs.length > 0
+      ? createConnectorRegistry({
+          connectors: connectorDefs,
+          onEvent: (event) => runtime.recordAudit(event),
+          // Write routes are admitted by the same policy stack that admits a
+          // spend, asked as the crew worker.
+          checkPolicy: async (target) =>
+            (await runtime.checkPolicy({ agent: runtime.defaultAgent, target, value: 0n }))
+              .verdict,
+        })
+      : undefined;
+  if (connectorDefs.length > 0) {
+    console.log(
+      `[@lacrew/orchestrator] ${connectorDefs.length} connector(s): ${connectors!.toolNames().join(", ")}`,
+    );
+  }
+  const flows = createFlowsSurface({ runtime, model, mcpBackend, connectors });
   const app = createOrchestratorApp({
     runtime,
     queue,

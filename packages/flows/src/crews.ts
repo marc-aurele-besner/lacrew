@@ -143,6 +143,21 @@ export type CrewHumanSeat = {
   holds: string;
 };
 
+/**
+ * An external surface the crew's flows call, and the routes they need. The
+ * operator registers these with the orchestrator (`LACREW_CONNECTORS`); a
+ * blueprint declaring them is how they know what to wire before the crew can
+ * do anything but think.
+ */
+export type CrewConnectorNeed = {
+  /** Connector id a flow's tool names are prefixed with, e.g. `github`. */
+  id: string;
+  /** Route names used, without the prefix. */
+  routes: string[];
+  /** What it is for, and which credential it wants. */
+  note: string;
+};
+
 export type CrewBlueprint = {
   id: string;
   name: string;
@@ -162,6 +177,8 @@ export type CrewBlueprint = {
   targets: CrewTarget[];
   /** Credentials the crew acts through that LaCrew does not govern. */
   externalScopes: CrewExternalScope[];
+  /** Connectors the crew's flows call. Empty means the crew never leaves LaCrew. */
+  connectors: CrewConnectorNeed[];
   escalation: CrewEscalation[];
   governance: CrewGovernanceRule[];
   guardrails: CrewGuardrail[];
@@ -247,6 +264,21 @@ export function validateCrewBlueprint(bp: CrewBlueprint): CrewValidationResult {
   for (const flowId of bp.flows ?? []) {
     if (!getFlowTemplate(flowId)) {
       errors.push(`blueprint ships flow "${flowId}" that is not a known template`);
+    }
+  }
+
+  // Every external call a shipped flow makes has to be declared, or the
+  // operator stands the crew up and discovers the gap at the first run.
+  const declared = new Set(
+    (bp.connectors ?? []).flatMap((c) => c.routes.map((r) => `${c.id}.${r}`)),
+  );
+  for (const flowId of bp.flows ?? []) {
+    const def = getFlowTemplate(flowId)?.definition;
+    for (const step of def?.steps ?? []) {
+      if (step.kind !== "tool" || step.tool.startsWith("lacrew_")) continue;
+      if (!declared.has(step.tool)) {
+        errors.push(`flow "${flowId}" calls "${step.tool}", which no declared connector serves`);
+      }
     }
   }
 

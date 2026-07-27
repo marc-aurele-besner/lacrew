@@ -142,6 +142,46 @@ test("a bound crew flow runs end to end against the mock backend", async () => {
   assert.ok(result.steps.every((s) => s.status === "ok"));
 });
 
+test("every external call a crew flow makes is declared by its blueprint", () => {
+  for (const bp of crewBlueprints) {
+    const declared = new Set(bp.connectors.flatMap((c) => c.routes.map((r) => `${c.id}.${r}`)));
+    for (const flowId of bp.flows) {
+      for (const step of getFlowTemplate(flowId)!.definition.steps) {
+        if (step.kind !== "tool" || step.tool.startsWith("lacrew_")) continue;
+        assert.ok(
+          declared.has(step.tool),
+          `${bp.id}/${flowId} calls ${step.tool} with nothing declared to serve it`,
+        );
+      }
+    }
+  }
+
+  // A crew that reaches nothing says so with an empty list rather than by
+  // omission — "no connectors" and "nobody wrote them down" must not look alike.
+  for (const bp of crewBlueprints) {
+    assert.ok(Array.isArray(bp.connectors), `${bp.id} must state its connectors`);
+  }
+});
+
+test("validation catches a flow calling an undeclared connector", () => {
+  const bp = structuredClone(getCrewBlueprint("github-experts")!);
+  bp.connectors = [];
+  const result = validateCrewBlueprint(bp);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /which no declared connector serves/.test(e)));
+});
+
+test("the GitHub crew asks policy before it merges, and cannot merge otherwise", () => {
+  const def = getFlowTemplate("bot-pr-triage")!.definition;
+  const check = def.steps.find((s) => s.id === "merge-check");
+  assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
+  // The merge step is reachable only from the branch that read the verdict.
+  const reachesMerge = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"merge"'));
+  assert.deepEqual(reachesMerge.map((s) => s.id), ["may-merge"]);
+  const merge = def.steps.find((s) => s.id === "merge");
+  assert.equal(merge?.kind === "tool" && merge.tool, "github.merge_pull_request");
+});
+
 test("publication is asked of policy before it is ever proposed", () => {
   // Verified on Anvil: proposing against an unadmitted target reverts with
   // SessionTargetDenied, which fails the run — the sign-off package the deny

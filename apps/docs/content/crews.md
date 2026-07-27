@@ -109,6 +109,22 @@ It executes nothing. Each step carries:
 lacrew crews plan content-studio --out plan.json
 ```
 
+## Reaching the outside world
+
+A blueprint's flows do the crew's thinking; [connectors](./connectors.md) are
+how they act. Each blueprint declares the connectors its flows call, and
+`lacrew crews show <id>` prints them as the list to register before the crew can
+do more than reason:
+
+```
+Connectors to register before the crew can work
+  github  (github.get_pull_request, github.merge_pull_request)
+```
+
+`validateCrewBlueprint` rejects a blueprint whose flows call a route no declared
+connector serves, and a crew that genuinely reaches nothing says so with an
+empty list rather than by omission.
+
 ## A gate names a target; the session key must cover it
 
 A run proposes through a session key, and the orchestrator issues that key

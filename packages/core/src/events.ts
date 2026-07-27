@@ -39,6 +39,14 @@ export type ProtocolEventType =
   | "TreasuryOutflow"
   | "FlowSaved"
   | "FlowRun"
+  /**
+   * A flow reached outside LaCrew through an operator-registered connector.
+   * Carries what was called and how it went — connector, route, method,
+   * effect, status, duration — and never the response body or the credential.
+   * A `write` effect here is a crew acting on the world, so this is the row an
+   * operator scans when asking what their agents actually did.
+   */
+  | "ToolCalled"
   | "MarketplacePurchase"
   | "MarketplaceListed"
   | "MarketplaceWithdrawn";
