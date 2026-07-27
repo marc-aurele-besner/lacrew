@@ -14,6 +14,17 @@ export {
   type ConnectorRoute,
 } from "./connectors.js";
 export {
+  buildConnectorPreset,
+  connectorPresets,
+  getConnectorPreset,
+  presetPolicyTargetRoutes,
+  resolveConnectorConfig,
+  type ConnectorConfigEntry,
+  type ConnectorPreset,
+  type ConnectorPresetOptions,
+  type ConnectorPresetRoute,
+} from "./connectorPresets.js";
+export {
   createAuditStoreFromEnv,
   createMemoryAuditStore,
   createPgAuditStore,

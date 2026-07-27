@@ -32,6 +32,7 @@
  */
 
 import type { ProtocolEvent } from "@lacrew/core";
+import { resolveConnectorConfig, type ConnectorConfigEntry } from "./connectorPresets.js";
 
 export type ConnectorAuth =
   | { kind: "none" }
@@ -340,6 +341,12 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
  * Load connectors from `LACREW_CONNECTORS` (inline JSON or a path to a JSON
  * file). Returns an empty registry when unset: a crew with no connectors is the
  * normal state, not an error.
+ *
+ * An entry may be a connector written out in full, or `{"preset":"github", …}`
+ * naming one that ships (`connectorPresets.ts`). A preset expands to the same
+ * plain connector and is validated identically — it saves the transcription,
+ * not the operator's decision, and a preset write still refuses to register
+ * until its policy target is bound.
  */
 export function loadConnectorsFromEnv(
   env: Record<string, string | undefined> = process.env,
@@ -352,8 +359,10 @@ export function loadConnectorsFromEnv(
     if (!readFile) throw new Error("connector_config_unreadable: no file reader supplied");
     text = readFile(raw);
   }
-  const parsed = JSON.parse(text) as Connector[] | { connectors: Connector[] };
-  const connectors = Array.isArray(parsed) ? parsed : parsed.connectors;
-  if (!Array.isArray(connectors)) throw new Error("connector_config_invalid: expected an array");
-  return connectors;
+  const parsed = JSON.parse(text) as
+    | ConnectorConfigEntry[]
+    | { connectors: ConnectorConfigEntry[] };
+  const entries = Array.isArray(parsed) ? parsed : parsed.connectors;
+  if (!Array.isArray(entries)) throw new Error("connector_config_invalid: expected an array");
+  return resolveConnectorConfig(entries);
 }
