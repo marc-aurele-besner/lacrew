@@ -17,6 +17,7 @@ import {
   connectorPresets,
   getConnectorPreset,
   type ConnectorPreset,
+  type ConnectorPresetAuthMode,
   type ConnectorPresetOptions,
 } from "@lacrew/orchestrator";
 
@@ -42,9 +43,13 @@ function routeLine(preset: ConnectorPreset, name: string): string {
   return `  ${route.effect === "write" ? "write" : "read "}  ${preset.id}.${route.name}  ${route.method} ${route.path}${gate}`;
 }
 
-/** `GH_TOKEN`, or the fact that a public registry needs nothing. */
-function credentialLine(preset: ConnectorPreset): string {
-  return preset.credential.kind === "none" ? "none (public API)" : preset.credential.env;
+/** The env vars one credential mode reads — none, for a public API. */
+function modeEnvVars(auth: ConnectorPreset["auth"][number]): string[] {
+  if (auth.mode === "none") return [];
+  if (auth.mode === "github-app") {
+    return [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv];
+  }
+  return [auth.env];
 }
 
 function printList(): void {
@@ -52,7 +57,7 @@ function printList(): void {
   for (const preset of connectorPresets) {
     console.log(`  ${preset.id}  —  ${preset.title}`);
     console.log(`     ${preset.summary}`);
-    console.log(`     credential: ${credentialLine(preset)}`);
+    console.log(`     auth: ${preset.auth.map((a) => a.mode).join(" | ")} (default ${preset.auth[0]!.mode})`);
     console.log(
       `     routes: ${preset.routes.length} (${preset.routes.filter((r) => r.effect === "write").length} write)`,
     );
@@ -74,8 +79,6 @@ function printShow(id: string): void {
   console.log(
     `\nBase URL   ${preset.baseUrl ?? `⚠ none — pass --base-url. ${preset.baseUrlNote ?? ""}`}`,
   );
-  console.log(`Credential ${credentialLine(preset)} (${preset.credential.kind})`);
-  console.log(`           ${preset.credential.note}`);
   if (preset.headers) {
     console.log(
       `Headers    ${Object.entries(preset.headers)
@@ -83,6 +86,16 @@ function printShow(id: string): void {
         .join(", ")}`,
     );
   }
+
+  // Modes are listed best-posture first, and the default is the first, so an
+  // operator who reads top-down lands on the one they should be using.
+  console.log("\nCredential modes");
+  preset.auth.forEach((auth, i) => {
+    const envVars = modeEnvVars(auth);
+    console.log(`  ${auth.mode}${i === 0 ? "  (default)" : ""}  —  ${auth.label}`);
+    console.log(`      env: ${envVars.length > 0 ? envVars.join(", ") : "none (public API)"}`);
+    console.log(`      ${auth.note}`);
+  });
 
   console.log("\nRoutes");
   for (const route of preset.routes) {
@@ -130,7 +143,9 @@ function parsePolicyTargets(args: string[]): Record<string, `0x${string}`> {
 function printConfig(id: string, args: string[]): void {
   const policyTargets = parsePolicyTargets(args);
   const omitRoutes = flagValues(args, "--omit");
+  const authMode = flagValue(args, "--auth") as ConnectorPresetAuthMode | undefined;
   const options: ConnectorPresetOptions = {
+    ...(authMode ? { authMode } : {}),
     ...(flagValue(args, "--base-url") ? { baseUrl: flagValue(args, "--base-url") } : {}),
     ...(flagValue(args, "--token-env") ? { tokenEnv: flagValue(args, "--token-env") } : {}),
     ...(flagValue(args, "--credential-header")
@@ -183,12 +198,13 @@ export function cmdConnectors(args: string[]): void {
   config <id> [flags]      JSON for LACREW_CONNECTORS
 
 Flags for config:
+  --auth <mode>                 Credential mode (see: connectors show <id>)
   --policy-target <route>=0x…   Admit a write route (repeatable)
   --omit <route>                Leave a route out (repeatable)
   --base-url <url>              Self-hosted instance (e.g. GitHub Enterprise);
                                 required for a preset with no default host
-  --token-env <NAME>            Read the credential from another env var
-  --credential-header <name>    Send the credential in another header
+  --token-env <NAME>            Read a token-mode credential from another env var
+  --credential-header <name>    Send a token-mode credential in another header
   --id <name>                   Register under a different connector id
 
 Register it:

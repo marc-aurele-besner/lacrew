@@ -3,6 +3,7 @@ export { getOrchToken, isAuthorized } from "./auth.js";
 export { createOrchestratorApp, type OrchestratorAppOptions } from "./httpApp.js";
 export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
+  connectorEnvVars,
   createConnectorRegistry,
   loadConnectorsFromEnv,
   validateConnector,
@@ -12,6 +13,8 @@ export {
   type ConnectorRegistry,
   type ConnectorRegistryOptions,
   type ConnectorRoute,
+  type ConnectorRouteView,
+  type ConnectorView,
 } from "./connectors.js";
 export {
   buildConnectorPreset,
@@ -19,11 +22,21 @@ export {
   getConnectorPreset,
   presetPolicyTargetRoutes,
   resolveConnectorConfig,
+  resolvePresetAuth,
   type ConnectorConfigEntry,
   type ConnectorPreset,
+  type ConnectorPresetAuth,
+  type ConnectorPresetAuthMode,
   type ConnectorPresetOptions,
   type ConnectorPresetRoute,
 } from "./connectorPresets.js";
+export {
+  createGithubAppTokenSource,
+  normalizePrivateKey,
+  signAppJwt,
+  type GithubAppAuth,
+  type GithubAppTokenSource,
+} from "./githubApp.js";
 export {
   createAuditStoreFromEnv,
   createMemoryAuditStore,
@@ -57,9 +70,13 @@ export {
 } from "./queue/index.js";
 export {
   createModelProviderFromEnv,
+  MODEL_PROVIDER_IDS,
   MemoryModelProvider,
+  AnthropicModelProvider,
+  OpenAIModelProvider,
   OpenRouterModelProvider,
   type ModelProvider,
+  type ModelProviderId,
   type ModelCompleteInput,
   type ModelCompleteResult,
 } from "./model/index.js";

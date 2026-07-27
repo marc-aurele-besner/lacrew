@@ -29,7 +29,7 @@
  *    exactly the comfortable mistake the policy target exists to prevent.
  */
 
-import type { Connector, ConnectorRoute } from "./connectors.js";
+import type { Connector, ConnectorAuth, ConnectorRoute } from "./connectors.js";
 
 /**
  * A preset's route. Same shape a connector route has, except `policyTarget` is
@@ -45,15 +45,43 @@ export type ConnectorPresetRoute = Omit<ConnectorRoute, "policyTarget"> & {
 };
 
 /**
- * Auth shape with the env var the operator is expected to set. `none` is for the
- * genuinely public surfaces (the npm and PyPI registries) — stated rather than
- * left blank, so "this preset sends no credential" is a claim the preset makes
- * and a reader can check.
+ * One way to authenticate a preset. A service may support more than one, and
+ * they are not interchangeable in posture: a personal token carries whatever
+ * its owner can reach, an app installation carries only what it was granted.
+ * The preset states both so the operator picks rather than discovers.
  */
-export type ConnectorPresetCredential =
-  | { kind: "none"; note: string }
-  | { kind: "bearer"; env: string; note: string }
-  | { kind: "header"; header: string; env: string; note: string };
+export type ConnectorPresetAuth =
+  | {
+      mode: "token";
+      kind: "bearer" | "header";
+      /** Header name for `kind: "header"`. */
+      header?: string;
+      env: string;
+      label: string;
+      /** Which token, and the narrowest scope that works. */
+      note: string;
+    }
+  | {
+      mode: "github-app";
+      appIdEnv: string;
+      privateKeyEnv: string;
+      installationIdEnv: string;
+      label: string;
+      note: string;
+    }
+  | {
+      /**
+       * The genuinely public surfaces — the npm and PyPI registries. Declared
+       * rather than left blank, so "this preset sends no credential" is a claim
+       * the preset makes and a reader can check, and so `--token-env` against
+       * one can be refused instead of silently ignored.
+       */
+      mode: "none";
+      label: string;
+      note: string;
+    };
+
+export type ConnectorPresetAuthMode = ConnectorPresetAuth["mode"];
 
 export type ConnectorPreset = {
   /** Default connector id, and the name a config entry references. */
@@ -69,7 +97,8 @@ export type ConnectorPreset = {
   baseUrl?: string;
   /** What the operator's own base URL looks like, when there is no default. */
   baseUrlNote?: string;
-  credential: ConnectorPresetCredential;
+  /** Supported credential modes, best-posture first. The first is the default. */
+  auth: ConnectorPresetAuth[];
   /** Constant headers the service requires, e.g. an API version pin. */
   headers?: Record<string, string>;
   routes: ConnectorPresetRoute[];
@@ -81,14 +110,20 @@ export type ConnectorPresetOptions = {
   /** Override for a self-hosted instance, e.g. GitHub Enterprise. Required when
    *  the preset ships no default host. */
   baseUrl?: string;
-  /** Override the environment variable the credential is read from. */
+  /** Which credential mode to use. Defaults to the preset's first. */
+  authMode?: ConnectorPresetAuthMode;
+  /** Override the environment variable a `token`-mode credential is read from. */
   tokenEnv?: string;
   /**
-   * Override the header the credential rides in. CoinGecko's Pro tier is the
-   * same preset under a different host *and* a different header name, which the
-   * env var override alone cannot express.
+   * Override the header a `token`-mode credential rides in. CoinGecko's Pro
+   * tier is the same preset under a different host *and* a different header
+   * name, which the env var override alone cannot express.
    */
   credentialHeader?: string;
+  /** Override the env vars a `github-app` credential is read from. */
+  appIdEnv?: string;
+  privateKeyEnv?: string;
+  installationIdEnv?: string;
   timeoutMs?: number;
   /**
    * Route name → the address standing for the authority to take that action.
@@ -113,11 +148,23 @@ const github: ConnectorPreset = {
   summary:
     "Reads pull requests, their files, and their CI state; merges the ones that clear policy. What the `github-experts` crew's triage flow calls.",
   baseUrl: "https://api.github.com",
-  credential: {
-    kind: "bearer",
-    env: "GH_TOKEN",
-    note: "Fine-grained personal access token or GitHub App installation token, scoped to the allowlisted repos. Contents: read, Pull requests: read (add write only if the merge route is registered), Checks: read.",
-  },
+  auth: [
+    {
+      mode: "github-app",
+      appIdEnv: "GITHUB_APP_ID",
+      privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
+      installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
+      label: "GitHub App installation",
+      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read, Pull requests: read (write only if the merge route is registered), Checks: read. The registry mints and refreshes the hourly installation token itself.",
+    },
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "GH_TOKEN",
+      label: "Personal access token",
+      note: "Fine-grained PAT scoped to the allowlisted repos. Simpler to set up, but it carries its owner's access and every action the crew takes is attributed to that person. Prefer the App for anything long-lived.",
+    },
+  ],
   routes: [
     {
       name: "get_pull_request",
@@ -184,12 +231,16 @@ const gitlab: ConnectorPreset = {
   summary:
     "Merge requests, their diffs, and their pipeline state; merges the ones that clear policy. The `github-experts` pattern for a crew whose code lives on GitLab.",
   baseUrl: "https://gitlab.com/api/v4",
-  credential: {
-    kind: "header",
-    header: "private-token",
-    env: "GITLAB_TOKEN",
-    note: "Project or group access token. `read_api` is enough for the reads; the merge route needs `api`. Self-hosted: pass --base-url https://gitlab.example.com/api/v4.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "private-token",
+      env: "GITLAB_TOKEN",
+      label: "Project or group access token",
+      note: "A project or group access token belongs to the project rather than to a person, which is the closest thing GitLab offers to GitHub's App posture. `read_api` is enough for the reads; the merge route needs `api`. Self-hosted: pass --base-url https://gitlab.example.com/api/v4.",
+    },
+  ],
   routes: [
     {
       name: "get_merge_request",
@@ -256,10 +307,13 @@ const npm: ConnectorPreset = {
   summary:
     "Published versions, dist-tags, deprecations and repository links for a package. What a dependency-bump reviewer reads so the release notes in its summary are the real ones.",
   baseUrl: "https://registry.npmjs.org",
-  credential: {
-    kind: "none",
-    note: "None. The public registry serves package metadata unauthenticated; a private registry is a different host and a different connector.",
-  },
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The public registry serves package metadata unauthenticated; a private registry is a different host and a different connector.",
+    },
+  ],
   routes: [
     {
       name: "get_package",
@@ -285,10 +339,13 @@ const pypi: ConnectorPreset = {
   title: "PyPI JSON API",
   summary: "Release history, requires-python, and yanked releases for a Python package. The npm preset's counterpart for a Python dependency bot.",
   baseUrl: "https://pypi.org",
-  credential: {
-    kind: "none",
-    note: "None. The JSON API is public and read-only; uploading is a different API this preset deliberately does not reach.",
-  },
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The JSON API is public and read-only; uploading is a different API this preset deliberately does not reach.",
+    },
+  ],
   routes: [
     {
       name: "get_project",
@@ -321,11 +378,15 @@ const twitter: ConnectorPreset = {
   summary:
     "Reads timelines and search for the content crew's research step; posts what clears policy. The publish route is the crew's most public action, so it is the one that must be admitted.",
   baseUrl: "https://api.twitter.com/2",
-  credential: {
-    kind: "bearer",
-    env: "TWITTER_BEARER_TOKEN",
-    note: "App-only bearer token covers the reads. `create_tweet` needs an OAuth 2.0 user-context token with `tweet.write` — the same header either way, so set this to whichever the crew is allowed to hold and omit the write when it is app-only.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "TWITTER_BEARER_TOKEN",
+      label: "Bearer token",
+      note: "An app-only bearer token covers the reads and cannot post, which is the safer default for a crew that only researches. `create_tweet` needs an OAuth 2.0 user-context token with `tweet.write` — the same header either way, so set this to whichever the crew is allowed to hold and omit the write when it is app-only.",
+    },
+  ],
   routes: [
     {
       name: "get_tweet",
@@ -382,12 +443,16 @@ const typefully: ConnectorPreset = {
   summary:
     "Files drafts and schedules them. Two write routes on one endpoint: `create_draft` cannot pass a schedule date because it is not in its allowlist, so filing a draft for a human and putting one on the wire are separately admitted.",
   baseUrl: "https://api.typefully.com/v1",
-  credential: {
-    kind: "header",
-    header: "x-api-key",
-    env: "TYPEFULLY_API_KEY",
-    note: "API key from Typefully → Settings → API. Set the env var to the literal `Bearer <key>` — Typefully expects that prefix inside the X-API-KEY header, and the value is sent verbatim.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "x-api-key",
+      env: "TYPEFULLY_API_KEY",
+      label: "API key",
+      note: "API key from Typefully → Settings → API. Set the env var to the literal `Bearer <key>` — Typefully expects that prefix inside the X-API-KEY header, and the value is sent verbatim.",
+    },
+  ],
   routes: [
     {
       name: "list_recently_scheduled",
@@ -437,12 +502,16 @@ const ghost: ConnectorPreset = {
     "Reads the site's existing posts and files new ones. The publish decision lives in the request body (`status`), which a param allowlist cannot split, so every write here is admitted as publishing authority.",
   baseUrlNote:
     "Your own site: https://<site>/ghost/api/admin (Ghost Pro is https://<name>.ghost.io/ghost/api/admin).",
-  credential: {
-    kind: "header",
-    header: "authorization",
-    env: "GHOST_ADMIN_TOKEN",
-    note: "The assembled header value `Ghost <jwt>`, not the Admin API key. Ghost signs a JWT from the key and caps it at five minutes, so this fits a token minted per run; a value left in the environment will start returning 401.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "authorization",
+      env: "GHOST_ADMIN_TOKEN",
+      label: "Admin API JWT",
+      note: "The assembled header value `Ghost <jwt>`, not the Admin API key. Ghost signs a JWT from the key and caps it at five minutes, so this fits a token minted per run; a value left in the environment will start returning 401.",
+    },
+  ],
   headers: { "Accept-Version": "v5.0" },
   routes: [
     {
@@ -504,11 +573,15 @@ const medium: ConnectorPreset = {
   summary:
     "An alternate publish surface for the content studio. Medium no longer issues integration tokens, so this preset is only usable by an account that already holds one — register it knowing that, or publish through Ghost.",
   baseUrl: "https://api.medium.com/v1",
-  credential: {
-    kind: "bearer",
-    env: "MEDIUM_INTEGRATION_TOKEN",
-    note: "A legacy integration token from Settings → Security and apps. Medium stopped issuing new ones, and there is no other credential this API takes — if the account has none, nothing here will authenticate.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "MEDIUM_INTEGRATION_TOKEN",
+      label: "Integration token (legacy)",
+      note: "A legacy integration token from Settings → Security and apps. Medium stopped issuing new ones, and there is no other credential this API takes — if the account has none, nothing here will authenticate.",
+    },
+  ],
   routes: [
     {
       name: "get_me",
@@ -555,11 +628,15 @@ const notion: ConnectorPreset = {
   summary:
     "Brand voice docs, style guides, and past posts as a read-only source of truth. No write route ships: the crew reads what the humans wrote and does not edit it.",
   baseUrl: "https://api.notion.com/v1",
-  credential: {
-    kind: "bearer",
-    env: "NOTION_TOKEN",
-    note: "Internal integration secret. Notion scopes access by what is shared with the integration, not by the token — share exactly the pages the crew should read and nothing else.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "NOTION_TOKEN",
+      label: "Internal integration secret",
+      note: "Notion scopes access by what is shared with the integration, not by the token — share exactly the pages the crew should read and nothing else. That makes it closer to an App installation than to a personal token.",
+    },
+  ],
   // Notion refuses a request without a version pin, and the version decides the
   // response shape, so it belongs to the preset rather than to a caller.
   headers: { "Notion-Version": "2022-06-28" },
@@ -615,11 +692,15 @@ const uniswap: ConnectorPreset = {
   summary:
     "Pool state, liquidity and recent swaps for quoting a candidate trade. Read-only by construction: execution is an onchain intent through the policy stack, never an HTTP call.",
   baseUrl: "https://gateway.thegraph.com/api",
-  credential: {
-    kind: "bearer",
-    env: "GRAPH_API_KEY",
-    note: "The Graph gateway API key. Free-tier keys are rate limited; the desk's scanner should cache rather than poll.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "GRAPH_API_KEY",
+      label: "Gateway API key",
+      note: "The Graph gateway API key. Free-tier keys are rate limited; the desk's scanner should cache rather than poll.",
+    },
+  ],
   routes: [
     {
       name: "query",
@@ -639,12 +720,16 @@ const tenderly: ConnectorPreset = {
   summary:
     "Dry-runs a call before the executor proposes it, so a revert is found off-chain. A simulation is a read — it is not an approval, and the verdict still comes from the policy stack.",
   baseUrl: "https://api.tenderly.co/api/v1",
-  credential: {
-    kind: "header",
-    header: "x-access-key",
-    env: "TENDERLY_ACCESS_KEY",
-    note: "Tenderly access token from Settings → Authorization. The account and project slugs are route args, not credentials.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "x-access-key",
+      env: "TENDERLY_ACCESS_KEY",
+      label: "Access token",
+      note: "Tenderly access token from Settings → Authorization. The account and project slugs are route args, not credentials.",
+    },
+  ],
   routes: [
     {
       name: "simulate",
@@ -685,12 +770,16 @@ const coingecko: ConnectorPreset = {
   summary:
     "Off-chain price and market context for the desk's scanner and risk step. Read-only; nothing here can move funds.",
   baseUrl: "https://api.coingecko.com/api/v3",
-  credential: {
-    kind: "header",
-    header: "x-cg-demo-api-key",
-    env: "COINGECKO_API_KEY",
-    note: "Demo API key. Pro is the same routes on a different host under a different header — pass --base-url https://pro-api.coingecko.com/api/v3 and --credential-header x-cg-pro-api-key.",
-  },
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "x-cg-demo-api-key",
+      env: "COINGECKO_API_KEY",
+      label: "Demo API key",
+      note: "Demo API key. Pro is the same routes on a different host under a different header — pass --base-url https://pro-api.coingecko.com/api/v3 and --credential-header x-cg-pro-api-key.",
+    },
+  ],
   routes: [
     {
       name: "simple_price",
@@ -775,6 +864,41 @@ export function presetPolicyTargetRoutes(preset: ConnectorPreset): string[] {
   return preset.routes.filter((r) => r.policyTarget?.required).map((r) => r.name);
 }
 
+/** The auth mode a set of options selects, defaulting to the preset's first. */
+export function resolvePresetAuth(
+  preset: ConnectorPreset,
+  mode?: ConnectorPresetAuthMode,
+): ConnectorPresetAuth {
+  if (!mode) return preset.auth[0]!;
+  const hit = preset.auth.find((a) => a.mode === mode);
+  if (!hit) {
+    throw new Error(
+      `connector_preset_unknown_auth_mode:${preset.id}.${mode} (supported: ${preset.auth.map((a) => a.mode).join(", ")})`,
+    );
+  }
+  return hit;
+}
+
+function buildAuth(auth: ConnectorPresetAuth, options: ConnectorPresetOptions): ConnectorAuth {
+  if (auth.mode === "none") return { kind: "none" };
+  if (auth.mode === "github-app") {
+    return {
+      kind: "github-app",
+      appIdEnv: options.appIdEnv?.trim() || auth.appIdEnv,
+      privateKeyEnv: options.privateKeyEnv?.trim() || auth.privateKeyEnv,
+      installationIdEnv: options.installationIdEnv?.trim() || auth.installationIdEnv,
+    };
+  }
+  const env = options.tokenEnv?.trim() || auth.env;
+  return auth.kind === "bearer"
+    ? { kind: "bearer", tokenEnv: env }
+    : {
+        kind: "header",
+        header: options.credentialHeader?.trim() || auth.header || "authorization",
+        valueEnv: env,
+      };
+}
+
 /**
  * Resolve a preset into the plain `Connector` the registry takes.
  *
@@ -794,6 +918,11 @@ export function buildConnectorPreset(
     );
   }
 
+  // Resolved first: an unknown auth mode is a typo in the operator's own
+  // config, and reporting an unbound policy target instead would send them to
+  // fix the wrong line.
+  const auth = resolvePresetAuth(preset, options.authMode);
+
   const known = new Set(preset.routes.map((r) => r.name));
   for (const name of options.omitRoutes ?? []) {
     if (!known.has(name)) throw new Error(`connector_preset_unknown_route:${id}.${name}`);
@@ -806,14 +935,13 @@ export function buildConnectorPreset(
   // operator still has to bind: "that flag does not apply here" is a different
   // problem from "you have not supplied the address yet", and the first one
   // arriving second reads as though the binding was the mistake.
-  const credential = preset.credential;
-  if (credential.kind === "none" && (options.tokenEnv || options.credentialHeader)) {
+  if (auth.mode === "none" && (options.tokenEnv || options.credentialHeader)) {
     // Naming an env var for a preset that sends no credential means the operator
     // believes a token is going out. It is not, and finding that out from a
     // rate-limited public endpoint months later is worse than finding it here.
     throw new Error(`connector_preset_takes_no_credential:${id}`);
   }
-  if (credential.kind === "bearer" && options.credentialHeader) {
+  if (options.credentialHeader && !(auth.mode === "token" && auth.kind === "header")) {
     throw new Error(`connector_preset_credential_is_not_a_header:${id}`);
   }
 
@@ -845,21 +973,10 @@ export function buildConnectorPreset(
     );
   }
 
-  const env = credential.kind === "none" ? "" : options.tokenEnv?.trim() || credential.env;
-
   return {
     id: options.id?.trim() || preset.id,
     baseUrl,
-    auth:
-      credential.kind === "none"
-        ? { kind: "none" }
-        : credential.kind === "bearer"
-          ? { kind: "bearer", tokenEnv: env }
-          : {
-              kind: "header",
-              header: options.credentialHeader?.trim() || credential.header,
-              valueEnv: env,
-            },
+    auth: buildAuth(auth, options),
     ...(preset.headers ? { headers: { ...preset.headers } } : {}),
     routes,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),

@@ -46,13 +46,42 @@ test("the github preset serves the routes the github-experts blueprint declares"
   assert.ok(names.includes("get_pull_request"));
   assert.ok(names.includes("merge_pull_request"));
   assert.equal(connector.baseUrl, "https://api.github.com");
-  assert.deepEqual(connector.auth, { kind: "bearer", tokenEnv: "GH_TOKEN" });
 
   const merge = connector.routes.find((r) => r.name === "merge_pull_request")!;
   assert.equal(merge.method, "PUT");
   assert.equal(merge.path, "/repos/{owner}/{repo}/pulls/{number}/merge");
   assert.equal(merge.effect, "write");
   assert.equal(merge.policyTarget, MERGE_AUTHORITY);
+});
+
+test("the default credential mode is the App, and the PAT is an explicit opt-in", () => {
+  // Posture, not preference: a PAT carries its owner's whole account and
+  // attributes every crew action to a person. Whichever mode is listed first
+  // is what an operator who does not choose ends up running.
+  assert.equal(getConnectorPreset("github")!.auth[0]!.mode, "github-app");
+  assert.deepEqual(
+    buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }).auth,
+    {
+      kind: "github-app",
+      appIdEnv: "GITHUB_APP_ID",
+      privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
+      installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
+    },
+  );
+  assert.deepEqual(
+    buildConnectorPreset("github", {
+      authMode: "token",
+      policyTargets: { merge_pull_request: MERGE_AUTHORITY },
+    }).auth,
+    { kind: "bearer", tokenEnv: "GH_TOKEN" },
+  );
+});
+
+test("an unsupported auth mode names the ones that exist", () => {
+  assert.throws(
+    () => buildConnectorPreset("github", { authMode: "oauth" as never }),
+    /connector_preset_unknown_auth_mode:github\.oauth \(supported: github-app, token\)/,
+  );
 });
 
 test("only the merge route is a write — a preset does not widen what a token can do", () => {
@@ -129,6 +158,7 @@ test("an unknown preset names what does exist", () => {
 test("overrides cover a self-hosted instance and a renamed credential", () => {
   const connector = buildConnectorPreset("github", {
     id: "ghe",
+    authMode: "token",
     baseUrl: "https://github.acme.example/api/v3",
     tokenEnv: "GHE_TOKEN",
     timeoutMs: 5_000,
@@ -259,6 +289,44 @@ test("a public registry sends no credential, and asking it to is an error", () =
     () => buildConnectorPreset("npm", { tokenEnv: "NPM_TOKEN" }),
     /connector_preset_takes_no_credential:npm/,
   );
+  // `none` is a mode like the others, so asking for one the preset does not
+  // support names what it does support rather than quietly falling back.
+  assert.throws(
+    () => buildConnectorPreset("npm", { authMode: "token" }),
+    /connector_preset_unknown_auth_mode:npm\.token \(supported: none\)/,
+  );
+});
+
+test("every preset states its credential modes, and every mode names its env", () => {
+  for (const preset of connectorPresets) {
+    assert.ok(preset.auth.length > 0, `${preset.id} declares no credential mode`);
+    for (const auth of preset.auth) {
+      assert.ok(auth.label.length > 0, `${preset.id}.${auth.mode} has no label`);
+      assert.ok(auth.note.length > 20, `${preset.id}.${auth.mode} has no note`);
+      // A mode that reads an env var must name it: the whole contract is that
+      // the preset says where the credential comes from and never carries one.
+      if (auth.mode === "token") assert.match(auth.env, /^[A-Z][A-Z0-9_]*$/);
+      if (auth.mode === "github-app") {
+        for (const env of [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv]) {
+          assert.match(env, /^[A-Z][A-Z0-9_]*$/);
+        }
+      }
+    }
+  }
+});
+
+test("the header override applies to a header credential and nothing else", () => {
+  // github's default mode is the App, which has no header to move. Reporting
+  // that plainly beats silently ignoring the flag on the mode that is actually
+  // in force.
+  assert.throws(
+    () => buildConnectorPreset("github", { credentialHeader: "x-token" }),
+    /connector_preset_credential_is_not_a_header:github/,
+  );
+  assert.throws(
+    () => buildConnectorPreset("npm", { credentialHeader: "x-token" }),
+    /connector_preset_takes_no_credential:npm/,
+  );
 });
 
 test("a preset with no default host refuses to build pointed at somebody else's site", () => {
@@ -330,10 +398,6 @@ test("CoinGecko Pro is the same preset under another host and header", () => {
     valueEnv: "COINGECKO_PRO_KEY",
   });
   assert.deepEqual(validateConnector(connector), []);
-  assert.throws(
-    () => buildConnectorPreset("github", { credentialHeader: "x-token" }),
-    /connector_preset_credential_is_not_a_header:github/,
-  );
 });
 
 test("nothing in the desk's presets can execute a trade", () => {
@@ -361,7 +425,9 @@ test("a preset route calls the URL the preset wrote down", async () => {
   }) as unknown as typeof fetch;
 
   const registry = createConnectorRegistry({
-    connectors: [buildConnectorPreset("github", { omitRoutes: ["merge_pull_request"] })],
+    connectors: [
+      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+    ],
     env: { GH_TOKEN: "ghp_secret" },
     fetchImpl,
   });

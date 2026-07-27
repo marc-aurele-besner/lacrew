@@ -10,6 +10,8 @@ import type { FlowDefinition } from "@lacrew/flows";
 import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
+import { connectorPresets } from "./connectorPresets.js";
+import type { ConnectorRegistry } from "./connectors.js";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
@@ -22,6 +24,8 @@ export interface OrchestratorAppOptions {
   model: ModelProvider;
   flows: ReturnType<typeof createFlowsSurface>;
   mcpBackend?: McpToolBackend;
+  /** Absent when no connector is registered — the normal state, not an error. */
+  connectors?: ConnectorRegistry;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -55,7 +59,7 @@ function isValidCron(expr: string): boolean {
 }
 
 export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
-  const { runtime, queue, model, flows, mcpBackend, mcpUseMock, authToken } = options;
+  const { runtime, queue, model, flows, mcpBackend, connectors, mcpUseMock, authToken } = options;
   const app = new Hono();
 
   app.use("*", async (c, next) => {
@@ -118,6 +122,52 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.get("/mcp/tools", (c) =>
     jsonBig(c, { tools: listLacrewMcpTools(), useMock: mcpUseMock, mode: runtime.mode }),
   );
+
+  /**
+   * Wiring state for the external surfaces this orchestrator can reach.
+   *
+   * An operator surface has no other way to answer "is GitHub actually hooked
+   * up?" — connectors are env-configured, so a control plane could only guess.
+   * The response carries route shapes, which env vars each connector reads,
+   * and whether they are set; never a credential value, and never a token. It
+   * also lists the presets that ship but are not registered, because "you
+   * could add this" and "this is wired" are different answers and a catalog
+   * that conflates them is how an operator thinks a crew can merge when it
+   * cannot.
+   */
+  app.get("/connectors", (c) => {
+    const registered = connectors?.describe() ?? [];
+    const live = new Set(registered.map((r) => r.id));
+    return jsonBig(c, {
+      connectors: registered,
+      available: connectorPresets
+        .filter((p) => !live.has(p.id))
+        .map((p) => ({
+          id: p.id,
+          title: p.title,
+          summary: p.summary,
+          // Null rather than absent, with the note beside it: a preset whose
+          // host is the operator's own (a Ghost blog) will not build without
+          // one, and a catalog that simply omitted the field would read as
+          // "no base URL needed".
+          baseUrl: p.baseUrl ?? null,
+          ...(p.baseUrl === undefined ? { baseUrlRequired: true, baseUrlNote: p.baseUrlNote } : {}),
+          ...(p.headers ? { headers: p.headers } : {}),
+          auth: p.auth,
+          routes: p.routes.map((r) => ({
+            name: r.name,
+            method: r.method,
+            path: r.path,
+            ...(r.description ? { description: r.description } : {}),
+            effect: r.effect,
+            params: r.params ?? [],
+            requiresPolicyTarget: Boolean(r.policyTarget?.required),
+            ...(r.policyTarget ? { policyTargetNote: r.policyTarget.note } : {}),
+          })),
+        })),
+      mode: runtime.mode,
+    });
+  });
 
   app.post("/mcp/call", async (c) => {
     const body = await bodyOf<{ name?: string; arguments?: Record<string, unknown> }>(c);

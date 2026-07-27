@@ -33,13 +33,27 @@
 
 import type { ProtocolEvent } from "@lacrew/core";
 import { resolveConnectorConfig, type ConnectorConfigEntry } from "./connectorPresets.js";
+import {
+  createGithubAppTokenSource,
+  type GithubAppAuth,
+  type GithubAppTokenSource,
+} from "./githubApp.js";
 
 export type ConnectorAuth =
   | { kind: "none" }
   /** `Authorization: Bearer <env value>`. */
   | { kind: "bearer"; tokenEnv: string }
   /** A fixed header whose value is read from the environment. */
-  | { kind: "header"; header: string; valueEnv: string };
+  | { kind: "header"; header: string; valueEnv: string }
+  /**
+   * A GitHub App installation. Unlike the others this is not a static string:
+   * an app id and a private key are exchanged for an hourly installation
+   * token, cached and refreshed by the registry (`githubApp.ts`). Preferred
+   * over a personal token — it is scoped to the repos the App was installed
+   * on, has its own identity in GitHub's audit log, and can be revoked without
+   * taking away a person's own access.
+   */
+  | GithubAppAuth;
 
 export type ConnectorRoute = {
   /** Suffix a flow calls as `<connector>.<name>`, e.g. `get_pull_request`. */
@@ -100,6 +114,39 @@ export type ConnectorCallResult = {
   ms: number;
 };
 
+/** A route as it is safe to publish: shape and gating, never a credential. */
+export type ConnectorRouteView = {
+  name: string;
+  method: ConnectorRoute["method"];
+  path: string;
+  description?: string;
+  effect: "read" | "write";
+  params: string[];
+  /** The address gating this route, or null. Public by design — admitting it is. */
+  policyTarget: string | null;
+};
+
+/**
+ * A connector as it is safe to publish to an operator surface. Names the env
+ * vars it reads and whether they are set, never a value: "is my token there?"
+ * is the question an operator actually has, and it can be answered without
+ * revealing anything.
+ */
+export type ConnectorView = {
+  id: string;
+  baseUrl: string;
+  timeoutMs: number;
+  auth: {
+    kind: ConnectorAuth["kind"];
+    envVars: string[];
+    /** Every env var this connector needs is present. */
+    ready: boolean;
+    /** `github-app` only: whether an installation token is currently held. */
+    installationToken?: { cached: boolean; expiresAt: string | null };
+  };
+  routes: ConnectorRouteView[];
+};
+
 export type ConnectorRegistry = {
   /** Every registered connector, for tool listings and the CLI. */
   list(): Connector[];
@@ -108,6 +155,8 @@ export type ConnectorRegistry = {
   /** Whether `name` is a connector tool (as opposed to a `lacrew_*` tool). */
   handles(name: string): boolean;
   call(name: string, args: Record<string, unknown>): Promise<ConnectorCallResult>;
+  /** Wiring state for an operator surface. Contains no credential material. */
+  describe(): ConnectorView[];
 };
 
 export type ConnectorRegistryOptions = {
@@ -124,9 +173,22 @@ export type ConnectorRegistryOptions = {
    * a registry that cannot ask must not answer for the policy stack.
    */
   checkPolicy?: (target: `0x${string}`) => Promise<string>;
+  /** Injected for tests so token expiry is drivable; defaults to `Date.now`. */
+  now?: () => number;
 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+/** Env vars a connector reads for auth — what an operator must set. */
+export function connectorEnvVars(connector: Connector): string[] {
+  const auth = connector.auth ?? { kind: "none" as const };
+  if (auth.kind === "bearer") return [auth.tokenEnv];
+  if (auth.kind === "header") return [auth.valueEnv];
+  if (auth.kind === "github-app") {
+    return [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv];
+  }
+  return [];
+}
 
 function isLoopback(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
@@ -162,6 +224,15 @@ export function validateConnector(connector: Connector): string[] {
   if (connector.auth?.kind === "header") {
     if (!connector.auth.header?.trim()) errors.push(`connector "${connector.id}" needs a header name`);
     if (!connector.auth.valueEnv?.trim()) errors.push(`connector "${connector.id}" needs valueEnv`);
+  }
+  if (connector.auth?.kind === "github-app") {
+    // All three or none: two of the three mints nothing, and the failure would
+    // land on the first call inside a run rather than here.
+    for (const field of ["appIdEnv", "privateKeyEnv", "installationIdEnv"] as const) {
+      if (!connector.auth[field]?.trim()) {
+        errors.push(`connector "${connector.id}" github-app auth needs ${field}`);
+      }
+    }
   }
   if (!connector.routes?.length) errors.push(`connector "${connector.id}" has no routes`);
 
@@ -225,10 +296,11 @@ function renderPath(route: ConnectorRoute, args: Record<string, unknown>): strin
   });
 }
 
-function authHeaders(
+async function authHeaders(
   connector: Connector,
   env: Record<string, string | undefined>,
-): Record<string, string> {
+  githubApp: GithubAppTokenSource,
+): Promise<Record<string, string>> {
   const auth = connector.auth ?? { kind: "none" as const };
   if (auth.kind === "bearer") {
     const token = env[auth.tokenEnv]?.trim();
@@ -239,6 +311,15 @@ function authHeaders(
     const value = env[auth.valueEnv]?.trim();
     if (!value) throw new Error(`connector_missing_credential:${auth.valueEnv}`);
     return { [auth.header.toLowerCase()]: value };
+  }
+  if (auth.kind === "github-app") {
+    const token = await githubApp.get({
+      cacheKey: connector.id,
+      baseUrl: connector.baseUrl,
+      auth,
+      env,
+    });
+    return { authorization: `Bearer ${token}` };
   }
   return {};
 }
@@ -251,6 +332,7 @@ function authHeaders(
 export function createConnectorRegistry(opts: ConnectorRegistryOptions): ConnectorRegistry {
   const env = opts.env ?? process.env;
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const githubApp = createGithubAppTokenSource({ fetchImpl, now: opts.now });
   const byId = new Map<string, Connector>();
   for (const connector of opts.connectors) {
     const errors = validateConnector(connector);
@@ -273,6 +355,35 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
     toolNames: () =>
       [...byId.values()].flatMap((c) => c.routes.map((r) => `${c.id}.${r.name}`)),
     handles: (name) => resolve(name) !== undefined,
+    describe: () =>
+      [...byId.values()].map((connector) => {
+        const envVars = connectorEnvVars(connector);
+        return {
+          id: connector.id,
+          baseUrl: connector.baseUrl,
+          timeoutMs: connector.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          auth: {
+            kind: (connector.auth ?? { kind: "none" as const }).kind,
+            envVars,
+            // Presence only. "Is the token there?" is answerable without
+            // reading it, and reading it into a response is how a status
+            // surface becomes an exfiltration route.
+            ready: envVars.every((name) => Boolean(env[name]?.trim())),
+            ...(connector.auth?.kind === "github-app"
+              ? { installationToken: githubApp.status(connector.id) }
+              : {}),
+          },
+          routes: connector.routes.map((route) => ({
+            name: route.name,
+            method: route.method,
+            path: route.path,
+            ...(route.description ? { description: route.description } : {}),
+            effect: route.effect,
+            params: route.params ?? [],
+            policyTarget: route.policyTarget ?? null,
+          })),
+        };
+      }),
     call: async (name, args) => {
       const hit = resolve(name);
       if (!hit) throw new Error(`unknown_connector_tool:${name}`);
@@ -314,19 +425,31 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
       let status = 0;
       let body: unknown;
       try {
-        const res = await fetchImpl(url.toString(), {
-          method: route.method,
-          headers: {
-            accept: "application/json",
-            ...(hasBody ? { "content-type": "application/json" } : {}),
-            // Auth last: validation already refuses a constant header that would
-            // shadow it, and the ordering keeps that true if validation changes.
-            ...(connector.headers ?? {}),
-            ...authHeaders(connector, env),
-          },
-          ...(hasBody ? { body: JSON.stringify(payload) } : {}),
-          signal: controller.signal,
-        });
+        const send = async (): Promise<Response> =>
+          fetchImpl(url.toString(), {
+            method: route.method,
+            headers: {
+              accept: "application/json",
+              ...(hasBody ? { "content-type": "application/json" } : {}),
+              // Auth last: validation already refuses a constant header that
+              // would shadow it, and the ordering keeps that true if validation
+              // changes.
+              ...(connector.headers ?? {}),
+              ...(await authHeaders(connector, env, githubApp)),
+            },
+            ...(hasBody ? { body: JSON.stringify(payload) } : {}),
+            signal: controller.signal,
+          });
+
+        let res = await send();
+        // An installation token can be revoked or expire early on GitHub's
+        // side, and the cache would keep serving it until its own deadline.
+        // One re-mint distinguishes a stale token from a credential that is
+        // genuinely wrong; a second would just be a retry loop on a real 401.
+        if (res.status === 401 && connector.auth?.kind === "github-app") {
+          githubApp.invalidate(connector.id);
+          res = await send();
+        }
         status = res.status;
         const text = await res.text();
         try {

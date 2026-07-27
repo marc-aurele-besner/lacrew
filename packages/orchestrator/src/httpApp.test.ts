@@ -5,9 +5,14 @@ import { createFlowsSurface } from "./flows.js";
 import { InMemoryQueue } from "./queue/index.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { createOrchestratorApp } from "./httpApp.js";
+import {
+  buildConnectorPreset,
+  createConnectorRegistry,
+  type ConnectorRegistry,
+} from "./index.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 
-function buildApp(authToken?: string) {
+function buildApp(authToken?: string, connectors?: ConnectorRegistry) {
   const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   const model = new MemoryModelProvider();
   const flows = createFlowsSurface({ runtime, model });
@@ -16,6 +21,7 @@ function buildApp(authToken?: string) {
     queue: new InMemoryQueue(),
     model,
     flows,
+    connectors,
     mcpUseMock: true,
     authToken,
     isDbReady: () => false,
@@ -36,6 +42,109 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.mocked, true);
     assert.equal((body.auth as { required: boolean }).required, false);
     assert.equal(body.runtimeStore, "memory");
+  });
+
+  it("serves an empty /connectors with the presets still offered", async () => {
+    const res = await buildApp().request("/connectors");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      connectors: unknown[];
+      available: Array<{ id: string; auth: Array<{ mode: string }> }>;
+    };
+    // No connector registered is the normal state, not an error — but the
+    // catalog must still say what could be added, and keep the two apart.
+    assert.deepEqual(body.connectors, []);
+    assert.ok(body.available.some((p) => p.id === "github"));
+    assert.deepEqual(
+      body.available.find((p) => p.id === "github")!.auth.map((a) => a.mode),
+      ["github-app", "token"],
+    );
+  });
+
+  it("says which presets need a host and which need no credential at all", async () => {
+    const res = await buildApp().request("/connectors");
+    const body = (await res.json()) as {
+      available: Array<{
+        id: string;
+        baseUrl: string | null;
+        baseUrlRequired?: boolean;
+        baseUrlNote?: string;
+        headers?: Record<string, string>;
+        auth: Array<{ mode: string }>;
+      }>;
+    };
+
+    // Ghost runs on the operator's own domain. Omitting the field would read as
+    // "no base URL needed" to a catalog built on this response, when in fact
+    // the preset will not build without one.
+    const ghost = body.available.find((p) => p.id === "ghost")!;
+    assert.equal(ghost.baseUrl, null);
+    assert.equal(ghost.baseUrlRequired, true);
+    assert.match(ghost.baseUrlNote!, /ghost\/api\/admin/);
+
+    const npm = body.available.find((p) => p.id === "npm")!;
+    assert.deepEqual(
+      npm.auth.map((a) => a.mode),
+      ["none"],
+    );
+    assert.equal(npm.baseUrlRequired, undefined);
+
+    // A version pin is part of the connector, so a catalog must be able to see
+    // it without registering one.
+    assert.equal(body.available.find((p) => p.id === "notion")!.headers?.["Notion-Version"], "2022-06-28");
+  });
+
+  it("reports a registered connector's wiring without any credential in it", async () => {
+    const registry = createConnectorRegistry({
+      connectors: [
+        buildConnectorPreset("github", {
+          authMode: "token",
+          policyTargets: { merge_pull_request: "0x00000000000000000000000000000000000000aa" },
+        }),
+      ],
+      env: { GH_TOKEN: "ghp_supersecret" },
+    });
+    const res = await buildApp(undefined, registry).request("/connectors");
+    const body = (await res.json()) as {
+      connectors: Array<{
+        id: string;
+        auth: { kind: string; envVars: string[]; ready: boolean };
+        routes: Array<{ name: string; effect: string; policyTarget: string | null }>;
+      }>;
+      available: Array<{ id: string }>;
+    };
+
+    assert.equal(body.connectors.length, 1);
+    assert.equal(body.connectors[0]!.id, "github");
+    assert.equal(body.connectors[0]!.auth.kind, "bearer");
+    assert.deepEqual(body.connectors[0]!.auth.envVars, ["GH_TOKEN"]);
+    assert.equal(body.connectors[0]!.auth.ready, true);
+
+    const merge = body.connectors[0]!.routes.find((r) => r.name === "merge_pull_request")!;
+    assert.equal(merge.effect, "write");
+    assert.equal(merge.policyTarget, "0x00000000000000000000000000000000000000aa");
+
+    // Registered is not "available to add" — a catalog that conflates them
+    // tells an operator a crew can merge when nothing is wired.
+    assert.ok(!body.available.some((p) => p.id === "github"));
+    assert.ok(!JSON.stringify(body).includes("ghp_supersecret"));
+  });
+
+  it("reports a connector whose credential is absent as not ready", async () => {
+    const registry = createConnectorRegistry({
+      connectors: [
+        buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+      ],
+      env: {},
+    });
+    const res = await buildApp(undefined, registry).request("/connectors");
+    const body = (await res.json()) as { connectors: Array<{ auth: { ready: boolean } }> };
+    assert.equal(body.connectors[0]!.auth.ready, false);
+  });
+
+  it("keeps /connectors behind the bearer token when one is set", async () => {
+    const res = await buildApp("s3cr3t").request("/connectors");
+    assert.equal(res.status, 401);
   });
 
   it("reports a listing as unlisted in mock mode rather than inventing a price", async () => {
