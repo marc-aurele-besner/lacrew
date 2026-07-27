@@ -257,6 +257,47 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "policies": {
+      // Per-node policy stacks read from the chain: which module the router
+      // binds per node and what each module enforces. --node narrows to one
+      // account; --asset reads a non-primary stack's own router.
+      if ("getNodePolicies" in client) {
+        const node = flagValue(rest, "--node") as `0x${string}` | undefined;
+        printJson(
+          await client.getNodePolicies({
+            nodes: node ? [node] : undefined,
+            asset: flagValue(rest, "--asset"),
+          }),
+        );
+      } else {
+        // The mock client has no policy contracts to read — nothing is invented.
+        printJson([]);
+      }
+      return;
+    }
+
+    case "usage": {
+      // Operation counts by audit-event type since --since (ISO; default the
+      // current UTC month) — the same read the cloud folds into billing
+      // meters, counted here from the local audit trail for cloud-free parity.
+      const sinceRaw = flagValue(rest, "--since");
+      const now = new Date();
+      const since =
+        sinceRaw ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+      if (Number.isNaN(Date.parse(since))) {
+        console.error(`invalid --since: ${since}`);
+        process.exitCode = 1;
+        return;
+      }
+      const cutoff = Date.parse(since);
+      const counts: Record<string, number> = {};
+      for (const event of await client.getAuditTrail()) {
+        if (Date.parse(event.at) >= cutoff) counts[event.type] = (counts[event.type] ?? 0) + 1;
+      }
+      printJson({ since, counts, source: "local audit trail" });
+      return;
+    }
+
     case "audit": {
       printJson(await client.getAuditTrail());
       return;
@@ -656,6 +697,8 @@ Commands:
   version                   Print CLI version
   org [--rpc [url]]         Print org tree (mock or onchain)
   allowances [--asset <sym>] [--rpc]  Print allowances (per asset with --asset)
+  policies [--node <addr>] [--asset <sym>] [--rpc]  Per-node policy stacks from the chain
+  usage [--since <iso>] [--rpc]       Operation counts by audit-event type
   treasury [--rpc]          Print per-asset treasury holdings (total/liquid/reserved)
   intents [--rpc]           List pending escalations
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
