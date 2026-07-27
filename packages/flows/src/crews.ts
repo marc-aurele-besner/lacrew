@@ -154,6 +154,24 @@ export type CrewConnectorNeed = {
   id: string;
   /** Route names used, without the prefix. */
   routes: string[];
+  /**
+   * Whether a shipped flow calls these routes today.
+   *
+   * `flow` — a flow in this blueprint names them, so the crew does not work
+   * until the connector is registered. Validation holds both directions: a flow
+   * may not call an undeclared route, and a `flow` need may not name routes no
+   * flow calls.
+   *
+   * `operator` — the crew's pipeline stops short of this surface, and
+   * registering it is how the operator closes that loop themselves. The studio
+   * produces a package no shipped flow files to a CMS; the desk reasons about a
+   * candidate it does not fetch. Saying so beats an empty list, which reads as
+   * "this crew never leaves LaCrew" — and beats declaring it as `flow`, which
+   * would send an operator to wire something nothing calls.
+   *
+   * Defaults to `flow`, so an omitted field cannot quietly weaken the check.
+   */
+  usedBy?: "flow" | "operator";
   /** What it is for, and which credential it wants. */
   note: string;
 };
@@ -272,12 +290,27 @@ export function validateCrewBlueprint(bp: CrewBlueprint): CrewValidationResult {
   const declared = new Set(
     (bp.connectors ?? []).flatMap((c) => c.routes.map((r) => `${c.id}.${r}`)),
   );
+  const called = new Set<string>();
   for (const flowId of bp.flows ?? []) {
     const def = getFlowTemplate(flowId)?.definition;
     for (const step of def?.steps ?? []) {
       if (step.kind !== "tool" || step.tool.startsWith("lacrew_")) continue;
+      called.add(step.tool);
       if (!declared.has(step.tool)) {
         errors.push(`flow "${flowId}" calls "${step.tool}", which no declared connector serves`);
+      }
+    }
+  }
+  // And the other direction: a need marked as called by a flow, that no flow
+  // calls, sends the operator to register a credential for nothing. The two
+  // rules together are what keep `usedBy` honest as flows change.
+  for (const need of bp.connectors ?? []) {
+    if ((need.usedBy ?? "flow") !== "flow") continue;
+    for (const route of need.routes) {
+      if (!called.has(`${need.id}.${route}`)) {
+        errors.push(
+          `connector "${need.id}.${route}" is declared as called by a flow, but no shipped flow calls it (mark it usedBy: "operator" if the operator wires it themselves)`,
+        );
       }
     }
   }
