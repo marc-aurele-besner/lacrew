@@ -65,6 +65,46 @@ pnpm --filter @lacrew/orchestrator dev
 # GET /health  POST /boot  POST /tick  GET /intents  GET /org
 ```
 
+### Read surface (chain-truth endpoints)
+
+Every read answers from the chain (or the persisted trail) — mock mode serves
+`[]`, never fixtures; the unavailable app answers 503, never an empty org:
+
+| Endpoint | What it reads |
+| --- | --- |
+| `GET /policies` | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router) |
+| `GET /usage` | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total |
+| `GET /assets` | The asset stacks the org can budget in (primary first) |
+| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`) |
+| `GET /treasury/balances` | Real per-asset holdings from each Treasury |
+
+### Governance write surface
+
+`POST /governance/propose-node-stack` deploys a node's desired stack (fresh
+rate/window modules with the requested params — their onchain params are
+constructor immutables — reusing identical ones, shared whitelist/spend-cap
+by address) and proposes `setNodePolicy` plus `setNodeRateRecorder` when the
+stack carries its own rate module. An unchanged composition proposes nothing
+(`unchanged: true`). `asset` selects a non-primary stack's own router;
+`propose-set-whitelist` and `propose-set-agent-cap` take the same selector.
+
+### Indexer-derived events
+
+The indexer also derives `TreasuryDeposit` / `TreasuryOutflow` from each
+token's own `Transfer` log filtered per treasury — a plain ERC-20 transfer
+runs no treasury code, so the token log is the only onchain record money
+moved. An outflow whose transaction matches no protocol spend is the theft
+signal Guardian correlates on.
+
+### Approval simulation
+
+`GET /intents` enriches pending intents with the F1.16 simulation trio:
+the policy verdict, `measuredChanges` (the approval executed in one
+`eth_simulateV1` block, balances read from the world it would leave behind),
+and `callTrace` (`debug_traceCall` callTracer — the exact contracts the
+approval executes, revert named on its frame). Both are absent when the node
+lacks the RPC — absent means "not measured/traced", never "no movement".
+
 ## Postgres (Neon or Docker)
 
 Orchestrator state and pg-boss jobs use one Postgres via `DATABASE_URL` (Neon hosted, or local Docker). Redis is not required.
