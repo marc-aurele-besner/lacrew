@@ -57,9 +57,13 @@ export {
 } from "./queue/index.js";
 export {
   createModelProviderFromEnv,
+  MODEL_PROVIDER_IDS,
   MemoryModelProvider,
+  AnthropicModelProvider,
+  OpenAIModelProvider,
   OpenRouterModelProvider,
   type ModelProvider,
+  type ModelProviderId,
   type ModelCompleteInput,
   type ModelCompleteResult,
 } from "./model/index.js";
