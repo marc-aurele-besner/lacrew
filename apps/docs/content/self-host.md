@@ -266,6 +266,15 @@ policy stack, and every call lands on the audit trail. See
 [Connectors](./connectors.md). Unset, crews run with no external reach, which is
 the default rather than an error.
 
+Vetted definitions ship for the surfaces the first-party crews work in, so the
+common case is not hand-written JSON:
+
+```bash
+lacrew connectors list
+export LACREW_CONNECTORS="$(lacrew connectors config github \
+  --policy-target merge_pull_request=0xMERGE_AUTHORITY)"
+```
+
 ## HTTP auth
 
 The orchestrator HTTP surface is open by default (fine for localhost demos). Set

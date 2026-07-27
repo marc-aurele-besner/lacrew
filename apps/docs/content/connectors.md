@@ -10,9 +10,50 @@ A **connector** is an HTTP surface the operator registers with the orchestrator.
 Flows call its routes by name (`github.get_pull_request`), and everything else
 about the call is the operator's decision, not the flow's.
 
-## Registering one
+## Start from a preset
 
-`LACREW_CONNECTORS` holds inline JSON or a path to a JSON file:
+Some connectors ship. A preset is the definition written out once and tested —
+base URL, paths, methods, and the arg allowlist for each route — so registering
+one is a decision rather than a transcription. See what ships:
+
+```bash
+lacrew connectors list
+lacrew connectors show github
+```
+
+A preset never carries a credential, and it will not guess a write's
+`policyTarget` — that address only exists once the crew is stood up. Bind it and
+emit the config:
+
+```bash
+lacrew connectors config github --policy-target merge_pull_request=0xMERGE_AUTHORITY
+```
+
+Ask for the merge route without an address and the command refuses rather than
+printing config that would stop the orchestrator at boot. A crew that only reads
+should leave the write out entirely — `--omit merge_pull_request` needs no
+address, and the narrowest connector that does the job is the one to register.
+
+`LACREW_CONNECTORS` also takes the reference directly, so the definition stays
+in one place:
+
+```json
+[{ "preset": "github", "policyTargets": { "merge_pull_request": "0x…" } }]
+```
+
+Alongside `policyTargets` and `omitRoutes`, a reference accepts `baseUrl` (a
+self-hosted instance such as GitHub Enterprise), `tokenEnv`, `timeoutMs`, and
+`id`. A preset expands to a plain connector and is validated identically — it
+saves the copying, not the operator's decision.
+
+| Preset | Routes | Credential |
+| --- | --- | --- |
+| `github` | `get_pull_request`, `list_pull_requests`, `list_pull_request_files`, `get_combined_status`, `list_check_runs` (reads); `merge_pull_request` (write, needs a policy target) | `GH_TOKEN` — fine-grained PAT or App installation token, scoped to the allowlisted repos |
+
+## Registering one by hand
+
+Anything without a preset is written out in full. `LACREW_CONNECTORS` holds
+inline JSON or a path to a JSON file, and the two forms mix in one array:
 
 ```json
 [
@@ -123,6 +164,7 @@ to register before standing the crew up:
 lacrew crews show github-experts
 # Connectors to register before the crew can work
 #   github  (github.get_pull_request, github.merge_pull_request)
+#      ships as a preset:  lacrew connectors show github
 ```
 
 `validateCrewBlueprint` rejects a blueprint whose flows call a route no declared
