@@ -843,10 +843,23 @@ export class CrewRuntime {
   }
 
   async listSessions(): Promise<SessionKey[]> {
-    if (isOnchainClient(this.client)) {
-      return this.client.getSessions();
+    const sessions = await this.client.getSessions();
+    // Chain reads carry no account-level delegations — SessionRegistry knows
+    // nothing of them. Overlay the runtime's own issue records, minus the
+    // signed blob: a reader needs budget and state, and revocation (which
+    // does need the signature) runs off the held record, not this surface.
+    const held = new Map<string, SessionDelegation>();
+    for (const entry of this.sessions.values()) {
+      const d = entry.session.delegation;
+      if (d) held.set(entry.session.keyId, d);
     }
-    return this.client.getSessions();
+    if (held.size === 0) return sessions;
+    return sessions.map((s) => {
+      const d = held.get(s.keyId);
+      if (!d) return s;
+      const { signed: _signed, ...summary } = d;
+      return { ...s, delegation: summary };
+    });
   }
 
   /**
