@@ -274,7 +274,16 @@ common case is not hand-written JSON:
 lacrew connectors list
 export LACREW_CONNECTORS="$(lacrew connectors config github \
   --policy-target merge_pull_request=0xMERGE_AUTHORITY)"
+
+# GitHub's default mode is an App installation — scoped to the repos it was
+# installed on, and revocable without touching anyone's own access.
+export GITHUB_APP_ID=123456
+export GITHUB_APP_PRIVATE_KEY="$(cat lacrew-crew.private-key.pem)"
+export GITHUB_APP_INSTALLATION_ID=48213991
 ```
+
+`GET /connectors` reports what is registered, which env vars each connector
+reads and whether they are set — never a value.
 
 ## HTTP auth
 
