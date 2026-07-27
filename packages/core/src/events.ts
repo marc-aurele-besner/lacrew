@@ -15,6 +15,16 @@ export type ProtocolEventType =
   | "SessionIssued"
   | "SessionRevoked"
   /**
+   * Account-level session delegations (F1.3). Issue/disable are orchestrator
+   * actions with onchain receipts; the two *Failed kinds record that the
+   * account-level path did NOT change — "no delegation" must never be
+   * mistaken for "delegation issued", nor a failed disable for a dead one.
+   */
+  | "SessionDelegationIssued"
+  | "SessionDelegationFailed"
+  | "SessionDelegationDisabled"
+  | "SessionDelegationDisableFailed"
+  /**
    * An ERC-20 transfer INTO an asset stack's Treasury — money arriving. The
    * contract emits nothing for a plain transfer, so the indexer derives this
    * from the token's own Transfer log filtered to the treasury address.

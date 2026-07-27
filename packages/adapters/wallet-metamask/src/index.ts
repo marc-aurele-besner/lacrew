@@ -19,6 +19,7 @@ import {
 
 export * from "./account.js";
 export * from "./delegation.js";
+export * from "./sessionDelegation.js";
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
 
 export type MetaMaskWalletAdapterOptions = Omit<CreateMetaMaskWalletOptions, "salt"> & {

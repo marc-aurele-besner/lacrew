@@ -374,6 +374,77 @@ export interface SessionKey {
   rate?: { maxProposals: number; ratePeriod: number };
   /** true when revoked onchain or locally. */
   revoked?: boolean;
+  /** Account-level delegation riding this session, when a provider issued one. */
+  delegation?: SessionDelegation;
+}
+
+/**
+ * A budget-caveated, expiring delegation from an agent's seat account to a
+ * session key (F1.3, MetaMask Delegation Toolkit path). Account-level
+ * enforcement that rides alongside — never instead of — the SessionRegistry
+ * + EscalationRouter path: the chain checks both.
+ */
+export interface SessionDelegation {
+  /** Which provider issued it, e.g. "metamask". */
+  provider: string;
+  /** The delegator seat account (smart account, root-owned today). */
+  seat: `0x${string}`;
+  /** True once the seat has code; a delegation redeems only against code. */
+  seatDeployed: boolean;
+  /** The session key the delegation is bound to. */
+  delegate: `0x${string}`;
+  delegationManager: `0x${string}`;
+  chainId: number;
+  budget: {
+    kind: "erc20Total" | "nativeTotal";
+    /** Budget token; absent for native. */
+    token?: `0x${string}`;
+    /** Raw amount as a decimal string (BigInt-safe). */
+    amount: string;
+  };
+  /** Unix seconds — matches the session's expiry via a timestamp caveat. */
+  expiresAtSec: number;
+  /** Provider-issue salt (the agent), so revocation can rebuild the seat. */
+  salt: string;
+  /** The signed delegation, opaque here — the provider owns its encoding. */
+  signed: Record<string, unknown>;
+  /** True after an onchain disable actually landed — never assumed. */
+  disabled?: boolean;
+}
+
+/** A transaction built by a provider for the caller to broadcast. */
+export interface BuiltTx {
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value: bigint;
+}
+
+/**
+ * Issues and revokes account-level session delegations. Implementations live
+ * in wallet adapter packages; the orchestrator only sees this seam.
+ */
+export interface DelegationProvider {
+  readonly provider: string;
+  /**
+   * Build and sign a delegation from the agent's seat to the session key,
+   * bounded by `maxValue` and expiring with the session. `seatDeployTx` is
+   * present when the seat has no code yet — redemption needs the deploy.
+   */
+  issue(args: {
+    agent: `0x${string}`;
+    sessionKey: `0x${string}`;
+    maxValue: bigint;
+    expiresAtSec: number;
+  }): Promise<{ delegation: SessionDelegation; seatDeployTx?: BuiltTx }>;
+  /**
+   * One plain transaction that disables the delegation onchain (self-bundled
+   * EntryPoint.handleOps — permissionless, no bundler service). Broadcasting
+   * is the caller's job; only a landed receipt makes `disabled` true.
+   */
+  buildRevokeTx(
+    delegation: SessionDelegation,
+    beneficiary: `0x${string}`,
+  ): Promise<BuiltTx>;
 }
 
 /**

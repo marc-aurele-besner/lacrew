@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/delegation.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/delegation.test.ts src/sessionDelegation.test.ts"
   },
   "dependencies": {
     "@lacrew/adapter-wallet-agentkit": "workspace:*",

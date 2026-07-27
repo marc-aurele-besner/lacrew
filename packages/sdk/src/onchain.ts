@@ -1321,6 +1321,27 @@ export class OnchainLacrewClient {
     return { txHash: hash };
   }
 
+  /** Broadcast a prebuilt transaction from the root wallet (Phase 0 sponsorship). */
+  async sendBuiltTx(tx: {
+    to: `0x${string}`;
+    data: `0x${string}`;
+    value: bigint;
+  }): Promise<{ txHash: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.sendTransaction({
+      to: tx.to,
+      data: tx.data,
+      value: tx.value,
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`Transaction ${hash} reverted.`);
+    }
+    return { txHash: hash };
+  }
+
   /** Register an ephemeral key on SessionRegistry (caller = root or issuer). */
   async issueSession(input: {
     agent: `0x${string}`;
