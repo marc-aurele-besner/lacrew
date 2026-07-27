@@ -36,13 +36,42 @@ test("the github preset serves the routes the github-experts blueprint declares"
   assert.ok(names.includes("get_pull_request"));
   assert.ok(names.includes("merge_pull_request"));
   assert.equal(connector.baseUrl, "https://api.github.com");
-  assert.deepEqual(connector.auth, { kind: "bearer", tokenEnv: "GH_TOKEN" });
 
   const merge = connector.routes.find((r) => r.name === "merge_pull_request")!;
   assert.equal(merge.method, "PUT");
   assert.equal(merge.path, "/repos/{owner}/{repo}/pulls/{number}/merge");
   assert.equal(merge.effect, "write");
   assert.equal(merge.policyTarget, MERGE_AUTHORITY);
+});
+
+test("the default credential mode is the App, and the PAT is an explicit opt-in", () => {
+  // Posture, not preference: a PAT carries its owner's whole account and
+  // attributes every crew action to a person. Whichever mode is listed first
+  // is what an operator who does not choose ends up running.
+  assert.equal(getConnectorPreset("github")!.auth[0]!.mode, "github-app");
+  assert.deepEqual(
+    buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }).auth,
+    {
+      kind: "github-app",
+      appIdEnv: "GITHUB_APP_ID",
+      privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
+      installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
+    },
+  );
+  assert.deepEqual(
+    buildConnectorPreset("github", {
+      authMode: "token",
+      policyTargets: { merge_pull_request: MERGE_AUTHORITY },
+    }).auth,
+    { kind: "bearer", tokenEnv: "GH_TOKEN" },
+  );
+});
+
+test("an unsupported auth mode names the ones that exist", () => {
+  assert.throws(
+    () => buildConnectorPreset("github", { authMode: "oauth" as never }),
+    /connector_preset_unknown_auth_mode:github\.oauth \(supported: github-app, token\)/,
+  );
 });
 
 test("only the merge route is a write — a preset does not widen what a token can do", () => {
@@ -118,6 +147,7 @@ test("an unknown preset names what does exist", () => {
 test("overrides cover a self-hosted instance and a renamed credential", () => {
   const connector = buildConnectorPreset("github", {
     id: "ghe",
+    authMode: "token",
     baseUrl: "https://github.acme.example/api/v3",
     tokenEnv: "GHE_TOKEN",
     timeoutMs: 5_000,
@@ -188,7 +218,9 @@ test("a preset route calls the URL the preset wrote down", async () => {
   }) as unknown as typeof fetch;
 
   const registry = createConnectorRegistry({
-    connectors: [buildConnectorPreset("github", { omitRoutes: ["merge_pull_request"] })],
+    connectors: [
+      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+    ],
     env: { GH_TOKEN: "ghp_secret" },
     fetchImpl,
   });

@@ -29,7 +29,7 @@
  *    exactly the comfortable mistake the policy target exists to prevent.
  */
 
-import type { Connector, ConnectorRoute } from "./connectors.js";
+import type { Connector, ConnectorAuth, ConnectorRoute } from "./connectors.js";
 
 /**
  * A preset's route. Same shape a connector route has, except `policyTarget` is
@@ -44,6 +44,34 @@ export type ConnectorPresetRoute = Omit<ConnectorRoute, "policyTarget"> & {
   policyTarget?: { required: true; note: string };
 };
 
+/**
+ * One way to authenticate a preset. A service may support more than one, and
+ * they are not interchangeable in posture: a personal token carries whatever
+ * its owner can reach, an app installation carries only what it was granted.
+ * The preset states both so the operator picks rather than discovers.
+ */
+export type ConnectorPresetAuth =
+  | {
+      mode: "token";
+      kind: "bearer" | "header";
+      /** Header name for `kind: "header"`. */
+      header?: string;
+      env: string;
+      label: string;
+      /** Which token, and the narrowest scope that works. */
+      note: string;
+    }
+  | {
+      mode: "github-app";
+      appIdEnv: string;
+      privateKeyEnv: string;
+      installationIdEnv: string;
+      label: string;
+      note: string;
+    };
+
+export type ConnectorPresetAuthMode = ConnectorPresetAuth["mode"];
+
 export type ConnectorPreset = {
   /** Default connector id, and the name a config entry references. */
   id: string;
@@ -51,15 +79,8 @@ export type ConnectorPreset = {
   /** What a crew uses it for. Printed by `lacrew connectors list`. */
   summary: string;
   baseUrl: string;
-  /** Auth shape with the env var the operator is expected to set. */
-  credential: {
-    kind: "bearer" | "header";
-    /** Header name for `kind: "header"`. */
-    header?: string;
-    env: string;
-    /** Which token, and the narrowest scope that works. */
-    note: string;
-  };
+  /** Supported credential modes, best-posture first. The first is the default. */
+  auth: ConnectorPresetAuth[];
   routes: ConnectorPresetRoute[];
 };
 
@@ -68,8 +89,14 @@ export type ConnectorPresetOptions = {
   id?: string;
   /** Override for a self-hosted instance, e.g. GitHub Enterprise. */
   baseUrl?: string;
-  /** Override the environment variable the credential is read from. */
+  /** Which credential mode to use. Defaults to the preset's first. */
+  authMode?: ConnectorPresetAuthMode;
+  /** Override the environment variable a `token`-mode credential is read from. */
   tokenEnv?: string;
+  /** Override the env vars a `github-app` credential is read from. */
+  appIdEnv?: string;
+  privateKeyEnv?: string;
+  installationIdEnv?: string;
   timeoutMs?: number;
   /**
    * Route name → the address standing for the authority to take that action.
@@ -94,11 +121,23 @@ const github: ConnectorPreset = {
   summary:
     "Reads pull requests, their files, and their CI state; merges the ones that clear policy. What the `github-experts` crew's triage flow calls.",
   baseUrl: "https://api.github.com",
-  credential: {
-    kind: "bearer",
-    env: "GH_TOKEN",
-    note: "Fine-grained personal access token or GitHub App installation token, scoped to the allowlisted repos. Contents: read, Pull requests: read (add write only if the merge route is registered), Checks: read.",
-  },
+  auth: [
+    {
+      mode: "github-app",
+      appIdEnv: "GITHUB_APP_ID",
+      privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
+      installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
+      label: "GitHub App installation",
+      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read, Pull requests: read (write only if the merge route is registered), Checks: read. The registry mints and refreshes the hourly installation token itself.",
+    },
+    {
+      mode: "token",
+      kind: "bearer",
+      env: "GH_TOKEN",
+      label: "Personal access token",
+      note: "Fine-grained PAT scoped to the allowlisted repos. Simpler to set up, but it carries its owner's access and every action the crew takes is attributed to that person. Prefer the App for anything long-lived.",
+    },
+  ],
   routes: [
     {
       name: "get_pull_request",
@@ -167,6 +206,36 @@ export function presetPolicyTargetRoutes(preset: ConnectorPreset): string[] {
   return preset.routes.filter((r) => r.policyTarget?.required).map((r) => r.name);
 }
 
+/** The auth mode a set of options selects, defaulting to the preset's first. */
+export function resolvePresetAuth(
+  preset: ConnectorPreset,
+  mode?: ConnectorPresetAuthMode,
+): ConnectorPresetAuth {
+  if (!mode) return preset.auth[0]!;
+  const hit = preset.auth.find((a) => a.mode === mode);
+  if (!hit) {
+    throw new Error(
+      `connector_preset_unknown_auth_mode:${preset.id}.${mode} (supported: ${preset.auth.map((a) => a.mode).join(", ")})`,
+    );
+  }
+  return hit;
+}
+
+function buildAuth(auth: ConnectorPresetAuth, options: ConnectorPresetOptions): ConnectorAuth {
+  if (auth.mode === "github-app") {
+    return {
+      kind: "github-app",
+      appIdEnv: options.appIdEnv?.trim() || auth.appIdEnv,
+      privateKeyEnv: options.privateKeyEnv?.trim() || auth.privateKeyEnv,
+      installationIdEnv: options.installationIdEnv?.trim() || auth.installationIdEnv,
+    };
+  }
+  const env = options.tokenEnv?.trim() || auth.env;
+  return auth.kind === "bearer"
+    ? { kind: "bearer", tokenEnv: env }
+    : { kind: "header", header: auth.header ?? "authorization", valueEnv: env };
+}
+
 /**
  * Resolve a preset into the plain `Connector` the registry takes.
  *
@@ -185,6 +254,11 @@ export function buildConnectorPreset(
       `unknown_connector_preset:${id} (available: ${connectorPresets.map((p) => p.id).join(", ")})`,
     );
   }
+
+  // Resolved first: an unknown auth mode is a typo in the operator's own
+  // config, and reporting an unbound policy target instead would send them to
+  // fix the wrong line.
+  const auth = resolvePresetAuth(preset, options.authMode);
 
   const known = new Set(preset.routes.map((r) => r.name));
   for (const name of options.omitRoutes ?? []) {
@@ -215,14 +289,10 @@ export function buildConnectorPreset(
   }
   if (routes.length === 0) throw new Error(`connector_preset_all_routes_omitted:${id}`);
 
-  const env = options.tokenEnv?.trim() || preset.credential.env;
   return {
     id: options.id?.trim() || preset.id,
     baseUrl: options.baseUrl?.trim() || preset.baseUrl,
-    auth:
-      preset.credential.kind === "bearer"
-        ? { kind: "bearer", tokenEnv: env }
-        : { kind: "header", header: preset.credential.header ?? "authorization", valueEnv: env },
+    auth: buildAuth(auth, options),
     routes,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
   };
