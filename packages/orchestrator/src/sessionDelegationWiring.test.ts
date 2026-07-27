@@ -67,9 +67,16 @@ function sessionClient(log: string[]) {
       log.push("fundEth");
       return { txHash: "0xfund" };
     },
-    // The class instance spread drops prototype methods; audit() needs this one.
+    // The class instance spread drops prototype methods; audit() and
+    // listSessions() need these two.
     async getAuditTrail() {
       return [];
+    },
+    async getSessions() {
+      log.push("getSessions");
+      // Chain-shaped rows: what SessionRegistry knows, which excludes any
+      // delegation — the overlay under test must add it.
+      return [{ agent: MOCK_WORKER, keyId: "s-1", expiresAt: Date.now() + 3600_000, scopes: [] }];
     },
   };
 }
@@ -157,6 +164,27 @@ describe("session delegation wiring", () => {
     const failed = audit.find((e) => e.type === "SessionDelegationFailed");
     assert.ok(failed, "the failure is its own audit event");
     assert.match(String(failed!.payload.reason), /factory unreachable/);
+  });
+
+  it("listSessions overlays the delegation, stripped of its signature", async () => {
+    const log: string[] = [];
+    const provider: DelegationProvider = {
+      provider: "metamask",
+      async issue(args) {
+        return { delegation: fakeDelegation(args.sessionKey, true) };
+      },
+      async buildRevokeTx() {
+        throw new Error("not expected here");
+      },
+    };
+    const runtime = runtimeWith(provider, log);
+    const booted = await runtime.boot();
+    const listed = await runtime.listSessions();
+    const row = listed.find((s) => s.keyId === booted.keyId);
+    assert.ok(row?.delegation, "the listed session carries its delegation");
+    assert.equal(row!.delegation!.seat, SEAT);
+    // The signature stays with the held record — read surfaces never need it.
+    assert.equal(row!.delegation!.signed, undefined);
   });
 
   it("revoke disables the delegation through one root transaction", async () => {

@@ -406,8 +406,12 @@ export interface SessionDelegation {
   expiresAtSec: number;
   /** Provider-issue salt (the agent), so revocation can rebuild the seat. */
   salt: string;
-  /** The signed delegation, opaque here — the provider owns its encoding. */
-  signed: Record<string, unknown>;
+  /**
+   * The signed delegation, opaque here — the provider owns its encoding.
+   * Present on the held/persisted record (revocation needs it); stripped
+   * from read surfaces, where budget and state are the whole story.
+   */
+  signed?: Record<string, unknown>;
   /** True after an onchain disable actually landed — never assumed. */
   disabled?: boolean;
 }
