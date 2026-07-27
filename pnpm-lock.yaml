@@ -338,6 +338,9 @@ importers:
       '@lacrew/adapter-agents-mcp':
         specifier: workspace:*
         version: link:../adapters/agents-mcp
+      '@lacrew/adapter-wallet-metamask':
+        specifier: workspace:*
+        version: link:../adapters/wallet-metamask
       '@lacrew/core':
         specifier: workspace:*
         version: link:../core

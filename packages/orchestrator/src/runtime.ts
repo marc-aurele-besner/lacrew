@@ -15,6 +15,8 @@ import {
 } from "@lacrew/sdk";
 import type { LacrewClient } from "@lacrew/sdk/testing";
 import {
+  type DelegationProvider,
+  type SessionDelegation,
   ANVIL_CHAIN_ID,
   escalationRouterAbi,
   getAddresses,
@@ -122,6 +124,12 @@ const AUDIT_STORE_TTL_MS = 2_000;
 
 export interface CrewRuntimeOptions {
   /**
+   * Account-level session delegations (F1.3): when set, boot also issues a
+   * budget-caveated delegation seat→session-key and revoke disables it.
+   * Absent means none are issued — the protocol path is unaffected.
+   */
+  delegations?: DelegationProvider;
+  /**
    * Required. It used to default to the in-memory test client, which is how a
    * runtime with no chain still answered every read with an invented org.
    * Tests inject a client explicitly; production builds one from env.
@@ -162,7 +170,8 @@ export type RuntimeBootFailure =
   | "no_deployment"
   | "incomplete_deployment"
   | "rpc_unreachable"
-  | "chain_id_mismatch";
+  | "chain_id_mismatch"
+  | "delegations_unavailable";
 
 export type RuntimeBoot =
   | { ok: true; runtime: CrewRuntime }
@@ -278,6 +287,39 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
     }
   }
 
+  // Account-level session delegations (F1.3), opt-in per deployment. A
+  // misconfiguration is a reported boot failure, not a silently
+  // delegation-less runtime the operator believes is issuing them.
+  let delegations: DelegationProvider | undefined;
+  if (process.env.LACREW_DELEGATIONS) {
+    if (process.env.LACREW_DELEGATIONS !== "metamask") {
+      return {
+        ok: false,
+        reason: "delegations_unavailable",
+        detail: `Unknown LACREW_DELEGATIONS provider "${process.env.LACREW_DELEGATIONS}" (supported: metamask).`,
+      };
+    }
+    try {
+      const { createMetaMaskDelegationProvider } = await import(
+        "@lacrew/adapter-wallet-metamask"
+      );
+      delegations = createMetaMaskDelegationProvider({
+        rpcUrl: rpc,
+        chainId,
+        owner: account,
+        ...(addresses.mockUSDC ? { token: addresses.mockUSDC } : {}),
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "delegations_unavailable",
+        detail: `LACREW_DELEGATIONS=metamask but the provider could not start: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+      };
+    }
+  }
+
   return {
     ok: true,
     runtime: new CrewRuntime({
@@ -289,6 +331,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       managerAgent: manager,
       auditStore: createAuditStoreFromEnv(),
       runtimeStore: createRuntimeStoreFromEnv(),
+      ...(delegations ? { delegations } : {}),
     }),
   };
 }
@@ -308,6 +351,7 @@ export class CrewRuntime {
    * silently hand back the authority the ceiling is supposed to remove.
    * Private keys stay in this map and never reach the store or audit payloads.
    */
+  private readonly delegations?: DelegationProvider;
   private readonly sessions = new Map<
     string,
     { session: SessionKey; privateKey?: `0x${string}` }
@@ -343,6 +387,7 @@ export class CrewRuntime {
     this.chainId = options.chainId ?? null;
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
+    this.delegations = options.delegations;
   }
 
   /** Replay persisted audit events into the local ring (call once on boot). */
@@ -598,6 +643,12 @@ export class CrewRuntime {
       });
       // Root sponsors gas so the session key can submit propose (Phase 0; AA/paymaster later).
       const fundTxHash = await this.fundSessionKey(ephemeral.keyAddress!);
+      const delegation = await this.issueSessionDelegation(
+        ephemeral.agent,
+        ephemeral.keyAddress!,
+        maxValue,
+        ephemeral.expiresAtSec,
+      );
       const session: SessionKey = {
         agent: ephemeral.agent,
         keyId: sessionId,
@@ -608,6 +659,7 @@ export class CrewRuntime {
         allowedTarget,
         window: limits?.window,
         revoked: false,
+        ...(delegation ? { delegation } : {}),
       };
       this.sessions.set(key, { session, privateKey: ephemeral.privateKey });
       // Awaited: this is the only durable copy of a key that just cost gas.
@@ -797,6 +849,97 @@ export class CrewRuntime {
     return this.client.getSessions();
   }
 
+  /**
+   * Issue the account-level delegation riding a fresh session (F1.3). A
+   * failure never fails the boot — the SessionRegistry path is the
+   * enforcement users rely on — but it is audited as its own event, because
+   * "no delegation" and "delegation issued" are different states the record
+   * must keep apart.
+   */
+  private async issueSessionDelegation(
+    agent: `0x${string}`,
+    sessionKey: `0x${string}`,
+    maxValue: bigint,
+    expiresAtSec: number,
+  ): Promise<SessionDelegation | undefined> {
+    if (!this.delegations) return undefined;
+    try {
+      const issued = await this.delegations.issue({ agent, sessionKey, maxValue, expiresAtSec });
+      let delegation = issued.delegation;
+      if (issued.seatDeployTx && isOnchainClient(this.client)) {
+        // Root-funded seat deploy (the Phase-0 sponsorship pattern): a
+        // delegation only redeems against code. sendBuiltTx throws on
+        // revert, so seatDeployed flips only when the deploy actually landed.
+        await this.client.sendBuiltTx(issued.seatDeployTx);
+        delegation = { ...delegation, seatDeployed: true };
+      }
+      this.pushAudit({
+        type: "SessionDelegationIssued",
+        at: new Date().toISOString(),
+        payload: {
+          agent,
+          sessionKey,
+          provider: delegation.provider,
+          seat: delegation.seat,
+          seatDeployed: delegation.seatDeployed,
+          budget: delegation.budget,
+          expiresAtSec: delegation.expiresAtSec,
+        },
+      });
+      return delegation;
+    } catch (err) {
+      this.pushAudit({
+        type: "SessionDelegationFailed",
+        at: new Date().toISOString(),
+        payload: {
+          agent,
+          sessionKey,
+          reason: err instanceof Error ? err.message : "delegation_failed",
+        },
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * Disable a revoked session's delegation onchain. The protocol revoke has
+   * already landed; this closes the account-level path too. `disabled` flips
+   * only on a landed receipt — a failure is audited, never assumed away, and
+   * the delegation still dies at its timestamp caveat when the session
+   * expires.
+   */
+  private async disableSessionDelegation(
+    sessionId: string,
+    delegation: SessionDelegation | undefined,
+  ): Promise<void> {
+    if (!delegation || delegation.disabled || !this.delegations) return;
+    if (!isOnchainClient(this.client)) return;
+    try {
+      const beneficiary =
+        this.client.walletClient?.account?.address ??
+        ("0x0000000000000000000000000000000000000000" as `0x${string}`);
+      const tx = await this.delegations.buildRevokeTx(delegation, beneficiary);
+      const { txHash } = await this.client.sendBuiltTx(tx);
+      delegation.disabled = true;
+      this.pushAudit({
+        type: "SessionDelegationDisabled",
+        at: new Date().toISOString(),
+        payload: { keyId: sessionId, seat: delegation.seat, txHash },
+      });
+    } catch (err) {
+      this.pushAudit({
+        type: "SessionDelegationDisableFailed",
+        at: new Date().toISOString(),
+        payload: {
+          keyId: sessionId,
+          seat: delegation.seat,
+          expiresAtSec: delegation.expiresAtSec,
+          reason: err instanceof Error ? err.message : "disable_failed",
+        },
+      });
+    }
+  }
+
   async revokeSessionById(sessionId: string): Promise<{ txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) {
       const held = this.findSessionEntry(sessionId);
@@ -823,6 +966,7 @@ export class CrewRuntime {
       at: new Date().toISOString(),
       payload: { keyId: sessionId, txHash },
     });
+    await this.disableSessionDelegation(sessionId, held?.[1].session.delegation);
     return { txHash };
   }
 
