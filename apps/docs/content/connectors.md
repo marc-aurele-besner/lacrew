@@ -42,13 +42,59 @@ in one place:
 ```
 
 Alongside `policyTargets` and `omitRoutes`, a reference accepts `baseUrl` (a
-self-hosted instance such as GitHub Enterprise), `tokenEnv`, `timeoutMs`, and
-`id`. A preset expands to a plain connector and is validated identically — it
-saves the copying, not the operator's decision.
+self-hosted instance such as GitHub Enterprise), `tokenEnv`, `credentialHeader`,
+`timeoutMs`, and `id`. A preset expands to a plain connector and is validated
+identically — it saves the copying, not the operator's decision.
 
-| Preset | Routes | Credential |
-| --- | --- | --- |
-| `github` | `get_pull_request`, `list_pull_requests`, `list_pull_request_files`, `get_combined_status`, `list_check_runs` (reads); `merge_pull_request` (write, needs a policy target) | `GH_TOKEN` — fine-grained PAT or App installation token, scoped to the allowlisted repos |
+### What ships
+
+Every write below needs a policy target bound before it will register, and every
+preset can be registered read-only with `--omit`. `lacrew connectors show <id>`
+prints the routes, the args each takes, and what is still unbound.
+
+| Preset | What a crew uses it for | Writes (need an address) | Credential |
+| --- | --- | --- | --- |
+| `github` | Pull requests, files, combined status, check runs | `merge_pull_request` | `GH_TOKEN` |
+| `gitlab` | Merge requests, diffs, pipelines — gitlab.com or self-hosted | `merge_merge_request` | `GITLAB_TOKEN` (`PRIVATE-TOKEN`) |
+| `npm` | Published versions, dist-tags, deprecations | — | none (public) |
+| `pypi` | Release history, requires-python, yanked releases | — | none (public) |
+| `twitter` | Search, timelines, one post | `create_tweet` | `TWITTER_BEARER_TOKEN` |
+| `typefully` | Draft queue and scheduling | `schedule_draft` (`create_draft` files a draft and needs none) | `TYPEFULLY_API_KEY` |
+| `ghost` | The site's posts; files new ones | `create_post`, `update_post` | `GHOST_ADMIN_TOKEN` |
+| `medium` | Alternate publish surface | `create_post` | `MEDIUM_INTEGRATION_TOKEN` |
+| `notion` | Brand voice docs and past posts, read-only | — | `NOTION_TOKEN` |
+| `uniswap` | Pool state and liquidity via the v3 subgraph | — | `GRAPH_API_KEY` |
+| `tenderly` | Dry-run a call before proposing it | — | `TENDERLY_ACCESS_KEY` |
+| `coingecko` | Prices and market context | — | `COINGECKO_API_KEY` |
+
+Three things worth reading off that table:
+
+**The desk's presets have no writes at all.** A swap is an onchain intent that
+goes through `lacrew_propose_intent` and the policy stack. A connector that could
+execute one would be a second execution path with none of that enforcement, so
+`uniswap`, `tenderly` and `coingecko` read and simulate, and nothing else.
+
+**Where the publish gate actually sits.** For `typefully` it is the arg
+allowlist: `create_draft` and `schedule_draft` are the same endpoint, and the
+first cannot pass a schedule date because the route does not declare one — so
+filing a draft for a human and putting one on the wire are admitted separately.
+For `ghost` and `medium` the visibility lives in the request body (`status`,
+`publishStatus`), which an allowlist cannot split, so every write there carries
+publishing authority and is documented as doing so.
+
+**Two presets ask for something before they will build.** `ghost` ships no base
+URL, because the site is yours (`--base-url https://<site>/ghost/api/admin`);
+`medium` authenticates only with a legacy integration token, and Medium no longer
+issues them — an account without one cannot use that preset at all.
+
+`npm` and `pypi` are public and send no credential. Passing `--token-env` to one
+is an error rather than a no-op: an operator who names a token there believes one
+is going out.
+
+A preset may also pin constant headers the service requires — `notion` sends
+`Notion-Version`, `ghost` sends `Accept-Version`. They are part of the connector,
+not a flow's args, and one that would shadow the credential is rejected at
+registration.
 
 ## Registering one by hand
 
