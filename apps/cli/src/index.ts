@@ -20,6 +20,7 @@ import {
 } from "@lacrew/core";
 import { http, parseEther, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { cmdConnectors } from "./connectors.js";
 import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { loadEnvFile } from "./env.js";
@@ -226,6 +227,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "crews") {
     cmdCrews(rest);
+    return;
+  }
+  if (cmd === "connectors") {
+    cmdConnectors(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -732,6 +737,8 @@ Commands:
                             (see: lacrew flows help)
   crews <sub>               Vertical crew blueprints — list, show <id>,
                             plan <id> (the calls that stand a crew up)
+  connectors <sub>          Connector presets — list, show <id>, config <id>
+                            (JSON for LACREW_CONNECTORS)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

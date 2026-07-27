@@ -10,6 +10,7 @@
  */
 
 import { writeFileSync } from "node:fs";
+import { getConnectorPreset } from "@lacrew/orchestrator";
 import {
   crewBlueprints,
   crewMonthlyGrantUsd,
@@ -106,6 +107,14 @@ function printBlueprint(bp: CrewBlueprint): void {
     for (const need of bp.connectors) {
       console.log(`  ${need.id}  (${need.routes.map((r) => `${need.id}.${r}`).join(", ")})`);
       console.log(`     ${need.note}`);
+      // Naming the routes without saying where a definition comes from is how
+      // an operator ends up transcribing one out of the docs.
+      const preset = getConnectorPreset(need.id);
+      console.log(
+        preset
+          ? `     ships as a preset:  lacrew connectors show ${need.id}`
+          : `     no preset ships — register this one by hand (docs: connectors)`,
+      );
     }
   } else {
     console.log("\nConnectors: none — this crew's flows never leave LaCrew.");
