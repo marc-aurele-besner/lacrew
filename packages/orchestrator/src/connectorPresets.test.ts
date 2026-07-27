@@ -12,12 +12,22 @@ import { createConnectorRegistry, loadConnectorsFromEnv, validateConnector } fro
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa" as const;
 
+/** A stand-in host for the presets that ship none, because the site is the operator's. */
+const OWN_HOST = "https://blog.example/ghost/api/admin";
+
+/** Everything a preset refuses to guess, filled in so the build can be exercised. */
+function bindings(preset: (typeof connectorPresets)[number]) {
+  return {
+    policyTargets: Object.fromEntries(
+      presetPolicyTargetRoutes(preset).map((name) => [name, MERGE_AUTHORITY]),
+    ),
+    ...(preset.baseUrl === undefined ? { baseUrl: OWN_HOST } : {}),
+  };
+}
+
 test("every shipped preset builds into a connector the registry accepts", () => {
   for (const preset of connectorPresets) {
-    const policyTargets = Object.fromEntries(
-      presetPolicyTargetRoutes(preset).map((name) => [name, MERGE_AUTHORITY]),
-    );
-    const connector = buildConnectorPreset(preset.id, { policyTargets });
+    const connector = buildConnectorPreset(preset.id, bindings(preset));
     assert.deepEqual(
       validateConnector(connector),
       [],
@@ -111,8 +121,9 @@ test("a preset serves every route the blueprints declaring it call", () => {
 });
 
 test("an unknown preset names what does exist", () => {
-  assert.throws(() => buildConnectorPreset("gitlab"), /unknown_connector_preset:gitlab/);
-  assert.equal(getConnectorPreset("gitlab"), undefined);
+  assert.throws(() => buildConnectorPreset("bitbucket"), /unknown_connector_preset:bitbucket/);
+  assert.throws(() => buildConnectorPreset("bitbucket"), /available: .*github/);
+  assert.equal(getConnectorPreset("bitbucket"), undefined);
 });
 
 test("overrides cover a self-hosted instance and a renamed credential", () => {
@@ -175,6 +186,168 @@ test("resolveConnectorConfig passes a full definition through untouched", () => 
     routes: [{ name: "get_post", method: "GET" as const, path: "/posts/{id}", effect: "read" as const }],
   };
   assert.deepEqual(resolveConnectorConfig([written]), [written]);
+});
+
+/* ------------------------------------------------------------------ *
+ * Catalog-wide invariants. These hold for every preset that ships, so a
+ * twelfth one added later cannot quietly break the shape the first eleven
+ * established.
+ * ------------------------------------------------------------------ */
+
+test("no preset ships a write that could be registered unadmitted", () => {
+  for (const preset of connectorPresets) {
+    const writes = preset.routes.filter((r) => r.effect === "write");
+    for (const route of writes) {
+      // The one exception is deliberate and must stay explicit: filing a draft
+      // nobody can see is not an action the policy stack has an opinion about.
+      if (preset.id === "typefully" && route.name === "create_draft") continue;
+      assert.ok(
+        route.policyTarget?.required,
+        `${preset.id}.${route.name} is a write with no required policy target`,
+      );
+      assert.ok(route.policyTarget!.note.length > 20, `${preset.id}.${route.name} target needs a note`);
+    }
+    // Building with nothing bound must fail rather than register the write.
+    if (writes.some((r) => r.policyTarget?.required)) {
+      assert.throws(
+        () => buildConnectorPreset(preset.id, { baseUrl: preset.baseUrl ?? OWN_HOST }),
+        /connector_preset_unbound_policy_target/,
+        `${preset.id} built with no binding`,
+      );
+    }
+  }
+});
+
+test("every preset can be registered read-only by omitting its writes", () => {
+  for (const preset of connectorPresets) {
+    const writes = preset.routes.filter((r) => r.effect === "write").map((r) => r.name);
+    if (writes.length === 0 || writes.length === preset.routes.length) continue;
+    const connector = buildConnectorPreset(preset.id, {
+      omitRoutes: writes,
+      ...(preset.baseUrl === undefined ? { baseUrl: OWN_HOST } : {}),
+    });
+    assert.ok(
+      connector.routes.every((r) => r.effect === "read"),
+      `${preset.id} kept a write after omitting them`,
+    );
+    assert.deepEqual(validateConnector(connector), []);
+  }
+});
+
+test("a param never shadows a path placeholder", () => {
+  // A name in both places is a transcription slip with a quiet failure mode:
+  // the arg fills the path *and* is forwarded as a query parameter or body
+  // field, so the call goes somewhere plausible with the wrong shape.
+  for (const preset of connectorPresets) {
+    for (const route of preset.routes) {
+      const placeholders = [...route.path.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((m) => m[1]!);
+      for (const param of route.params ?? []) {
+        assert.ok(
+          !placeholders.includes(param),
+          `${preset.id}.${route.name} declares "${param}" as both a path segment and a param`,
+        );
+      }
+    }
+  }
+});
+
+test("a public registry sends no credential, and asking it to is an error", () => {
+  const connector = buildConnectorPreset("npm");
+  assert.deepEqual(connector.auth, { kind: "none" });
+  assert.deepEqual(validateConnector(connector), []);
+  assert.throws(
+    () => buildConnectorPreset("npm", { tokenEnv: "NPM_TOKEN" }),
+    /connector_preset_takes_no_credential:npm/,
+  );
+});
+
+test("a preset with no default host refuses to build pointed at somebody else's site", () => {
+  assert.throws(() => buildConnectorPreset("ghost", {
+    policyTargets: { create_post: MERGE_AUTHORITY, update_post: MERGE_AUTHORITY },
+  }), /connector_preset_unbound_base_url:ghost/);
+  // The error carries the note, so the operator learns the shape of the URL.
+  assert.throws(
+    () => buildConnectorPreset("ghost", { omitRoutes: ["create_post", "update_post"] }),
+    /ghost\/api\/admin/,
+  );
+  const connector = buildConnectorPreset("ghost", {
+    baseUrl: OWN_HOST,
+    omitRoutes: ["create_post", "update_post"],
+  });
+  assert.equal(connector.baseUrl, OWN_HOST);
+});
+
+test("a version pin rides on the connector, not on the caller's args", async () => {
+  const seen: Record<string, string>[] = [];
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    seen.push((init?.headers ?? {}) as Record<string, string>);
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+
+  const registry = createConnectorRegistry({
+    connectors: [buildConnectorPreset("notion")],
+    env: { NOTION_TOKEN: "ntn_secret" },
+    fetchImpl,
+  });
+  await registry.call("notion.get_page", { page_id: "abc", "Notion-Version": "2000-01-01" });
+  assert.equal(seen[0]!["Notion-Version"], "2022-06-28");
+  assert.equal(seen[0]!.authorization, "Bearer ntn_secret");
+});
+
+test("filing a draft cannot schedule one — the allowlist is the gate", async () => {
+  const bodies: string[] = [];
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+
+  // The draft-only posture: the scheduling route is left out entirely, so the
+  // crew can write and a human still decides what goes on the wire.
+  const registry = createConnectorRegistry({
+    connectors: [buildConnectorPreset("typefully", { omitRoutes: ["schedule_draft"] })],
+    env: { TYPEFULLY_API_KEY: "Bearer k" },
+    fetchImpl,
+  });
+  assert.equal(registry.handles("typefully.schedule_draft"), false);
+  await registry.call("typefully.create_draft", {
+    content: "hello",
+    "schedule-date": "2026-08-01T09:00:00Z",
+  });
+  const sent = JSON.parse(bodies[0]!) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(sent), ["content"]);
+});
+
+test("CoinGecko Pro is the same preset under another host and header", () => {
+  const connector = buildConnectorPreset("coingecko", {
+    id: "coingecko-pro",
+    baseUrl: "https://pro-api.coingecko.com/api/v3",
+    credentialHeader: "x-cg-pro-api-key",
+    tokenEnv: "COINGECKO_PRO_KEY",
+  });
+  assert.deepEqual(connector.auth, {
+    kind: "header",
+    header: "x-cg-pro-api-key",
+    valueEnv: "COINGECKO_PRO_KEY",
+  });
+  assert.deepEqual(validateConnector(connector), []);
+  assert.throws(
+    () => buildConnectorPreset("github", { credentialHeader: "x-token" }),
+    /connector_preset_credential_is_not_a_header:github/,
+  );
+});
+
+test("nothing in the desk's presets can execute a trade", () => {
+  // The desk reads prices and simulates calls; moving funds stays an onchain
+  // intent through the policy stack. A write appearing here later would be a
+  // second execution path with none of that enforcement.
+  for (const id of ["uniswap", "tenderly", "coingecko"]) {
+    const preset = getConnectorPreset(id)!;
+    assert.deepEqual(
+      preset.routes.filter((r) => r.effect === "write"),
+      [],
+      `${id} ships a write route`,
+    );
+  }
 });
 
 test("a preset route calls the URL the preset wrote down", async () => {
