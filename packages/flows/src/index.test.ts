@@ -371,6 +371,18 @@ test("runFlow records the principal it executed as", async () => {
   assert.deepEqual(run.principal, { agent: AGENT_B, nodeKind: "worker_agent" });
 });
 
+test("interpolate reads fields of a JSON run input", () => {
+  const ctx = { input: '{"owner":"acme","repo":"app","number":7,"labels":["deps"]}', steps: {} };
+  assert.equal(interpolate("{{input.owner}}/{{input.repo}}#{{input.number}}", ctx), "acme/app#7");
+  assert.equal(interpolate("{{input.labels}}", ctx), '["deps"]');
+  // The whole input is still available verbatim, and a missing key is empty.
+  assert.equal(interpolate("{{input}}", ctx), ctx.input);
+  assert.equal(interpolate("[{{input.nope}}]", ctx), "[]");
+  // A plain-string input keeps working: only keyed refs go empty.
+  const plain = { input: "just text", steps: {} };
+  assert.equal(interpolate("{{input}} {{input.owner}}", plain), "just text ");
+});
+
 test("flowToCode emits scope, schedule, and the new step kinds", () => {
   const def = flow("coded", "Coded")
     .trigger("cron")

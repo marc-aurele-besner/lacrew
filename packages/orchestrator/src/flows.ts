@@ -20,6 +20,7 @@ import {
 } from "@lacrew/flows";
 import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { OrgNode } from "@lacrew/core";
+import type { ConnectorRegistry } from "./connectors.js";
 import { createFlowStoreFromEnv, type FlowStore } from "./flowStore.js";
 import { ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
@@ -73,6 +74,12 @@ export function createFlowsSurface(opts: {
   /** Live MCP backend; omitted (LACREW_MCP_MOCK=1) falls back to the detached mock. */
   mcpBackend?: McpToolBackend;
   store?: FlowStore;
+  /**
+   * Operator-registered external surfaces (`<connector>.<route>` tool names).
+   * Absent, a flow naming one gets "unknown tool" — the same answer it got
+   * before connectors existed, rather than a silent no-op.
+   */
+  connectors?: ConnectorRegistry;
 }): FlowsSurface {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
@@ -113,6 +120,11 @@ export function createFlowsSurface(opts: {
       complete: (input) => opts.model.complete(input),
       callTool: async (name, args) => {
         if (name === "lacrew_invoke_agent") return delegate(args, chain);
+        // Connectors are checked before the MCP dispatch so a `lacrew_*` name
+        // can never be shadowed by a registered route.
+        if (!name.startsWith("lacrew_") && opts.connectors?.handles(name)) {
+          return opts.connectors.call(name, args);
+        }
         return runMcpTool(name, fillGateDefaults(name, args, principal, opts.runtime), {
           backend: bound,
         });

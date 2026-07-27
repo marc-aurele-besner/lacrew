@@ -257,6 +257,15 @@ curl -s -X POST http://127.0.0.1:8788/mcp/call \
 # import { createLacrewVercelAiTools } from "@lacrew/adapter-agents-vercel-ai"
 ```
 
+## Connectors
+
+`LACREW_CONNECTORS` (inline JSON or a path to a JSON file) registers the
+external surfaces your flows may call — GitHub, a CMS, an RPC. Routes are an
+allowlist, credentials come from the environment, writes can be gated on the
+policy stack, and every call lands on the audit trail. See
+[Connectors](./connectors.md). Unset, crews run with no external reach, which is
+the default rather than an error.
+
 ## HTTP auth
 
 The orchestrator HTTP surface is open by default (fine for localhost demos). Set

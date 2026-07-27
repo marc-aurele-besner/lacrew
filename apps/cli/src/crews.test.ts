@@ -84,6 +84,7 @@ describe("lacrew crews", () => {
       ["target:model-api", "0x0000000000000000000000000000000000000008"],
       ["target:ci-minutes", "0x0000000000000000000000000000000000000009"],
       ["target:sandbox-runner", "0x000000000000000000000000000000000000000a"],
+      ["target:merge-authority", "0x000000000000000000000000000000000000000b"],
     ] as const) {
       args.push("--bind", `${role}=${addr}`);
     }

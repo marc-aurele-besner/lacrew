@@ -101,6 +101,16 @@ function printBlueprint(bp: CrewBlueprint): void {
     console.log(`  · ${line}`);
   }
 
+  if (bp.connectors.length > 0) {
+    console.log("\nConnectors to register before the crew can work");
+    for (const need of bp.connectors) {
+      console.log(`  ${need.id}  (${need.routes.map((r) => `${need.id}.${r}`).join(", ")})`);
+      console.log(`     ${need.note}`);
+    }
+  } else {
+    console.log("\nConnectors: none — this crew's flows never leave LaCrew.");
+  }
+
   console.log("\nFlows");
   for (const flowId of bp.flows) {
     const tpl = getFlowTemplate(flowId);
