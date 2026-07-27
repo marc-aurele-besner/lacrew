@@ -93,6 +93,7 @@ async function main(): Promise<void> {
     model,
     flows,
     mcpBackend,
+    connectors,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,

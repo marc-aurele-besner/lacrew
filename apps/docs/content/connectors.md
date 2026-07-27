@@ -29,6 +29,42 @@ emit the config:
 lacrew connectors config github --policy-target merge_pull_request=0xMERGE_AUTHORITY
 ```
 
+## Credentials: prefer an App to a personal token
+
+A preset can declare more than one way to authenticate, listed best-posture
+first. The first is what you get if you do not choose.
+
+For GitHub that is a **GitHub App installation**, and the difference is not
+stylistic:
+
+| | Personal access token | App installation |
+| --- | --- | --- |
+| Reach | whatever its owner can reach | only the repos the App was installed on |
+| Attribution | every crew action is a person's | the App's own identity in GitHub's audit log |
+| Revocation | takes away that person's access too | uninstall, nobody else affected |
+
+An App credential is not a static string. You hold an app id and an RSA private
+key; the API wants an installation token that expires hourly. The registry does
+that exchange itself — it signs a short-lived RS256 JWT as the app, trades it at
+`/app/installations/{id}/access_tokens`, caches the result until five minutes
+before expiry, and re-mints once if a call comes back 401. The private key never
+leaves the process, and the installation token is never logged, never audited,
+and never returned to a flow.
+
+```bash
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY="$(cat lacrew-crew.private-key.pem)"   # literal \n also accepted
+GITHUB_APP_INSTALLATION_ID=48213991
+```
+
+Reach for the token mode when you are trying something out, or when an App is
+more setup than the job deserves:
+
+```bash
+lacrew connectors config github --auth token \
+  --policy-target merge_pull_request=0xMERGE_AUTHORITY
+```
+
 Ask for the merge route without an address and the command refuses rather than
 printing config that would stop the orchestrator at boot. A crew that only reads
 should leave the write out entirely — `--omit merge_pull_request` needs no
@@ -46,9 +82,9 @@ self-hosted instance such as GitHub Enterprise), `tokenEnv`, `timeoutMs`, and
 `id`. A preset expands to a plain connector and is validated identically — it
 saves the copying, not the operator's decision.
 
-| Preset | Routes | Credential |
+| Preset | Routes | Credential modes |
 | --- | --- | --- |
-| `github` | `get_pull_request`, `list_pull_requests`, `list_pull_request_files`, `get_combined_status`, `list_check_runs` (reads); `merge_pull_request` (write, needs a policy target) | `GH_TOKEN` — fine-grained PAT or App installation token, scoped to the allowlisted repos |
+| `github` | `get_pull_request`, `list_pull_requests`, `list_pull_request_files`, `get_combined_status`, `list_check_runs` (reads); `merge_pull_request` (write, needs a policy target) | `github-app` (default) · `token` → `GH_TOKEN` |
 
 ## Registering one by hand
 
@@ -138,6 +174,42 @@ branch rather than a failed run:
 
 The registry re-checks regardless, so a flow that skipped the question still
 cannot merge. The check is the courtesy; the registry is the control.
+
+## Asking what is actually wired
+
+Connectors are configured from the environment, so an operator surface has no
+way to guess whether GitHub is hooked up. `GET /connectors` answers it:
+
+```bash
+curl -s localhost:8788/connectors | jq .
+```
+
+```json
+{
+  "connectors": [
+    {
+      "id": "github",
+      "baseUrl": "https://api.github.com",
+      "auth": { "kind": "bearer", "envVars": ["GH_TOKEN"], "ready": true },
+      "routes": [
+        { "name": "get_pull_request", "method": "GET", "effect": "read", "policyTarget": null },
+        { "name": "merge_pull_request", "method": "PUT", "effect": "write", "policyTarget": "0x…" }
+      ]
+    }
+  ],
+  "available": [{ "id": "…", "title": "…" }]
+}
+```
+
+`connectors` is what is registered; `available` is the presets that ship and are
+not. Keeping them apart is the point — a catalog that merges them tells an
+operator a crew can merge pull requests when nothing is wired.
+
+`auth` names the environment variables the connector reads and whether they are
+set. Never a value: "is my token there?" is answerable without reading it, and a
+status route that reads it is an exfiltration route. A `github-app` connector
+also reports whether an installation token is currently held and when it
+expires — again, not the token.
 
 ## Every call is on the audit trail
 
