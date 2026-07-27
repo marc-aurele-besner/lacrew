@@ -171,6 +171,55 @@ test("validation catches a flow calling an undeclared connector", () => {
   assert.ok(result.errors.some((e) => /which no declared connector serves/.test(e)));
 });
 
+test("validation catches a connector declared as called that no flow calls", () => {
+  // The mirror of the rule above. Without it, `usedBy: "flow"` decays into a
+  // wish list and `crews show` sends an operator to register a credential for a
+  // route nothing will ever use.
+  const bp = structuredClone(getCrewBlueprint("content-studio")!);
+  bp.connectors = bp.connectors.map((c) => ({ ...c, usedBy: "flow" as const }));
+  const result = validateCrewBlueprint(bp);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /no shipped flow calls it/.test(e)));
+
+  // Omitting the field must not weaken the check — the strict reading is the
+  // default, so a need added without thinking about it is caught.
+  const omitted = structuredClone(getCrewBlueprint("content-studio")!);
+  omitted.connectors = omitted.connectors.map(({ usedBy: _usedBy, ...rest }) => rest);
+  assert.equal(validateCrewBlueprint(omitted).ok, false);
+});
+
+test("a crew that declares a connector no flow calls says which it is", () => {
+  // The studio and the desk both produce something a human then moves by hand.
+  // Declaring the surfaces is how an operator learns what closing that loop
+  // takes; marking them keeps it distinct from what the crew cannot run without.
+  for (const id of ["content-studio", "defi-desk"]) {
+    const bp = getCrewBlueprint(id)!;
+    assert.ok(bp.connectors.length > 0, `${id} declares no connectors`);
+    assert.ok(
+      bp.connectors.every((c) => c.usedBy === "operator"),
+      `${id} claims a flow calls a connector`,
+    );
+    assert.equal(validateCrewBlueprint(bp).ok, true);
+  }
+
+  // github-experts is the other case: its triage flow genuinely calls GitHub,
+  // so the crew does not work until that one is registered.
+  const dev = getCrewBlueprint("github-experts")!;
+  assert.deepEqual(
+    dev.connectors.filter((c) => (c.usedBy ?? "flow") === "flow").map((c) => c.id),
+    ["github"],
+  );
+});
+
+test("the dev crew's connector note points at the credential the preset defaults to", () => {
+  // The preset's default became a GitHub App installation; a note still naming
+  // GH_TOKEN sends an operator to set a variable that mode never reads.
+  const need = getCrewBlueprint("github-experts")!.connectors.find((c) => c.id === "github")!;
+  for (const env of ["GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_INSTALLATION_ID"]) {
+    assert.ok(need.note.includes(env), `the note should name ${env}`);
+  }
+});
+
 test("the GitHub crew asks policy before it merges, and cannot merge otherwise", () => {
   const def = getFlowTemplate("bot-pr-triage")!.definition;
   const check = def.steps.find((s) => s.id === "merge-check");

@@ -102,9 +102,8 @@ function printBlueprint(bp: CrewBlueprint): void {
     console.log(`  · ${line}`);
   }
 
-  if (bp.connectors.length > 0) {
-    console.log("\nConnectors to register before the crew can work");
-    for (const need of bp.connectors) {
+  const printNeeds = (needs: typeof bp.connectors): void => {
+    for (const need of needs) {
       console.log(`  ${need.id}  (${need.routes.map((r) => `${need.id}.${r}`).join(", ")})`);
       console.log(`     ${need.note}`);
       // Naming the routes without saying where a definition comes from is how
@@ -116,8 +115,25 @@ function printBlueprint(bp: CrewBlueprint): void {
           : `     no preset ships — register this one by hand (docs: connectors)`,
       );
     }
+  };
+
+  // Two lists, because they are two different obligations. The first is what
+  // the crew does not work without; the second is a loop the operator closes if
+  // they want it. Merging them would send someone to wire a credential for a
+  // route nothing calls, and then to wonder why nothing happened.
+  const required = bp.connectors.filter((c) => (c.usedBy ?? "flow") === "flow");
+  const optional = bp.connectors.filter((c) => (c.usedBy ?? "flow") === "operator");
+
+  if (required.length > 0) {
+    console.log("\nConnectors to register before the crew can work");
+    printNeeds(required);
   } else {
-    console.log("\nConnectors: none — this crew's flows never leave LaCrew.");
+    console.log("\nConnectors: none required — no shipped flow leaves LaCrew.");
+  }
+
+  if (optional.length > 0) {
+    console.log("\nConnectors this crew could use — no shipped flow calls them yet");
+    printNeeds(optional);
   }
 
   console.log("\nFlows");
