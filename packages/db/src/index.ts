@@ -1,4 +1,12 @@
-export { createDb, checkDbReady, getDatabaseUrl, type DbHandle, type LacrewDb } from "./client.js";
+export {
+  assertValidSchemaName,
+  createDb,
+  checkDbReady,
+  getDatabaseSchema,
+  getDatabaseUrl,
+  type DbHandle,
+  type LacrewDb,
+} from "./client.js";
 export {
   countAuditEventsByType,
   insertAuditEvent,

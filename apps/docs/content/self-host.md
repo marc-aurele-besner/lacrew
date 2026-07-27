@@ -130,6 +130,29 @@ private keys never leave the process). `GET /sessions/history` and
 `GET /intents/history` read them back; without a database the same endpoints
 serve a bounded in-memory ring.
 
+### More than one orchestrator per database
+
+`DATABASE_SCHEMA` puts a runtime's tables in a Postgres schema of its own, so
+one database can hold several orchestrators — a few environments on one box, or
+a hosted pool running a separate runtime per workspace.
+
+```bash
+export DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew
+export DATABASE_SCHEMA=staging      # lowercase identifier; refused otherwise
+pnpm --filter @lacrew/orchestrator dev
+```
+
+Leave it unset and everything stays in `public`, exactly as before. Set it and
+the runtime creates the schema if it is missing, points `search_path` at it on
+every connection, and keeps its **migration journal there too** — a journal left
+in a shared schema would tell the second runtime that every migration had
+already been applied, and it would boot against an empty schema.
+
+This is namespacing, not a security boundary: every runtime still connects with
+the same role and could read another schema if it asked. What it prevents is
+runtimes silently sharing one set of tables, which for `orchestrator_audit_events`
+means each one's audit trail contains the other's.
+
 Optional indexer DB on the same Postgres instance:
 
 ```bash

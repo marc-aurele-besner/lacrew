@@ -7,7 +7,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDb, getDatabaseUrl } from "./client.js";
+import { assertValidSchemaName, createDb, getDatabaseSchema, getDatabaseUrl } from "./client.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,9 +23,26 @@ export type MigrateResult = { skipped: boolean };
  */
 export async function runDbMigrations(): Promise<MigrateResult> {
   if (!getDatabaseUrl()) return { skipped: true };
+  const schemaName = getDatabaseSchema();
   const handle = createDb();
   try {
-    await migrate(handle.db, { migrationsFolder: join(__dirname, "../drizzle") });
+    if (schemaName) {
+      // The connection already points `search_path` here, but Postgres does
+      // not create a schema by being pointed at one — without this the first
+      // migration fails on a schema that does not exist yet.
+      await handle.sql.unsafe(
+        `CREATE SCHEMA IF NOT EXISTS ${assertValidSchemaName(schemaName)}`,
+      );
+    }
+    await migrate(handle.db, {
+      migrationsFolder: join(__dirname, "../drizzle"),
+      // The journal has to live beside the tables it describes. Left in the
+      // default shared schema, the second runtime against this database reads
+      // the first one's journal, concludes every migration is already applied,
+      // and boots against an empty schema — failing later at query time with a
+      // bare "relation does not exist".
+      ...(schemaName ? { migrationsSchema: schemaName } : {}),
+    });
     return { skipped: false };
   } finally {
     // Own pool, own close — callers keep whatever handle they already had.
