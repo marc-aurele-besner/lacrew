@@ -4,7 +4,7 @@
  */
 
 import PgBoss from "pg-boss";
-import { getDatabaseUrl } from "@lacrew/db";
+import { assertValidSchemaName, getDatabaseSchema, getDatabaseUrl } from "@lacrew/db";
 import type { QueueHandlers, QueueJobName, QueueProvider, QueueStatus } from "./types.js";
 
 const QUEUES: QueueJobName[] = ["epoch", "tick", "flow-cron"];
@@ -16,13 +16,29 @@ export class PgBossQueue implements QueueProvider {
   private epochSchedule: string | null = null;
   private flowCronSchedule: string | null = null;
 
-  constructor(private readonly connectionString = getDatabaseUrl()) {}
+  constructor(
+    private readonly connectionString = getDatabaseUrl(),
+    private readonly schema = getDatabaseSchema(),
+  ) {}
 
   async start(handlers: QueueHandlers = {}): Promise<void> {
     if (!this.connectionString) {
       throw new Error("DATABASE_URL is required for PgBossQueue");
     }
-    const boss = new PgBoss(this.connectionString);
+    // pg-boss defaults to a `pgboss` schema, which every runtime against this
+    // database shares — so two orchestrators would share one job queue and
+    // either could `work()` the other's epoch or tick. That is worse than
+    // sharing a table: it is one workspace's schedule executing under another
+    // workspace's keys. When this runtime owns a schema, its queue lives there
+    // too. (The non-graceful stop below is the scar from the shared case.)
+    // The union of the two constructor overloads is not itself assignable to
+    // either, so pick the call rather than the argument.
+    const boss = this.schema
+      ? new PgBoss({
+          connectionString: this.connectionString,
+          schema: assertValidSchemaName(this.schema),
+        })
+      : new PgBoss(this.connectionString);
     this.boss = boss;
     await boss.start();
     for (const q of QUEUES) {
