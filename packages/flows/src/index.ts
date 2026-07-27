@@ -14,5 +14,28 @@ export { runFlow, interpolate, createMockFlowBackend, type RunFlowOptions } from
 export { flow, FlowBuilder } from "./builder.js";
 export { flowToCode, flowRunSnippet } from "./codegen.js";
 export { flowTemplates, getFlowTemplate } from "./templates.js";
+export { crewFlowTemplates } from "./crewTemplates.js";
+export { crewBlueprints, getCrewBlueprint } from "./crewBlueprints.js";
+export {
+  validateCrewBlueprint,
+  crewPlan,
+  crewMonthlyGrantUsd,
+  crewFlowPlaceholders,
+  bindCrewFlow,
+  formatUsdc,
+  type CrewBlueprint,
+  type CrewBindings,
+  type CrewEscalation,
+  type CrewExternalScope,
+  type CrewGovernanceRule,
+  type CrewGuardrail,
+  type CrewHumanSeat,
+  type CrewPlanStep,
+  type CrewRole,
+  type CrewTarget,
+  type CrewValidationResult,
+  type CrewVertical,
+  type EnforcementLayer,
+} from "./crews.js";
 export { createFlowsClient, type FlowsClient, type FlowsClientOptions } from "./client.js";
 export { cronMatches, isValidCron, parseCron } from "./cron.js";

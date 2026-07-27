@@ -22,6 +22,7 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 - [SDK reference](./sdk.md) — hand-written guide
 - [API reference](./reference/README.md) — generated from source by TypeDoc
 - [Flows](./flows.md)
+- [Crew blueprints](./crews.md) — a vertical as data: org chart, budgets, guardrails, and the plan that stands it up
 - [Self-hosting](./self-host.md)
 
 ## TODO

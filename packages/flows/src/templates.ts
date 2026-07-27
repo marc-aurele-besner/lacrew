@@ -1,4 +1,5 @@
 import { flow } from "./builder.js";
+import { crewFlowTemplates } from "./crewTemplates.js";
 import type { FlowTemplate } from "./types.js";
 
 /**
@@ -6,7 +7,7 @@ import type { FlowTemplate } from "./types.js";
  * (mocked, Phase 3) marketplace catalog. Values are USDC 6dp decimal strings
  * matching the demo org; agent/target defaults come from the executing runtime.
  */
-export const flowTemplates: FlowTemplate[] = [
+const generalTemplates: FlowTemplate[] = [
   {
     id: "tpl-crew-onboarding",
     name: "Crew onboarding",
@@ -203,6 +204,13 @@ export const flowTemplates: FlowTemplate[] = [
       .build(),
   },
 ];
+
+/**
+ * Everything the gallery and the marketplace list: the general-purpose
+ * templates above plus the pipelines that make up the crew blueprints
+ * (`crewBlueprints.ts`), which are ordinary templates and installable alone.
+ */
+export const flowTemplates: FlowTemplate[] = [...generalTemplates, ...crewFlowTemplates];
 
 export function getFlowTemplate(id: string): FlowTemplate | undefined {
   return flowTemplates.find((t) => t.id === id || t.definition.id === id);
