@@ -135,6 +135,14 @@ async function main(): Promise<void> {
     // session restore above, a failure here does cost correctness: every
     // paused agent comes back running and every agent loses its guidelines,
     // resources and skills — so it is logged loudly rather than in passing.
+    // The conversation is restored before controls: an agent that boots and
+    // reads its thread must find the answers it was already given, or it asks
+    // the same question again and the humans stop reading.
+    const talk = await runtime.hydrateConversation();
+    if (talk.loaded > 0) {
+      console.log(`[@lacrew/orchestrator] ${talk.loaded} message(s) restored`);
+    }
+
     const controls = await runtime.hydrateAgentControls();
     if (controls.ok) {
       if (controls.loaded > 0) {

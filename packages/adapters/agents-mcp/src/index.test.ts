@@ -94,7 +94,48 @@ describe("runMcpTool with injected backend", () => {
       "lacrew_set_budget",
       "lacrew_governance",
       "lacrew_invoke_agent",
+      "lacrew_say",
+      "lacrew_ask",
+      "lacrew_read_thread",
     ]);
+  });
+
+  it("tells a model that talking grants nothing", () => {
+    // A model reading a tool list will otherwise infer that announcing an
+    // action is part of taking it — which would make a posted plan read as
+    // self-authorising.
+    const say = listLacrewMcpTools().find((t) => t.name === "lacrew_say")!;
+    assert.match(say.description, /grants no permission/i);
+    assert.match(say.description, /still goes through policy/i);
+  });
+
+  it("offers refs on a claim, so a reader can check it", () => {
+    const say = listLacrewMcpTools().find((t) => t.name === "lacrew_say")!;
+    const props = say.inputSchema.properties as Record<string, unknown>;
+    assert.ok(props.refs, "lacrew_say must accept refs");
+  });
+
+  it("routes say and ask through one backend call, with ask's kind fixed", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const backend = {
+      getOrgTree: async () => [],
+      listPendingIntents: async () => [],
+      proposeIntent: async () => ({}),
+      resolveIntent: async () => ({}),
+      postMessage: async (input: Record<string, unknown>) => {
+        posted.push(input);
+        return { ok: true };
+      },
+    };
+
+    await runMcpTool("lacrew_say", { thread: "crew:trading", body: "shipping it", kind: "result" }, { backend });
+    // An agent must not be able to ask a question that files itself as a note
+    // and therefore never shows up as awaiting an answer.
+    await runMcpTool("lacrew_ask", { thread: "crew:trading", body: "merge?", kind: "note", options: ["y", "n"] }, { backend });
+
+    assert.equal(posted[0]?.kind, "result");
+    assert.equal(posted[1]?.kind, "question");
+    assert.deepEqual(posted[1]?.options, ["y", "n"]);
   });
 
   it("reports unsupported capabilities instead of faking success", async () => {

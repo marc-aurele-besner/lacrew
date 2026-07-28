@@ -6,9 +6,12 @@
  */
 
 import type { AgentControlRecord } from "./agentControls.js";
+import type { Message } from "./conversation.js";
 import {
   allAgentControlRows,
   createDb,
+  insertMessageRow,
+  recentMessageRows,
   getDatabaseUrl,
   insertIntentRow,
   markSessionRevokedRow,
@@ -48,16 +51,22 @@ export interface RuntimeStore {
    */
   loadAgentControls(): Promise<AgentControlRecord[]>;
   saveAgentControl(record: AgentControlRecord): Promise<void>;
+  /** Crew conversation (F1.7) — the third channel, beside intents and proposals. */
+  loadMessages(): Promise<Message[]>;
+  saveMessage(message: Message): Promise<void>;
   close(): Promise<void>;
 }
 
 const MEMORY_MAX = 200;
+/** Conversation is read as a thread, so it keeps more history than the event rings. */
+const MESSAGE_RING_MAX = 500;
 
 /** Bounded in-memory store so history endpoints work without a database. */
 export function createMemoryRuntimeStore(): RuntimeStore {
   const sessions: SessionRecord[] = [];
   const intents: IntentRecord[] = [];
   const controls = new Map<string, AgentControlRecord>();
+  const messages: Message[] = [];
 
   return {
     name: "memory",
@@ -95,6 +104,13 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     saveAgentControl: async (record) => {
       controls.set(record.agent, record);
     },
+    loadMessages: async () => [...messages],
+    saveMessage: async (message) => {
+      messages.push(message);
+      if (messages.length > MESSAGE_RING_MAX) {
+        messages.splice(0, messages.length - MESSAGE_RING_MAX);
+      }
+    },
     close: async () => {},
   };
 }
@@ -106,6 +122,35 @@ function toRow(record: AgentControlRecord): AgentControlRow {
 
 function fromRow(row: AgentControlRow): AgentControlRecord {
   return { ...row, layers: (row.layers ?? []) as AgentControlRecord["layers"] };
+}
+
+/** The stored row calls the recipient `recipient`; `to` is the wire name. */
+function messageFromRow(row: {
+  id: string;
+  threadId: string;
+  at: string;
+  author: string;
+  authorKind: string;
+  kind: string;
+  body: string;
+  options?: string[];
+  replyTo?: string;
+  recipient?: string;
+  refs?: unknown[];
+}): Message {
+  return {
+    id: row.id,
+    threadId: row.threadId,
+    at: row.at,
+    author: row.author,
+    authorKind: row.authorKind === "human" ? "human" : "agent",
+    kind: row.kind as Message["kind"],
+    body: row.body,
+    ...(row.options?.length ? { options: row.options } : {}),
+    ...(row.replyTo ? { replyTo: row.replyTo } : {}),
+    ...(row.recipient ? { to: row.recipient } : {}),
+    ...(row.refs?.length ? { refs: row.refs as Message["refs"] } : {}),
+  };
 }
 
 export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
@@ -178,6 +223,28 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await upsertAgentControlRow(db(), toRow(record));
       } catch (err) {
         warn("agent control save", err);
+      }
+    },
+    loadMessages: async () => {
+      try {
+        return (await recentMessageRows(db(), MESSAGE_RING_MAX)).map(messageFromRow);
+      } catch (err) {
+        // Swallowed, unlike agent controls: an empty conversation is a normal
+        // state for a new org, so it cannot be confused with a failed read the
+        // way "no agent is paused" could.
+        warn("messages load", err);
+        return [];
+      }
+    },
+    saveMessage: async (message) => {
+      try {
+        await insertMessageRow(db(), {
+          ...message,
+          recipient: message.to,
+          refs: message.refs,
+        });
+      } catch (err) {
+        warn("message save", err);
       }
     },
     close: async () => {

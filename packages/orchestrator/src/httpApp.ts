@@ -8,6 +8,7 @@ import { Hono, type Context } from "hono";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
 import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
+import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { connectorPresets } from "./connectorPresets.js";
@@ -357,6 +358,70 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
     } catch (err) {
       return jsonBig(c, { error: err instanceof Error ? err.message : "brief_failed" }, 400);
+    }
+  });
+
+  /* ——— conversation (F1.7) ——— */
+
+  app.get("/messages", async (c) => {
+    const limit = Number(c.req.query("limit") ?? 100);
+    const threadId = c.req.query("thread");
+    if (threadId) {
+      const scope = scopeOfThread(threadId);
+      if (!scope) return jsonBig(c, { error: "unknown_thread" }, 400);
+      return jsonBig(c, {
+        thread: threadId,
+        messages: runtime.thread(scope, limit),
+        openQuestions: runtime.openQuestions(scope),
+        mode: runtime.mode,
+      });
+    }
+    return jsonBig(c, {
+      messages: runtime.recentMessages(limit),
+      threads: runtime.listThreads(),
+      mode: runtime.mode,
+    });
+  });
+
+  /**
+   * Post a message. Never a decision: this endpoint returns no verdict and
+   * grants no authority, and a caller routing an approval through it has
+   * reintroduced the trust the protocol exists to remove.
+   */
+  app.post("/messages", async (c) => {
+    const body = await bodyOf<{
+      thread?: string;
+      author?: string;
+      authorKind?: string;
+      kind?: string;
+      body?: string;
+      options?: string[];
+      replyTo?: string;
+      to?: string;
+      refs?: Array<{ kind?: string; id?: string }>;
+    }>(c);
+    if (!body.thread) return jsonBig(c, { error: "thread_required" }, 400);
+    if (!body.author) return jsonBig(c, { error: "author_required" }, 400);
+    if (!body.body) return jsonBig(c, { error: "body_required" }, 400);
+    const scope = scopeOfThread(body.thread);
+    if (!scope) return jsonBig(c, { error: "unknown_thread" }, 400);
+    try {
+      const message = runtime.postMessage({
+        scope,
+        author: body.author,
+        authorKind: body.authorKind === "human" ? "human" : "agent",
+        kind: body.kind,
+        body: body.body,
+        options: body.options,
+        replyTo: body.replyTo,
+        to: body.to,
+        refs: (body.refs ?? [])
+          .filter((r) => r?.id)
+          .map((r) => ({ kind: (r.kind ?? "intent") as "intent", id: String(r.id) })),
+      });
+      return jsonBig(c, { message, mode: runtime.mode });
+    } catch (err) {
+      return jsonBig(c, { error: err instanceof Error ? err.message : "post_failed" }, 400);
     }
   });
 
