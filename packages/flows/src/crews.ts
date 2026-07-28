@@ -23,7 +23,7 @@
 import { getFlowTemplate } from "./templates.js";
 import type { FlowDefinition, FlowStep } from "./types.js";
 
-export type CrewVertical = "trading" | "dev" | "content";
+export type CrewVertical = "trading" | "dev" | "content" | "research" | "support" | "ops";
 
 /**
  * Where a rule is actually enforced. Ordered loosely from hardest to softest —
@@ -181,8 +181,17 @@ export type CrewBlueprint = {
   name: string;
   vertical: CrewVertical;
   summary: string;
-  /** The filled intake this was derived from, so the numbers can be traced back. */
-  intake: { persona: string; file: string };
+  /**
+   * Where this blueprint's numbers come from.
+   *
+   * `file` names the filled design-partner intake they trace back to. Its
+   * absence is meaningful and not an oversight: the blueprint is an
+   * author-drafted pattern, and its caps and grants are a starting point
+   * somebody reasoned about rather than a figure a real operator gave. A
+   * surface that presented the two identically would lend partner-derived
+   * authority to a guess.
+   */
+  intake: { persona: string; file?: string };
   /**
    * The cadence the grants are sized for. Epoch length is an operator decision
    * (EpochStreamer has no fixed period), so a blueprint has to state its own.
@@ -212,7 +221,23 @@ export type CrewBlueprint = {
    * the difference between an editor that prompts "add the repos this crew
    * watches" and one that shows an empty box with no clue what belongs in it.
    */
-  caresFor?: { kind: string; label: string; hint: string };
+  caresFor?: {
+    /** The noun, and the default kind for a row the operator adds. */
+    kind: string;
+    label: string;
+    hint: string;
+    /**
+     * What one looks like, shown in the field.
+     *
+     * Carried per blueprint because the shape genuinely differs: "owner/repo"
+     * is meaningless to a trading desk and a pool address is meaningless to a
+     * maintainer. One placeholder across all of them asks every operator to
+     * translate an example from somebody else's job.
+     */
+    placeholder: string;
+    /** What the per-item note is for here — the part a generic list cannot carry. */
+    notePlaceholder: string;
+  };
 };
 
 /**
