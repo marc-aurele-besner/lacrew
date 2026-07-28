@@ -128,6 +128,6 @@ export function deriveCrewDirectives(blueprint: CrewBlueprint): SeededDirective[
  */
 export function caresForPrompt(
   blueprint: CrewBlueprint,
-): { kind: string; label: string; hint: string } | null {
+): NonNullable<CrewBlueprint["caresFor"]> | null {
   return blueprint.caresFor ?? null;
 }
