@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
  * Runtime session + intent records (F1.7). Written by the orchestrator so
@@ -65,3 +65,31 @@ export const runtimeIntents = pgTable(
     index("intents_status_idx").on(table.status),
   ],
 );
+
+/**
+ * Standing per-agent controls (F1.7): the pause gate and the directive.
+ *
+ * One row per agent, replaced wholesale on write — a directive is edited as a
+ * document, not accumulated, and diffing layers to preserve row identity would
+ * buy nothing an operator can see.
+ *
+ * These outlive the process on purpose. A pause that vanished on restart fails
+ * safe; a directive that vanished does not — an agent silently reverting to no
+ * guidelines, no resources and no skills keeps working, and does the wrong
+ * thing competently.
+ */
+export const runtimeAgentControls = pgTable("orchestrator_agent_controls", {
+  /** Lowercased agent address; one row per agent. */
+  agent: text("agent").primaryKey(),
+  paused: boolean("paused").notNull().default(false),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
+  /** Free-text reason an operator gave; surfaced in the trail and the UI. */
+  pausedReason: text("paused_reason"),
+  /**
+   * Ordered directive layers, each `{label, text?, resources?, skills?}`.
+   * Stored as written rather than as rendered prompt text, so the editor can
+   * round-trip what an operator typed instead of re-parsing a rendering.
+   */
+  layers: jsonb("layers").notNull().default([]).$type<unknown[]>(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
