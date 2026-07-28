@@ -17,12 +17,23 @@ export { flowTemplates, getFlowTemplate } from "./templates.js";
 export { crewFlowTemplates } from "./crewTemplates.js";
 export { crewBlueprints, getCrewBlueprint } from "./crewBlueprints.js";
 export {
+  BLUEPRINT_AGENT_LABEL,
+  blueprintCrewLabel,
+  caresForPrompt,
+  deriveCrewDirectives,
+  deriveCrewLayer,
+  deriveRoleLayer,
+  renderCrewGuidelines,
+  type SeededDirective,
+} from "./crewDirectives.js";
+export {
   validateCrewBlueprint,
   crewPlan,
   crewMonthlyGrantUsd,
   crewFlowPlaceholders,
   bindCrewFlow,
   formatUsdc,
+  type BriefLayer,
   type CrewBlueprint,
   type CrewBindings,
   type CrewEscalation,
