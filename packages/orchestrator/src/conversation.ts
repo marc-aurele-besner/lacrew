@@ -36,6 +36,8 @@
  * on the reader, every time, for every line.
  */
 
+import { normalizeBlocks, refsOfBlocks, type MessageBlock } from "./messageBlocks.js";
+
 /** Where a conversation happens. Crews are cloud-side labels, so ids are opaque. */
 export type ThreadScope =
   | { kind: "crew"; id: string }
@@ -85,6 +87,14 @@ export type Message = {
   /** Who this is directed at — an agent address or crew id. */
   to?: string;
   refs?: MessageRef[];
+  /**
+   * Rich content: the data it found, the post it submitted, the fields it
+   * extracted, a pointer to the intent or proposal it is talking about.
+   * Validated in `messageBlocks.ts`, which treats every field as
+   * attacker-controlled — see the note there on why a block carries a
+   * reference and never an action.
+   */
+  blocks?: MessageBlock[];
 };
 
 export const MESSAGE_MAX_CHARS = 4_000;
@@ -137,6 +147,7 @@ export type PostInput = {
   replyTo?: string;
   to?: string;
   refs?: MessageRef[];
+  blocks?: readonly unknown[];
 };
 
 /**
@@ -163,6 +174,8 @@ export function normalizeMessage(
     .filter((r) => r && typeof r.id === "string" && r.id.trim())
     .map((r) => ({ kind: r.kind, id: r.id.trim() }));
 
+  const blocks = input.blocks ? normalizeBlocks(input.blocks) : [];
+
   return {
     id,
     threadId: threadIdOf(input.scope),
@@ -175,6 +188,7 @@ export function normalizeMessage(
     ...(input.replyTo?.trim() ? { replyTo: input.replyTo.trim() } : {}),
     ...(input.to?.trim() ? { to: input.to.trim() } : {}),
     ...(refs.length > 0 ? { refs } : {}),
+    ...(blocks.length > 0 ? { blocks } : {}),
   };
 }
 
@@ -190,7 +204,20 @@ export function verifiability(message: Message): {
   status: "unverified" | "referenced";
   refs: MessageRef[];
 } {
-  const refs = message.refs ?? [];
+  // Ref blocks count as evidence too: attaching the intent as a block rather
+  // than in `refs` is the same claim, and a reader would rightly expect it to
+  // read the same way.
+  const fromBlocks = refsOfBlocks(message.blocks ?? []).map((r) => ({
+    kind: r.kind,
+    id: r.id,
+  }));
+  const seen = new Set<string>();
+  const refs = [...(message.refs ?? []), ...fromBlocks].filter((r) => {
+    const key = `${r.kind}:${r.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return { status: refs.length > 0 ? "referenced" : "unverified", refs };
 }
 
