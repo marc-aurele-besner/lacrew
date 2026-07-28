@@ -861,4 +861,24 @@ describe("POST /epoch/schedule", () => {
     assert.equal(res.status, 400);
     assert.equal(((await res.json()) as { error: string }).error, "layers_required");
   });
+  it("serves the org-wide question queue on the feed", async () => {
+    const app = buildApp();
+    await app.request("/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        thread: "crew:trading",
+        author: "0x0000000000000000000000000000000000000a20",
+        authorKind: "agent",
+        kind: "question",
+        body: "merge?",
+      }),
+    });
+    // Without this, a question is only findable by opening the thread that
+    // holds it — and one nobody opens looks exactly like one nobody asked.
+    const body = (await (await app.request("/messages")).json()) as {
+      openQuestions: Array<{ body: string }>;
+    };
+    assert.equal(body.openQuestions.length, 1);
+    assert.equal(body.openQuestions[0]?.body, "merge?");
+  });
 });

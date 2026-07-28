@@ -379,6 +379,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, {
       messages: runtime.recentMessages(limit),
       threads: runtime.listThreads(),
+      // Every unanswered question, so a caller can show the queue without
+      // reading each thread to find out one was waiting.
+      openQuestions: runtime.allOpenQuestions(),
       mode: runtime.mode,
     });
   });

@@ -1115,6 +1115,11 @@ export class CrewRuntime {
     return this.conversation.openQuestionsIn(scope);
   }
 
+  /** Every unanswered question in the org, oldest first — the human's queue. */
+  allOpenQuestions(): Message[] {
+    return this.conversation.allOpenQuestions();
+  }
+
   /**
    * Stop this agent acting through this orchestrator.
    *
