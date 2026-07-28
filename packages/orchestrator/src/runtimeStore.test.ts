@@ -1,12 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  messageFromRow,
+  messageToRow,
   createMemoryRuntimeStore,
   createRuntimeStoreFromEnv,
   type IntentRecord,
   type SessionRecord,
 } from "./runtimeStore.js";
 import { CrewRuntime } from "./runtime.js";
+import type { Message } from "./conversation.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
@@ -83,6 +86,68 @@ describe("createMemoryRuntimeStore", () => {
     const intents = await store.recentIntents(300);
     assert.equal(intents.length, 200);
     assert.equal(intents[0]?.intentId, "249");
+  });
+});
+
+describe("message row mapping", () => {
+  /**
+   * Every optional field populated. The point is the exhaustiveness: a field
+   * added to `Message` and to the database schema, but forgotten in the mapping
+   * between them, is invisible to every other test — the memory store holds the
+   * object whole, so it round-trips there no matter what this mapping does.
+   *
+   * That is exactly how `blocks` shipped writing and reading as undefined
+   * against Postgres while all 25 conversation tests passed.
+   */
+  const full: Message = {
+    id: "msg_1",
+    threadId: "crew:trading",
+    at: "2026-07-28T12:00:00.000Z",
+    author: "0xabc",
+    authorKind: "agent",
+    kind: "result",
+    body: "done",
+    options: ["yes", "no"],
+    replyTo: "msg_0",
+    to: "0xdef",
+    refs: [{ kind: "intent", id: "12" }],
+    blocks: [
+      { kind: "fields", items: [{ label: "repo", value: "owner/repo" }] },
+      { kind: "ref", ref: "intent", id: "12" },
+    ],
+  };
+
+  it("round-trips every field a message can carry", () => {
+    assert.deepEqual(messageFromRow(messageToRow(full)), full);
+  });
+
+  it("carries every key of the message into the row", () => {
+    // Structural, so the next optional field cannot be dropped quietly: if it
+    // is on the message and missing from the row, this fails without anyone
+    // having to remember to extend the fixture's assertions.
+    const row = messageToRow(full) as Record<string, unknown>;
+    for (const key of Object.keys(full)) {
+      // `to` is stored as `recipient`; everything else keeps its name.
+      const column = key === "to" ? "recipient" : key;
+      assert.ok(column in row, `message field "${key}" never reaches the row`);
+    }
+  });
+
+  it("omits absent fields rather than storing empty ones", () => {
+    const bare: Message = {
+      id: "msg_2",
+      threadId: "org",
+      at: full.at,
+      author: "seat1",
+      authorKind: "human",
+      kind: "note",
+      body: "hi",
+    };
+    const row = messageToRow(bare) as Record<string, unknown>;
+    for (const key of ["options", "replyTo", "recipient", "refs", "blocks"]) {
+      assert.equal(key in row, false, `${key} was stored for a message without one`);
+    }
+    assert.deepEqual(messageFromRow(row as never), bare);
   });
 });
 
