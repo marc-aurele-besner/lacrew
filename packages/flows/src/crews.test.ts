@@ -42,16 +42,64 @@ test("every first-party blueprint validates", () => {
   }
 });
 
-test("blueprints cover the three filled intake personas", () => {
-  assert.deepEqual(
-    crewBlueprints.map((b) => b.id).sort(),
-    ["content-studio", "defi-desk", "github-experts"],
-  );
-  for (const bp of crewBlueprints) {
-    assert.match(bp.intake.file, /^design-partners\/\d+-[a-z-]+\.md$/);
+test("blueprints keep partner-derived numbers distinguishable from drafted ones", () => {
+  assert.deepEqual(crewBlueprints.map((b) => b.id).sort(), [
+    "content-studio",
+    "defi-desk",
+    "github-experts",
+    "platform-oncall",
+    "research-desk",
+    "support-desk",
+  ]);
+
+  // Three trace to a filled intake: every number in them answers a question a
+  // real operator was asked.
+  const partnerDerived = ["defi-desk", "github-experts", "content-studio"];
+  for (const id of partnerDerived) {
+    assert.match(getCrewBlueprint(id)!.intake.file!, /^design-partners\/\d+-[a-z-]+\.md$/);
   }
+
+  // The rest are author-drafted patterns. The absence is the honest signal —
+  // pointing them at a document that does not exist would lend partner-derived
+  // authority to a guess.
+  for (const bp of crewBlueprints.filter((b) => !partnerDerived.includes(b.id))) {
+    assert.equal(bp.intake.file, undefined, `${bp.id} claims an intake file`);
+    assert.ok(bp.intake.persona.trim(), `${bp.id} has no persona`);
+  }
+
   assert.equal(getCrewBlueprint("defi-desk")?.vertical, "trading");
   assert.equal(getCrewBlueprint("nope"), undefined);
+});
+
+test("every blueprint says what it looks after, with a field shape of its own", () => {
+  for (const bp of crewBlueprints) {
+    const cares = bp.caresFor;
+    assert.ok(cares, `${bp.id} declares no caresFor`);
+    // "owner/repo" is meaningless to a trading desk and a pool address is
+    // meaningless to a maintainer. One placeholder across all of them asks
+    // every operator to translate an example from somebody else's job.
+    assert.ok(cares!.placeholder.trim(), `${bp.id} has no placeholder`);
+    assert.ok(cares!.notePlaceholder.trim(), `${bp.id} has no note placeholder`);
+  }
+
+  const placeholders = crewBlueprints.map((b) => b.caresFor!.placeholder);
+  assert.equal(new Set(placeholders).size, placeholders.length, "two blueprints share a placeholder");
+});
+
+test("every blueprint puts its own manager between the root and its workers", () => {
+  for (const bp of crewBlueprints) {
+    const managers = bp.roles.filter((r) => r.kind === "manager_agent");
+    assert.ok(managers.length >= 1, `${bp.id} has no manager`);
+    // Workers reporting straight to root is what flattens an org once a second
+    // crew is installed: every seat from every template ends up siblings.
+    for (const worker of bp.roles.filter((r) => r.kind === "worker_agent")) {
+      assert.notEqual(
+        worker.reportsTo,
+        "root",
+        `${bp.id}: worker "${worker.id}" reports to root rather than a crew manager`,
+      );
+    }
+  }
 });
 
 test("streamed grants land inside the budget the partner stated", () => {
