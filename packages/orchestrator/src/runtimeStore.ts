@@ -124,8 +124,8 @@ function fromRow(row: AgentControlRow): AgentControlRecord {
   return { ...row, layers: (row.layers ?? []) as AgentControlRecord["layers"] };
 }
 
-/** The stored row calls the recipient `recipient`; `to` is the wire name. */
-function messageFromRow(row: {
+/** Every column a message occupies. Exported so the mapping below is testable. */
+export type StoredMessageRow = {
   id: string;
   threadId: string;
   at: string;
@@ -137,7 +137,18 @@ function messageFromRow(row: {
   replyTo?: string;
   recipient?: string;
   refs?: unknown[];
-}): Message {
+  blocks?: unknown[];
+};
+
+/**
+ * Row → message.
+ *
+ * Exported with `messageToRow` so the pair can be round-tripped in a test. They
+ * were not, and a field added to `Message` reached the database schema while
+ * this mapping kept dropping it — silently, because the memory store holds the
+ * object whole and every test used that one.
+ */
+export function messageFromRow(row: StoredMessageRow): Message {
   return {
     id: row.id,
     threadId: row.threadId,
@@ -150,6 +161,25 @@ function messageFromRow(row: {
     ...(row.replyTo ? { replyTo: row.replyTo } : {}),
     ...(row.recipient ? { to: row.recipient } : {}),
     ...(row.refs?.length ? { refs: row.refs as Message["refs"] } : {}),
+    ...(row.blocks?.length ? { blocks: row.blocks as Message["blocks"] } : {}),
+  };
+}
+
+/** Message → row. The stored column is `recipient`; `to` is the wire name. */
+export function messageToRow(message: Message): StoredMessageRow {
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    at: message.at,
+    author: message.author,
+    authorKind: message.authorKind,
+    kind: message.kind,
+    body: message.body,
+    ...(message.options?.length ? { options: message.options } : {}),
+    ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.to ? { recipient: message.to } : {}),
+    ...(message.refs?.length ? { refs: message.refs } : {}),
+    ...(message.blocks?.length ? { blocks: message.blocks } : {}),
   };
 }
 
@@ -238,11 +268,7 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
     },
     saveMessage: async (message) => {
       try {
-        await insertMessageRow(db(), {
-          ...message,
-          recipient: message.to,
-          refs: message.refs,
-        });
+        await insertMessageRow(db(), messageToRow(message));
       } catch (err) {
         warn("message save", err);
       }
