@@ -52,6 +52,12 @@ import type {
   OrgActionInput,
 } from "@lacrew/adapter-agents-mcp";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
+import {
+  AgentControls,
+  AgentPausedError,
+  type AgentBrief,
+  type BriefLayer,
+} from "./agentControls.js";
 import { worstVerdict } from "./flowScope.js";
 import { decideAutoExecute } from "./governanceSweep.js";
 import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
@@ -358,6 +364,8 @@ export class CrewRuntime {
   >();
   /** agent (lowercased) => scopes last explicitly requested for it. */
   private readonly sessionScopePolicy = new Map<string, SessionScope[]>();
+  /** Standing per-agent controls: the pause gate and the brief (see agentControls.ts). */
+  private readonly agentControls = new AgentControls();
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
@@ -596,6 +604,11 @@ export class CrewRuntime {
     },
   ): Promise<SessionKey> {
     const forAgent = agent ?? this.workerAgent;
+    // Ahead of the cache lookup on purpose: a paused agent must not be handed
+    // back a key it was issued before the pause, which is exactly the key the
+    // operator meant to take away.
+    const paused = this.agentControls.pausedDetail(forAgent);
+    if (paused) throw new AgentPausedError(forAgent, paused.at, paused.reason);
     const ceiling = limits?.maxValue;
     // An explicit narrowing sticks until it is explicitly changed. Internal
     // callers (propose, purchase) boot without scopes, so defaulting to the
@@ -616,7 +629,18 @@ export class CrewRuntime {
     // A cached session is only reusable when its scopes match what was asked
     // for. Reusing a wider one would hand back authority this call did not
     // request, which is the failure the scopes exist to prevent.
-    if (held && !isSessionExpired(held.session) && sameScopes(held.session.scopes, scopes)) {
+    //
+    // A revoked one is never reusable either. `revokeSessionById` leaves the
+    // revoked record in this cache so history reads still find it, and without
+    // this check the very next boot handed the dead key straight back — the
+    // chain would refuse whatever it signed, and the revocation an operator
+    // performed would appear to have done nothing.
+    if (
+      held &&
+      !held.session.revoked &&
+      !isSessionExpired(held.session) &&
+      sameScopes(held.session.scopes, scopes)
+    ) {
       return held.session;
     }
 
@@ -981,6 +1005,127 @@ export class CrewRuntime {
     });
     await this.disableSessionDelegation(sessionId, held?.[1].session.delegation);
     return { txHash };
+  }
+
+  /* ——— standing agent controls (PRD F1.7) ——— */
+
+  /**
+   * Stop this agent acting through this orchestrator.
+   *
+   * Two things happen, and only the first is durable: new session keys are
+   * refused, and every live key for the agent is revoked. Revocation is what
+   * makes the pause bite immediately — gating issuance alone would leave a key
+   * minted a minute ago working until it expired.
+   *
+   * Revocation failures are collected, not thrown. A pause that aborts halfway
+   * through a roster leaves some keys live while reporting failure, and an
+   * operator reaching for this during an incident needs the gate to hold and
+   * the partial result named, not an exception and an unknown state.
+   */
+  async pauseAgent(
+    agent: `0x${string}`,
+    reason?: string,
+  ): Promise<{
+    agent: string;
+    paused: boolean;
+    revoked: string[];
+    failed: Array<{ keyId: string; error: string }>;
+  }> {
+    const at = new Date().toISOString();
+    const changed = this.agentControls.pause(agent, at, reason);
+
+    const live = (await this.listSessions()).filter(
+      (s) => s.agent.toLowerCase() === agent.toLowerCase() && !s.revoked && !isSessionExpired(s),
+    );
+    const revoked: string[] = [];
+    const failed: Array<{ keyId: string; error: string }> = [];
+    for (const session of live) {
+      try {
+        await this.revokeSessionById(session.keyId);
+        revoked.push(session.keyId);
+      } catch (err) {
+        failed.push({
+          keyId: session.keyId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Revoking by id goes through whatever `listSessions` reports, which is not
+    // always this process's own cache — so the held keys are dropped directly
+    // too. Without this a cached key survives its own revocation, and the pause
+    // would gate the next boot while the private key it already holds keeps
+    // signing.
+    this.purgeHeldSessionsFor(agent);
+
+    if (changed) {
+      this.pushAudit({
+        type: "AgentPaused",
+        at,
+        payload: { agent, reason, revoked: revoked.length, failed: failed.length },
+      });
+    }
+    return { agent, paused: true, revoked, failed };
+  }
+
+  /**
+   * Let this agent hold keys again.
+   *
+   * Nothing is re-issued: the keys revoked by the pause are gone for good, and
+   * the next action boots a fresh one. Handing back the old key would undo the
+   * revocation the pause performed.
+   */
+  resumeAgent(agent: `0x${string}`): { agent: string; paused: boolean; changed: boolean } {
+    const changed = this.agentControls.resume(agent);
+    if (changed) {
+      this.pushAudit({
+        type: "AgentResumed",
+        at: new Date().toISOString(),
+        payload: { agent },
+      });
+    }
+    return { agent, paused: false, changed };
+  }
+
+  /**
+   * Mark every cached session for this agent revoked and drop its private key.
+   *
+   * The record stays so history reads still find it; only the ability to sign
+   * goes away. Dropping the entry entirely would let the next boot mint a key
+   * under the same cache slot and lose the fact that one was ever revoked.
+   */
+  private purgeHeldSessionsFor(agent: string): void {
+    const wanted = agent.toLowerCase();
+    for (const [key, held] of this.sessions.entries()) {
+      if (held.session.agent.toLowerCase() !== wanted) continue;
+      this.sessions.set(key, { session: revokeSession(held.session) });
+    }
+  }
+
+  isAgentPaused(agent: `0x${string}`): boolean {
+    return this.agentControls.isPaused(agent);
+  }
+
+  listPausedAgents(): Array<{ agent: string; at: string; reason?: string }> {
+    return this.agentControls.listPaused();
+  }
+
+  /** Replace an agent's standing brief. Empty layers clear it. */
+  setAgentBrief(agent: `0x${string}`, layers: readonly BriefLayer[]): AgentBrief | null {
+    return this.agentControls.setBrief(agent, layers, new Date().toISOString());
+  }
+
+  agentBrief(agent: `0x${string}`): AgentBrief | null {
+    return this.agentControls.briefFor(agent);
+  }
+
+  listAgentBriefs(): AgentBrief[] {
+    return this.agentControls.listBriefs();
+  }
+
+  /** The system prompt an agent's turn runs under, brief applied. */
+  systemPromptFor(agent: string): string {
+    return this.agentControls.systemPromptFor(agent);
   }
 
   /**

@@ -322,4 +322,83 @@ describe("no demo address stands in for a real seat", () => {
       }
     }
   });
+  /* ——— standing agent controls (F1.7) ——— */
+
+  it("a pause revokes the live key, not just the next one", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const session = await runtime.boot(MOCK_WORKER);
+    assert.equal(session.revoked, false);
+
+    const result = await runtime.pauseAgent(MOCK_WORKER, "spending anomaly");
+    assert.equal(result.paused, true);
+    // Gating issuance alone would leave a key minted a minute ago working
+    // until it expired — which is precisely the key an operator is reaching
+    // for the pause to take away.
+    assert.deepEqual(result.failed, []);
+
+    // Booting again must mint a fresh key rather than return the cached one:
+    // the key that existed before the pause can no longer sign.
+    runtime.resumeAgent(MOCK_WORKER);
+    const after = await runtime.boot(MOCK_WORKER);
+    assert.notEqual(after.keyId, session.keyId);
+  });
+
+  it("a paused agent cannot boot, and can again once resumed", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    await runtime.pauseAgent(MOCK_WORKER);
+    assert.equal(runtime.isAgentPaused(MOCK_WORKER), true);
+    await assert.rejects(() => runtime.boot(MOCK_WORKER), /agent_paused/);
+
+    runtime.resumeAgent(MOCK_WORKER);
+    assert.equal(runtime.isAgentPaused(MOCK_WORKER), false);
+    const session = await runtime.boot(MOCK_WORKER);
+    assert.equal(session.revoked, false);
+  });
+
+  it("resuming issues nothing — the revoked key stays revoked", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const before = await runtime.boot(MOCK_WORKER);
+    await runtime.pauseAgent(MOCK_WORKER);
+    runtime.resumeAgent(MOCK_WORKER);
+
+    const after = await runtime.boot(MOCK_WORKER);
+    // Handing the old key back would undo the revocation the pause performed.
+    assert.notEqual(after.keyId, before.keyId);
+  });
+
+  it("pausing writes who decided it and why; a redundant pause writes nothing", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    await runtime.pauseAgent(MOCK_WORKER, "spending anomaly");
+    await runtime.pauseAgent(MOCK_WORKER, "again");
+
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentPaused");
+    assert.equal(events.length, 1);
+    assert.equal((events[0]?.payload as { reason?: string }).reason, "spending anomaly");
+  });
+
+  it("a pause raises no governance action — it is not an onchain change", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const before = (await runtime.audit()).filter((e) => e.type.startsWith("Proposal")).length;
+    await runtime.pauseAgent(MOCK_WORKER, "spending anomaly");
+    // The agent keeps its seat, its grant and its reporting line. A pause is
+    // the orchestrator refusing to mint keys, so nothing proposes.
+    const after = (await runtime.audit()).filter((e) => e.type.startsWith("Proposal")).length;
+    assert.equal(after, before);
+  });
+
+  it("an agent's brief becomes its system prompt, identity line first", () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    assert.equal(
+      runtime.systemPromptFor(MOCK_WORKER),
+      `You are agent ${MOCK_WORKER} in a LaCrew organization.`,
+    );
+
+    runtime.setAgentBrief(MOCK_WORKER, [
+      { label: "crew:Trading", text: "Quote before you fill." },
+      { label: "agent", text: "You settle; you do not price." },
+    ]);
+    const prompt = runtime.systemPromptFor(MOCK_WORKER);
+    assert.ok(prompt.startsWith(`You are agent ${MOCK_WORKER} in a LaCrew organization.`));
+    assert.match(prompt, /Quote before you fill\./);
+  });
 });

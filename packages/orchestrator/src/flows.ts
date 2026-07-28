@@ -174,8 +174,11 @@ export function createFlowsSurface(opts: {
         text: result.steps.at(-1)?.summary ?? result.status,
       };
     }
+    // The identity line used to be the whole system prompt, which made every
+    // agent in every org identical in disposition. It is now the first layer of
+    // the agent's standing brief (agentControls.ts) and still leads it.
     const completion = await opts.model.complete({
-      system: `You are agent ${agent} in a LaCrew organization.`,
+      system: opts.runtime.systemPromptFor(agent),
       prompt: String(args.prompt ?? ""),
     });
     return { agent, text: completion.text, model: completion.model };

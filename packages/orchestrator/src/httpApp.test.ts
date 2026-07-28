@@ -741,4 +741,120 @@ describe("POST /epoch/schedule", () => {
     });
     assert.equal(res.status, 400);
   });
+  /* ——— standing agent controls (F1.7) ——— */
+
+  it("reports no paused agents and no briefs on a fresh runtime", async () => {
+    const res = await buildApp().request("/agents/controls");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { paused: unknown[]; briefs: unknown[] };
+    assert.deepEqual(body.paused, []);
+    assert.deepEqual(body.briefs, []);
+  });
+
+  it("pausing an agent refuses it a session key until it is resumed", async () => {
+    const app = buildApp();
+    const agent = "0x0000000000000000000000000000000000000a11";
+
+    const paused = await app.request("/agents/pause", {
+      method: "POST",
+      body: JSON.stringify({ agent, reason: "spending anomaly" }),
+    });
+    assert.equal(paused.status, 200);
+    assert.equal(((await paused.json()) as { paused: boolean }).paused, true);
+
+    // The gate is the point: booting must fail rather than hand back a key.
+    const booted = await app.request("/boot", {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    });
+    assert.equal(booted.status, 500);
+    assert.match(((await booted.json()) as { error: string }).error, /agent_paused/);
+
+    const resumed = await app.request("/agents/resume", {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    });
+    assert.equal(((await resumed.json()) as { changed: boolean }).changed, true);
+  });
+
+  it("names the paused agent and why, so the trail carries the decision", async () => {
+    const app = buildApp();
+    const agent = "0x0000000000000000000000000000000000000a12";
+    await app.request("/agents/pause", {
+      method: "POST",
+      body: JSON.stringify({ agent, reason: "spending anomaly" }),
+    });
+    const body = (await (await app.request("/agents/controls")).json()) as {
+      paused: Array<{ agent: string; reason?: string }>;
+    };
+    assert.equal(body.paused.length, 1);
+    assert.equal(body.paused[0]?.agent, agent.toLowerCase());
+    assert.equal(body.paused[0]?.reason, "spending anomaly");
+  });
+
+  it("requires an agent on both control routes", async () => {
+    const app = buildApp();
+    for (const path of ["/agents/pause", "/agents/resume"]) {
+      const res = await app.request(path, { method: "POST", body: JSON.stringify({}) });
+      assert.equal(res.status, 400);
+      assert.equal(((await res.json()) as { error: string }).error, "agent_required");
+    }
+  });
+
+  it("a brief becomes the system prompt, with the identity line still leading", async () => {
+    const app = buildApp();
+    const agent = "0x0000000000000000000000000000000000000a13";
+    const res = await app.request("/agents/brief", {
+      method: "PUT",
+      body: JSON.stringify({
+        agent,
+        layers: [
+          { label: "crew:Trading", text: "Quote before you fill." },
+          { label: "agent", text: "You settle; you do not price." },
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { systemPrompt: string };
+    assert.ok(body.systemPrompt.startsWith(`You are agent ${agent} in a LaCrew organization.`));
+    assert.match(body.systemPrompt, /Quote before you fill\./);
+    assert.match(body.systemPrompt, /You settle; you do not price\./);
+  });
+
+  it("clearing a brief returns the agent to the bare identity line", async () => {
+    const app = buildApp();
+    const agent = "0x0000000000000000000000000000000000000a14";
+    await app.request("/agents/brief", {
+      method: "PUT",
+      body: JSON.stringify({ agent, layers: [{ label: "agent", text: "Settle only." }] }),
+    });
+    const cleared = await app.request("/agents/brief", {
+      method: "PUT",
+      body: JSON.stringify({ agent, layers: [] }),
+    });
+    const body = (await cleared.json()) as { brief: unknown; systemPrompt: string };
+    assert.equal(body.brief, null);
+    assert.equal(body.systemPrompt, `You are agent ${agent} in a LaCrew organization.`);
+  });
+
+  it("refuses a brief past the ceiling rather than storing a document", async () => {
+    const res = await buildApp().request("/agents/brief", {
+      method: "PUT",
+      body: JSON.stringify({
+        agent: "0x0000000000000000000000000000000000000a15",
+        layers: [{ label: "agent", text: "x".repeat(5000) }],
+      }),
+    });
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error: string }).error, /brief_too_long/);
+  });
+
+  it("requires a layer list, so a missing field never silently clears a brief", async () => {
+    const res = await buildApp().request("/agents/brief", {
+      method: "PUT",
+      body: JSON.stringify({ agent: "0x0000000000000000000000000000000000000a16" }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error: string }).error, "layers_required");
+  });
 });

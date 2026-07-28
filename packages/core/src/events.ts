@@ -49,7 +49,19 @@ export type ProtocolEventType =
   | "ToolCalled"
   | "MarketplacePurchase"
   | "MarketplaceListed"
-  | "MarketplaceWithdrawn";
+  | "MarketplaceWithdrawn"
+  /**
+   * An operator stopped or restarted an agent at the orchestrator (F1.7).
+   *
+   * Off-chain, like `FlowRun` and `ToolCalled`: a pause gates session issuance
+   * and revokes live keys, but changes nothing the chain knows about — the
+   * agent keeps its seat, its grant, and its policy stack. The revocations it
+   * performs emit their own `SessionRevoked` rows, so the onchain-visible half
+   * of a pause is recorded where it always was; these two say who decided it
+   * and why, which is the part no other row carries.
+   */
+  | "AgentPaused"
+  | "AgentResumed";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;
