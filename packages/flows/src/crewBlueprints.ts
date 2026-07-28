@@ -20,6 +20,11 @@ const usdc = (dollars: number): string => BigInt(Math.round(dollars * 1_000_000)
 
 const defiDesk: CrewBlueprint = {
   id: "defi-desk",
+  caresFor: {
+    kind: "venue",
+    label: "Venues this desk trades",
+    hint: "Add the DEXes and pools the desk is admitted to. A venue not listed here is one the crew has no business quoting.",
+  },
   name: "Opportunistic DeFi desk",
   vertical: "trading",
   summary:
@@ -290,6 +295,11 @@ const defiDesk: CrewBlueprint = {
 
 const githubExperts: CrewBlueprint = {
   id: "github-experts",
+  caresFor: {
+    kind: "repo",
+    label: "Repos this crew looks after",
+    hint: "Add the repositories the watcher ingests PRs from, as owner/repo. Note anything unusual per repo — a gas snapshot to regenerate, a protected branch, a slow CI job.",
+  },
   name: "GitHub experts crew",
   vertical: "dev",
   summary:
@@ -545,6 +555,11 @@ const githubExperts: CrewBlueprint = {
 
 const contentStudio: CrewBlueprint = {
   id: "content-studio",
+  caresFor: {
+    kind: "account",
+    label: "Accounts this studio writes for",
+    hint: "Add each account by handle, and note its voice. The whole point of the crew is that two accounts never share a draft.",
+  },
   name: "Content studio",
   vertical: "content",
   summary:

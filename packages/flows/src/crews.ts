@@ -204,6 +204,29 @@ export type CrewBlueprint = {
   flows: string[];
   /** What this crew deliberately does not do, and what LaCrew cannot enforce for it. */
   outOfScope: string[];
+  /**
+   * The kind of thing this crew looks after, when it looks after anything.
+   *
+   * A blueprint cannot know *which* repos, venues or accounts belong to whoever
+   * installs it, so it declares the noun and leaves the list to them. That is
+   * the difference between an editor that prompts "add the repos this crew
+   * watches" and one that shows an empty box with no clue what belongs in it.
+   */
+  caresFor?: { kind: string; label: string; hint: string };
+};
+
+/**
+ * One layer of standing direction, mirroring `@lacrew/orchestrator`'s shape.
+ *
+ * Declared here rather than imported because `@lacrew/flows` does not depend on
+ * the orchestrator — blueprints are data, and a data package that pulled in the
+ * runtime to name a type would invert the dependency the packages are split on.
+ */
+export type BriefLayer = {
+  label: string;
+  text?: string;
+  resources?: Array<{ kind: string; ref: string; note?: string }>;
+  skills?: Array<{ name: string; when?: string; instructions: string }>;
 };
 
 export type CrewValidationResult = { ok: boolean; errors: string[] };
