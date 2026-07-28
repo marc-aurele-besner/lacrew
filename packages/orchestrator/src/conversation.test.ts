@@ -272,6 +272,62 @@ describe("Conversation", () => {
     assert.equal(c.hydrated, false);
   });
 
+  it("gathers unanswered questions from every thread, oldest first", () => {
+    const c = new Conversation();
+    const older = c.post(
+      { scope: { kind: "crew", id: "a" }, author: AGENT, authorKind: "agent", kind: "question", body: "first?" },
+      "2026-07-28T10:00:00.000Z",
+    );
+    const newer = c.post(
+      { scope: { kind: "crew", id: "b" }, author: AGENT, authorKind: "agent", kind: "question", body: "second?" },
+      "2026-07-28T11:00:00.000Z",
+    );
+    // The one that has waited longest is the one holding something up.
+    assert.deepEqual(c.allOpenQuestions().map((m) => m.id), [older.id, newer.id]);
+  });
+
+  it("does not let an answer in one crew close a question in another", () => {
+    // Answers only ever live in their question's thread. Run across the flat
+    // list, a stray replyTo would silently resolve someone else's question.
+    const c = new Conversation();
+    const q = c.post({
+      scope: { kind: "crew", id: "a" },
+      author: AGENT,
+      authorKind: "agent",
+      kind: "question",
+      body: "merge?",
+    });
+    c.post({
+      scope: { kind: "crew", id: "b" },
+      author: "seat1",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: q.id,
+      body: "yes",
+    });
+    assert.deepEqual(c.allOpenQuestions().map((m) => m.id), [q.id]);
+  });
+
+  it("is empty once every question is answered in its own thread", () => {
+    const c = new Conversation();
+    const q = c.post({
+      scope: { kind: "crew", id: "a" },
+      author: AGENT,
+      authorKind: "agent",
+      kind: "question",
+      body: "merge?",
+    });
+    c.post({
+      scope: { kind: "crew", id: "a" },
+      author: "seat1",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: q.id,
+      body: "yes",
+    });
+    assert.deepEqual(c.allOpenQuestions(), []);
+  });
+
   it("lists threads with their activity", () => {
     const c = new Conversation();
     c.post({ scope: { kind: "crew", id: "a" }, author: "s", authorKind: "human", body: "x" });
