@@ -61,7 +61,22 @@ export type ProtocolEventType =
    * and why, which is the part no other row carries.
    */
   | "AgentPaused"
-  | "AgentResumed";
+  | "AgentResumed"
+  /**
+   * An agent's standing directive was rewritten (F1.7).
+   *
+   * Arguably the change most worth attributing of the three: a pause is
+   * visible the moment an agent stops working, whereas a directive edit leaves
+   * it working and changes what it does. Someone quietly adding a repo to a
+   * crew's care, or a skill telling it to merge on green, would otherwise
+   * appear nowhere.
+   *
+   * The payload records the directive's *shape* — which layers, how many
+   * resources and skills, whether it was cleared — and never the instruction
+   * text. The trail is a memory-bounded ring and a directive runs to thousands
+   * of characters; the text itself is served, in full, by /agents/controls.
+   */
+  | "AgentDirectiveChanged";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;
