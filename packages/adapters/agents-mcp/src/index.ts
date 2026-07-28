@@ -55,6 +55,7 @@ export interface McpToolBackend {
     options?: string[];
     to?: string;
     refs?: Array<{ kind: string; id: string }>;
+    blocks?: unknown[];
   }): Promise<unknown>;
   readThread?(input: { thread: string; limit?: number }): Promise<unknown>;
 }
@@ -262,6 +263,12 @@ export function listLacrewMcpTools(): McpToolDescriptor[] {
           },
           body: { type: "string" },
           to: { type: "string", description: "Who this is directed at (optional)" },
+          blocks: {
+            type: "array",
+            description:
+              "Rich content. {kind:'text'|'code',text} for prose or output, {kind:'fields',items:[{label,value}]} for what you found, {kind:'link',url,label} for something off-site you produced or read, {kind:'ref',ref:'intent'|'proposal'|'tx'|'flowRun',id} to point at something in LaCrew. A ref carries ONLY what it points at — the surface renders its summary and any control from the real record, so do not describe it here.",
+            items: { type: "object" },
+          },
           refs: {
             type: "array",
             description: "What this claims to be about, so a reader can verify it",
@@ -486,6 +493,7 @@ export async function runMcpTool(
         kind: name === "lacrew_ask" ? "question" : String(args.kind ?? "note"),
         ...(Array.isArray(args.options) ? { options: args.options.map(String) } : {}),
         ...(args.to ? { to: String(args.to) } : {}),
+        ...(Array.isArray(args.blocks) ? { blocks: args.blocks } : {}),
         ...(Array.isArray(args.refs)
           ? {
               refs: (args.refs as Array<{ kind?: unknown; id?: unknown }>)

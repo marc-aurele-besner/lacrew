@@ -399,6 +399,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       replyTo?: string;
       to?: string;
       refs?: Array<{ kind?: string; id?: string }>;
+      blocks?: unknown[];
     }>(c);
     if (!body.thread) return jsonBig(c, { error: "thread_required" }, 400);
     if (!body.author) return jsonBig(c, { error: "author_required" }, 400);
@@ -415,6 +416,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         options: body.options,
         replyTo: body.replyTo,
         to: body.to,
+        blocks: body.blocks,
         refs: (body.refs ?? [])
           .filter((r) => r?.id)
           .map((r) => ({ kind: (r.kind ?? "intent") as "intent", id: String(r.id) })),

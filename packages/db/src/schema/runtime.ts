@@ -120,6 +120,8 @@ export const runtimeMessages = pgTable(
     recipient: text("recipient"),
     /** Intents, proposals, txs or flow runs this message claims to be about. */
     refs: jsonb("refs").$type<unknown[]>(),
+    /** Rich content — links, fields, code, internal references (F1.7). */
+    blocks: jsonb("blocks").$type<unknown[]>(),
   },
   (table) => [index("messages_thread_idx").on(table.threadId, table.at)],
 );

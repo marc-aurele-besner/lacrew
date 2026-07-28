@@ -223,6 +223,7 @@ export interface MessageRow {
   replyTo?: string;
   recipient?: string;
   refs?: unknown[];
+  blocks?: unknown[];
 }
 
 /** Insert-only: a message is a statement someone made, and editing one would rewrite the record. */
@@ -241,6 +242,7 @@ export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promi
       replyTo: row.replyTo ?? null,
       recipient: row.recipient ?? null,
       refs: row.refs ?? null,
+      blocks: row.blocks ?? null,
     })
     .onConflictDoNothing();
 }
@@ -267,5 +269,6 @@ export async function recentMessageRows(
     replyTo: row.replyTo ?? undefined,
     recipient: row.recipient ?? undefined,
     refs: Array.isArray(row.refs) ? row.refs : undefined,
+    blocks: Array.isArray(row.blocks) ? row.blocks : undefined,
   }));
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "orchestrator_messages" ADD COLUMN "blocks" jsonb;

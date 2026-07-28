@@ -71,6 +71,7 @@ export function createRuntimeMcpBackend(
         body: input.body,
         options: input.options,
         to: input.to,
+        blocks: input.blocks,
         refs: (input.refs ?? []).map((r) => ({
           kind: r.kind as "intent" | "proposal" | "tx" | "flowRun",
           id: r.id,
