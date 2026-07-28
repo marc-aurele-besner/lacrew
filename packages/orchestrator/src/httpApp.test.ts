@@ -11,6 +11,7 @@ import {
   type ConnectorRegistry,
 } from "./index.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
+import { BRIEF_MAX_CHARS } from "./agentControls.js";
 
 function buildApp(authToken?: string, connectors?: ConnectorRegistry) {
   const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
@@ -842,7 +843,10 @@ describe("POST /epoch/schedule", () => {
       method: "PUT",
       body: JSON.stringify({
         agent: "0x0000000000000000000000000000000000000a15",
-        layers: [{ label: "agent", text: "x".repeat(5000) }],
+        // Derived from the constant, never a literal: the ceiling moved once
+        // already (a structured directive renders larger than it types) and a
+        // hardcoded figure silently stopped testing the limit.
+        layers: [{ label: "agent", text: "x".repeat(BRIEF_MAX_CHARS + 1) }],
       }),
     });
     assert.equal(res.status, 400);
