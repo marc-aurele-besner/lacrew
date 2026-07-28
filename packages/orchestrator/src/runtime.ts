@@ -53,6 +53,12 @@ import type {
 } from "@lacrew/adapter-agents-mcp";
 import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 import {
+  Conversation,
+  type Message,
+  type PostInput,
+  type ThreadScope,
+} from "./conversation.js";
+import {
   AgentControls,
   AgentPausedError,
   type AgentBrief,
@@ -380,6 +386,8 @@ export class CrewRuntime {
   private readonly sessionScopePolicy = new Map<string, SessionScope[]>();
   /** Standing per-agent controls: the pause gate and the brief (see agentControls.ts). */
   private readonly agentControls: AgentControls;
+  /** The crew's conversation — claims and questions, never authority (F1.7). */
+  private readonly conversation: Conversation;
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   /** Distinguishes same-millisecond local events; see pushAudit. */
@@ -412,6 +420,7 @@ export class CrewRuntime {
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
     this.agentControls = new AgentControls(this.runtimeStore);
+    this.conversation = new Conversation(this.runtimeStore);
     this.delegations = options.delegations;
   }
 
@@ -1041,9 +1050,69 @@ export class CrewRuntime {
     return this.agentControls.hydrate(this.runtimeStore);
   }
 
+  /** The agent this runtime acts as by default — the author of an unattributed post. */
+  get workerAddress(): `0x${string}` {
+    return this.workerAgent;
+  }
+
   /** True once stored controls were read; false means nothing standing is known. */
   get agentControlsHydrated(): boolean {
     return this.agentControls.hydrated;
+  }
+
+  /* ——— conversation (PRD F1.7) ——— */
+
+  /**
+   * Restore the crew's conversation.
+   *
+   * A crew whose history vanished would lose the answers to its own questions,
+   * and an agent would re-ask what it had already been told.
+   */
+  async hydrateConversation(): Promise<{ ok: boolean; loaded: number }> {
+    return this.conversation.hydrate(this.runtimeStore);
+  }
+
+  /**
+   * Post to a thread.
+   *
+   * Audited, because a claim an agent makes about its own work is exactly the
+   * kind of thing that should be attributable later — but as `MessagePosted`,
+   * never as the action it describes. A message asserting a spend is not a
+   * spend, and the trail must not let the two blur.
+   */
+  postMessage(input: PostInput): Message {
+    const message = this.conversation.post(input);
+    this.pushAudit({
+      type: "MessagePosted",
+      at: message.at,
+      payload: {
+        messageId: message.id,
+        threadId: message.threadId,
+        author: message.author,
+        authorKind: message.authorKind,
+        kind: message.kind,
+        // The body stays out: the trail is a bounded ring, and the message
+        // itself is served in full from the conversation endpoints.
+        refs: message.refs?.length ?? 0,
+      },
+    });
+    return message;
+  }
+
+  thread(scope: ThreadScope, limit = 100): Message[] {
+    return this.conversation.thread(scope, limit);
+  }
+
+  recentMessages(limit = 100): Message[] {
+    return this.conversation.recent(limit);
+  }
+
+  listThreads(): Array<{ threadId: string; messages: number; lastAt: string }> {
+    return this.conversation.threads();
+  }
+
+  openQuestions(scope: ThreadScope): Message[] {
+    return this.conversation.openQuestionsIn(scope);
   }
 
   /**
