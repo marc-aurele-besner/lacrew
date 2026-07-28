@@ -353,4 +353,29 @@ export class Conversation {
   openQuestionsIn(scope: ThreadScope): Message[] {
     return openQuestions(this.thread(scope, THREAD_RING_MAX));
   }
+
+  /**
+   * Every unanswered question, across every thread, oldest first.
+   *
+   * A question visible only inside the thread that holds it is a question the
+   * human finds by opening each crew in turn — and one nobody opens is
+   * indistinguishable from one nobody asked. Oldest first because the one that
+   * has waited longest is the one holding something up.
+   *
+   * Scoped per thread rather than over the flat list: `openQuestions` closes a
+   * question by a later `replyTo`, and answers only ever live in the thread
+   * their question does. Run across threads the ordering would be meaningless
+   * and an answer in one crew could close a question in another.
+   */
+  allOpenQuestions(): Message[] {
+    const byThread = new Map<string, Message[]>();
+    for (const message of this.messages) {
+      const bucket = byThread.get(message.threadId);
+      if (bucket) bucket.push(message);
+      else byThread.set(message.threadId, [message]);
+    }
+    return [...byThread.values()]
+      .flatMap((messages) => openQuestions(messages))
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  }
 }
