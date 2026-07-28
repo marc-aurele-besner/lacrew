@@ -30,8 +30,11 @@ export {
   insertIntentRow,
   resolveIntentRows,
   recentIntentRows,
+  upsertAgentControlRow,
+  allAgentControlRows,
   type SessionRow,
   type IntentRow,
+  type AgentControlRow,
 } from "./runtime.js";
 export { runDbMigrations, type MigrateResult } from "./migrate.js";
 export * from "./schema/index.js";

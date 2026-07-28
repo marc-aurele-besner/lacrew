@@ -309,6 +309,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     jsonBig(c, {
       paused: runtime.listPausedAgents(),
       briefs: runtime.listAgentBriefs(),
+      // False when stored controls were never read — an empty list then means
+      // "unknown", not "nothing is paused and nobody is briefed".
+      hydrated: runtime.agentControlsHydrated,
       mode: runtime.mode,
     }),
   );

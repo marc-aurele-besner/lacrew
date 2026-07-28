@@ -130,6 +130,24 @@ async function main(): Promise<void> {
       // here costs gas, not correctness.
       console.error("[@lacrew/orchestrator] session hydration failed:", err);
     }
+
+    // Restore pauses and directives before anything can act. Unlike the
+    // session restore above, a failure here does cost correctness: every
+    // paused agent comes back running and every agent loses its guidelines,
+    // resources and skills — so it is logged loudly rather than in passing.
+    const controls = await runtime.hydrateAgentControls();
+    if (controls.ok) {
+      if (controls.loaded > 0) {
+        console.log(
+          `[@lacrew/orchestrator] standing controls restored for ${controls.loaded} agent(s)`,
+        );
+      }
+    } else {
+      console.error(
+        "[@lacrew/orchestrator] agent controls could not be read: every agent is running " +
+          "with no directive. Paused agents are NOT paused. Fix the store and restart.",
+      );
+    }
   }
   const hydrated = await flows.hydrate();
   if (hydrated.flows > 0 || hydrated.runs > 0) {

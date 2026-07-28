@@ -5,7 +5,9 @@
  * Metadata only: session private keys never reach the store.
  */
 
+import type { AgentControlRecord } from "./agentControls.js";
 import {
+  allAgentControlRows,
   createDb,
   getDatabaseUrl,
   insertIntentRow,
@@ -13,7 +15,9 @@ import {
   recentIntentRows,
   recentSessionRows,
   resolveIntentRows,
+  upsertAgentControlRow,
   upsertSessionRow,
+  type AgentControlRow,
   type DbHandle,
   type IntentRow,
   type SessionRow,
@@ -21,6 +25,7 @@ import {
 
 export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
+
 
 export interface RuntimeStore {
   readonly name: string;
@@ -37,6 +42,12 @@ export interface RuntimeStore {
   ): Promise<void>;
   /** Most recent intents, newest → oldest. */
   recentIntents(limit: number): Promise<IntentRecord[]>;
+  /**
+   * Standing per-agent controls — the pause gate and the directive (F1.7).
+   * Read once at boot to rehydrate; written through on every change.
+   */
+  loadAgentControls(): Promise<AgentControlRecord[]>;
+  saveAgentControl(record: AgentControlRecord): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -46,6 +57,7 @@ const MEMORY_MAX = 200;
 export function createMemoryRuntimeStore(): RuntimeStore {
   const sessions: SessionRecord[] = [];
   const intents: IntentRecord[] = [];
+  const controls = new Map<string, AgentControlRecord>();
 
   return {
     name: "memory",
@@ -77,8 +89,23 @@ export function createMemoryRuntimeStore(): RuntimeStore {
       }
     },
     recentIntents: async (limit) => intents.slice(-limit).reverse(),
+    // Unbounded on purpose, unlike the rings above: there is one row per agent
+    // and an org has tens of them, so trimming would silently drop a directive.
+    loadAgentControls: async () => [...controls.values()],
+    saveAgentControl: async (record) => {
+      controls.set(record.agent, record);
+    },
     close: async () => {},
   };
+}
+
+/** The stored row carries opaque layers; the orchestrator owns their shape. */
+function toRow(record: AgentControlRecord): AgentControlRow {
+  return { ...record, layers: record.layers as unknown[] };
+}
+
+function fromRow(row: AgentControlRow): AgentControlRecord {
+  return { ...row, layers: (row.layers ?? []) as AgentControlRecord["layers"] };
 }
 
 export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
@@ -131,6 +158,26 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
       } catch (err) {
         warn("intents list", err);
         return [];
+      }
+    },
+    loadAgentControls: async () => {
+      try {
+        return (await allAgentControlRows(db())).map(fromRow);
+      } catch (err) {
+        // Rethrown, unlike the reads above: hydration is the one call whose
+        // empty answer is indistinguishable from "nothing was ever set", and
+        // booting every agent unpaused with no directive because the database
+        // was briefly unreachable is exactly the silent failure this table
+        // exists to prevent. The caller decides what to do about it.
+        warn("agent controls load", err);
+        throw err;
+      }
+    },
+    saveAgentControl: async (record) => {
+      try {
+        await upsertAgentControlRow(db(), toRow(record));
+      } catch (err) {
+        warn("agent control save", err);
       }
     },
     close: async () => {

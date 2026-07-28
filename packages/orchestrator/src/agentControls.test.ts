@@ -7,8 +7,33 @@ import {
   BRIEF_MAX_CHARS,
   BriefTooLongError,
   composeSystemPrompt,
+  isEmptyLayer,
   normalizeLayers,
+  renderLayer,
+  type AgentControlRecord,
+  type AgentControlStore,
 } from "./agentControls.js";
+
+/** An in-memory stand-in for RuntimeStore, so persistence is testable alone. */
+function fakeStore(seed: AgentControlRecord[] = []) {
+  const rows = new Map(seed.map((r) => [r.agent, r]));
+  let failLoad = false;
+  return {
+    rows,
+    breakLoad: () => {
+      failLoad = true;
+    },
+    store: {
+      loadAgentControls: async () => {
+        if (failLoad) throw new Error("store_down");
+        return [...rows.values()];
+      },
+      saveAgentControl: async (record: AgentControlRecord) => {
+        rows.set(record.agent, record);
+      },
+    } satisfies AgentControlStore,
+  };
+}
 
 const AGENT = "0xAbCdEf0000000000000000000000000000000001";
 const AT = "2026-07-28T00:00:00.000Z";
@@ -193,5 +218,201 @@ describe("AgentControls — briefs", () => {
     assert.equal(c.systemPromptFor(AGENT).endsWith("Settle only."), true);
     c.resume(AGENT);
     assert.equal(c.systemPromptFor(AGENT).endsWith("Settle only."), true);
+  });
+});
+
+describe("renderLayer — a directive reads like the AGENTS.md someone would write", () => {
+  it("orders guidelines, then what it is responsible for, then what it knows", () => {
+    const rendered = renderLayer({
+      label: "crew:github-experts",
+      text: "Never merge a PR that touches CI workflows.",
+      resources: [
+        { kind: "repo", ref: "marc-aurele-besner/lacrew", note: "contracts need a gas snapshot" },
+        { kind: "repo", ref: "marc-aurele-besner/lacrew.xyz" },
+      ],
+      skills: [
+        {
+          name: "Triage a bot PR",
+          when: "a dependency bot opens a pull request",
+          instructions: "Patch and minor bumps with green CI are routine.\nMajors are not.",
+        },
+      ],
+    });
+
+    assert.equal(
+      rendered,
+      "Never merge a PR that touches CI workflows.\n\n" +
+        "In your care:\n" +
+        "- repo marc-aurele-besner/lacrew — contracts need a gas snapshot\n" +
+        "- repo marc-aurele-besner/lacrew.xyz\n\n" +
+        "Skills:\n" +
+        "- Triage a bot PR\n" +
+        "  Use when: a dependency bot opens a pull request\n" +
+        "  Patch and minor bumps with green CI are routine.\n" +
+        "  Majors are not.",
+    );
+  });
+
+  it("renders a plain-text layer unchanged, so a pre-directive brief still works", () => {
+    assert.equal(renderLayer({ label: "agent", text: "Settle only." }), "Settle only.");
+  });
+
+  it("omits a section that carries nothing rather than printing an empty heading", () => {
+    assert.equal(
+      renderLayer({ label: "agent", resources: [{ kind: "repo", ref: "a/b" }] }),
+      "In your care:\n- repo a/b",
+    );
+  });
+
+  it("defaults a resource with no kind rather than dropping it", () => {
+    assert.match(renderLayer({ label: "x", resources: [{ kind: "", ref: "a/b" }] }), /- resource a\/b/);
+  });
+
+  it("drops a skill missing its name or its body — a half-skill instructs nothing", () => {
+    const rendered = renderLayer({
+      label: "x",
+      skills: [
+        { name: "", instructions: "orphan body" },
+        { name: "orphan name", instructions: "" },
+        { name: "real", instructions: "do it" },
+      ],
+    });
+    assert.equal(rendered, "Skills:\n- real\n  do it");
+  });
+});
+
+describe("isEmptyLayer", () => {
+  it("is empty when nothing a model could act on survives", () => {
+    assert.equal(isEmptyLayer({ label: "x" }), true);
+    assert.equal(isEmptyLayer({ label: "x", text: "  " }), true);
+    assert.equal(isEmptyLayer({ label: "x", resources: [{ kind: "repo", ref: " " }] }), true);
+    assert.equal(isEmptyLayer({ label: "x", skills: [{ name: "n", instructions: "" }] }), true);
+  });
+
+  it("is not empty when any part carries something", () => {
+    assert.equal(isEmptyLayer({ label: "x", resources: [{ kind: "repo", ref: "a/b" }] }), false);
+    assert.equal(isEmptyLayer({ label: "x", skills: [{ name: "n", instructions: "i" }] }), false);
+  });
+});
+
+describe("normalizeLayers with structure", () => {
+  it("trims every field and drops incomplete entries", () => {
+    assert.deepEqual(
+      normalizeLayers([
+        {
+          label: " crew:x ",
+          text: " guidelines ",
+          resources: [{ kind: " repo ", ref: " a/b ", note: "  " }, { kind: "repo", ref: "" }],
+          skills: [{ name: " s ", when: "  ", instructions: " do " }],
+        },
+      ]),
+      [
+        {
+          label: "crew:x",
+          text: "guidelines",
+          resources: [{ kind: "repo", ref: "a/b" }],
+          skills: [{ name: "s", instructions: "do" }],
+        },
+      ],
+    );
+  });
+
+  it("measures the ceiling on the rendered prompt, not the raw fields", () => {
+    // Twenty short skills type small and render large; the number that matters
+    // is what reaches the model's context.
+    const skills = Array.from({ length: 60 }, (_, i) => ({
+      name: `skill ${i}`,
+      when: "x".repeat(60),
+      instructions: "y".repeat(120),
+    }));
+    assert.throws(() => normalizeLayers([{ label: "crew", skills }]), BriefTooLongError);
+    assert.ok(renderLayer({ label: "crew", skills }).length > BRIEF_MAX_CHARS);
+  });
+});
+
+describe("AgentControls persistence", () => {
+  const AGENT2 = "0xAbCdEf0000000000000000000000000000000002";
+
+  it("writes a pause and a directive through to the store", async () => {
+    const { rows, store } = fakeStore();
+    const c = new AgentControls(store);
+
+    c.pause(AGENT, AT, "anomaly");
+    c.setBrief(AGENT, [{ label: "agent", text: "Settle only." }], AT);
+    // The write-through is fire-and-forget; let the microtask queue drain.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const row = rows.get(AGENT.toLowerCase());
+    assert.equal(row?.paused, true);
+    assert.equal(row?.pausedReason, "anomaly");
+    assert.deepEqual(row?.layers, [{ label: "agent", text: "Settle only." }]);
+  });
+
+  it("restores exactly what an operator left, across a restart", async () => {
+    const { store } = fakeStore([
+      {
+        agent: AGENT.toLowerCase(),
+        paused: true,
+        pausedAt: AT,
+        pausedReason: "anomaly",
+        layers: [
+          {
+            label: "crew:github-experts",
+            text: "Never merge a PR touching CI.",
+            resources: [{ kind: "repo", ref: "owner/repo" }],
+          },
+        ],
+        updatedAt: AT,
+      },
+      { agent: AGENT2.toLowerCase(), paused: false, layers: [], updatedAt: AT },
+    ]);
+
+    const restarted = new AgentControls(store);
+    assert.equal(restarted.isPaused(AGENT), false, "nothing stands before hydrate");
+
+    const result = await restarted.hydrate();
+    assert.deepEqual(result, { ok: true, loaded: 2 });
+    assert.equal(restarted.isPaused(AGENT), true);
+    assert.equal(restarted.pausedDetail(AGENT)?.reason, "anomaly");
+    // The directive survives, not just the pause — an agent quietly reverting
+    // to no guidelines keeps working and does the wrong thing competently.
+    assert.match(restarted.systemPromptFor(AGENT), /Never merge a PR touching CI\./);
+    assert.match(restarted.systemPromptFor(AGENT), /- repo owner\/repo/);
+    // A row with nothing standing must not resurrect a pause or a brief.
+    assert.equal(restarted.isPaused(AGENT2), false);
+    assert.equal(restarted.briefFor(AGENT2), null);
+  });
+
+  it("reports a failed load instead of booting as though nothing was set", async () => {
+    const { store, breakLoad } = fakeStore([
+      { agent: AGENT.toLowerCase(), paused: true, pausedAt: AT, layers: [], updatedAt: AT },
+    ]);
+    breakLoad();
+
+    const c = new AgentControls(store);
+    const result = await c.hydrate();
+    assert.deepEqual(result, { ok: false, loaded: 0 });
+    // `hydrated` is what lets a caller say "unknown" rather than "all running".
+    assert.equal(c.hydrated, false);
+  });
+
+  it("persists a resume, so a restart does not re-pause a released agent", async () => {
+    const { rows, store } = fakeStore();
+    const c = new AgentControls(store);
+    c.pause(AGENT, AT);
+    await Promise.resolve();
+    c.resume(AGENT, AT);
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(rows.get(AGENT.toLowerCase())?.paused, false);
+  });
+
+  it("works with no store at all — self-hosting without a database still runs", async () => {
+    const c = new AgentControls();
+    c.pause(AGENT, AT);
+    c.setBrief(AGENT, [{ label: "agent", text: "ok" }], AT);
+    assert.equal(c.isPaused(AGENT), true);
+    assert.deepEqual(await c.hydrate(), { ok: false, loaded: 0 });
   });
 });

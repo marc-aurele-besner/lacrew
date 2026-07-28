@@ -365,7 +365,7 @@ export class CrewRuntime {
   /** agent (lowercased) => scopes last explicitly requested for it. */
   private readonly sessionScopePolicy = new Map<string, SessionScope[]>();
   /** Standing per-agent controls: the pause gate and the brief (see agentControls.ts). */
-  private readonly agentControls = new AgentControls();
+  private readonly agentControls: AgentControls;
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
@@ -395,6 +395,7 @@ export class CrewRuntime {
     this.chainId = options.chainId ?? null;
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
+    this.agentControls = new AgentControls(this.runtimeStore);
     this.delegations = options.delegations;
   }
 
@@ -1008,6 +1009,26 @@ export class CrewRuntime {
   }
 
   /* ——— standing agent controls (PRD F1.7) ——— */
+
+  /**
+   * Restore pauses and directives left by whoever ran this org before the
+   * restart. Call once at boot, before anything can act.
+   *
+   * A failed load is reported rather than swallowed, and the caller must
+   * decide: booting with an empty set silently un-pauses every paused agent
+   * and strips every directive, so an agent goes back to work with no
+   * guidelines, no resources and no skills — and does the wrong thing
+   * competently. That is the failure this store exists to prevent, so it must
+   * not be indistinguishable from a clean first boot.
+   */
+  async hydrateAgentControls(): Promise<{ ok: boolean; loaded: number }> {
+    return this.agentControls.hydrate(this.runtimeStore);
+  }
+
+  /** True once stored controls were read; false means nothing standing is known. */
+  get agentControlsHydrated(): boolean {
+    return this.agentControls.hydrated;
+  }
 
   /**
    * Stop this agent acting through this orchestrator.

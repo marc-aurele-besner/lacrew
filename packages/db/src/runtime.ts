@@ -1,7 +1,7 @@
 /** Query helpers for runtime session/intent records (keeps Drizzle inside @lacrew/db). */
 
 import { and, desc, eq } from "drizzle-orm";
-import { runtimeIntents, runtimeSessions } from "./schema/runtime.js";
+import { runtimeAgentControls, runtimeIntents, runtimeSessions } from "./schema/runtime.js";
 import type { DbHandle } from "./client.js";
 
 export interface SessionRow {
@@ -146,5 +146,61 @@ export async function recentIntentRows(handle: DbHandle, limit: number): Promise
     chainId: row.chainId ?? undefined,
     proposedAt: row.proposedAt.toISOString(),
     resolvedAt: row.resolvedAt?.toISOString(),
+  }));
+}
+
+/** Standing per-agent controls: the pause gate and the directive layers. */
+export interface AgentControlRow {
+  agent: string;
+  paused: boolean;
+  pausedAt?: string;
+  pausedReason?: string;
+  /** Ordered directive layers, opaque here — @lacrew/orchestrator owns the shape. */
+  layers: unknown[];
+  updatedAt: string;
+}
+
+/**
+ * Replace one agent's controls.
+ *
+ * A directive is edited as a document, so the row is overwritten wholesale
+ * rather than merged — a partial update would let a caller that omitted
+ * `layers` silently keep a directive it believed it had cleared.
+ */
+export async function upsertAgentControlRow(
+  handle: DbHandle,
+  row: AgentControlRow,
+): Promise<void> {
+  const values = {
+    agent: row.agent,
+    paused: row.paused,
+    pausedAt: row.pausedAt ? new Date(row.pausedAt) : null,
+    pausedReason: row.pausedReason ?? null,
+    layers: row.layers,
+    updatedAt: new Date(row.updatedAt),
+  };
+  await handle.db
+    .insert(runtimeAgentControls)
+    .values(values)
+    .onConflictDoUpdate({ target: runtimeAgentControls.agent, set: values });
+}
+
+/**
+ * Every agent with standing state.
+ *
+ * Rows where nothing stands — resumed, directive cleared — are not filtered
+ * out here: a caller hydrating in-memory state needs to know the row exists so
+ * it does not re-create it, and the shape it reads back says plainly that
+ * nothing is set.
+ */
+export async function allAgentControlRows(handle: DbHandle): Promise<AgentControlRow[]> {
+  const rows = await handle.db.select().from(runtimeAgentControls);
+  return rows.map((row) => ({
+    agent: row.agent,
+    paused: row.paused,
+    pausedAt: row.pausedAt?.toISOString(),
+    pausedReason: row.pausedReason ?? undefined,
+    layers: Array.isArray(row.layers) ? row.layers : [],
+    updatedAt: row.updatedAt.toISOString(),
   }));
 }
