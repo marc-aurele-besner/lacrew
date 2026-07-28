@@ -401,4 +401,86 @@ describe("no demo address stands in for a real seat", () => {
     assert.ok(prompt.startsWith(`You are agent ${MOCK_WORKER} in a LaCrew organization.`));
     assert.match(prompt, /Quote before you fill\./);
   });
+  it("records a directive change as shape, never as instruction text", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    runtime.setAgentBrief(MOCK_WORKER, [
+      {
+        label: "crew:github-experts",
+        text: "Never merge a PR that touches CI workflows.",
+        resources: [
+          { kind: "repo", ref: "owner/one" },
+          { kind: "repo", ref: "owner/two" },
+        ],
+        skills: [{ name: "Triage", instructions: "classify it" }],
+      },
+      { label: "agent", text: "You watch; you do not merge." },
+    ]);
+
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
+    assert.equal(events.length, 1);
+    const payload = events[0]!.payload as Record<string, unknown>;
+    assert.deepEqual(payload.layers, ["crew:github-experts", "agent"]);
+    assert.equal(payload.resources, 2);
+    assert.equal(payload.skills, 1);
+    assert.equal(payload.cleared, false);
+
+    // The trail is a bounded ring and a directive runs to thousands of
+    // characters; the text is served in full by the controls endpoint instead.
+    const serialised = JSON.stringify(payload);
+    assert.equal(serialised.includes("Never merge a PR"), false);
+    assert.equal(serialised.includes("You watch"), false);
+  });
+
+  it("records what the directive was before, so a rewrite is legible", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    runtime.setAgentBrief(MOCK_WORKER, [{ label: "agent", text: "first" }]);
+    runtime.setAgentBrief(MOCK_WORKER, [
+      { label: "crew:x", text: "crew rules" },
+      { label: "agent", text: "second" },
+    ]);
+
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
+    assert.equal(events.length, 2);
+    const second = events.find(
+      (e) => (e.payload as { layers: string[] }).layers.length === 2,
+    )!;
+    assert.deepEqual((second.payload as { previousLayers: string[] }).previousLayers, ["agent"]);
+  });
+
+  it("marks a cleared directive as cleared rather than as an empty change", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    runtime.setAgentBrief(MOCK_WORKER, [{ label: "agent", text: "something" }]);
+    runtime.setAgentBrief(MOCK_WORKER, []);
+
+    // audit() serves newest first, so the clear is the head of the list.
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
+    assert.equal(events.length, 2, "both writes are recorded, not collapsed");
+    const latest = events[0]!;
+    assert.equal((latest.payload as { cleared: boolean }).cleared, true);
+    assert.deepEqual((latest.payload as { previousLayers: string[] }).previousLayers, ["agent"]);
+  });
+
+  it("writes no event when the directive was refused", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    // An event claiming a directive landed, for one that was rejected over the
+    // ceiling, is worse than no event: the trail would assert a change nobody made.
+    assert.throws(() =>
+      runtime.setAgentBrief(MOCK_WORKER, [{ label: "agent", text: "x".repeat(20_000) }]),
+    );
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
+    assert.deepEqual(events, []);
+  });
+  it("keeps two same-millisecond off-chain events apart in the trail", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    // Off-chain events carry no intent id, tx hash or value, so the dedupe key
+    // reduced to type + timestamp and collapsed these into one — the trail
+    // asserting a single change where two had happened.
+    runtime.setAgentBrief(MOCK_WORKER, [{ label: "agent", text: "one" }]);
+    runtime.setAgentBrief(MOCK_WORKER, [{ label: "agent", text: "two" }]);
+
+    const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
+    assert.equal(events.length, 2);
+    const seqs = events.map((e) => (e.payload as { seq: number }).seq);
+    assert.equal(new Set(seqs).size, 2, "each event carries its own sequence");
+  });
 });
