@@ -1,5 +1,19 @@
 /**
- * First-party crew blueprints, one per filled design-partner intake.
+ * First-party crew blueprints.
+ *
+ * Two provenances, deliberately distinguishable. Three trace to a filled
+ * design-partner intake and carry `intake.file`: every number in them answers a
+ * question a real operator was asked. Three are author-drafted patterns with no
+ * file — common team shapes whose caps and grants are a starting point somebody
+ * reasoned about. Presenting them identically would lend partner-derived
+ * authority to a guess, so the field is absent rather than pointed at a
+ * document that does not exist.
+ *
+ * The patterns ship no flows on purpose. A blueprint's flows are the part most
+ * specific to how one team actually works, and inventing them would be the same
+ * fabrication one level down — these give the org shape, the budgets, the
+ * guardrails and the standing directives, and leave the flows to whoever
+ * installs them.
  *
  * Every number here traces to an answer: caps come from question 6 ("where's
  * your line"), grants from question 5 (the monthly budget, divided by the
@@ -24,6 +38,8 @@ const defiDesk: CrewBlueprint = {
     kind: "venue",
     label: "Venues this desk trades",
     hint: "Add the DEXes and pools the desk is admitted to. A venue not listed here is one the crew has no business quoting.",
+    placeholder: "Uniswap v3 · USDC/ETH 0.05%",
+    notePlaceholder: "Depth, chain, or why this one is admitted",
   },
   name: "Opportunistic DeFi desk",
   vertical: "trading",
@@ -299,6 +315,8 @@ const githubExperts: CrewBlueprint = {
     kind: "repo",
     label: "Repos this crew looks after",
     hint: "Add the repositories the watcher ingests PRs from, as owner/repo. Note anything unusual per repo — a gas snapshot to regenerate, a protected branch, a slow CI job.",
+    placeholder: "owner/repo",
+    notePlaceholder: "Gas snapshot, protected branch, slow CI…",
   },
   name: "GitHub experts crew",
   vertical: "dev",
@@ -559,6 +577,8 @@ const contentStudio: CrewBlueprint = {
     kind: "account",
     label: "Accounts this studio writes for",
     hint: "Add each account by handle, and note its voice. The whole point of the crew is that two accounts never share a draft.",
+    placeholder: "@handle",
+    notePlaceholder: "Voice, audience, what it never posts",
   },
   name: "Content studio",
   vertical: "content",
@@ -853,7 +873,435 @@ const contentStudio: CrewBlueprint = {
   ],
 };
 
-export const crewBlueprints: CrewBlueprint[] = [defiDesk, githubExperts, contentStudio];
+
+/* ------------------------------------------------------------------ *
+ * Author-drafted patterns (no filled intake — see the note at the top)
+ * ------------------------------------------------------------------ */
+
+const researchDesk: CrewBlueprint = {
+  id: "research-desk",
+  name: "Research desk",
+  vertical: "research",
+  caresFor: {
+    kind: "source",
+    label: "Sources this desk tracks",
+    hint: "Add the feeds, datasets and publications the scout watches. A source not listed is one the desk has no business citing.",
+    placeholder: "arXiv cs.CR · https://export.arxiv.org/rss/cs.CR",
+    notePlaceholder: "Paywalled, rate-limited, how far back it goes",
+  },
+  summary:
+    "Scout, analyst, and librarian under a research lead. The work is reading and writing; the spending is metered data and model usage, which is exactly the bill that runs away unattended.",
+  intake: {
+    persona: "Analyst or small research team wanting continuous coverage of a moving field",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 200,
+    monthlyUsdMax: 800,
+    note: "Model usage, paid data feeds, and article access. No treasury: the allowance exists so a scout that decides to read everything cannot spend a quarter's budget doing it.",
+  },
+  humanSeats: [
+    {
+      id: "lead",
+      label: "Research lead",
+      holds: "Root key; sole vote on the high tier. Decides what the desk is allowed to cite.",
+    },
+  ],
+  roles: [
+    {
+      id: "research-lead",
+      label: "Research lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns the question and the budget. Clears escalated purchases, decides what is worth deep reading, and refuses work that drifts from the brief.",
+      capUsdc: usdc(120),
+      grantUsdc: usdc(30),
+      spends: ["model-api"],
+      tools: ["lacrew_list_pending_intents", "lacrew_approve_intent", "lacrew_say"],
+      flows: [],
+    },
+    {
+      id: "scout",
+      label: "Source scout",
+      kind: "worker_agent",
+      reportsTo: "research-lead",
+      charter:
+        "Sweeps the tracked sources for anything new that bears on the brief, and posts what it found rather than what it thinks about it.",
+      capUsdc: usdc(15),
+      grantUsdc: usdc(20),
+      spends: ["model-api", "data-feed"],
+      tools: ["lacrew_say", "lacrew_check_policy"],
+      flows: [],
+    },
+    {
+      id: "analyst",
+      label: "Analyst",
+      kind: "worker_agent",
+      reportsTo: "research-lead",
+      charter:
+        "Reads deeply on what the scout surfaced and writes the argument, naming which source carries each claim.",
+      capUsdc: usdc(60),
+      grantUsdc: usdc(35),
+      spends: ["model-api", "article-access"],
+      tools: ["lacrew_say", "lacrew_ask"],
+      flows: [],
+    },
+    {
+      id: "librarian",
+      label: "Librarian",
+      kind: "worker_agent",
+      reportsTo: "research-lead",
+      charter:
+        "Keeps the source list current: retires dead feeds, flags paywalled ones, and refuses to let an unattributed claim into the record.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(10),
+      spends: ["model-api"],
+      tools: ["lacrew_say", "lacrew_read_thread"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Metered inference. Every seat needs it, which is why it is the one target the whole desk shares.",
+    },
+    {
+      id: "data-feed",
+      label: "Data feed",
+      kind: "service",
+      whitelisted: true,
+      note: "Paid feeds the scout polls. Metered per call, which is why the scout's per-call cap is the tightest on the desk.",
+    },
+    {
+      id: "article-access",
+      label: "Article access",
+      kind: "service",
+      whitelisted: true,
+      note: "Per-article purchases. The analyst is the only seat that buys these; a scout buying one has misread its job.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "feed-keys",
+      label: "Data feed API keys",
+      boundary:
+        "Whatever the provider scopes them to. LaCrew bounds what the desk may spend, not what a key may read — a key with wider access than the brief is the provider's setting to fix, not ours.",
+    },
+  ],
+  connectors: [],
+  escalation: [
+    { when: "A single article or dataset costs more than the analyst's cap", to: "research-lead", via: "escalation" },
+    { when: "A purchase exceeds the lead's own cap", to: "human_root", via: "escalation" },
+    { when: "Adding a paid source to the tracked list", to: "human_root", via: "governance" },
+  ],
+  governance: [
+    { change: "Admitting a new paid data source", tier: "high" },
+    { change: "Raising the desk's monthly budget", tier: "high" },
+    { change: "Hiring or retiring a seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "A scout's sweep spends the month's data budget in an afternoon",
+      enforcedBy: "policy",
+      how: "The scout's per-call cap is the tightest on the desk and its grant is per epoch. A sweep that runs long stops when the allowance does, not when someone notices.",
+    },
+    {
+      never: "Paying a data provider nobody admitted",
+      enforcedBy: "policy",
+      how: "WhitelistPolicy denies any target not on the list; admitting one is a high-tier proposal.",
+    },
+    {
+      never: "A claim reaches the record with no source behind it",
+      enforcedBy: "monitoring",
+      how: "The librarian's charter is to refuse unattributed claims, and results posted to the thread carry the source they rest on.",
+      residualRisk:
+        "This is a disposition, not a gate. Nothing onchain refuses an unsourced sentence, and an analyst that fabricates a citation produces something a reader must still check. The desk makes fabrication visible, not impossible.",
+    },
+  ],
+  flows: [],
+  outOfScope: [
+    "Publishing. The desk produces arguments; putting one in front of an audience is the content crew's job or a human's.",
+    "Deciding what is true. Two sources disagreeing is a finding, and the desk is built to surface that rather than resolve it.",
+    "Anything onchain. This crew reads and writes; its only spending is metered services.",
+  ],
+};
+
+const supportDesk: CrewBlueprint = {
+  id: "support-desk",
+  name: "Support desk",
+  vertical: "support",
+  caresFor: {
+    kind: "queue",
+    label: "Inboxes this desk answers",
+    hint: "Add each queue the triager reads, and note its promise — a queue with a one-hour SLA and one with a two-day SLA are not the same job.",
+    placeholder: "support@ · Zendesk view 42",
+    notePlaceholder: "SLA, who it is for, what never gets auto-answered",
+  },
+  summary:
+    "Triager, responder, and an escalation writer under a support lead. Off-chain work with a real bill: model usage per ticket, which is the cost that scales with a bad week rather than a good one.",
+  intake: {
+    persona: "Small team drowning in a support queue that grows faster than headcount",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 150,
+    monthlyUsdMax: 600,
+    note: "Model usage and helpdesk API calls. The allowance is per epoch so a spike week costs a spike week, not the quarter.",
+  },
+  humanSeats: [
+    {
+      id: "support-lead",
+      label: "Support lead",
+      holds: "Root key; sole vote on the high tier. Owns what the desk is allowed to promise a customer.",
+    },
+  ],
+  roles: [
+    {
+      id: "desk-lead",
+      label: "Desk lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns the queue and the budget. Clears escalated replies, decides what needs a human, and reports the week's shape rather than its volume.",
+      capUsdc: usdc(60),
+      grantUsdc: usdc(20),
+      spends: ["model-api"],
+      tools: ["lacrew_list_pending_intents", "lacrew_approve_intent", "lacrew_say"],
+      flows: [],
+    },
+    {
+      id: "triager",
+      label: "Triager",
+      kind: "worker_agent",
+      reportsTo: "desk-lead",
+      charter:
+        "Reads each new ticket, classifies it, and routes it. Refuses to guess at a ticket it does not understand — an unclear ticket goes to a human, not to a plausible answer.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(15),
+      spends: ["model-api", "helpdesk-api"],
+      tools: ["lacrew_say", "lacrew_ask"],
+      flows: [],
+    },
+    {
+      id: "responder",
+      label: "Responder",
+      kind: "worker_agent",
+      reportsTo: "desk-lead",
+      charter:
+        "Drafts replies for routine, well-understood tickets, citing the document the answer comes from. Never invents a policy the company does not have.",
+      capUsdc: usdc(20),
+      grantUsdc: usdc(25),
+      spends: ["model-api", "helpdesk-api"],
+      tools: ["lacrew_say", "lacrew_read_thread"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Metered inference, billed per ticket handled. The cost that scales with a bad week.",
+    },
+    {
+      id: "helpdesk-api",
+      label: "Helpdesk API",
+      kind: "service",
+      whitelisted: true,
+      note: "Reading and updating tickets. Metered on some plans, which is why it is a target rather than a free integration.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "helpdesk-token",
+      label: "Helpdesk API token",
+      boundary:
+        "The helpdesk's own permission model. A token that can close tickets can close them whatever LaCrew says — scope it to comment-and-tag if the desk is not trusted to resolve.",
+    },
+  ],
+  connectors: [],
+  escalation: [
+    { when: "A ticket the triager cannot classify", to: "desk-lead", via: "escalation" },
+    { when: "A reply that would commit the company to something (refund, exception, deadline)", to: "human_root", via: "escalation" },
+    { when: "Adding a queue to the desk's care", to: "human_root", via: "governance" },
+  ],
+  governance: [
+    { change: "Adding or removing a queue", tier: "high" },
+    { change: "Raising the desk's budget", tier: "high" },
+    { change: "Hiring or retiring a seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "A bad week costs a quarter's budget",
+      enforcedBy: "treasury",
+      how: "Allowances stream per epoch and do not accumulate. A spike week spends a week's allowance and then the desk stops answering until the next refill — which is the signal a human wanted anyway.",
+    },
+    {
+      never: "An agent promises a customer something the company has not agreed to",
+      enforcedBy: "escalation",
+      how: "Anything committing the company routes to the human root before it is sent. The responder's charter is routine tickets, and its cap is sized for them.",
+      residualRisk:
+        "The routing depends on the agent recognising a commitment as one. A reply that promises something without sounding like it does will go out — the desk narrows this, it does not close it.",
+    },
+    {
+      never: "Spending with a vendor nobody approved",
+      enforcedBy: "policy",
+      how: "WhitelistPolicy denies any target not admitted; admitting one is a high-tier proposal.",
+    },
+  ],
+  flows: [],
+  outOfScope: [
+    "Closing tickets without a human, where the resolution costs the company something. The desk drafts; a person commits.",
+    "Anything requiring account access beyond the helpdesk token. Reading a customer's billing record is a permission the helpdesk grants, not one the org chart can.",
+    "Phone and live chat. Both are real-time, and every guardrail here assumes a reply can wait for review.",
+  ],
+};
+
+const platformOncall: CrewBlueprint = {
+  id: "platform-oncall",
+  name: "Platform on-call",
+  vertical: "ops",
+  caresFor: {
+    kind: "service",
+    label: "Services this crew watches",
+    hint: "Add each service and note what 'down' means for it. A crew that cannot tell degraded from down will either page constantly or not at all.",
+    placeholder: "api.example.com · prod",
+    notePlaceholder: "What 'down' means here, and what may be restarted",
+  },
+  summary:
+    "A monitor and a remediator under an on-call lead. The crew's power is deliberately asymmetric: it may look at anything and change almost nothing, because a remediation that misfires at 3am is worse than the incident.",
+  intake: {
+    persona: "Small platform team wanting first-response coverage without a rota nobody wants",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 100,
+    monthlyUsdMax: 400,
+    note: "Model usage and metered observability queries. Deliberately small: this crew's value is attention, not spending.",
+  },
+  humanSeats: [
+    {
+      id: "platform-owner",
+      label: "Platform owner",
+      holds: "Root key; sole vote on the high tier. The only seat that can widen what the crew may change.",
+    },
+  ],
+  roles: [
+    {
+      id: "oncall-lead",
+      label: "On-call lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Holds the incident. Decides what is worth waking a human for, clears escalated remediations, and writes the timeline afterwards.",
+      capUsdc: usdc(40),
+      grantUsdc: usdc(15),
+      spends: ["model-api"],
+      tools: ["lacrew_list_pending_intents", "lacrew_approve_intent", "lacrew_say"],
+      flows: [],
+    },
+    {
+      id: "monitor",
+      label: "Monitor",
+      kind: "worker_agent",
+      reportsTo: "oncall-lead",
+      charter:
+        "Watches the tracked services and reports what changed, with the query that shows it. Reports degradation as degradation and never as an outage.",
+      capUsdc: usdc(15),
+      grantUsdc: usdc(20),
+      spends: ["model-api", "observability-api"],
+      tools: ["lacrew_say", "lacrew_ask"],
+      flows: [],
+    },
+    {
+      id: "remediator",
+      label: "Remediator",
+      kind: "worker_agent",
+      reportsTo: "oncall-lead",
+      charter:
+        "Proposes the smallest action that would restore service and says what it expects to happen. Acts only on the few remediations the owner has pre-agreed.",
+      capUsdc: usdc(15),
+      grantUsdc: usdc(10),
+      spends: ["model-api"],
+      tools: ["lacrew_say", "lacrew_check_policy"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Metered inference. An incident is exactly when usage spikes, which is why the caps here are small.",
+    },
+    {
+      id: "observability-api",
+      label: "Observability provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Metered queries against logs and metrics. The monitor is the only seat that pays for them.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "infra-credentials",
+      label: "Infrastructure credentials",
+      boundary:
+        "The cloud provider's IAM, and the tightest boundary in this blueprint. LaCrew bounds what the crew may spend; what it may restart, scale, or delete is IAM's answer, and a credential that can delete a database can do so regardless of any cap here.",
+    },
+  ],
+  connectors: [],
+  escalation: [
+    { when: "Any remediation the owner has not pre-agreed", to: "human_root", via: "escalation" },
+    { when: "A second remediation after the first did not restore service", to: "human_root", via: "escalation" },
+    { when: "Widening what the crew may change", to: "human_root", via: "governance" },
+  ],
+  governance: [
+    { change: "Adding a pre-agreed remediation", tier: "high" },
+    { change: "Adding a service to the watch list", tier: "low" },
+    { change: "Hiring or retiring a seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "A misfiring remediation loop makes an incident worse",
+      enforcedBy: "escalation",
+      how: "Only pre-agreed remediations run unattended, and a second attempt after a failed first goes to the human root. The loop cannot run itself twice.",
+    },
+    {
+      never: "An incident's model usage outruns the month",
+      enforcedBy: "treasury",
+      how: "Grants stream per epoch and the caps here are the smallest in any first-party blueprint. An incident that costs a week's allowance stops the crew, and a stopped crew during an incident is a human's problem to notice — which beats a silent bill.",
+    },
+    {
+      never: "The crew changes infrastructure nobody gave it access to",
+      enforcedBy: "external",
+      how: "The cloud provider's IAM decides this entirely. The org chart bounds money; it has no opinion about a delete.",
+      residualRisk:
+        "This is the blueprint's weakest boundary and the one worth reading twice: a credential scoped too widely makes every guardrail above cosmetic, and LaCrew cannot detect that it was.",
+    },
+  ],
+  flows: [],
+  outOfScope: [
+    "Paging. Deciding who to wake and how is a rota tool's job; this crew decides that someone should be.",
+    "Root-cause analysis. The crew writes what happened and when, not why — a timeline is evidence, an explanation is a claim.",
+    "Anything requiring a deploy. Shipping a fix is the dev crew's work and goes through its own review.",
+  ],
+};
+
+export const crewBlueprints: CrewBlueprint[] = [
+  defiDesk,
+  githubExperts,
+  contentStudio,
+  researchDesk,
+  supportDesk,
+  platformOncall,
+];
 
 export function getCrewBlueprint(id: string): CrewBlueprint | undefined {
   return crewBlueprints.find((bp) => bp.id === id);
