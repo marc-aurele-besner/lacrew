@@ -47,6 +47,16 @@ export interface McpToolBackend {
     prompt?: string;
     flowId?: string;
   }): Promise<unknown>;
+  /** Conversation (F1.7). Posting is a claim, never an authority. */
+  postMessage?(input: {
+    thread: string;
+    body: string;
+    kind?: string;
+    options?: string[];
+    to?: string;
+    refs?: Array<{ kind: string; id: string }>;
+  }): Promise<unknown>;
+  readThread?(input: { thread: string; limit?: number }): Promise<unknown>;
 }
 
 export type OrgActionInput = {
@@ -225,6 +235,76 @@ export function listLacrewMcpTools(): McpToolDescriptor[] {
         required: ["agent"],
       },
     },
+    /*
+      Conversation (F1.7). These are the tools that let a crew work the way a
+      person expects a collaborator to: say what it is about to do before doing
+      it, ask when it does not know, and report what happened afterwards.
+
+      None of them grant anything. A plan posted here is not an approval to
+      execute it, and an answer is not authorization — the spend still meets the
+      policy stack. The descriptions say so, because a model reading a tool list
+      will otherwise infer that announcing an action is part of taking it.
+    */
+    {
+      name: "lacrew_say",
+      description:
+        "Post to a thread the humans and other agents can read: a crew channel, another agent, or the org. Use kind 'plan' before you act so a human can redirect you, 'result' after, 'handoff' when passing work on, 'note' otherwise. Attach refs (intent id, proposal id, tx hash) to anything you claim happened, so it can be checked. Posting grants no permission: a plan is not an approval, and the action still goes through policy.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          thread: {
+            type: "string",
+            description: "crew:<id>, agent:<address>, or org",
+          },
+          kind: {
+            type: "string",
+            enum: ["note", "plan", "result", "handoff"],
+          },
+          body: { type: "string" },
+          to: { type: "string", description: "Who this is directed at (optional)" },
+          refs: {
+            type: "array",
+            description: "What this claims to be about, so a reader can verify it",
+            items: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["intent", "proposal", "tx", "flowRun"] },
+                id: { type: "string" },
+              },
+              required: ["kind", "id"],
+            },
+          },
+        },
+        required: ["thread", "body"],
+      },
+    },
+    {
+      name: "lacrew_ask",
+      description:
+        "Ask a question in a thread and offer the options you see. The question stays open until someone answers it — this does not block you, so say in the body what you will do meanwhile, or stop and wait. Use it when a choice is genuinely the human's to make rather than guessing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          thread: { type: "string" },
+          body: { type: "string" },
+          options: { type: "array", items: { type: "string" } },
+        },
+        required: ["thread", "body"],
+      },
+    },
+    {
+      name: "lacrew_read_thread",
+      description:
+        "Read a thread oldest-first, with the questions in it that nobody has answered. Read before you ask: the answer may already be there.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          thread: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["thread"],
+      },
+    },
   ];
 }
 
@@ -284,6 +364,8 @@ export function createOrchHttpMcpBackend(baseUrl: string, token?: string): McpTo
       }),
     governance: (input) => call("lacrew_governance", { ...input }),
     invokeAgent: (input) => call("lacrew_invoke_agent", { ...input }),
+    postMessage: (input) => call("lacrew_say", { ...input }),
+    readThread: (input) => call("lacrew_read_thread", { ...input }),
   };
 }
 
@@ -391,6 +473,33 @@ export async function runMcpTool(
         agent: String(args.agent) as `0x${string}`,
         ...(args.prompt ? { prompt: String(args.prompt) } : {}),
         ...(args.flowId ? { flowId: String(args.flowId) } : {}),
+      });
+    }
+    case "lacrew_say":
+    case "lacrew_ask": {
+      const fn = capability(backend, "postMessage", name);
+      return fn({
+        thread: String(args.thread),
+        body: String(args.body),
+        // `lacrew_ask` is `lacrew_say` with the kind fixed, so an agent cannot
+        // ask a question that files itself as a note and never gets answered.
+        kind: name === "lacrew_ask" ? "question" : String(args.kind ?? "note"),
+        ...(Array.isArray(args.options) ? { options: args.options.map(String) } : {}),
+        ...(args.to ? { to: String(args.to) } : {}),
+        ...(Array.isArray(args.refs)
+          ? {
+              refs: (args.refs as Array<{ kind?: unknown; id?: unknown }>)
+                .filter((r) => r?.id)
+                .map((r) => ({ kind: String(r.kind ?? "intent"), id: String(r.id) })),
+            }
+          : {}),
+      });
+    }
+    case "lacrew_read_thread": {
+      const fn = capability(backend, "readThread", name);
+      return fn({
+        thread: String(args.thread),
+        ...(args.limit ? { limit: Number(args.limit) } : {}),
       });
     }
     default:
