@@ -303,6 +303,60 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...result, mode: runtime.mode });
   });
 
+  /* ——— standing agent controls (F1.7) ——— */
+
+  app.get("/agents/controls", async (c) =>
+    jsonBig(c, {
+      paused: runtime.listPausedAgents(),
+      briefs: runtime.listAgentBriefs(),
+      mode: runtime.mode,
+    }),
+  );
+
+  /**
+   * Stop an agent acting through this orchestrator: no new session keys, and
+   * every live one revoked. Deliberately not 500 on a partial revoke — the
+   * gate holds either way, and the caller is told exactly which keys survived
+   * so it can say so rather than reporting an unknown state.
+   */
+  app.post("/agents/pause", async (c) => {
+    const body = await bodyOf<{ agent?: string; reason?: string }>(c);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+    const result = await runtime.pauseAgent(body.agent as `0x${string}`, body.reason);
+    return jsonBig(c, { ...result, mode: runtime.mode });
+  });
+
+  app.post("/agents/resume", async (c) => {
+    const body = await bodyOf<{ agent?: string }>(c);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+    return jsonBig(c, { ...runtime.resumeAgent(body.agent as `0x${string}`), mode: runtime.mode });
+  });
+
+  /**
+   * Replace an agent's standing brief. Layers are applied in the order given
+   * and their labels are stored, never interpreted — see agentControls.ts.
+   */
+  app.put("/agents/brief", async (c) => {
+    const body = await bodyOf<{
+      agent?: string;
+      layers?: Array<{ label?: string; text?: string }>;
+    }>(c);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+    if (!Array.isArray(body.layers)) return jsonBig(c, { error: "layers_required" }, 400);
+    const layers = body.layers.map((l) => ({ label: String(l.label ?? ""), text: String(l.text ?? "") }));
+    try {
+      const brief = runtime.setAgentBrief(body.agent as `0x${string}`, layers);
+      return jsonBig(c, {
+        agent: body.agent,
+        brief,
+        systemPrompt: runtime.systemPromptFor(body.agent),
+        mode: runtime.mode,
+      });
+    } catch (err) {
+      return jsonBig(c, { error: err instanceof Error ? err.message : "brief_failed" }, 400);
+    }
+  });
+
   app.post("/tick", async (c) => {
     const body = await bodyOf<{ value?: string }>(c);
     const value = body.value ? BigInt(body.value) : 75n * 10n ** 6n;
