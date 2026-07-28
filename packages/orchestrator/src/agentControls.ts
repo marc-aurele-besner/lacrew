@@ -40,14 +40,57 @@
  * module concatenates and reports what it applied, and understands none of it.
  */
 
-/** One layer of standing instruction, with an opaque provenance label. */
+/**
+ * A named capability the agent can apply, in the shape a person would write it.
+ *
+ * `when` matters as much as `instructions`: a model given six skill bodies at
+ * once applies whichever reads closest, so the trigger is what keeps a merge
+ * procedure from being used on a triage question.
+ */
+export type Skill = {
+  name: string;
+  /** When this applies — the trigger, not the procedure. */
+  when?: string;
+  instructions: string;
+};
+
+/**
+ * Something in the agent's care: a repo, a venue, an account, a contract.
+ *
+ * Deliberately `kind` + `ref` rather than a repo field. A GitHub crew looks
+ * after repositories, a trading crew looks after venues and a content crew
+ * looks after accounts — the same standing question ("what am I responsible
+ * for?") with a different noun, and one shape answers all of them.
+ */
+export type Resource = {
+  /** "repo", "venue", "account", "contract", … — free-form on purpose. */
+  kind: string;
+  /** The identifier as its own world writes it: "owner/repo", a URL, an address. */
+  ref: string;
+  /** What is special about this one. The part a generic list cannot carry. */
+  note?: string;
+};
+
+/**
+ * One layer of standing direction, with an opaque provenance label.
+ *
+ * A layer is the AGENTS.md of one scope: prose guidelines, the resources that
+ * scope looks after, and the skills it knows. All three are optional, so a
+ * plain-text layer written before this existed is still a valid layer — it is
+ * simply one with only `text`.
+ */
 export type BriefLayer = {
   /**
    * Where this layer came from, for display and audit. Never interpreted —
    * "org", "crew:Trading" and "agent" are all equally opaque here.
    */
   label: string;
-  text: string;
+  /** House guidelines for this scope: the prose an AGENTS.md would carry. */
+  text?: string;
+  /** What this scope is responsible for. */
+  resources?: Resource[];
+  /** Named procedures this scope knows, each with its own trigger. */
+  skills?: Skill[];
 };
 
 export type AgentBrief = {
@@ -56,8 +99,14 @@ export type AgentBrief = {
   updatedAt: string;
 };
 
-/** Ceiling on a stored brief. A system prompt is not a document store. */
-export const BRIEF_MAX_CHARS = 4_000;
+/**
+ * Ceiling on a stored brief, measured on the *rendered* prompt.
+ *
+ * Measuring the raw fields would let twenty short skills past a limit that the
+ * rendered form blows through — the number that matters is what actually
+ * reaches the model's context, not what was typed.
+ */
+export const BRIEF_MAX_CHARS = 8_000;
 
 export class BriefTooLongError extends Error {
   constructor(readonly chars: number) {
@@ -66,16 +115,87 @@ export class BriefTooLongError extends Error {
   }
 }
 
+function trimmed(value: string | undefined): string {
+  return (value ?? "").trim();
+}
+
+/** True when a layer carries nothing a model could act on. */
+export function isEmptyLayer(layer: BriefLayer): boolean {
+  return (
+    !trimmed(layer.text) &&
+    (layer.resources ?? []).every((r) => !trimmed(r.ref)) &&
+    (layer.skills ?? []).every((s) => !trimmed(s.name) || !trimmed(s.instructions))
+  );
+}
+
+/**
+ * Render one layer as the section a person would have written by hand.
+ *
+ * Guidelines lead, then what the scope is responsible for, then what it knows
+ * how to do — responsibilities before procedures, because a procedure is only
+ * meaningful once its subject is established.
+ */
+export function renderLayer(layer: BriefLayer): string {
+  const parts: string[] = [];
+  const guidelines = trimmed(layer.text);
+  if (guidelines) parts.push(guidelines);
+
+  const resources = (layer.resources ?? []).filter((r) => trimmed(r.ref));
+  if (resources.length > 0) {
+    const lines = resources.map((r) => {
+      const kind = trimmed(r.kind) || "resource";
+      const note = trimmed(r.note);
+      return `- ${kind} ${trimmed(r.ref)}${note ? ` — ${note}` : ""}`;
+    });
+    parts.push(`In your care:\n${lines.join("\n")}`);
+  }
+
+  const skills = (layer.skills ?? []).filter(
+    (s) => trimmed(s.name) && trimmed(s.instructions),
+  );
+  if (skills.length > 0) {
+    const blocks = skills.map((s) => {
+      const when = trimmed(s.when);
+      // The trigger is rendered on its own line above the body so the model
+      // can scan for the applicable skill without reading every procedure.
+      return `- ${trimmed(s.name)}${when ? `\n  Use when: ${when}` : ""}\n  ${trimmed(
+        s.instructions,
+      ).replace(/\n/g, "\n  ")}`;
+    });
+    parts.push(`Skills:\n${blocks.join("\n")}`);
+  }
+
+  return parts.join("\n\n");
+}
+
 /** Drop empty layers and trim; returns [] when nothing survives. */
 export function normalizeLayers(layers: readonly BriefLayer[]): BriefLayer[] {
   const out: BriefLayer[] = [];
   for (const layer of layers) {
-    const text = layer.text.trim();
-    if (!text) continue;
-    out.push({ label: layer.label.trim() || "unlabelled", text });
+    if (isEmptyLayer(layer)) continue;
+    const resources = (layer.resources ?? [])
+      .filter((r) => trimmed(r.ref))
+      .map((r) => ({
+        kind: trimmed(r.kind) || "resource",
+        ref: trimmed(r.ref),
+        ...(trimmed(r.note) ? { note: trimmed(r.note) } : {}),
+      }));
+    const skills = (layer.skills ?? [])
+      .filter((s) => trimmed(s.name) && trimmed(s.instructions))
+      .map((s) => ({
+        name: trimmed(s.name),
+        ...(trimmed(s.when) ? { when: trimmed(s.when) } : {}),
+        instructions: trimmed(s.instructions),
+      }));
+    out.push({
+      label: trimmed(layer.label) || "unlabelled",
+      ...(trimmed(layer.text) ? { text: trimmed(layer.text) } : {}),
+      ...(resources.length > 0 ? { resources } : {}),
+      ...(skills.length > 0 ? { skills } : {}),
+    });
   }
-  const total = out.reduce((sum, l) => sum + l.text.length, 0);
-  if (total > BRIEF_MAX_CHARS) throw new BriefTooLongError(total);
+  const rendered = out.map(renderLayer).join("\n\n").length;
+  if (rendered > BRIEF_MAX_CHARS) throw new BriefTooLongError(rendered);
   return out;
 }
 
@@ -92,24 +212,105 @@ export function composeSystemPrompt(
   layers: readonly BriefLayer[] = [],
 ): string {
   const identity = `You are agent ${agent} in a LaCrew organization.`;
-  const applied = layers.map((l) => l.text.trim()).filter(Boolean);
+  const applied = layers.map(renderLayer).filter(Boolean);
   return applied.length === 0 ? identity : `${identity}\n\n${applied.join("\n\n")}`;
 }
 
+/** One agent's durable standing state, as the store round-trips it. */
+export type AgentControlRecord = {
+  agent: string;
+  paused: boolean;
+  pausedAt?: string;
+  pausedReason?: string;
+  layers: BriefLayer[];
+  updatedAt: string;
+};
+
 /**
- * Standing per-agent controls, held for the life of the process.
+ * Persistence for standing controls. Implemented by `RuntimeStore`, which is
+ * Postgres when `DATABASE_URL` is set and a memory map otherwise.
+ */
+export interface AgentControlStore {
+  loadAgentControls(): Promise<AgentControlRecord[]>;
+  saveAgentControl(record: AgentControlRecord): Promise<void>;
+}
+
+/**
+ * Standing per-agent controls: the pause gate and the directive.
  *
- * Deliberately in-memory, like `sessionScopePolicy`: this is orchestration
- * state, and the authoritative copy belongs to whoever operates the deployment
- * (the hosted control plane keeps its own per tenant, and pushes it in). A
- * restart therefore resumes every agent, which is the safe direction to fail —
- * an operator who lost a pause will see the agent working and can pause it
- * again, whereas a pause that outlived the operator's intent is a silent
- * outage nobody can find.
+ * These outlive the process. An earlier version held them in memory only, on
+ * the argument that a restart resuming every agent fails in the safe
+ * direction — which is true of a pause and badly wrong for a directive: an
+ * agent silently reverting to no guidelines, no resources and no skills goes
+ * on working, and does the wrong thing competently. So both persist through
+ * `AgentControlStore`, and a restart restores exactly what an operator left.
+ *
+ * Writes go to memory first and the store after, so a store that is down
+ * degrades to the old in-memory behaviour rather than refusing the pause an
+ * operator is trying to apply during an incident.
  */
 export class AgentControls {
   private readonly paused = new Map<string, { at: string; reason?: string }>();
   private readonly briefs = new Map<string, AgentBrief>();
+  private store?: AgentControlStore;
+  /** Surfaced so a caller can report "loaded from store" vs "nothing was stored". */
+  hydrated = false;
+
+  constructor(store?: AgentControlStore) {
+    this.store = store;
+  }
+
+  /**
+   * Load stored controls into memory. Idempotent, and never throws: a store
+   * that cannot be read must not stop the orchestrator from booting, so it
+   * boots with nothing standing and says so through `hydrated`.
+   */
+  async hydrate(store = this.store): Promise<{ ok: boolean; loaded: number }> {
+    if (!store) return { ok: false, loaded: 0 };
+    this.store = store;
+    try {
+      const records = await store.loadAgentControls();
+      for (const record of records) {
+        const key = this.key(record.agent);
+        if (record.paused && record.pausedAt) {
+          this.paused.set(
+            key,
+            record.pausedReason ? { at: record.pausedAt, reason: record.pausedReason } : { at: record.pausedAt },
+          );
+        }
+        if (record.layers.length > 0) {
+          this.briefs.set(key, {
+            agent: key,
+            layers: record.layers,
+            updatedAt: record.updatedAt,
+          });
+        }
+      }
+      this.hydrated = true;
+      return { ok: true, loaded: records.length };
+    } catch {
+      return { ok: false, loaded: 0 };
+    }
+  }
+
+  /** Fire-and-forget write-through; the store swallows its own errors. */
+  private persist(agent: string, at: string): void {
+    if (!this.store) return;
+    const key = this.key(agent);
+    const paused = this.paused.get(key);
+    void this.store
+      .saveAgentControl({
+        agent: key,
+        paused: Boolean(paused),
+        ...(paused ? { pausedAt: paused.at } : {}),
+        ...(paused?.reason ? { pausedReason: paused.reason } : {}),
+        layers: this.briefs.get(key)?.layers ?? [],
+        updatedAt: at,
+      })
+      .catch(() => {
+        /* a store blip must not turn a successful pause into a failure */
+      });
+  }
 
   private key(agent: string): string {
     return agent.toLowerCase();
@@ -128,27 +329,41 @@ export class AgentControls {
     const key = this.key(agent);
     if (this.paused.has(key)) return false;
     this.paused.set(key, reason ? { at, reason } : { at });
+    this.persist(key, at);
     return true;
   }
 
-  resume(agent: string): boolean {
-    return this.paused.delete(this.key(agent));
+  resume(agent: string, at = new Date().toISOString()): boolean {
+    const key = this.key(agent);
+    const changed = this.paused.delete(key);
+    // Persisted even on a no-op resume: the stored row is the source of truth
+    // a restart reads, and leaving a stale paused row there would re-pause an
+    // agent the operator had already let go.
+    this.persist(key, at);
+    return changed;
   }
 
   listPaused(): Array<{ agent: string; at: string; reason?: string }> {
     return [...this.paused.entries()].map(([agent, detail]) => ({ agent, ...detail }));
   }
 
-  /** Replaces the agent's layers wholesale; empty clears the brief entirely. */
+  /**
+   * Replaces the agent's layers wholesale; empty clears the directive entirely.
+   *
+   * Normalization runs before anything is stored, so an over-long directive
+   * throws without having half-written itself.
+   */
   setBrief(agent: string, layers: readonly BriefLayer[], at: string): AgentBrief | null {
     const key = this.key(agent);
     const normalized = normalizeLayers(layers);
     if (normalized.length === 0) {
       this.briefs.delete(key);
+      this.persist(key, at);
       return null;
     }
     const brief: AgentBrief = { agent: key, layers: normalized, updatedAt: at };
     this.briefs.set(key, brief);
+    this.persist(key, at);
     return brief;
   }
 
