@@ -1,7 +1,12 @@
 /** Query helpers for runtime session/intent records (keeps Drizzle inside @lacrew/db). */
 
 import { and, desc, eq } from "drizzle-orm";
-import { runtimeAgentControls, runtimeIntents, runtimeSessions } from "./schema/runtime.js";
+import {
+  runtimeAgentControls,
+  runtimeIntents,
+  runtimeMessages,
+  runtimeSessions,
+} from "./schema/runtime.js";
 import type { DbHandle } from "./client.js";
 
 export interface SessionRow {
@@ -202,5 +207,65 @@ export async function allAgentControlRows(handle: DbHandle): Promise<AgentContro
     pausedReason: row.pausedReason ?? undefined,
     layers: Array.isArray(row.layers) ? row.layers : [],
     updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+/** One conversation message. `refs` and `options` stay opaque here. */
+export interface MessageRow {
+  id: string;
+  threadId: string;
+  at: string;
+  author: string;
+  authorKind: string;
+  kind: string;
+  body: string;
+  options?: string[];
+  replyTo?: string;
+  recipient?: string;
+  refs?: unknown[];
+}
+
+/** Insert-only: a message is a statement someone made, and editing one would rewrite the record. */
+export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promise<void> {
+  await handle.db
+    .insert(runtimeMessages)
+    .values({
+      id: row.id,
+      threadId: row.threadId,
+      at: new Date(row.at),
+      author: row.author,
+      authorKind: row.authorKind,
+      kind: row.kind,
+      body: row.body,
+      options: row.options ?? null,
+      replyTo: row.replyTo ?? null,
+      recipient: row.recipient ?? null,
+      refs: row.refs ?? null,
+    })
+    .onConflictDoNothing();
+}
+
+/** Most recent messages, returned oldest → newest so a reader follows them forward. */
+export async function recentMessageRows(
+  handle: DbHandle,
+  limit: number,
+): Promise<MessageRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(runtimeMessages)
+    .orderBy(desc(runtimeMessages.at), desc(runtimeMessages.id))
+    .limit(limit);
+  return rows.reverse().map((row) => ({
+    id: row.id,
+    threadId: row.threadId,
+    at: row.at.toISOString(),
+    author: row.author,
+    authorKind: row.authorKind,
+    kind: row.kind,
+    body: row.body,
+    options: Array.isArray(row.options) ? row.options : undefined,
+    replyTo: row.replyTo ?? undefined,
+    recipient: row.recipient ?? undefined,
+    refs: Array.isArray(row.refs) ? row.refs : undefined,
   }));
 }

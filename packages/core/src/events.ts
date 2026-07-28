@@ -76,7 +76,17 @@ export type ProtocolEventType =
    * text. The trail is a memory-bounded ring and a directive runs to thousands
    * of characters; the text itself is served, in full, by /agents/controls.
    */
-  | "AgentDirectiveChanged";
+  | "AgentDirectiveChanged"
+  /**
+   * Someone posted to the crew's conversation (F1.7).
+   *
+   * Records that a claim was made and by whom — never that the claim is true.
+   * A message asserting a spend is not a spend; the spend has its own rows, and
+   * conflating them would put an agent's assertion in the record of settled
+   * facts. The body is deliberately absent: the trail is a bounded ring, and
+   * the message is served in full from the conversation endpoints.
+   */
+  | "MessagePosted";
 
 export interface ProtocolEvent {
   type: ProtocolEventType;

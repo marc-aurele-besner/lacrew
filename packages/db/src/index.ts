@@ -32,9 +32,12 @@ export {
   recentIntentRows,
   upsertAgentControlRow,
   allAgentControlRows,
+  insertMessageRow,
+  recentMessageRows,
   type SessionRow,
   type IntentRow,
   type AgentControlRow,
+  type MessageRow,
 } from "./runtime.js";
 export { runDbMigrations, type MigrateResult } from "./migrate.js";
 export * from "./schema/index.js";

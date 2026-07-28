@@ -93,3 +93,33 @@ export const runtimeAgentControls = pgTable("orchestrator_agent_controls", {
   layers: jsonb("layers").notNull().default([]).$type<unknown[]>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Crew conversation (F1.7): the third channel, beside intents and proposals.
+ *
+ * Deliberately its own table rather than rows in the audit trail. The audit
+ * trail records what the protocol did and is the thing users are asked to
+ * trust; a message is a claim someone made about it. Merging the two would let
+ * an agent's assertion sit in the record of settled facts, which is precisely
+ * the confusion this channel must not create.
+ */
+export const runtimeMessages = pgTable(
+  "orchestrator_messages",
+  {
+    id: text("id").primaryKey(),
+    /** `crew:<id>`, `agent:<address>`, or `org`. */
+    threadId: text("thread_id").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    author: text("author").notNull(),
+    /** "agent" | "human" — who is speaking, which the UI must never guess. */
+    authorKind: text("author_kind").notNull(),
+    kind: text("kind").notNull(),
+    body: text("body").notNull(),
+    options: jsonb("options").$type<string[]>(),
+    replyTo: text("reply_to"),
+    recipient: text("recipient"),
+    /** Intents, proposals, txs or flow runs this message claims to be about. */
+    refs: jsonb("refs").$type<unknown[]>(),
+  },
+  (table) => [index("messages_thread_idx").on(table.threadId, table.at)],
+);
