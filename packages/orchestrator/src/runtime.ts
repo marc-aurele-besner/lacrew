@@ -112,6 +112,20 @@ const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 
 export type RuntimeMode = "mock" | "onchain";
 
+/** The shape of a directive, for the audit trail — counts and labels, never text. */
+function summarizeBrief(brief: AgentBrief | null): {
+  labels: string[];
+  resources: number;
+  skills: number;
+} {
+  const layers = brief?.layers ?? [];
+  return {
+    labels: layers.map((l) => l.label),
+    resources: layers.reduce((n, l) => n + (l.resources?.length ?? 0), 0),
+    skills: layers.reduce((n, l) => n + (l.skills?.length ?? 0), 0),
+  };
+}
+
 /**
  * One module in a node's desired stack, as `proposeNodePolicyStack` takes it.
  * Whitelist / spend-cap carry no params — they reuse the org's shared modules,
@@ -368,6 +382,8 @@ export class CrewRuntime {
   private readonly agentControls: AgentControls;
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
+  /** Distinguishes same-millisecond local events; see pushAudit. */
+  private auditSeq = 0;
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
   private readonly auditStore: AuditStore;
   private readonly runtimeStore: RuntimeStore;
@@ -1133,7 +1149,29 @@ export class CrewRuntime {
 
   /** Replace an agent's standing brief. Empty layers clear it. */
   setAgentBrief(agent: `0x${string}`, layers: readonly BriefLayer[]): AgentBrief | null {
-    return this.agentControls.setBrief(agent, layers, new Date().toISOString());
+    const at = new Date().toISOString();
+    const before = this.agentControls.briefFor(agent);
+    const brief = this.agentControls.setBrief(agent, layers, at);
+
+    // Recorded after the write, so a rejected directive (over the ceiling)
+    // throws without leaving an event claiming it landed.
+    const summary = summarizeBrief(brief);
+    this.pushAudit({
+      type: "AgentDirectiveChanged",
+      at,
+      payload: {
+        agent,
+        cleared: brief === null,
+        // The shape, never the instruction text: the trail is a bounded ring
+        // and a directive runs to thousands of characters. /agents/controls
+        // serves the text in full.
+        layers: summary.labels,
+        resources: summary.resources,
+        skills: summary.skills,
+        previousLayers: summarizeBrief(before).labels,
+      },
+    });
+    return brief;
   }
 
   agentBrief(agent: `0x${string}`): AgentBrief | null {
@@ -1377,8 +1415,10 @@ export class CrewRuntime {
     ]);
     const seen = new Set<string>();
     const out: ProtocolEvent[] = [];
+    // `seq` is present only on events this process raised, and travels with
+    // them into the store — so a persisted copy still matches its original.
     const keyOf = (e: ProtocolEvent) =>
-      `${e.type}:${e.payload.intentId ?? ""}:${e.payload.txHash ?? ""}:${e.payload.value ?? ""}:${e.at}`;
+      `${e.type}:${e.payload.intentId ?? ""}:${e.payload.txHash ?? ""}:${e.payload.value ?? ""}:${e.payload.seq ?? ""}:${e.at}`;
 
     const take = (events: ProtocolEvent[]) => {
       for (const e of events) {
@@ -2568,6 +2608,24 @@ export class CrewRuntime {
   }
 
   private pushAudit(event: ProtocolEvent): void {
+    /*
+      Stamp a monotonic sequence before the event goes anywhere.
+
+      `audit()` dedupes on type + intent/tx/value + timestamp, which is right
+      for chain events — the same log arriving from the local ring, the store
+      and the indexer must collapse to one row. Off-chain events carry no
+      intent id, tx hash or value, so that key reduces to type + timestamp, and
+      two of the same kind raised in the same millisecond collapsed into one:
+      the trail asserted a single change where two had happened. Two directive
+      edits, two flow runs, two tool calls.
+
+      The sequence distinguishes them without weakening the chain-event case,
+      because it rides in the payload and travels with the event into the
+      store — so a persisted copy of the same event still matches its local
+      original and still dedupes.
+    */
+    this.auditSeq += 1;
+    event = { ...event, payload: { ...event.payload, seq: this.auditSeq } };
     this.localAudit.push(event);
     if (this.localAudit.length > AUDIT_RING_MAX) {
       this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);
