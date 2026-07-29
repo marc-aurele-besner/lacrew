@@ -2325,6 +2325,44 @@ export async function readAccountBalances(
   return out;
 }
 
+/**
+ * Read an ERC-20's own `symbol()` and `decimals()`.
+ *
+ * The safety net for hand-entered tokens. A wrong `decimals` does not fail
+ * loudly — it renders a balance with the point in the wrong place, off by
+ * powers of ten — and a wrong address reads zero rather than throwing. Asking
+ * the contract turns both into an answer the operator can see before saving.
+ *
+ * Null means the address did not answer as an ERC-20: not a contract, or not
+ * this chain. That is a refusal to guess, not a failure to try.
+ */
+export async function readTokenMetadata(
+  publicClient: PublicClient,
+  address: `0x${string}`,
+): Promise<{ symbol: string; decimals: number } | null> {
+  try {
+    const [symbol, decimals] = await Promise.all([
+      publicClient.readContract({
+        address,
+        abi: erc20Abi,
+        functionName: "symbol",
+      }) as Promise<string>,
+      publicClient.readContract({
+        address,
+        abi: erc20Abi,
+        functionName: "decimals",
+      }) as Promise<number>,
+    ]);
+    const places = Number(decimals);
+    if (!symbol?.trim() || !Number.isInteger(places) || places < 0 || places > 36) {
+      return null;
+    }
+    return { symbol: symbol.trim(), decimals: places };
+  } catch {
+    return null;
+  }
+}
+
 export function createOnchainClient(options: OnchainClientOptions): OnchainLacrewClient {
   return new OnchainLacrewClient(options);
 }

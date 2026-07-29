@@ -284,18 +284,52 @@ export const KNOWN_STABLECOINS: Record<
   ],
 };
 
+/**
+ * A public endpoint per chain, used when the operator has configured none.
+ *
+ * Chain-operator endpoints are preferred over third-party aggregators: they are
+ * the most verifiable and the least likely to quietly disappear. Anvil has none
+ * on purpose — it is local, and defaulting a hosted orchestrator to
+ * `127.0.0.1` would have it dial itself and report someone else's chain.
+ *
+ * These are shared and rate-limited. A throttled read surfaces as a chain that
+ * could not be read, which is the truthful outcome, but it is also why the
+ * surface says *which* endpoint answered: "sometimes unread" is confusing until
+ * you know you are on a shared endpoint.
+ *
+ * They are also not private. Reading balances tells whoever runs the endpoint
+ * which addresses an operator cares about; configuring your own avoids that.
+ */
+const PUBLIC_RPC_URLS: Record<number, string> = {
+  [MAINNET_CHAIN_ID]: "https://ethereum-rpc.publicnode.com",
+  [SEPOLIA_CHAIN_ID]: "https://ethereum-sepolia-rpc.publicnode.com",
+  [BASE_CHAIN_ID]: "https://mainnet.base.org",
+  [BASE_SEPOLIA_CHAIN_ID]: "https://sepolia.base.org",
+  [ARBITRUM_CHAIN_ID]: "https://arb1.arbitrum.io/rpc",
+  [OPTIMISM_CHAIN_ID]: "https://mainnet.optimism.io",
+  [POLYGON_CHAIN_ID]: "https://polygon-rpc.com",
+};
+
+/** The public fallback endpoint for a chain, or null when there is none. */
+export function publicRpcUrl(chainId: number): string | null {
+  return PUBLIC_RPC_URLS[chainId] ?? null;
+}
+
 /** Every chain this package can name, for a settings pick-list. */
 export function knownChains(): Array<{
   chainId: number;
   name: string;
   nativeSymbol: string;
   stablecoins: ReadonlyArray<{ symbol: string; address: `0x${string}`; decimals: number }>;
+  /** Fallback endpoint used when the operator configures none; null if there is none. */
+  publicRpc: string | null;
 }> {
   return Object.entries(CHAIN_METADATA).map(([id, meta]) => ({
     chainId: Number(id),
     name: meta.name,
     nativeSymbol: meta.nativeSymbol,
     stablecoins: KNOWN_STABLECOINS[Number(id)] ?? [],
+    publicRpc: publicRpcUrl(Number(id)),
   }));
 }
 

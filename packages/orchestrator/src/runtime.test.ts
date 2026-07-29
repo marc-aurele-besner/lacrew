@@ -6,6 +6,7 @@ import {
   ADDRESS_ENV_VARS,
   ANVIL_CHAIN_ID,
   MOCK_WORKER,
+  publicRpcUrl,
   type AgentWallet,
   type ChainAddresses,
   type PolicyModuleInfo,
@@ -375,15 +376,24 @@ describe("watched chains", () => {
     });
   }
 
-  it("reports a watched chain with no endpoint as unread, never as empty wallets", async () => {
+  it("reports a chain with no endpoint and no public default as unread", async () => {
     // The property the whole feature turns on. Rendering [] as "these accounts
-    // hold nothing" would put a fabricated zero on a balance screen.
-    const chains = await build([{ chainId: 8453, tokens: [] }]).getAgentWallets();
-    const base = chains.find((c) => c.chainId === 8453)!;
-    assert.equal(base.read, false);
-    assert.equal(base.reason, "no_rpc");
-    assert.deepEqual(base.wallets, []);
-    assert.equal(base.chainName, "Base", "an unread chain is still named");
+    // hold nothing" would put a fabricated zero on a balance screen. Uses a
+    // chain with no public fallback so the test never leaves the machine.
+    const chains = await build([{ chainId: 999_999, tokens: [] }]).getAgentWallets();
+    const orphan = chains.find((c) => c.chainId === 999_999)!;
+    assert.equal(orphan.read, false);
+    assert.equal(orphan.reason, "no_rpc");
+    assert.deepEqual(orphan.wallets, []);
+  });
+
+  it("falls back to the public endpoint and says it did", () => {
+    // Configured wins; public stands in. Which one answered has to be
+    // reported: a shared endpoint throttles, and a chain that reads
+    // intermittently is baffling until you know you are on one.
+    assert.ok(publicRpcUrl(8453), "Base ships a public default");
+    assert.equal(publicRpcUrl(ANVIL_CHAIN_ID), null, "local chain has none");
+    assert.equal(publicRpcUrl(999_999), null);
   });
 
   it("reports an unreachable endpoint as unread, with the reason", async () => {
@@ -398,10 +408,11 @@ describe("watched chains", () => {
     assert.deepEqual(base.wallets, []);
   });
 
-  it("always reports the bound chain as read", async () => {
+  it("always reports the bound chain as read, through its own endpoint", async () => {
     const chains = await build([{ chainId: 999, tokens: [] }]).getAgentWallets();
     const bound = chains.find((c) => c.chainId === ANVIL_CHAIN_ID)!;
     assert.equal(bound.read, true);
+    assert.equal(bound.rpcSource, "configured");
     // An unnameable watched chain still gets a row — watching it is the fact.
     const unknown = chains.find((c) => c.chainId === 999)!;
     assert.equal(unknown.chainName, null);

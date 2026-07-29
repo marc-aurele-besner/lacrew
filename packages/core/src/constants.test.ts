@@ -12,6 +12,7 @@ import {
   SEPOLIA_CHAIN_ID,
   KNOWN_STABLECOINS,
   knownChains,
+  publicRpcUrl,
   PRIMARY_ASSET_SYMBOL,
   primaryAssetStack,
   listAssetStacks,
@@ -225,6 +226,20 @@ describe("known chains and stablecoins", () => {
         seen.add(key);
       }
     }
+  });
+
+  it("offers a public endpoint for every public chain, and none for Anvil", () => {
+    for (const chain of knownChains()) {
+      if (chain.chainId === ANVIL_CHAIN_ID) {
+        // Local. Defaulting a hosted orchestrator to 127.0.0.1 would have it
+        // dial itself and report someone else's chain as this org's.
+        assert.equal(chain.publicRpc, null);
+        continue;
+      }
+      assert.ok(chain.publicRpc, `chain ${chain.chainId} has a fallback`);
+      assert.match(chain.publicRpc!, /^https:\/\//, `${chain.chainId} is https`);
+    }
+    assert.equal(publicRpcUrl(999_999), null);
   });
 
   it("never lists one symbol at two addresses on a chain", () => {

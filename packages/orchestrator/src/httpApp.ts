@@ -937,6 +937,29 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { watchlist: parsed.value.length, mode: runtime.mode });
   });
 
+  /**
+   * An ERC-20's own symbol and decimals, read from the chain.
+   *
+   * The check before an operator saves a hand-entered token. A wrong decimals
+   * renders a balance with the point in the wrong place; a wrong address reads
+   * zero rather than erroring. Neither fails loudly, so the contract is asked
+   * directly and 404 means "this address did not answer as an ERC-20 here" —
+   * a refusal to guess, not a failed request.
+   */
+  app.get("/wallets/token", async (c) => {
+    const chainId = Number(c.req.query("chainId"));
+    const address = c.req.query("address") ?? "";
+    if (!Number.isInteger(chainId) || chainId <= 0) {
+      return jsonBig(c, { error: "invalid_chain_id" }, 400);
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return jsonBig(c, { error: "invalid_address" }, 400);
+    }
+    const found = await runtime.readWatchedToken(chainId, address as `0x${string}`);
+    if (!found) return jsonBig(c, { error: "not_an_erc20_here" }, 404);
+    return jsonBig(c, { ...found, chainId, address, mode: runtime.mode });
+  });
+
   app.get("/assets", async (c) => {
     // The asset stacks this org can budget in (primary first). Drives the
     // cloud's grant/cap asset picker; [] in mock mode — the list is read from

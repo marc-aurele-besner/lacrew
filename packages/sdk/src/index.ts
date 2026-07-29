@@ -10,6 +10,7 @@
 export {
   createOnchainClient,
   readAccountBalances,
+  readTokenMetadata,
   OnchainLacrewClient,
   type OnchainClientOptions,
   type OnchainResolveResult,
