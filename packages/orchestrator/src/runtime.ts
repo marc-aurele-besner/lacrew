@@ -9,6 +9,7 @@
 
 import {
   createOnchainClient,
+  readAccountBalances,
   simulateIntentAction,
   type OnchainLacrewClient,
   type ResolveResult,
@@ -29,8 +30,11 @@ import {
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
+  type AgentWallet,
   type AssetStack,
   type ChainWallets,
+  type NodeKind,
+  type WatchedChain,
   type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceSeat,
@@ -45,7 +49,7 @@ import {
   narrowScopesForEscalation,
   policyForcesEscalation,
 } from "@lacrew/core";
-import { http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
+import { createPublicClient, http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Verdict } from "@lacrew/flows";
 import type {
@@ -70,6 +74,7 @@ import { worstVerdict } from "./flowScope.js";
 import { decideAutoExecute } from "./governanceSweep.js";
 import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
 import { planNodeStack, stackUnchanged } from "./policyPlan.js";
+import { watchlistFromEnv } from "./walletWatchlist.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
   createMemoryRuntimeStore,
@@ -168,6 +173,8 @@ export interface CrewRuntimeOptions {
   managerAgent?: `0x${string}`;
   mode?: RuntimeMode;
   chainId?: number;
+  /** Chains/tokens to read agent balances on; empty = the bound chain only. */
+  watchlist?: WatchedChain[];
   /** Persistence for the audit ring; defaults to memory no-op. */
   auditStore?: AuditStore;
   /** Persistence for session/intent records; defaults to bounded memory. */
@@ -359,6 +366,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       managerAgent: manager,
       auditStore: createAuditStoreFromEnv(),
       runtimeStore: createRuntimeStoreFromEnv(),
+      watchlist: watchlistFromEnv(),
       ...(delegations ? { delegations } : {}),
     }),
   };
@@ -371,6 +379,8 @@ export class CrewRuntime {
   private readonly managerAgent: `0x${string}`;
   readonly mode: RuntimeMode;
   readonly chainId: number | null;
+  /** Chains and tokens agent balances are read on, beyond the address book. */
+  private watchlist: WatchedChain[];
   /**
    * Sessions keyed by agent *and* the limits they were issued under. A flow runs
    * as its invoking principal, so a single key can't be shared across agents —
@@ -419,6 +429,7 @@ export class CrewRuntime {
       options.spendTarget ?? "0x4444444444444444444444444444444444444444";
     this.managerAgent = options.managerAgent ?? MOCK_MANAGER;
     this.chainId = options.chainId ?? null;
+    this.watchlist = options.watchlist ?? [];
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
     this.agentControls = new AgentControls(this.runtimeStore);
@@ -2382,15 +2393,128 @@ export class CrewRuntime {
    */
   async getAgentWallets(): Promise<ChainWallets[]> {
     if (!isOnchainClient(this.client) || this.chainId == null) return [];
-    const meta = chainMetadata(this.chainId);
-    return [
+    const client = this.client;
+    const bound = this.chainId;
+    const meta = chainMetadata(bound);
+
+    // Watched tokens for the chain the runtime is already on ride the existing
+    // read: it has the org tree and an address book, so they are simply extra
+    // `balanceOf` calls rather than a second connection.
+    const here = this.watchlist.find((w) => w.chainId === bound);
+    const out: ChainWallets[] = [
       {
-        chainId: this.chainId,
+        chainId: bound,
         chainName: meta.name,
         nativeSymbol: meta.nativeSymbol,
-        wallets: await this.client.getAgentBalances(),
+        wallets: await client.getAgentBalances(here?.tokens ?? []),
+        read: true,
       },
     ];
+
+    // Every other watched chain needs its own connection. The accounts come
+    // from the bound chain's registry — an org's seats are addresses, and an
+    // address exists on every EVM chain whether or not LaCrew is deployed
+    // there, which is exactly why no address book is required here.
+    const foreign = this.watchlist.filter((w) => w.chainId !== bound);
+    if (foreign.length === 0) return out;
+
+    const accounts = (await client.getOrgTree()).map((n) => ({
+      account: n.account,
+      kind: n.kind,
+      active: n.active,
+    }));
+    for (const watch of foreign) {
+      out.push(await this.readWatchedChain(watch, accounts));
+    }
+    return out;
+  }
+
+  /**
+   * One watched chain, read through a connection of its own.
+   *
+   * Every failure path returns `read: false` with a reason rather than an empty
+   * wallet list, because on a balance screen those are opposite claims: "we
+   * could not look" must never render as "these accounts hold nothing".
+   */
+  private async readWatchedChain(
+    watch: WatchedChain,
+    accounts: Array<{ account: `0x${string}`; kind: NodeKind; active: boolean }>,
+  ): Promise<ChainWallets> {
+    const meta = chainMetadata(watch.chainId);
+    const base = {
+      chainId: watch.chainId,
+      chainName: meta.name,
+      nativeSymbol: meta.nativeSymbol,
+      wallets: [] as AgentWallet[],
+    };
+
+    if (!watch.rpcUrl?.trim()) {
+      return {
+        ...base,
+        read: false,
+        reason: "no_rpc",
+        detail: `No RPC endpoint configured for chain ${watch.chainId}.`,
+      };
+    }
+
+    const publicClient = createPublicClient({ transport: http(watch.rpcUrl) });
+    let reported: number;
+    try {
+      reported = await publicClient.getChainId();
+    } catch (err) {
+      return {
+        ...base,
+        read: false,
+        reason: "unreachable",
+        detail: err instanceof Error ? err.message.split("\n")[0]! : "RPC unreachable",
+      };
+    }
+
+    // The same check the runtime makes at boot, for the same reason: a wrong
+    // chain is worse than an unreachable one. The reads would all succeed and
+    // every balance would describe somewhere else.
+    if (reported !== watch.chainId) {
+      return {
+        ...base,
+        read: false,
+        reason: "chain_id_mismatch",
+        detail: `Endpoint reports chain ${reported}, not ${watch.chainId}.`,
+      };
+    }
+
+    try {
+      return {
+        ...base,
+        wallets: await readAccountBalances(
+          publicClient,
+          accounts,
+          watch.tokens,
+          meta.nativeSymbol,
+        ),
+        read: true,
+      };
+    } catch (err) {
+      return {
+        ...base,
+        read: false,
+        reason: "unreachable",
+        detail: err instanceof Error ? err.message.split("\n")[0]! : "Balance read failed",
+      };
+    }
+  }
+
+  /** The chains and tokens agent balances are read on. */
+  getWatchlist(): WatchedChain[] {
+    return this.watchlist.map((w) => ({ ...w, tokens: [...w.tokens] }));
+  }
+
+  /**
+   * Replace the watchlist. The cloud pushes this on a settings change; a
+   * self-hoster sets `WALLET_WATCHLIST` instead. Held in memory on purpose —
+   * it is configuration the operator owns, not runtime state to reconcile.
+   */
+  setWatchlist(next: WatchedChain[]): void {
+    this.watchlist = next.map((w) => ({ ...w, tokens: [...w.tokens] }));
   }
 
   /**

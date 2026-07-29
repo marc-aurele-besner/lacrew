@@ -8,7 +8,10 @@ import {
   ANVIL_CHAIN_ID,
   BASE_CHAIN_ID,
   BASE_SEPOLIA_CHAIN_ID,
+  POLYGON_CHAIN_ID,
   SEPOLIA_CHAIN_ID,
+  KNOWN_STABLECOINS,
+  knownChains,
   PRIMARY_ASSET_SYMBOL,
   primaryAssetStack,
   listAssetStacks,
@@ -180,10 +183,56 @@ describe("chainMetadata", () => {
     assert.equal(chainMetadata(BASE_CHAIN_ID).name, "Base");
   });
 
-  it("reports nulls for an unknown chain rather than assuming ether", () => {
-    // Polygon settles in POL. Defaulting the symbol would render a balance as
-    // "0.42 ETH" on a chain where that unit does not exist — a wrong number
-    // with a confident label, which is worse than an unnamed one.
-    assert.deepEqual(chainMetadata(137), { name: null, nativeSymbol: null });
+  it("names a chain whose coin is not ether", () => {
+    // The case that proves the coin symbol is per-chain data rather than a
+    // default: rendering a POL balance as "0.42 ETH" would be a wrong number
+    // wearing a confident label.
+    assert.deepEqual(chainMetadata(POLYGON_CHAIN_ID), {
+      name: "Polygon",
+      nativeSymbol: "POL",
+    });
+  });
+
+  it("reports nulls for a chain nothing names, rather than assuming ether", () => {
+    assert.deepEqual(chainMetadata(999_999), { name: null, nativeSymbol: null });
+  });
+});
+
+describe("known chains and stablecoins", () => {
+  it("offers a catalog with a coin symbol for every chain", () => {
+    const chains = knownChains();
+    assert.ok(chains.length >= 8);
+    for (const chain of chains) {
+      assert.ok(chain.name, `chain ${chain.chainId} is named`);
+      assert.ok(chain.nativeSymbol, `chain ${chain.chainId} names its coin`);
+    }
+  });
+
+  it("carries well-formed, deduplicated token addresses", () => {
+    // A malformed address does not throw at read time — `balanceOf` on a
+    // non-contract reads empty — so a wrong entry here surfaces as a zero the
+    // operator trusts. Shape is checked where it can still be caught.
+    for (const [chainId, tokens] of Object.entries(KNOWN_STABLECOINS)) {
+      const seen = new Set<string>();
+      for (const token of tokens) {
+        assert.match(token.address, /^0x[0-9a-fA-F]{40}$/, `${chainId} ${token.symbol}`);
+        assert.ok(
+          Number.isInteger(token.decimals) && token.decimals >= 0 && token.decimals <= 36,
+          `${chainId} ${token.symbol} decimals`,
+        );
+        const key = token.address.toLowerCase();
+        assert.ok(!seen.has(key), `${chainId} lists ${token.address} twice`);
+        seen.add(key);
+      }
+    }
+  });
+
+  it("never lists one symbol at two addresses on a chain", () => {
+    // Bridged variants share a ticker with the native asset; carrying both
+    // under "USDC" is how a balance gets attributed to the wrong token.
+    for (const [chainId, tokens] of Object.entries(KNOWN_STABLECOINS)) {
+      const symbols = tokens.map((t) => t.symbol);
+      assert.equal(new Set(symbols).size, symbols.length, `chain ${chainId} repeats a symbol`);
+    }
   });
 });

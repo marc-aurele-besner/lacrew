@@ -78,6 +78,34 @@ Every read answers from the chain (or the persisted trail) — mock mode serves
 | `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`) |
 | `GET /treasury/balances` | Real per-asset holdings from each Treasury |
 | `GET /agents/balances` | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance *in* the account, not what the Treasury reserved for it |
+| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked |
+
+### Wallet watchlist
+
+`GET /agents/balances` reads the bound chain plus every chain on the watchlist.
+A watched chain needs only an RPC endpoint, the account addresses, and the token
+addresses — **no LaCrew deployment on that chain** — because an org's seats are
+addresses that exist on any EVM chain.
+
+Set `WALLET_WATCHLIST` to a JSON array (the cloud pushes the same shape to
+`POST /wallets/watchlist`):
+
+```bash
+export WALLET_WATCHLIST='[
+  {"chainId":8453,"rpcUrl":"https://base-mainnet.example/v2/KEY","tokens":[
+    {"symbol":"USDC","address":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","decimals":6}
+  ]},
+  {"chainId":42161,"tokens":[]}
+]'
+```
+
+Each chain reports `read: true|false`. A chain with no `rpcUrl`, an unreachable
+endpoint, or one whose `eth_chainId` disagrees with the entry is returned with
+`read: false` and a reason — **never as accounts holding zero**. That
+distinction is the point: a fabricated zero on a balance screen is worse than an
+empty one. `@lacrew/core` ships `knownChains()` and `KNOWN_STABLECOINS` as a
+pick-list so addresses need not be typed by hand; verify any mainnet address
+against its issuer before relying on the figure.
 
 ### Governance write surface
 

@@ -43,6 +43,7 @@ import {
   sessionScopesFromMask,
   type AgentWallet,
   type Allowance,
+  type WatchedToken,
   type EpochGrant,
   type ChainAddresses,
   type TreasuryBalance,
@@ -53,6 +54,7 @@ import {
   type GovernanceSeatRole,
   type GovernanceTier,
   type Intent,
+  type NodeKind,
   type NodePolicyStack,
   type OrgNode,
   type PolicyModuleInfo,
@@ -305,50 +307,33 @@ export class OnchainLacrewClient {
    * same as "not checked". Inactive nodes are kept — a fired agent's account can
    * still hold funds, and that is precisely when someone needs to see it.
    */
-  async getAgentBalances(): Promise<AgentWallet[]> {
+  async getAgentBalances(watched: WatchedToken[] = []): Promise<AgentWallet[]> {
     const tree = await this.getOrgTree();
     const nativeSymbol = chainMetadata(this.chainId).nativeSymbol;
 
-    // Stacks can share a token (different routers, same asset); a wallet row
-    // must not list the same balance twice.
-    const tokens = new Map<string, { symbol: string; token: `0x${string}`; decimals: number }>();
+    // Stacks can share a token (different routers, same asset), and a watched
+    // token can name one the address book already carries; a wallet row must
+    // not list the same balance twice. The address book wins on a collision —
+    // it is the deployment's own statement about what the asset is.
+    const tokens = new Map<string, WatchedToken>();
     for (const stack of listAssetStacks(this.addresses)) {
       if (!stack.token || stack.token === "0x0000000000000000000000000000000000000000") continue;
       const key = stack.token.toLowerCase();
       if (!tokens.has(key)) {
-        tokens.set(key, { symbol: stack.symbol, token: stack.token, decimals: stack.decimals });
+        tokens.set(key, { symbol: stack.symbol, address: stack.token, decimals: stack.decimals });
       }
     }
-    const assets = [...tokens.values()];
-
-    const out: AgentWallet[] = [];
-    for (const node of tree) {
-      const native = await this.publicClient.getBalance({ address: node.account });
-      const balances = await Promise.all(
-        assets.map(
-          (a) =>
-            this.publicClient.readContract({
-              address: a.token,
-              abi: erc20Abi,
-              functionName: "balanceOf",
-              args: [node.account],
-            }) as Promise<bigint>,
-        ),
-      );
-      out.push({
-        account: node.account,
-        kind: node.kind,
-        active: node.active,
-        native: { symbol: nativeSymbol, token: "native", decimals: 18, balance: native },
-        tokens: assets.map((a, i) => ({
-          symbol: a.symbol,
-          token: a.token,
-          decimals: a.decimals,
-          balance: balances[i]!,
-        })),
-      });
+    for (const token of watched) {
+      const key = token.address.toLowerCase();
+      if (!tokens.has(key)) tokens.set(key, token);
     }
-    return out;
+
+    return readAccountBalances(
+      this.publicClient,
+      tree.map((n) => ({ account: n.account, kind: n.kind, active: n.active })),
+      [...tokens.values()],
+      nativeSymbol,
+    );
   }
 
   /**
@@ -2286,6 +2271,58 @@ export class OnchainLacrewClient {
       return null;
     }
   }
+}
+
+/**
+ * Read what a set of accounts holds on whatever chain a public client is
+ * pointed at — the chain coin plus one row per token given.
+ *
+ * Deliberately free of every protocol contract. An org's accounts exist as
+ * addresses on any EVM chain whether or not LaCrew is deployed there, so
+ * answering "what does this agent hold on Base?" needs an RPC, the addresses,
+ * and the token list, and nothing else. That is what lets a watchlist cover
+ * chains the registry has never heard of.
+ *
+ * Balances are read per account in one batch. Zero rows are kept: a token that
+ * was asked for and came back empty is an answer, and dropping it would make it
+ * indistinguishable from a token nobody looked up.
+ */
+export async function readAccountBalances(
+  publicClient: PublicClient,
+  accounts: Array<{ account: `0x${string}`; kind: NodeKind; active: boolean }>,
+  tokens: WatchedToken[],
+  nativeSymbol: string | null,
+): Promise<AgentWallet[]> {
+  const out: AgentWallet[] = [];
+  for (const node of accounts) {
+    const [native, balances] = await Promise.all([
+      publicClient.getBalance({ address: node.account }),
+      Promise.all(
+        tokens.map(
+          (t) =>
+            publicClient.readContract({
+              address: t.address,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [node.account],
+            }) as Promise<bigint>,
+        ),
+      ),
+    ]);
+    out.push({
+      account: node.account,
+      kind: node.kind,
+      active: node.active,
+      native: { symbol: nativeSymbol, token: "native", decimals: 18, balance: native },
+      tokens: tokens.map((t, i) => ({
+        symbol: t.symbol,
+        token: t.address,
+        decimals: t.decimals,
+        balance: balances[i]!,
+      })),
+    });
+  }
+  return out;
 }
 
 export function createOnchainClient(options: OnchainClientOptions): OnchainLacrewClient {

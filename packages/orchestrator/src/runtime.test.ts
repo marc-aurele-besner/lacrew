@@ -9,6 +9,7 @@ import {
   type AgentWallet,
   type ChainAddresses,
   type PolicyModuleInfo,
+  type WatchedChain,
 } from "@lacrew/core";
 import { createOnchainClient } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
@@ -326,12 +327,93 @@ describe("getAgentWallets", () => {
     assert.equal(anvil?.nativeSymbol, "ETH");
     assert.deepEqual(anvil?.wallets, [wallet]);
 
-    // Polygon settles in POL. An unnamed chain reports nulls rather than
-    // stamping "ETH" on a balance denominated in something else.
-    const [unknown] = await build(137).getAgentWallets();
-    assert.equal(unknown?.chainId, 137);
+    // Polygon settles in POL, and the catalog now says so — the case that
+    // proves the coin symbol is per-chain data rather than a default.
+    const [polygon] = await build(137).getAgentWallets();
+    assert.equal(polygon?.chainName, "Polygon");
+    assert.equal(polygon?.nativeSymbol, "POL");
+
+    // A chain nothing names reports nulls rather than stamping "ETH" on a
+    // balance denominated in something else.
+    const [unknown] = await build(999_999).getAgentWallets();
+    assert.equal(unknown?.chainId, 999_999);
     assert.equal(unknown?.chainName, null);
     assert.equal(unknown?.nativeSymbol, null);
+  });
+});
+
+describe("watched chains", () => {
+  const addr = (n: string) => `0x${n.repeat(40)}` as `0x${string}`;
+
+  function build(watchlist: WatchedChain[]) {
+    const addresses: ChainAddresses = {
+      chainId: ANVIL_CHAIN_ID,
+      orgRegistry: addr("1"),
+      treasury: addr("2"),
+      escalationRouter: addr("3"),
+      governanceModule: addr("4"),
+      spendCapPolicy: addr("5"),
+      mockUSDC: addr("6"),
+    };
+    const client = createOnchainClient({
+      transport: http("http://127.0.0.1:1"),
+      chainId: ANVIL_CHAIN_ID,
+      addresses,
+    });
+    client.getAgentBalances = async () => [];
+    client.getOrgTree = async () => [
+      { account: addr("b"), kind: "worker_agent", parent: null, active: true },
+    ];
+    return new CrewRuntime({
+      client,
+      mode: "onchain",
+      chainId: ANVIL_CHAIN_ID,
+      watchlist,
+      workerAgent: addr("b"),
+      managerAgent: addr("c"),
+      spendTarget: addr("d"),
+    });
+  }
+
+  it("reports a watched chain with no endpoint as unread, never as empty wallets", async () => {
+    // The property the whole feature turns on. Rendering [] as "these accounts
+    // hold nothing" would put a fabricated zero on a balance screen.
+    const chains = await build([{ chainId: 8453, tokens: [] }]).getAgentWallets();
+    const base = chains.find((c) => c.chainId === 8453)!;
+    assert.equal(base.read, false);
+    assert.equal(base.reason, "no_rpc");
+    assert.deepEqual(base.wallets, []);
+    assert.equal(base.chainName, "Base", "an unread chain is still named");
+  });
+
+  it("reports an unreachable endpoint as unread, with the reason", async () => {
+    const chains = await build([
+      // Port 1 refuses; nothing is listening and nothing will be.
+      { chainId: 8453, rpcUrl: "http://127.0.0.1:1", tokens: [] },
+    ]).getAgentWallets();
+    const base = chains.find((c) => c.chainId === 8453)!;
+    assert.equal(base.read, false);
+    assert.equal(base.reason, "unreachable");
+    assert.ok(base.detail, "an operator has to be able to fix it");
+    assert.deepEqual(base.wallets, []);
+  });
+
+  it("always reports the bound chain as read", async () => {
+    const chains = await build([{ chainId: 999, tokens: [] }]).getAgentWallets();
+    const bound = chains.find((c) => c.chainId === ANVIL_CHAIN_ID)!;
+    assert.equal(bound.read, true);
+    // An unnameable watched chain still gets a row — watching it is the fact.
+    const unknown = chains.find((c) => c.chainId === 999)!;
+    assert.equal(unknown.chainName, null);
+    assert.equal(unknown.read, false);
+  });
+
+  it("does not open a second connection for the chain it is already on", async () => {
+    // The bound chain's watched tokens ride the existing read; a duplicate
+    // entry would render the chain twice with two different token lists.
+    const chains = await build([{ chainId: ANVIL_CHAIN_ID, tokens: [] }]).getAgentWallets();
+    assert.equal(chains.filter((c) => c.chainId === ANVIL_CHAIN_ID).length, 1);
+    assert.equal(chains.length, 1);
   });
 });
 
