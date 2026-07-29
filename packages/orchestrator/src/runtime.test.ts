@@ -6,6 +6,7 @@ import {
   ADDRESS_ENV_VARS,
   ANVIL_CHAIN_ID,
   MOCK_WORKER,
+  type AgentWallet,
   type ChainAddresses,
   type PolicyModuleInfo,
 } from "@lacrew/core";
@@ -267,6 +268,70 @@ describe("listAssets", () => {
     assert.equal(primary.token, addresses.mockUSDC);
     assert.equal(extra.symbol, "WETH");
     assert.equal(extra.decimals, 18);
+  });
+});
+
+describe("getAgentWallets", () => {
+  it("returns no chain entry in mock mode rather than empty wallets on a chain", () => {
+    // "No chain answered" and "the accounts hold nothing" are different
+    // answers. The second is a chain entry whose wallets read zero; reporting
+    // it here would tell an operator their agents are broke when in fact
+    // nothing was read.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    return runtime.getAgentWallets().then((chains) => assert.deepEqual(chains, []));
+  });
+
+  it("labels the chain it read from, and reports nulls for an unknown one", async () => {
+    const addr = (n: string) => `0x${n.repeat(40)}` as `0x${string}`;
+    const wallet: AgentWallet = {
+      account: addr("b"),
+      kind: "worker_agent",
+      active: true,
+      native: { symbol: "ETH", token: "native", decimals: 18, balance: 5n * 10n ** 17n },
+      tokens: [{ symbol: "USDC", token: addr("6"), decimals: 6, balance: 25_000_000n }],
+    };
+
+    const build = (chainId: number) => {
+      const addresses: ChainAddresses = {
+        chainId,
+        orgRegistry: addr("1"),
+        treasury: addr("2"),
+        escalationRouter: addr("3"),
+        governanceModule: addr("4"),
+        spendCapPolicy: addr("5"),
+        mockUSDC: addr("6"),
+      };
+      const client = createOnchainClient({
+        // Never dialed: the balance read is stubbed so this exercises the
+        // chain envelope the runtime wraps around it.
+        transport: http("http://127.0.0.1:1"),
+        chainId,
+        addresses,
+      });
+      client.getAgentBalances = async () => [wallet];
+      return new CrewRuntime({
+        client,
+        mode: "onchain",
+        chainId,
+        workerAgent: addr("b"),
+        managerAgent: addr("c"),
+        spendTarget: addr("d"),
+      });
+    };
+
+    const [anvil, ...rest] = await build(ANVIL_CHAIN_ID).getAgentWallets();
+    assert.equal(rest.length, 0, "one client reads one chain");
+    assert.equal(anvil?.chainId, ANVIL_CHAIN_ID);
+    assert.equal(anvil?.chainName, "Anvil (local)");
+    assert.equal(anvil?.nativeSymbol, "ETH");
+    assert.deepEqual(anvil?.wallets, [wallet]);
+
+    // Polygon settles in POL. An unnamed chain reports nulls rather than
+    // stamping "ETH" on a balance denominated in something else.
+    const [unknown] = await build(137).getAgentWallets();
+    assert.equal(unknown?.chainId, 137);
+    assert.equal(unknown?.chainName, null);
+    assert.equal(unknown?.nativeSymbol, null);
   });
 });
 

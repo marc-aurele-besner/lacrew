@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   getAddresses,
   hasDeployment,
+  chainMetadata,
   ADDRESS_ENV_VARS,
   ANVIL_CHAIN_ID,
+  BASE_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID,
   SEPOLIA_CHAIN_ID,
   PRIMARY_ASSET_SYMBOL,
   primaryAssetStack,
@@ -163,5 +166,24 @@ describe("asset stacks (F0.4 multi-asset)", () => {
     // Silently budgeting the primary treasury would move the wrong token.
     assert.throws(() => resolveAssetStack(addrs, "DAI"), /No asset stack "DAI"/);
     assert.throws(() => resolveAssetStack(addrs, "DAI"), /Known assets: USDC, WETH/);
+  });
+});
+
+describe("chainMetadata", () => {
+  it("names the chains this repo ships deploy targets for", () => {
+    assert.deepEqual(chainMetadata(ANVIL_CHAIN_ID), {
+      name: "Anvil (local)",
+      nativeSymbol: "ETH",
+    });
+    assert.equal(chainMetadata(SEPOLIA_CHAIN_ID).name, "Ethereum Sepolia");
+    assert.equal(chainMetadata(BASE_SEPOLIA_CHAIN_ID).name, "Base Sepolia");
+    assert.equal(chainMetadata(BASE_CHAIN_ID).name, "Base");
+  });
+
+  it("reports nulls for an unknown chain rather than assuming ether", () => {
+    // Polygon settles in POL. Defaulting the symbol would render a balance as
+    // "0.42 ETH" on a chain where that unit does not exist — a wrong number
+    // with a confident label, which is worse than an unnamed one.
+    assert.deepEqual(chainMetadata(137), { name: null, nativeSymbol: null });
   });
 });

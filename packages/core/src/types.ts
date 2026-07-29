@@ -501,6 +501,61 @@ export interface TreasuryBalance {
 }
 
 /**
+ * One asset an account holds: the chain's own coin, or an ERC-20.
+ *
+ * `symbol` is nullable because nothing onchain names a chain coin — it comes
+ * from the chain metadata table, which only knows the chains this repo ships
+ * address books for. An unrecognised chain reports `null` rather than assuming
+ * ETH, since "ETH" on a chain whose coin is not ether is a wrong number with a
+ * confident label.
+ */
+export interface AgentAssetBalance {
+  symbol: string | null;
+  /** ERC-20 contract, or the literal `"native"` for the chain coin. */
+  token: `0x${string}` | "native";
+  decimals: number;
+  /** Base units, in this asset's own `decimals`. */
+  balance: bigint;
+}
+
+/**
+ * What one org node's own account holds.
+ *
+ * Distinct from its allowance: an allowance is what the Treasury has reserved
+ * for the node and will release through the policy path, while this is the
+ * balance sitting in the account itself — including the native float it needs
+ * to pay for its own gas, which no allowance covers.
+ *
+ * `tokens` carries one row per ERC-20 the deployment's address book names,
+ * including zero balances: "this agent holds no USDC" is an answer, and
+ * dropping the row would make it indistinguishable from "we did not look".
+ */
+export interface AgentWallet {
+  account: `0x${string}`;
+  kind: NodeKind;
+  active: boolean;
+  native: AgentAssetBalance;
+  tokens: AgentAssetBalance[];
+}
+
+/**
+ * Agent wallets on one chain.
+ *
+ * A list because the org is a chain-agnostic idea and the same accounts can
+ * hold balances on several chains. One client reads one chain, so a single
+ * runtime contributes exactly one entry — the shape is what lets a second
+ * deployment be added without reshaping every consumer (F1.4).
+ */
+export interface ChainWallets {
+  chainId: number;
+  /** Display name when the chain is one we ship metadata for; else `null`. */
+  chainName: string | null;
+  /** Chain coin symbol when known; `null` rather than an assumed "ETH". */
+  nativeSymbol: string | null;
+  wallets: AgentWallet[];
+}
+
+/**
  * What a policy module was identified as by probing its distinctive getters.
  *
  * `IPolicyModule` carries no `kind()` discriminator, so classification probes

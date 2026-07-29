@@ -254,3 +254,59 @@ describe("multi-asset budgeting (F0.4)", () => {
     },
   );
 });
+
+describe("agent wallet balances", () => {
+  it(
+    "reads each node's own native float and one row per address-book ERC-20",
+    { skip: multiAssetSkip },
+    async () => {
+      const addresses = anvilDeployment!;
+      const client = createOnchainClient({
+        transport: http(rpc!),
+        chainId: ANVIL_CHAIN_ID,
+        addresses,
+      });
+
+      const wallets = await client.getAgentBalances();
+      assert.ok(wallets.length > 0, "the deployed org has nodes");
+
+      const worker = wallets.find(
+        (w) => w.account.toLowerCase() === addresses.worker!.toLowerCase(),
+      );
+      const root = wallets.find(
+        (w) => w.account.toLowerCase() === addresses.humanRoot!.toLowerCase(),
+      );
+      assert.ok(worker && root, "the worker and root seats are reported");
+
+      assert.equal(worker.native.token, "native");
+      assert.equal(worker.native.decimals, 18);
+      assert.equal(worker.native.symbol, "ETH");
+
+      // The number no allowance view carries. On the reference deployment the
+      // root is an Anvil-funded account and the worker is a further-derived
+      // one that nothing has ever sent ether to — so the worker is exactly the
+      // agent this read exists to expose: it can be granted an allowance and
+      // still be unable to pay for its own gas.
+      assert.ok(root.native.balance > 0n, "the root seat holds a gas float");
+      assert.equal(worker.native.balance, 0n, "the worker seat holds none");
+
+      // One row per stack, zero balances included — "holds no WETH" is an
+      // answer, and dropping the row would read as "not checked".
+      const symbols = worker.tokens.map((t) => t.symbol).sort();
+      assert.deepEqual(symbols, ["USDC", "WETH"]);
+      const usdc = worker.tokens.find((t) => t.symbol === "USDC")!;
+      const weth = worker.tokens.find((t) => t.symbol === "WETH")!;
+      assert.equal(usdc.decimals, 6);
+      assert.equal(weth.decimals, 18);
+      assert.notEqual(usdc.token.toLowerCase(), weth.token.toLowerCase());
+
+      // An allowance is Treasury money reserved for the node; this is the
+      // account's own balance. The worker's USDC allowance is non-zero after
+      // any epoch, and its wallet balance is a different figure entirely —
+      // asserting they are read from different places is the point.
+      const [allowance] = await client.getAllowances(addresses.worker!);
+      assert.ok(allowance, "the worker carries a USDC allowance");
+      assert.equal(allowance.token.toLowerCase(), usdc.token.toLowerCase());
+    },
+  );
+});

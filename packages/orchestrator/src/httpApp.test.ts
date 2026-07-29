@@ -365,6 +365,16 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(body.balances, []);
   });
 
+  it("serves agent wallets grouped by chain (no chain entry in mock mode)", async () => {
+    const res = await buildApp().request("/agents/balances");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { chains: unknown[]; mode: string };
+    // No chain answered, which is not the same claim as "the accounts are
+    // empty" — that would be a chain entry whose wallets all read zero.
+    assert.deepEqual(body.chains, []);
+    assert.equal(body.mode, "mock");
+  });
+
   it("serves the asset-stack list (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/assets");
     assert.equal(res.status, 200);
