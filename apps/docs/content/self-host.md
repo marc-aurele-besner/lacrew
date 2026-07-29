@@ -77,6 +77,7 @@ Every read answers from the chain (or the persisted trail) — mock mode serves
 | `GET /assets` | The asset stacks the org can budget in (primary first) |
 | `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`) |
 | `GET /treasury/balances` | Real per-asset holdings from each Treasury |
+| `GET /agents/balances` | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance *in* the account, not what the Treasury reserved for it |
 
 ### Governance write surface
 

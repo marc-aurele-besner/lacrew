@@ -7,6 +7,7 @@
 import {
   MOCK_MANAGER,
   MOCK_ROOT,
+  type AgentWallet,
   type Allowance,
   type EpochGrant,
   type GovernanceConfig,
@@ -124,6 +125,15 @@ export class LacrewClient {
    * than inventing a balance — real per-asset figures need an onchain client.
    */
   async getTreasuryBalances(): Promise<TreasuryBalance[]> {
+    return [];
+  }
+
+  /**
+   * No chain, so no account balances. The demo org has allowances, but what an
+   * account *holds* is a chain fact — inventing one would put a gas float and a
+   * token balance on screen for accounts that do not exist.
+   */
+  async getAgentBalances(): Promise<AgentWallet[]> {
     return [];
   }
 

@@ -193,3 +193,34 @@ export const BASE_SEPOLIA_CHAIN_ID = 84532;
 
 /** Anvil / Foundry default chain. */
 export const ANVIL_CHAIN_ID = 31337;
+
+/** Base mainnet — the Phase 1 target (F1.4), gated on the audit. */
+export const BASE_CHAIN_ID = 8453;
+
+/**
+ * Display metadata for the chains this repo ships address books or deploy
+ * targets for. Nothing onchain names a chain or its coin, so this table is the
+ * only place either string can come from.
+ */
+const CHAIN_METADATA: Record<number, { name: string; nativeSymbol: string }> = {
+  [ANVIL_CHAIN_ID]: { name: "Anvil (local)", nativeSymbol: "ETH" },
+  [SEPOLIA_CHAIN_ID]: { name: "Ethereum Sepolia", nativeSymbol: "ETH" },
+  [BASE_SEPOLIA_CHAIN_ID]: { name: "Base Sepolia", nativeSymbol: "ETH" },
+  [BASE_CHAIN_ID]: { name: "Base", nativeSymbol: "ETH" },
+};
+
+/**
+ * Name and coin symbol for a chain, or nulls when the id is not one we know.
+ *
+ * Deliberately not defaulted to ether: EVM chains do not share a coin, and a
+ * balance rendered "0.42 ETH" on a chain settling in something else is a wrong
+ * number wearing a confident label. A null symbol lets a caller show the figure
+ * and say it cannot name the unit.
+ */
+export function chainMetadata(chainId: number): {
+  name: string | null;
+  nativeSymbol: string | null;
+} {
+  const meta = CHAIN_METADATA[chainId];
+  return { name: meta?.name ?? null, nativeSymbol: meta?.nativeSymbol ?? null };
+}

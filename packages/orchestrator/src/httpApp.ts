@@ -903,6 +903,15 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { balances, mode: runtime.mode });
   });
 
+  app.get("/agents/balances", async (c) => {
+    // What each node's own account holds — native float and one row per ERC-20
+    // in the address book — grouped by chain. Distinct from allowances: this is
+    // the balance in the account, not what the Treasury has reserved for it.
+    // [] in mock mode; an empty list means no chain answered, not empty wallets.
+    const chains = await runtime.getAgentWallets();
+    return jsonBig(c, { chains, mode: runtime.mode });
+  });
+
   app.get("/assets", async (c) => {
     // The asset stacks this org can budget in (primary first). Drives the
     // cloud's grant/cap asset picker; [] in mock mode — the list is read from

@@ -18,6 +18,7 @@ import {
   type DelegationProvider,
   type SessionDelegation,
   ANVIL_CHAIN_ID,
+  chainMetadata,
   escalationRouterAbi,
   getAddresses,
   hasDeployment,
@@ -29,6 +30,7 @@ import {
   MOCK_WORKER,
   SESSION_SCOPES,
   type AssetStack,
+  type ChainWallets,
   type GovernanceConfig,
   type GovernanceProposal,
   type GovernanceSeat,
@@ -2364,6 +2366,31 @@ export class CrewRuntime {
   /** Real per-asset treasury holdings ([] in mock mode — no real treasury). */
   async getTreasuryBalances(): Promise<TreasuryBalance[]> {
     return this.client.getTreasuryBalances();
+  }
+
+  /**
+   * What each org node's own account holds, grouped by chain.
+   *
+   * A list of chains for a runtime that reads exactly one: the org is a
+   * chain-agnostic idea and the same accounts can hold balances on several
+   * chains, so consumers are given the shape a second deployment will fill
+   * (F1.4) rather than one that has to be reshaped to accept it.
+   *
+   * [] in mock mode and when no chain is bound — an empty list says "no chain
+   * answered", which is different from a chain answering that the accounts are
+   * empty (that is a chain entry whose wallets all read zero).
+   */
+  async getAgentWallets(): Promise<ChainWallets[]> {
+    if (!isOnchainClient(this.client) || this.chainId == null) return [];
+    const meta = chainMetadata(this.chainId);
+    return [
+      {
+        chainId: this.chainId,
+        chainName: meta.name,
+        nativeSymbol: meta.nativeSymbol,
+        wallets: await this.client.getAgentBalances(),
+      },
+    ];
   }
 
   /**

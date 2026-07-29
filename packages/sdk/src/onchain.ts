@@ -19,6 +19,7 @@ import {
 } from "viem";
 import {
   ANVIL_CHAIN_ID,
+  chainMetadata,
   getAddresses,
   orgRegistryAbi,
   treasuryAbi,
@@ -40,6 +41,7 @@ import {
   listAssetStacks,
   resolveAssetStack,
   sessionScopesFromMask,
+  type AgentWallet,
   type Allowance,
   type EpochGrant,
   type ChainAddresses,
@@ -285,6 +287,66 @@ export class OnchainLacrewClient {
       ]);
       if (balance === 0n && n.kind === "human_root") continue;
       out.push({ node: n.account, token, balance, epoch, cap });
+    }
+    return out;
+  }
+
+  /**
+   * What each org node's own account holds on this chain.
+   *
+   * Two balances an operator keeps confusing and the protocol keeps apart:
+   * an *allowance* is Treasury money reserved for a node and released through
+   * the policy path, while this is what sits in the account itself. The native
+   * float matters on its own — an agent with a full allowance and no gas cannot
+   * transact, and nothing in the allowance view says so.
+   *
+   * One ERC-20 row per asset stack in the address book, zero balances included:
+   * "holds no USDC" is an answer, and omitting the row would make it read the
+   * same as "not checked". Inactive nodes are kept — a fired agent's account can
+   * still hold funds, and that is precisely when someone needs to see it.
+   */
+  async getAgentBalances(): Promise<AgentWallet[]> {
+    const tree = await this.getOrgTree();
+    const nativeSymbol = chainMetadata(this.chainId).nativeSymbol;
+
+    // Stacks can share a token (different routers, same asset); a wallet row
+    // must not list the same balance twice.
+    const tokens = new Map<string, { symbol: string; token: `0x${string}`; decimals: number }>();
+    for (const stack of listAssetStacks(this.addresses)) {
+      if (!stack.token || stack.token === "0x0000000000000000000000000000000000000000") continue;
+      const key = stack.token.toLowerCase();
+      if (!tokens.has(key)) {
+        tokens.set(key, { symbol: stack.symbol, token: stack.token, decimals: stack.decimals });
+      }
+    }
+    const assets = [...tokens.values()];
+
+    const out: AgentWallet[] = [];
+    for (const node of tree) {
+      const native = await this.publicClient.getBalance({ address: node.account });
+      const balances = await Promise.all(
+        assets.map(
+          (a) =>
+            this.publicClient.readContract({
+              address: a.token,
+              abi: erc20Abi,
+              functionName: "balanceOf",
+              args: [node.account],
+            }) as Promise<bigint>,
+        ),
+      );
+      out.push({
+        account: node.account,
+        kind: node.kind,
+        active: node.active,
+        native: { symbol: nativeSymbol, token: "native", decimals: 18, balance: native },
+        tokens: assets.map((a, i) => ({
+          symbol: a.symbol,
+          token: a.token,
+          decimals: a.decimals,
+          balance: balances[i]!,
+        })),
+      });
     }
     return out;
   }
