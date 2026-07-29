@@ -10,9 +10,11 @@
 import {
   createOnchainClient,
   readAccountBalances,
+  readTokenMetadata,
   simulateIntentAction,
   type OnchainLacrewClient,
   type ResolveResult,
+  type TokenLookup,
 } from "@lacrew/sdk";
 import type { LacrewClient } from "@lacrew/sdk/testing";
 import {
@@ -20,6 +22,7 @@ import {
   type SessionDelegation,
   ANVIL_CHAIN_ID,
   chainMetadata,
+  publicRpcUrl,
   escalationRouterAbi,
   getAddresses,
   hasDeployment,
@@ -2408,6 +2411,7 @@ export class CrewRuntime {
         nativeSymbol: meta.nativeSymbol,
         wallets: await client.getAgentBalances(here?.tokens ?? []),
         read: true,
+        rpcSource: "configured",
       },
     ];
 
@@ -2448,16 +2452,22 @@ export class CrewRuntime {
       wallets: [] as AgentWallet[],
     };
 
-    if (!watch.rpcUrl?.trim()) {
+    // The operator's endpoint wins; a public one stands in when they gave none.
+    // Which answered is reported, because a shared endpoint throttles and
+    // "sometimes unread" is baffling until you know you are on one.
+    const configured = watch.rpcUrl?.trim();
+    const rpcUrl = configured || publicRpcUrl(watch.chainId);
+    const rpcSource: "configured" | "public" = configured ? "configured" : "public";
+    if (!rpcUrl) {
       return {
         ...base,
         read: false,
         reason: "no_rpc",
-        detail: `No RPC endpoint configured for chain ${watch.chainId}.`,
+        detail: `No RPC endpoint for chain ${watch.chainId}, and no public default.`,
       };
     }
 
-    const publicClient = createPublicClient({ transport: http(watch.rpcUrl) });
+    const publicClient = createPublicClient({ transport: http(rpcUrl) });
     let reported: number;
     try {
       reported = await publicClient.getChainId();
@@ -2465,6 +2475,7 @@ export class CrewRuntime {
       return {
         ...base,
         read: false,
+        rpcSource,
         reason: "unreachable",
         detail: err instanceof Error ? err.message.split("\n")[0]! : "RPC unreachable",
       };
@@ -2477,6 +2488,7 @@ export class CrewRuntime {
       return {
         ...base,
         read: false,
+        rpcSource,
         reason: "chain_id_mismatch",
         detail: `Endpoint reports chain ${reported}, not ${watch.chainId}.`,
       };
@@ -2492,13 +2504,49 @@ export class CrewRuntime {
           meta.nativeSymbol,
         ),
         read: true,
+        rpcSource,
       };
     } catch (err) {
       return {
         ...base,
         read: false,
+        rpcSource,
         reason: "unreachable",
         detail: err instanceof Error ? err.message.split("\n")[0]! : "Balance read failed",
+      };
+    }
+  }
+
+  /**
+   * Read a token's own symbol/decimals on a chain we can reach.
+   *
+   * Uses the same endpoint resolution as a balance read — the operator's
+   * endpoint when set, the public default otherwise — so a lookup succeeds
+   * exactly where the balance read would.
+   */
+  async readWatchedToken(chainId: number, address: `0x${string}`): Promise<TokenLookup> {
+    // The bound chain reads through the runtime's own client.
+    if (chainId === this.chainId && isOnchainClient(this.client)) {
+      return readTokenMetadata(this.client.publicClient, address);
+    }
+    const configured = this.watchlist.find((w) => w.chainId === chainId)?.rpcUrl?.trim();
+    const rpcUrl = configured || publicRpcUrl(chainId);
+    if (!rpcUrl) {
+      return { ok: false, reason: "unreachable", detail: `No endpoint for chain ${chainId}.` };
+    }
+    try {
+      const publicClient = createPublicClient({ transport: http(rpcUrl) });
+      // Same guard as the balance read: metadata from the wrong chain would
+      // name a token that is not the one being added.
+      if ((await publicClient.getChainId()) !== chainId) {
+        return { ok: false, reason: "unreachable", detail: "Endpoint is on a different chain." };
+      }
+      return await readTokenMetadata(publicClient, address);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "unreachable",
+        detail: err instanceof Error ? err.message.split("\n")[0]! : "Endpoint unreachable",
       };
     }
   }

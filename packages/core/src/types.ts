@@ -562,6 +562,13 @@ export interface ChainWallets {
    * `read: false` means `wallets` says nothing at all.
    */
   read: boolean;
+  /**
+   * Which endpoint answered (or was tried). A public endpoint is shared and
+   * rate-limited, so a chain that reads intermittently is explained by this
+   * rather than looking like a bug — and it is also the privacy signal: a
+   * public endpoint learns which addresses the operator cares about.
+   */
+  rpcSource?: "configured" | "public";
   /** Why the chain could not be read. Absent when `read` is true. */
   reason?: "no_rpc" | "unreachable" | "chain_id_mismatch";
   /** Detail for `reason` — an operator has to be able to fix it. */

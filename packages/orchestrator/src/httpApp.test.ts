@@ -421,6 +421,24 @@ describe("orchestrator Hono app", () => {
     assert.match(body.error, /20-byte hex address/);
   });
 
+  it("refuses a token lookup it cannot answer, rather than guessing", async () => {
+    const app = buildApp();
+    // Operator input errors are 400 and never leave the machine.
+    assert.equal((await app.request("/wallets/token?chainId=0&address=0x1")).status, 400);
+    assert.equal(
+      (await app.request("/wallets/token?chainId=8453&address=nope")).status,
+      400,
+    );
+    // A chain with no endpoint and no public default cannot be asked. That is
+    // 503 "could not ask", never 404 "this is not a token" — telling an
+    // operator their correct address is wrong sends them to fix nothing.
+    const res = await app.request(
+      "/wallets/token?chainId=999999&address=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    );
+    assert.equal(res.status, 503);
+    assert.equal(((await res.json()) as { error: string }).error, "unreachable");
+  });
+
   it("serves the asset-stack list (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/assets");
     assert.equal(res.status, 200);

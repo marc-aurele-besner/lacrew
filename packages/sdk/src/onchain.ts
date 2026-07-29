@@ -2325,6 +2325,86 @@ export async function readAccountBalances(
   return out;
 }
 
+/**
+ * The three answers a token lookup can give.
+ *
+ * `not_erc20` and `unreachable` must never be collapsed. Telling an operator
+ * that a correct address "is not a token here" — when the truth is that a
+ * rate-limited public endpoint refused to answer — sends them to fix something
+ * that is not broken, and is the same conflation of "unread" with a definite
+ * negative that the balance surface exists to avoid.
+ */
+export type TokenLookup =
+  | { ok: true; symbol: string; decimals: number }
+  | { ok: false; reason: "not_erc20" | "unreachable"; detail?: string };
+
+/** Errors that mean the call reached the chain and the contract did not answer. */
+function isContractError(err: unknown): boolean {
+  const name = err instanceof Error ? err.name : "";
+  return /ContractFunction|Abi|InvalidAddress/.test(name);
+}
+
+/**
+ * Read an ERC-20's own `symbol()` and `decimals()`.
+ *
+ * The safety net for hand-entered tokens. A wrong `decimals` does not fail
+ * loudly — it renders a balance with the point in the wrong place, off by
+ * powers of ten — and a wrong address reads zero rather than throwing. Asking
+ * the contract turns both into an answer the operator can see before saving.
+ *
+ * An address with no code is definitively `not_erc20`; that check comes first
+ * because it is the common typo and it needs no interpretation. Anything else
+ * that fails is reported `unreachable` unless the error is recognisably a
+ * contract-level one — biased that way on purpose, since "try again" is a
+ * cheap wrong answer and "your address is bad" is an expensive one.
+ */
+export async function readTokenMetadata(
+  publicClient: PublicClient,
+  address: `0x${string}`,
+): Promise<TokenLookup> {
+  try {
+    const code = await publicClient.getCode({ address });
+    if (!code || code === "0x") {
+      return { ok: false, reason: "not_erc20", detail: "No contract at this address." };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "unreachable",
+      detail: err instanceof Error ? err.message.split("\n")[0] : "RPC unreachable",
+    };
+  }
+
+  try {
+    const [symbol, decimals] = await Promise.all([
+      publicClient.readContract({
+        address,
+        abi: erc20Abi,
+        functionName: "symbol",
+      }) as Promise<string>,
+      publicClient.readContract({
+        address,
+        abi: erc20Abi,
+        functionName: "decimals",
+      }) as Promise<number>,
+    ]);
+    const places = Number(decimals);
+    if (!symbol?.trim() || !Number.isInteger(places) || places < 0 || places > 36) {
+      return { ok: false, reason: "not_erc20", detail: "Contract did not return symbol/decimals." };
+    }
+    return { ok: true, symbol: symbol.trim(), decimals: places };
+  } catch (err) {
+    if (isContractError(err)) {
+      return { ok: false, reason: "not_erc20", detail: "Contract has no ERC-20 metadata." };
+    }
+    return {
+      ok: false,
+      reason: "unreachable",
+      detail: err instanceof Error ? err.message.split("\n")[0] : "Token read failed",
+    };
+  }
+}
+
 export function createOnchainClient(options: OnchainClientOptions): OnchainLacrewClient {
   return new OnchainLacrewClient(options);
 }
