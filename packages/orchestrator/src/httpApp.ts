@@ -12,6 +12,7 @@ import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { connectorPresets } from "./connectorPresets.js";
+import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
@@ -910,6 +911,30 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // [] in mock mode; an empty list means no chain answered, not empty wallets.
     const chains = await runtime.getAgentWallets();
     return jsonBig(c, { chains, mode: runtime.mode });
+  });
+
+  /**
+   * The chains and tokens agent balances are read on. The cloud pushes this on
+   * a settings change; a self-hoster sets WALLET_WATCHLIST instead. RPC URLs
+   * are echoed back with their credentials masked — an operator needs to see
+   * *which* endpoint is configured, never the key inside it.
+   */
+  app.get("/wallets/watchlist", (c) =>
+    jsonBig(c, {
+      watchlist: runtime.getWatchlist().map((w) => ({
+        ...w,
+        ...(w.rpcUrl ? { rpcUrl: maskRpcUrl(w.rpcUrl) } : {}),
+      })),
+      mode: runtime.mode,
+    }),
+  );
+
+  app.post("/wallets/watchlist", async (c) => {
+    const body = await bodyOf<{ watchlist?: unknown }>(c);
+    const parsed = parseWatchlist(body.watchlist);
+    if (!parsed.ok) return jsonBig(c, { error: parsed.error }, 400);
+    runtime.setWatchlist(parsed.value);
+    return jsonBig(c, { watchlist: parsed.value.length, mode: runtime.mode });
   });
 
   app.get("/assets", async (c) => {

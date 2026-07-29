@@ -9,6 +9,7 @@
 
 export {
   createOnchainClient,
+  readAccountBalances,
   OnchainLacrewClient,
   type OnchainClientOptions,
   type OnchainResolveResult,

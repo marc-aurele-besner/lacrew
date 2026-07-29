@@ -197,17 +197,107 @@ export const ANVIL_CHAIN_ID = 31337;
 /** Base mainnet — the Phase 1 target (F1.4), gated on the audit. */
 export const BASE_CHAIN_ID = 8453;
 
+/** Ethereum mainnet. */
+export const MAINNET_CHAIN_ID = 1;
+
+/** Arbitrum One. */
+export const ARBITRUM_CHAIN_ID = 42161;
+
+/** OP Mainnet. */
+export const OPTIMISM_CHAIN_ID = 10;
+
+/** Polygon PoS — settles in POL, not ether. */
+export const POLYGON_CHAIN_ID = 137;
+
 /**
- * Display metadata for the chains this repo ships address books or deploy
- * targets for. Nothing onchain names a chain or its coin, so this table is the
- * only place either string can come from.
+ * Display metadata for the chains this repo can name. Nothing onchain names a
+ * chain or its coin, so this table is the only place either string can come
+ * from — which is also why it is kept here, in the public package, where the
+ * claim can be checked rather than in cloud code nobody can read.
+ *
+ * Membership here says only "we can name this chain". It says nothing about a
+ * LaCrew deployment existing on it: reading what an account holds needs an RPC,
+ * the account address, and a token address — no protocol contracts at all.
  */
 const CHAIN_METADATA: Record<number, { name: string; nativeSymbol: string }> = {
   [ANVIL_CHAIN_ID]: { name: "Anvil (local)", nativeSymbol: "ETH" },
+  [MAINNET_CHAIN_ID]: { name: "Ethereum", nativeSymbol: "ETH" },
   [SEPOLIA_CHAIN_ID]: { name: "Ethereum Sepolia", nativeSymbol: "ETH" },
-  [BASE_SEPOLIA_CHAIN_ID]: { name: "Base Sepolia", nativeSymbol: "ETH" },
   [BASE_CHAIN_ID]: { name: "Base", nativeSymbol: "ETH" },
+  [BASE_SEPOLIA_CHAIN_ID]: { name: "Base Sepolia", nativeSymbol: "ETH" },
+  [ARBITRUM_CHAIN_ID]: { name: "Arbitrum One", nativeSymbol: "ETH" },
+  [OPTIMISM_CHAIN_ID]: { name: "OP Mainnet", nativeSymbol: "ETH" },
+  // Polygon's coin is POL, not ether. The whole reason `nativeSymbol` is not
+  // defaulted anywhere is so this row can be different without special-casing.
+  [POLYGON_CHAIN_ID]: { name: "Polygon", nativeSymbol: "POL" },
 };
+
+/**
+ * Well-known stablecoins per chain, offered as a pick-list so an operator does
+ * not have to paste contract addresses by hand.
+ *
+ * **These are reference data, not protocol state.** A wrong address here does
+ * not move money — `balanceOf` on the wrong contract simply reads zero — but a
+ * silent zero is exactly the failure this surface exists to prevent, so every
+ * address is shown in the UI beside its symbol and any of them can be
+ * overridden. Verify against the issuer before relying on a mainnet figure.
+ *
+ * Only assets whose issuer publishes a canonical deployment are listed. Bridged
+ * variants (USDC.e and friends) are deliberately absent: they share a ticker
+ * with the native asset and listing both under one symbol is how a balance ends
+ * up attributed to the wrong token.
+ */
+export const KNOWN_STABLECOINS: Record<
+  number,
+  ReadonlyArray<{ symbol: string; address: `0x${string}`; decimals: number }>
+> = {
+  [MAINNET_CHAIN_ID]: [
+    { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+    { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+    { symbol: "DAI", address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", decimals: 18 },
+  ],
+  [BASE_CHAIN_ID]: [
+    { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+    { symbol: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
+    { symbol: "DAI", address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", decimals: 18 },
+  ],
+  [BASE_SEPOLIA_CHAIN_ID]: [
+    { symbol: "USDC", address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", decimals: 6 },
+  ],
+  [SEPOLIA_CHAIN_ID]: [
+    { symbol: "USDC", address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", decimals: 6 },
+  ],
+  [ARBITRUM_CHAIN_ID]: [
+    { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
+    { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
+    { symbol: "DAI", address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", decimals: 18 },
+  ],
+  [OPTIMISM_CHAIN_ID]: [
+    { symbol: "USDC", address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", decimals: 6 },
+    { symbol: "USDT", address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", decimals: 6 },
+    { symbol: "DAI", address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", decimals: 18 },
+  ],
+  [POLYGON_CHAIN_ID]: [
+    { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
+    { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
+    { symbol: "DAI", address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", decimals: 18 },
+  ],
+};
+
+/** Every chain this package can name, for a settings pick-list. */
+export function knownChains(): Array<{
+  chainId: number;
+  name: string;
+  nativeSymbol: string;
+  stablecoins: ReadonlyArray<{ symbol: string; address: `0x${string}`; decimals: number }>;
+}> {
+  return Object.entries(CHAIN_METADATA).map(([id, meta]) => ({
+    chainId: Number(id),
+    name: meta.name,
+    nativeSymbol: meta.nativeSymbol,
+    stablecoins: KNOWN_STABLECOINS[Number(id)] ?? [],
+  }));
+}
 
 /**
  * Name and coin symbol for a chain, or nulls when the id is not one we know.

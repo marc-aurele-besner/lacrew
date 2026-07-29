@@ -375,6 +375,52 @@ describe("orchestrator Hono app", () => {
     assert.equal(body.mode, "mock");
   });
 
+  it("serves an empty watchlist, and accepts one that validates", async () => {
+    const app = buildApp();
+    const empty = (await (await app.request("/wallets/watchlist")).json()) as {
+      watchlist: unknown[];
+    };
+    assert.deepEqual(empty.watchlist, []);
+
+    const res = await app.request("/wallets/watchlist", {
+      method: "POST",
+      body: JSON.stringify({
+        watchlist: [
+          {
+            chainId: 8453,
+            rpcUrl: "https://base-mainnet.example/v2/SECRET",
+            tokens: [
+              {
+                symbol: "USDC",
+                address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                decimals: 6,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    const saved = (await (await app.request("/wallets/watchlist")).json()) as {
+      watchlist: Array<{ chainId: number; rpcUrl?: string }>;
+    };
+    assert.equal(saved.watchlist[0]?.chainId, 8453);
+    // The endpoint is echoed so an operator can recognise it; the key inside
+    // it is not, because this response can land in a log.
+    assert.equal(saved.watchlist[0]?.rpcUrl, "https://base-mainnet.example/v2/…");
+  });
+
+  it("refuses a malformed watchlist rather than storing half of it", async () => {
+    const res = await buildApp().request("/wallets/watchlist", {
+      method: "POST",
+      body: JSON.stringify({ watchlist: [{ chainId: 1, tokens: [{ symbol: "X", address: "0xnope", decimals: 6 }] }] }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /20-byte hex address/);
+  });
+
   it("serves the asset-stack list (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/assets");
     assert.equal(res.status, 200);

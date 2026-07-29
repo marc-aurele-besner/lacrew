@@ -553,6 +553,42 @@ export interface ChainWallets {
   /** Chain coin symbol when known; `null` rather than an assumed "ETH". */
   nativeSymbol: string | null;
   wallets: AgentWallet[];
+  /**
+   * Whether the chain actually answered.
+   *
+   * The distinction this whole feature turns on. A watched chain with no RPC,
+   * or one that timed out, must never render as accounts holding zero — that is
+   * a fabricated balance on the one screen where a fabricated balance is worst.
+   * `read: false` means `wallets` says nothing at all.
+   */
+  read: boolean;
+  /** Why the chain could not be read. Absent when `read` is true. */
+  reason?: "no_rpc" | "unreachable" | "chain_id_mismatch";
+  /** Detail for `reason` — an operator has to be able to fix it. */
+  detail?: string;
+}
+
+/** An ERC-20 to read on a chain regardless of any address book. */
+export interface WatchedToken {
+  symbol: string;
+  address: `0x${string}`;
+  decimals: number;
+}
+
+/**
+ * One chain an operator wants agent balances read on.
+ *
+ * `rpcUrl` is what makes the chain readable. Watching a chain without one is a
+ * legitimate state — it says "we care about this chain and cannot see it yet",
+ * which is information — so it is optional rather than required, and the read
+ * reports `read: false` instead of inventing zeros.
+ */
+export interface WatchedChain {
+  chainId: number;
+  /** Read-only JSON-RPC endpoint. Absent = watched but unreadable. */
+  rpcUrl?: string;
+  /** Tokens to read here, beyond whatever the address book already names. */
+  tokens: WatchedToken[];
 }
 
 /**
