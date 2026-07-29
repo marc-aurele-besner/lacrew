@@ -956,8 +956,23 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       return jsonBig(c, { error: "invalid_address" }, 400);
     }
     const found = await runtime.readWatchedToken(chainId, address as `0x${string}`);
-    if (!found) return jsonBig(c, { error: "not_an_erc20_here" }, 404);
-    return jsonBig(c, { ...found, chainId, address, mode: runtime.mode });
+    if (!found.ok) {
+      // 404 = the chain answered and this is not a token. 503 = we could not
+      // ask. Collapsing them would tell an operator to fix a correct address
+      // because a shared endpoint happened to throttle.
+      return jsonBig(
+        c,
+        { error: found.reason, detail: found.detail },
+        found.reason === "not_erc20" ? 404 : 503,
+      );
+    }
+    return jsonBig(c, {
+      symbol: found.symbol,
+      decimals: found.decimals,
+      chainId,
+      address,
+      mode: runtime.mode,
+    });
   });
 
   app.get("/assets", async (c) => {

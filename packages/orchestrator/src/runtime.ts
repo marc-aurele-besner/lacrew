@@ -14,6 +14,7 @@ import {
   simulateIntentAction,
   type OnchainLacrewClient,
   type ResolveResult,
+  type TokenLookup,
 } from "@lacrew/sdk";
 import type { LacrewClient } from "@lacrew/sdk/testing";
 import {
@@ -2523,25 +2524,30 @@ export class CrewRuntime {
    * endpoint when set, the public default otherwise — so a lookup succeeds
    * exactly where the balance read would.
    */
-  async readWatchedToken(
-    chainId: number,
-    address: `0x${string}`,
-  ): Promise<{ symbol: string; decimals: number } | null> {
+  async readWatchedToken(chainId: number, address: `0x${string}`): Promise<TokenLookup> {
     // The bound chain reads through the runtime's own client.
     if (chainId === this.chainId && isOnchainClient(this.client)) {
       return readTokenMetadata(this.client.publicClient, address);
     }
     const configured = this.watchlist.find((w) => w.chainId === chainId)?.rpcUrl?.trim();
     const rpcUrl = configured || publicRpcUrl(chainId);
-    if (!rpcUrl) return null;
+    if (!rpcUrl) {
+      return { ok: false, reason: "unreachable", detail: `No endpoint for chain ${chainId}.` };
+    }
     try {
       const publicClient = createPublicClient({ transport: http(rpcUrl) });
       // Same guard as the balance read: metadata from the wrong chain would
       // name a token that is not the one being added.
-      if ((await publicClient.getChainId()) !== chainId) return null;
+      if ((await publicClient.getChainId()) !== chainId) {
+        return { ok: false, reason: "unreachable", detail: "Endpoint is on a different chain." };
+      }
       return await readTokenMetadata(publicClient, address);
-    } catch {
-      return null;
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "unreachable",
+        detail: err instanceof Error ? err.message.split("\n")[0]! : "Endpoint unreachable",
+      };
     }
   }
 

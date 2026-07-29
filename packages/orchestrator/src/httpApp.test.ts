@@ -429,13 +429,14 @@ describe("orchestrator Hono app", () => {
       (await app.request("/wallets/token?chainId=8453&address=nope")).status,
       400,
     );
-    // A chain with no endpoint and no public default cannot be asked, so the
-    // answer is "not found" rather than an invented symbol/decimals pair.
+    // A chain with no endpoint and no public default cannot be asked. That is
+    // 503 "could not ask", never 404 "this is not a token" — telling an
+    // operator their correct address is wrong sends them to fix nothing.
     const res = await app.request(
       "/wallets/token?chainId=999999&address=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     );
-    assert.equal(res.status, 404);
-    assert.equal(((await res.json()) as { error: string }).error, "not_an_erc20_here");
+    assert.equal(res.status, 503);
+    assert.equal(((await res.json()) as { error: string }).error, "unreachable");
   });
 
   it("serves the asset-stack list (empty in mock mode, not invented)", async () => {

@@ -246,6 +246,12 @@ const CHAIN_METADATA: Record<number, { name: string; nativeSymbol: string }> = {
  * variants (USDC.e and friends) are deliberately absent: they share a ticker
  * with the native asset and listing both under one symbol is how a balance ends
  * up attributed to the wrong token.
+ *
+ * Symbols match what each contract's own `symbol()` returns, not the ticker a
+ * reader expects — Arbitrum's Tether reports `USD₮0` after the omnichain
+ * migration, and showing "USDT" beside an address that disagrees is the kind of
+ * small lie that makes an operator distrust the rest of the figure. Every entry
+ * below was read back from its chain.
  */
 export const KNOWN_STABLECOINS: Record<
   number,
@@ -269,7 +275,7 @@ export const KNOWN_STABLECOINS: Record<
   ],
   [ARBITRUM_CHAIN_ID]: [
     { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
-    { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
+    { symbol: "USD₮0", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
     { symbol: "DAI", address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", decimals: 18 },
   ],
   [OPTIMISM_CHAIN_ID]: [
@@ -279,7 +285,7 @@ export const KNOWN_STABLECOINS: Record<
   ],
   [POLYGON_CHAIN_ID]: [
     { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
-    { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
+    { symbol: "USDT0", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
     { symbol: "DAI", address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", decimals: 18 },
   ],
 };
@@ -307,7 +313,7 @@ const PUBLIC_RPC_URLS: Record<number, string> = {
   [BASE_SEPOLIA_CHAIN_ID]: "https://sepolia.base.org",
   [ARBITRUM_CHAIN_ID]: "https://arb1.arbitrum.io/rpc",
   [OPTIMISM_CHAIN_ID]: "https://mainnet.optimism.io",
-  [POLYGON_CHAIN_ID]: "https://polygon-rpc.com",
+  [POLYGON_CHAIN_ID]: "https://polygon-bor-rpc.publicnode.com",
 };
 
 /** The public fallback endpoint for a chain, or null when there is none. */
