@@ -273,15 +273,22 @@ describe("agent wallet balances", () => {
       const worker = wallets.find(
         (w) => w.account.toLowerCase() === addresses.worker!.toLowerCase(),
       );
-      assert.ok(worker, "the worker seat is reported");
+      const root = wallets.find(
+        (w) => w.account.toLowerCase() === addresses.humanRoot!.toLowerCase(),
+      );
+      assert.ok(worker && root, "the worker and root seats are reported");
 
-      // Anvil funds its deterministic accounts, so a seat has a real float.
-      // This is the number no allowance view carries: an agent with a full
-      // allowance and no gas cannot transact.
       assert.equal(worker.native.token, "native");
       assert.equal(worker.native.decimals, 18);
       assert.equal(worker.native.symbol, "ETH");
-      assert.ok(worker.native.balance > 0n, "Anvil seats hold a gas float");
+
+      // The number no allowance view carries. On the reference deployment the
+      // root is an Anvil-funded account and the worker is a further-derived
+      // one that nothing has ever sent ether to — so the worker is exactly the
+      // agent this read exists to expose: it can be granted an allowance and
+      // still be unable to pay for its own gas.
+      assert.ok(root.native.balance > 0n, "the root seat holds a gas float");
+      assert.equal(worker.native.balance, 0n, "the worker seat holds none");
 
       // One row per stack, zero balances included — "holds no WETH" is an
       // answer, and dropping the row would read as "not checked".
