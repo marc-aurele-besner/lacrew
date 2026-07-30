@@ -1,5 +1,51 @@
 import type { FlowDefinition, FlowRunResult, FlowTemplate } from "./types.js";
 
+/**
+ * Wire shapes for the orchestrator's `/flows/triggers*` surface (F2.22).
+ *
+ * Declared structurally here rather than imported from `@lacrew/orchestrator`:
+ * this package is the chain-free client the code-first path uses, and depending
+ * on the orchestrator would invert that. The orchestrator owns the behaviour;
+ * these are the fields it puts on the wire.
+ */
+export type FlowTriggerRecord = {
+  id: string;
+  flowId: string;
+  principal?: string;
+  /** Event source: `lacrew` | `github` | `google-pubsub`. */
+  scheme: string;
+  enabled: boolean;
+  input?: { path?: string; fields?: Record<string, string> };
+  description?: string;
+  /** Event types subscribed to; absent means every delivery runs. */
+  events?: string[];
+  /** Non-secret per-source settings (Pub/Sub audience, service account). */
+  config?: Record<string, string>;
+  /** Absent for sources that authenticate the sender instead of sharing a key. */
+  secretVersion?: number;
+};
+
+export type FlowTriggerDelivery = {
+  triggerId: string;
+  deliveryKey: string;
+  result: string;
+  reason?: string | null;
+  runId?: string | null;
+  bytes?: number | null;
+  at: string;
+};
+
+export type FlowTriggerCreate = {
+  flowId: string;
+  principal?: string;
+  scheme?: string;
+  input?: { path?: string; fields?: Record<string, string> };
+  description?: string;
+  events?: string[];
+  config?: Record<string, string>;
+  secret?: string;
+};
+
 export type FlowsClientOptions = {
   /** Orchestrator base URL, e.g. http://127.0.0.1:8788 */
   baseUrl: string;
@@ -22,6 +68,25 @@ export type FlowsClient = {
   ): Promise<FlowRunResult>;
   runs(): Promise<FlowRunResult[]>;
   templates(): Promise<FlowTemplate[]>;
+  /** Registered webhook triggers. Never carries a secret. */
+  listTriggers(): Promise<FlowTriggerRecord[]>;
+  /**
+   * Mint a trigger. The secret comes back exactly once and is not readable
+   * again; sources that authenticate their sender return none at all.
+   */
+  createTrigger(
+    input: FlowTriggerCreate,
+  ): Promise<{ trigger: FlowTriggerRecord; secret?: string }>;
+  rotateTriggerSecret(
+    id: string,
+    secret?: string,
+  ): Promise<{ trigger: FlowTriggerRecord; secret?: string }>;
+  setTriggerEnabled(id: string, enabled: boolean): Promise<FlowTriggerRecord>;
+  removeTrigger(id: string): Promise<boolean>;
+  triggerDeliveries(opts?: {
+    triggerId?: string;
+    limit?: number;
+  }): Promise<FlowTriggerDelivery[]>;
 };
 
 /** Typed HTTP client for the orchestrator's /flows surface (code-first path). */
@@ -73,5 +138,42 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
     runs: async () => (await call<{ runs: FlowRunResult[] }>("/flows/runs")).runs,
     templates: async () =>
       (await call<{ templates: FlowTemplate[] }>("/flows/templates")).templates,
+    listTriggers: async () =>
+      (await call<{ triggers: FlowTriggerRecord[] }>("/flows/triggers")).triggers,
+    createTrigger: (input) =>
+      call<{ trigger: FlowTriggerRecord; secret?: string }>("/flows/triggers", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    rotateTriggerSecret: (id, secret) =>
+      call<{ trigger: FlowTriggerRecord; secret?: string }>("/flows/triggers/rotate", {
+        method: "POST",
+        body: JSON.stringify(secret ? { id, secret } : { id }),
+      }),
+    setTriggerEnabled: async (id, enabled) =>
+      (
+        await call<{ trigger: FlowTriggerRecord }>("/flows/triggers/enabled", {
+          method: "POST",
+          body: JSON.stringify({ id, enabled }),
+        })
+      ).trigger,
+    removeTrigger: async (id) =>
+      (
+        await call<{ removed?: boolean }>("/flows/triggers/delete", {
+          method: "POST",
+          body: JSON.stringify({ id }),
+        })
+      ).removed === true,
+    triggerDeliveries: async (deliveryOpts) => {
+      const params = new URLSearchParams();
+      if (deliveryOpts?.triggerId) params.set("triggerId", deliveryOpts.triggerId);
+      if (deliveryOpts?.limit) params.set("limit", String(deliveryOpts.limit));
+      const query = params.toString();
+      return (
+        await call<{ deliveries: FlowTriggerDelivery[] }>(
+          `/flows/triggers/deliveries${query ? `?${query}` : ""}`,
+        )
+      ).deliveries;
+    },
   };
 }

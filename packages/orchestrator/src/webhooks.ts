@@ -27,12 +27,15 @@ import {
   createWebhookStoreFromEnv,
   type WebhookStore,
 } from "./webhookStore.js";
+import { generateWebhookSecret } from "./webhookSignature.js";
 import {
-  isWebhookScheme,
-  generateWebhookSecret,
-  verifyWebhookSignature,
-  type WebhookScheme,
-} from "./webhookSignature.js";
+  eventSelected,
+  getEventSource,
+  isEventSource,
+  type EventSourceConfig,
+  type EventSourceId,
+} from "./eventSources.js";
+import type { JwksFetcher } from "./googleOidc.js";
 import type { CrewRuntime } from "./runtime.js";
 import type { FlowsSurface } from "./flows.js";
 
@@ -65,11 +68,21 @@ export type WebhookTrigger = {
   id: string;
   flowId: string;
   principal?: `0x${string}`;
-  scheme: WebhookScheme;
+  /** Which event source speaks to this hook (`lacrew` | `github` | `google-pubsub`). */
+  scheme: EventSourceId;
   enabled: boolean;
   input?: WebhookInputMap;
   description?: string;
-  secretVersion: number;
+  /**
+   * Event types this trigger wants. Empty or absent means every delivery runs.
+   * Dotted prefixes select subtypes, so `pull_request` covers
+   * `pull_request.opened` without listing each action.
+   */
+  events?: string[];
+  /** Non-secret per-source settings (Pub/Sub audience, service account). */
+  config?: EventSourceConfig;
+  /** Absent for sources that authenticate the sender instead of sharing a key. */
+  secretVersion?: number;
 };
 
 export type WebhookDelivery = {
@@ -99,14 +112,23 @@ export type WebhookAccept =
       job: WebhookJob;
     }
   | { ok: true; status: 200; duplicate: true; deliveryKey: string }
+  /**
+   * Verified and well-formed, but the trigger did not subscribe to this event
+   * type. A 2xx on purpose: GitHub sends every subscribed event and disables a
+   * hook that keeps answering 4xx, so "not interested" must not read as
+   * "broken".
+   */
+  | { ok: true; status: 200; skipped: string; eventType?: string }
   | { ok: false; status: number; error: string };
 
 export type WebhookCreateInput = {
   flowId: string;
   principal?: `0x${string}`;
-  scheme?: WebhookScheme;
+  scheme?: EventSourceId;
   input?: WebhookInputMap;
   description?: string;
+  events?: string[];
+  config?: EventSourceConfig;
   /** Operator-supplied secret; one is generated when omitted. */
   secret?: string;
 };
@@ -114,14 +136,17 @@ export type WebhookCreateInput = {
 export type WebhookSurface = {
   list(): WebhookTrigger[];
   get(id: string): WebhookTrigger | undefined;
-  /** Returns the cleartext secret exactly once — it is not readable again. */
+  /**
+   * Returns the cleartext secret exactly once — it is not readable again.
+   * Absent for sources that authenticate the sender rather than share a key.
+   */
   create(
     input: WebhookCreateInput,
-  ): Promise<{ trigger: WebhookTrigger; secret: string }>;
+  ): Promise<{ trigger: WebhookTrigger; secret?: string }>;
   rotate(
     id: string,
     secret?: string,
-  ): Promise<{ trigger: WebhookTrigger; secret: string }>;
+  ): Promise<{ trigger: WebhookTrigger; secret?: string }>;
   setEnabled(id: string, enabled: boolean): Promise<WebhookTrigger>;
   remove(id: string): Promise<boolean>;
   deliveries(limit?: number, triggerId?: string): Promise<WebhookDelivery[]>;
@@ -212,12 +237,35 @@ function rejectionKey(): string {
   return `rej_${randomUUID()}`;
 }
 
+/** Trim, drop blanks, de-duplicate — an events filter is a set, not a list. */
+function normalizeEvents(events: string[] | undefined): string[] {
+  if (!Array.isArray(events)) return [];
+  return [...new Set(events.map((e) => String(e).trim()).filter(Boolean))];
+}
+
+/**
+ * Keep only the config keys a source declares.
+ *
+ * Config is operator-supplied JSON that gets persisted and echoed back, so an
+ * unrecognized key would be stored and served forever without ever being read.
+ */
+function pickConfig(config: EventSourceConfig): EventSourceConfig {
+  const out: EventSourceConfig = {};
+  if (config.audience?.trim()) out.audience = config.audience.trim();
+  if (config.serviceAccountEmail?.trim()) {
+    out.serviceAccountEmail = config.serviceAccountEmail.trim();
+  }
+  return out;
+}
+
 export function createWebhookSurface(opts: {
   runtime: CrewRuntime;
   flows: FlowsSurface;
   /** Hands an accepted delivery to the queue; the HTTP thread never runs it. */
   enqueue: (job: WebhookJob) => Promise<void>;
   store?: WebhookStore;
+  /** Test seam for Google's key set; production reaches the real endpoint. */
+  jwksFetcher?: JwksFetcher;
 }): WebhookSurface {
   const store = opts.store ?? createWebhookStoreFromEnv();
   const triggers = new Map<string, WebhookTrigger>();
@@ -242,20 +290,22 @@ export function createWebhookSurface(opts: {
 
   const persist = async (
     trigger: WebhookTrigger,
-    secret: string,
+    secret: string | undefined,
   ): Promise<void> => {
     await store.save({
       id: trigger.id,
       flowId: trigger.flowId,
       principal: trigger.principal ?? null,
       scheme: trigger.scheme,
-      secretSealed: sealForStore(secret),
-      secretVersion: trigger.secretVersion,
+      secretSealed: secret ? sealForStore(secret) : "",
+      secretVersion: trigger.secretVersion ?? 0,
       enabled: trigger.enabled,
       inputMap: trigger.input
         ? (trigger.input as Record<string, unknown>)
         : null,
       description: trigger.description ?? null,
+      events: trigger.events ?? null,
+      config: trigger.config ? (trigger.config as Record<string, unknown>) : null,
     });
   };
 
@@ -268,7 +318,10 @@ export function createWebhookSurface(opts: {
   const requireWebhookFlow = async (
     flowId: string,
   ): Promise<FlowDefinition> => {
-    const def = (await opts.flows.list()).find((f) => f.id === flowId);
+    // Always through the store: this runs on registration and on every
+    // delivery, both of which can land on a replica that booted before the flow
+    // was saved, and both of which already touch the database anyway.
+    const def = await opts.flows.get(flowId, { refresh: true });
     if (!def) throw new Error("flow_not_found");
     if (def.trigger !== "webhook")
       throw new Error("flow_not_webhook_triggered");
@@ -279,7 +332,7 @@ export function createWebhookSurface(opts: {
   const adopt = (
     row: Awaited<ReturnType<WebhookStore["get"]>>,
   ): WebhookTrigger | undefined => {
-    if (!row || !isWebhookScheme(row.scheme)) return undefined;
+    if (!row || !isEventSource(row.scheme)) return undefined;
     const trigger: WebhookTrigger = {
       id: row.id,
       flowId: row.flowId,
@@ -288,14 +341,16 @@ export function createWebhookSurface(opts: {
       enabled: row.enabled,
       ...(row.inputMap ? { input: row.inputMap as WebhookInputMap } : {}),
       ...(row.description ? { description: row.description } : {}),
-      secretVersion: row.secretVersion,
+      ...(row.events?.length ? { events: row.events } : {}),
+      ...(row.config ? { config: row.config as EventSourceConfig } : {}),
+      ...(row.secretVersion ? { secretVersion: row.secretVersion } : {}),
     };
     triggers.set(row.id, trigger);
     const secret = row.secretSealed
       ? readSealed(row.id, row.secretSealed)
       : null;
     if (secret) secrets.set(row.id, secret);
-    else if (store.durable) {
+    else if (store.durable && getEventSource(trigger.scheme).usesSecret) {
       // Sealed material exists and could not be opened — wrong key, or a
       // tampered row. Dropping the in-process copy is what turns that into a
       // 503 instead of quietly verifying against the last secret this process
@@ -376,11 +431,22 @@ export function createWebhookSurface(opts: {
     create: async (input) => {
       await requireWebhookFlow(input.flowId);
       const scheme = input.scheme ?? "lacrew";
-      if (!isWebhookScheme(scheme)) throw new Error("unknown_webhook_scheme");
+      if (!isEventSource(scheme)) throw new Error("unknown_event_source");
       if (input.principal && !/^0x[0-9a-fA-F]{40}$/.test(input.principal)) {
         throw new Error("invalid_principal");
       }
-      const secret = input.secret?.trim() || generateWebhookSecret();
+      const source = getEventSource(scheme);
+      // Required config is checked here rather than at delivery time: a Pub/Sub
+      // hook without an audience would accept a token minted for anybody's
+      // subscription, and learning that from the first live event is far too
+      // late for a trigger that starts funded flows.
+      const missing = source.requiredConfig.filter((key) => !input.config?.[key]?.trim());
+      if (missing.length > 0) throw new Error(`source_config_required: ${missing.join(", ")}`);
+
+      const events = normalizeEvents(input.events);
+      const secret = source.usesSecret
+        ? input.secret?.trim() || generateWebhookSecret()
+        : undefined;
       const trigger: WebhookTrigger = {
         id: newTriggerId(),
         flowId: input.flowId,
@@ -389,22 +455,27 @@ export function createWebhookSurface(opts: {
         enabled: true,
         ...(input.input ? { input: input.input } : {}),
         ...(input.description ? { description: input.description } : {}),
-        secretVersion: 1,
+        ...(events.length > 0 ? { events } : {}),
+        ...(input.config ? { config: pickConfig(input.config) } : {}),
+        ...(secret ? { secretVersion: 1 } : {}),
       };
       await persist(trigger, secret);
       triggers.set(trigger.id, trigger);
-      secrets.set(trigger.id, secret);
+      if (secret) secrets.set(trigger.id, secret);
       recordChange(trigger, "created");
-      return { trigger: view(trigger), secret };
+      return { trigger: view(trigger), ...(secret ? { secret } : {}) };
     },
 
     rotate: async (id, secret) => {
-      const existing = triggers.get(id);
+      const existing = await resolve(id);
       if (!existing) throw new Error("webhook_trigger_not_found");
+      // Nothing to rotate when the source carries no shared secret; saying so
+      // beats minting a key that would never verify anything.
+      if (!getEventSource(existing.scheme).usesSecret) throw new Error("source_has_no_secret");
       const next = secret?.trim() || generateWebhookSecret();
       const rotated: WebhookTrigger = {
         ...existing,
-        secretVersion: existing.secretVersion + 1,
+        secretVersion: (existing.secretVersion ?? 1) + 1,
       };
       await persist(rotated, next);
       triggers.set(id, rotated);
@@ -414,10 +485,12 @@ export function createWebhookSurface(opts: {
     },
 
     setEnabled: async (id, enabled) => {
-      const existing = triggers.get(id);
+      const existing = await resolve(id);
       if (!existing) throw new Error("webhook_trigger_not_found");
       const secret = secrets.get(id);
-      if (!secret) throw new Error("webhook_secret_unreadable");
+      if (!secret && getEventSource(existing.scheme).usesSecret) {
+        throw new Error("webhook_secret_unreadable");
+      }
       const updated: WebhookTrigger = { ...existing, enabled };
       await persist(updated, secret);
       triggers.set(id, updated);
@@ -450,21 +523,26 @@ export function createWebhookSurface(opts: {
         return reject(triggerId, 413, "webhook_body_too_large", bytes);
       }
 
+      const source = getEventSource(trigger.scheme);
       const secret = secrets.get(triggerId);
-      if (!secret) {
+      if (source.usesSecret && !secret) {
         // The record survived a restart but its secret did not unseal. Verifying
         // is impossible, and accepting unverified would defeat the whole point.
         return reject(triggerId, 503, "webhook_secret_unreadable", bytes);
       }
 
-      const signature = verifyWebhookSignature({
-        scheme: trigger.scheme,
+      const ctx = { rawBody, header };
+      const verified = await source.verify({
+        ctx,
         secret,
-        rawBody,
-        header,
+        config: trigger.config,
+        ...(opts.jwksFetcher ? { jwksFetcher: opts.jwksFetcher } : {}),
       });
-      if (!signature.ok) {
-        return reject(triggerId, 401, `webhook_${signature.reason}`, bytes);
+      if (!verified.ok) {
+        // A key set we could not reach is our outage, not the producer's bad
+        // request — 503 tells them to retry, 401 tells them to stop.
+        const status = verified.reason === "jwks_unavailable" ? 503 : 401;
+        return reject(triggerId, status, `webhook_${verified.reason}`, bytes);
       }
 
       if (!trigger.enabled)
@@ -475,6 +553,35 @@ export function createWebhookSurface(opts: {
         body = JSON.parse(rawBody);
       } catch {
         return reject(triggerId, 400, "webhook_body_invalid", bytes);
+      }
+
+      // The payload a flow sees is not always the body: Pub/Sub wraps the real
+      // message in base64 inside an envelope, and mapping against the envelope
+      // would read nothing while looking like a mis-typed path.
+      const payload = source.payload(ctx, body);
+      if (payload === undefined) {
+        return reject(triggerId, 400, "webhook_envelope_invalid", bytes);
+      }
+
+      const eventType = source.eventType(ctx, body);
+      if (!eventSelected(trigger.events, eventType)) {
+        // Verified and well-formed, just not subscribed. Logged so an operator
+        // can see the hook is live and simply filtering, and answered 2xx so
+        // GitHub does not mark the endpoint as failing and disable it.
+        await store.logDelivery({
+          triggerId,
+          deliveryKey: rejectionKey(),
+          result: "skipped",
+          reason: `event_not_selected${eventType ? `: ${eventType}` : ""}`,
+          runId: null,
+          bytes,
+        });
+        return {
+          ok: true,
+          status: 200,
+          skipped: "event_not_selected",
+          ...(eventType ? { eventType } : {}),
+        };
       }
 
       let def: FlowDefinition;
@@ -497,7 +604,7 @@ export function createWebhookSurface(opts: {
         return reject(triggerId, 403, "webhook_principal_paused", bytes);
       }
 
-      const deliveryKey = deliveryKeyFor(header);
+      const deliveryKey = source.deliveryKey(ctx, body) ?? deliveryKeyFor(header);
       const claimed = await store.claimDelivery({
         triggerId,
         deliveryKey,
@@ -511,7 +618,7 @@ export function createWebhookSurface(opts: {
         triggerId,
         deliveryKey,
         runId,
-        input: mapWebhookInput(body, trigger.input),
+        input: mapWebhookInput(payload, trigger.input),
       };
       try {
         await opts.enqueue(job);
@@ -556,6 +663,10 @@ export function createWebhookSurface(opts: {
           input: job.input,
           trigger: "webhook",
           runId: job.runId,
+          // This worker may never have seen the flow: the queue hands a
+          // delivery to whichever replica is free, and its boot-time map holds
+          // only the flows that existed when it started.
+          refresh: true,
           ...(trigger.principal ? { as: trigger.principal } : {}),
         });
         await store.settleDelivery({

@@ -36,6 +36,10 @@ export const webhookTriggers = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     /** Optional body → flow input mapping (`path` / `fields`). */
     inputMap: jsonb("input_map").$type<Record<string, unknown>>(),
+    /** Event types this trigger subscribes to; null/empty means all of them. */
+    events: jsonb("events").$type<string[]>(),
+    /** Non-secret per-source settings (Pub/Sub audience, service account). */
+    config: jsonb("config").$type<Record<string, unknown>>(),
     description: text("description"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

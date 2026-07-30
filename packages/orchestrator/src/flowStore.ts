@@ -8,6 +8,7 @@ import {
   createDb,
   deleteFlowDefinition,
   getDatabaseUrl,
+  getFlowDefinition,
   insertFlowRun,
   listFlowDefinitions,
   recentFlowRuns,
@@ -23,6 +24,13 @@ export interface FlowStore {
   remove(id: string): Promise<void>;
   /** All persisted definitions (hydrated into the surface on boot). */
   list(): Promise<FlowDefinition[]>;
+  /**
+   * One definition by id, read through rather than served from the boot-time
+   * map. Replicas share a queue but not memory, so a flow saved after a worker
+   * booted is invisible to it — which a webhook delivery discovers as
+   * `flow_not_found` on a flow that plainly exists.
+   */
+  get(id: string): Promise<FlowDefinition | null>;
   appendRun(run: FlowRunResult): Promise<void>;
   /** Most recent runs, newest → oldest. */
   recentRuns(limit: number): Promise<FlowRunResult[]>;
@@ -36,6 +44,7 @@ export function createMemoryFlowStore(): FlowStore {
     save: async () => {},
     remove: async () => {},
     list: async () => [],
+    get: async () => null,
     appendRun: async () => {},
     recentRuns: async () => [],
     close: async () => {},
@@ -77,6 +86,15 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
       } catch (err) {
         warn("list", err);
         return [];
+      }
+    },
+    get: async (id) => {
+      try {
+        const row = await getFlowDefinition(db(), id);
+        return row ? (row.definition as unknown as FlowDefinition) : null;
+      } catch (err) {
+        warn("get", err);
+        return null;
       }
     },
     appendRun: async (run) => {

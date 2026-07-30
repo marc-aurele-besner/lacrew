@@ -49,5 +49,12 @@ export {
   type CrewVertical,
   type EnforcementLayer,
 } from "./crews.js";
-export { createFlowsClient, type FlowsClient, type FlowsClientOptions } from "./client.js";
+export {
+  createFlowsClient,
+  type FlowsClient,
+  type FlowsClientOptions,
+  type FlowTriggerCreate,
+  type FlowTriggerDelivery,
+  type FlowTriggerRecord,
+} from "./client.js";
 export { cronMatches, isValidCron, parseCron } from "./cron.js";

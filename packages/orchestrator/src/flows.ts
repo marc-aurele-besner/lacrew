@@ -40,6 +40,12 @@ const MAX_DELEGATION_DEPTH = 4;
 export type FlowsSurface = {
   /** Every flow, or only those `as` may see when a principal is given. */
   list(as?: string): Promise<FlowDefinition[]>;
+  /**
+   * One definition by id. `refresh` reads the store rather than this process's
+   * map, which is what dispatched work needs: the replica that saved a flow and
+   * the one handed its delivery are routinely different processes.
+   */
+  get(id: string, opts?: { refresh?: boolean }): Promise<FlowDefinition | undefined>;
   save(def: FlowDefinition): Promise<FlowDefinition>;
   remove(id: string): Promise<boolean>;
   run(input: {
@@ -53,6 +59,16 @@ export type FlowsSurface = {
      * still queued — and makes a redelivered job land on the same row.
      */
     runId?: string;
+    /**
+     * Read the definition from the store instead of this process's map.
+     *
+     * Set by dispatched work (webhook deliveries): the replica that saved a
+     * flow and the one that runs it are routinely different, and a boot-time
+     * map answers `flow_not_found` for everything saved since. Manual and
+     * swept runs keep the map, which is already the definition their own
+     * process was asked about.
+     */
+    refresh?: boolean;
     /** Agent the run executes as; defaults to the crew worker. */
     as?: `0x${string}`;
   }): Promise<FlowRunResult>;
@@ -204,13 +220,18 @@ export function createFlowsSurface(opts: {
       input?: string;
       trigger?: FlowTrigger;
       runId?: string;
+      refresh?: boolean;
       as?: `0x${string}`;
     },
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
     chain: string[] = [],
   ): Promise<FlowRunResult> => {
+    const fresh =
+      input.refresh && input.id && !input.flow ? await store.get(input.id) : null;
+    if (fresh) flows.set(fresh.id, fresh);
     const def =
       input.flow ??
+      fresh ??
       flows.get(input.id ?? "") ??
       flowTemplates.find((t) => t.definition.id === input.id)?.definition;
     if (!def) throw new Error("flow_not_found");
@@ -256,6 +277,18 @@ export function createFlowsSurface(opts: {
       if (!as) return all;
       const nodes = await orgNodes();
       return all.filter((def) => visibleTo(def, as, nodes));
+    },
+    get: async (id, getOpts) => {
+      if (getOpts?.refresh) {
+        const stored = await store.get(id);
+        if (stored) {
+          flows.set(stored.id, stored);
+          return stored;
+        }
+      }
+      return (
+        flows.get(id) ?? flowTemplates.find((t) => t.definition.id === id)?.definition
+      );
     },
     save: async (def) => {
       const check = validateFlow(def);

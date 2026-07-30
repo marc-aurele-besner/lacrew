@@ -18,7 +18,8 @@ import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
 import { webhookMaxBodyBytes, type WebhookInputMap, type WebhookSurface } from "./webhooks.js";
-import type { WebhookScheme } from "./webhookSignature.js";
+import { describeEventSources } from "./eventSources.js";
+import type { EventSourceId } from "./eventSources.js";
 import type { QueueProvider } from "./queue/index.js";
 import type { ModelProvider } from "./model/index.js";
 
@@ -272,6 +273,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           triggers: webhooks.list(),
           store: webhooks.storeName,
           maxBodyBytes: webhookMaxBodyBytes(),
+          // Served rather than duplicated by consumers: a control plane that
+          // hardcoded this list would offer a source the orchestrator it is
+          // talking to cannot actually verify.
+          sources: describeEventSources(),
         })
       : jsonBig(c, { error: "webhooks_unavailable" }, 503),
   );
@@ -281,7 +286,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const body = await bodyOf<{
       flowId?: string;
       principal?: `0x${string}`;
-      scheme?: WebhookScheme;
+      scheme?: EventSourceId;
       input?: WebhookInputMap;
       description?: string;
       secret?: string;
@@ -360,7 +365,18 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       ...(Number.isFinite(declared) ? { contentLength: declared } : {}),
     });
     if (!accepted.ok) return jsonBig(c, { error: accepted.error }, accepted.status);
-    if (accepted.status === 200) {
+    if ("skipped" in accepted) {
+      return jsonBig(
+        c,
+        {
+          accepted: true,
+          skipped: accepted.skipped,
+          ...(accepted.eventType ? { eventType: accepted.eventType } : {}),
+        },
+        200,
+      );
+    }
+    if ("duplicate" in accepted) {
       return jsonBig(c, { accepted: true, duplicate: true, deliveryKey: accepted.deliveryKey }, 200);
     }
     return jsonBig(

@@ -36,6 +36,7 @@ function recordingStore() {
       defs.delete(id);
     },
     list: async () => [...defs.values()],
+    get: async (id) => defs.get(id) ?? null,
     appendRun: async (run) => {
       runs.push(run);
     },
