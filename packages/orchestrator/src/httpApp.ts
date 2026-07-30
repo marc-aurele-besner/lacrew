@@ -692,6 +692,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       to?: string;
       refs?: Array<{ kind?: string; id?: string }>;
       blocks?: unknown[];
+      via?: string;
     }>(c);
     if (!body.thread) return jsonBig(c, { error: "thread_required" }, 400);
     if (!body.author) return jsonBig(c, { error: "author_required" }, 400);
@@ -709,6 +710,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         replyTo: body.replyTo,
         to: body.to,
         blocks: body.blocks,
+        // Where it came from, when the caller bridged it in from somewhere the
+        // app is not (F2.19). Dropped unless it looks like a channel slug.
+        via: body.via,
         refs: (body.refs ?? [])
           .filter((r) => r?.id)
           .map((r) => ({ kind: (r.kind ?? "intent") as "intent", id: String(r.id) })),

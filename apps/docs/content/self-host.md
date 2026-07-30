@@ -435,6 +435,11 @@ docker run --rm -p 8788:8788 lacrew-orchestrator
 
 Run the public orchestrator on `:8788`, then the private API on `:8789` and web on `:3000`. See the lacrew.xyz README for `file:` package wiring. The API applies tenancy SQL migrations on startup when `DATABASE_URL` is set.
 
+To supervise a crew from Slack or Telegram, the control plane also needs a channel signing
+key — `LACREW_CHANNEL_SECRET`, or `LACREW_SESSION_KEY`, from which one is derived. Without
+it a reply from chat has no verifiable target and the bridge refuses rather than guessing
+at a thread. See [Supervising a crew from chat](./chat-bridge.md).
+
 ## TODO
 
 - TODO: Publish `@lacrew/sdk` / `@lacrew/orchestrator` / `@lacrew/db` to npm

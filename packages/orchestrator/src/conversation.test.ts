@@ -107,6 +107,15 @@ describe("normalizeMessage", () => {
     assert.deepEqual(m.options, ["a"]);
     assert.deepEqual(m.refs, [{ kind: "intent", id: "7" }]);
   });
+
+  it("keeps provenance only when it looks like a channel slug", () => {
+    // It renders next to the author's name, so whatever posts a message must
+    // not be able to put markup — or a sentence — in that position.
+    assert.equal(normalizeMessage({ ...base, body: "hi", via: "Telegram" }, "m1", AT).via, "telegram");
+    for (const bad of ["<b>slack</b>", "posted by the ceo", "", "x".repeat(40)]) {
+      assert.equal(normalizeMessage({ ...base, body: "hi", via: bad }, "m1", AT).via, undefined);
+    }
+  });
 });
 
 describe("verifiability", () => {

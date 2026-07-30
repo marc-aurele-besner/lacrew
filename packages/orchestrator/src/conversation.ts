@@ -95,6 +95,15 @@ export type Message = {
    * reference and never an action.
    */
   blocks?: MessageBlock[];
+  /**
+   * How this message reached the thread, when it did not come from the app —
+   * `telegram`, `slack`. Provenance, not authority: a message bridged in from
+   * chat (F2.19) has already been attributed to a human seat by the time it
+   * gets here, and this only lets a reader see that the sentence was typed
+   * somewhere the app's rules do not reach. A surface that hid it would be
+   * presenting a chat line and a signed-in post as the same thing.
+   */
+  via?: string;
 };
 
 export const MESSAGE_MAX_CHARS = 4_000;
@@ -148,7 +157,21 @@ export type PostInput = {
   to?: string;
   refs?: MessageRef[];
   blocks?: readonly unknown[];
+  via?: string;
 };
+
+/**
+ * Provenance is a label, so it is constrained to look like one.
+ *
+ * Whatever posts a message controls this string, and it renders next to the
+ * author's name — the one place in a thread a reader is trusting. A slug can
+ * only ever be a slug; anything else is dropped rather than escaped, because
+ * a surface should not have to be careful with it.
+ */
+function normalizeVia(raw: string | undefined): string | undefined {
+  const slug = (raw ?? "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,23}$/.test(slug) ? slug : undefined;
+}
 
 /**
  * Validate and normalize a post. Throws rather than silently correcting: a
@@ -175,6 +198,7 @@ export function normalizeMessage(
     .map((r) => ({ kind: r.kind, id: r.id.trim() }));
 
   const blocks = input.blocks ? normalizeBlocks(input.blocks) : [];
+  const via = normalizeVia(input.via);
 
   return {
     id,
@@ -189,6 +213,7 @@ export function normalizeMessage(
     ...(input.to?.trim() ? { to: input.to.trim() } : {}),
     ...(refs.length > 0 ? { refs } : {}),
     ...(blocks.length > 0 ? { blocks } : {}),
+    ...(via ? { via } : {}),
   };
 }
 
