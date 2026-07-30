@@ -47,9 +47,13 @@ test("blueprints keep partner-derived numbers distinguishable from drafted ones"
     "content-studio",
     "defi-desk",
     "github-experts",
+    "governance-desk",
+    "lp-advisor",
     "platform-oncall",
     "research-desk",
+    "risk-watch",
     "support-desk",
+    "yield-desk",
   ]);
 
   // Three trace to a filled intake: every number in them answers a question a
@@ -257,6 +261,67 @@ test("a crew that declares a connector no flow calls says which it is", () => {
     dev.connectors.filter((c) => (c.usedBy ?? "flow") === "flow").map((c) => c.id),
     ["github"],
   );
+});
+
+test("the advisory crew has nowhere to trade and nowhere to withdraw", () => {
+  // The whole claim of `lp-advisor` is structural rather than stated: it does
+  // not decline to trade, it has no admitted target to trade against. A venue
+  // or payout quietly flipped to `true` here would turn an advisory crew into
+  // a trading one without changing a word of its summary.
+  const bp = getCrewBlueprint("lp-advisor")!;
+  const spendable = bp.targets.filter((t) => t.kind !== "service");
+  assert.ok(spendable.length > 0, "lp-advisor lists no venue or payout to refuse");
+  for (const target of spendable) {
+    assert.equal(target.whitelisted, false, `lp-advisor admits ${target.kind} "${target.id}"`);
+  }
+
+  // And the refusal is exercised rather than assumed: the flow asks about the
+  // router it expects to be denied on, so an admission shows up as an alert.
+  const def = getFlowTemplate("lp-range-review")!.definition;
+  assert.ok(
+    crewFlowPlaceholders(def).includes("target.dex-router"),
+    "the review flow never asks policy about the venue it must not reach",
+  );
+});
+
+test("the risk watch states the residual risk on every guardrail it has", () => {
+  // Validation only demands this of `monitoring` rails. This crew claims to
+  // detect rather than prevent, so every rail owes the reader what it still
+  // does not cover — including the ones enforced onchain.
+  const bp = getCrewBlueprint("risk-watch")!;
+  for (const rail of bp.guardrails) {
+    assert.ok(
+      rail.residualRisk?.trim(),
+      `risk-watch guardrail "${rail.never}" claims prevention without stating its gap`,
+    );
+  }
+});
+
+test("the DeFi patterns declare the connectors their own flows call", () => {
+  // The counterpart to the studio and the desk above: these four ship a
+  // pipeline that genuinely leaves LaCrew, so `usedBy: "flow"` is a claim the
+  // flow has to back. `governance-desk` is the deliberate exception — no
+  // proposal-feed preset exists, so it declares nothing rather than pretending.
+  for (const id of ["lp-advisor", "yield-desk", "risk-watch"]) {
+    const bp = getCrewBlueprint(id)!;
+    const needed = bp.connectors.filter((c) => (c.usedBy ?? "flow") === "flow");
+    assert.ok(needed.length > 0, `${id} ships a flow but needs no connector`);
+
+    const called = new Set(
+      bp.flows.flatMap((flowId) =>
+        getFlowTemplate(flowId)!.definition.steps.flatMap((s) =>
+          s.kind === "tool" && !s.tool.startsWith("lacrew_") ? [s.tool] : [],
+        ),
+      ),
+    );
+    for (const need of needed) {
+      for (const route of need.routes) {
+        assert.ok(called.has(`${need.id}.${route}`), `${id} declares ${need.id}.${route} uncalled`);
+      }
+    }
+  }
+
+  assert.deepEqual(getCrewBlueprint("governance-desk")!.connectors, []);
 });
 
 test("the dev crew's connector note points at the credential the preset defaults to", () => {
