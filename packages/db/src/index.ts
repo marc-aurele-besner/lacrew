@@ -38,6 +38,15 @@ export {
   type WebhookDeliveryRow,
 } from "./webhooks.js";
 export {
+  upsertConnectorMode,
+  deleteConnectorMode,
+  listConnectorModes,
+  upsertConnectorAsk,
+  recentConnectorAsks,
+  type ConnectorModeRow,
+  type ConnectorAskRow,
+} from "./connectors.js";
+export {
   upsertSessionRow,
   markSessionRevokedRow,
   recentSessionRows,
