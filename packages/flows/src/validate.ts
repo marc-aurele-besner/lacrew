@@ -27,6 +27,8 @@ export const STEP_KINDS = [
 
 export const SCOPE_LEVELS = ["org", "team", "agent"] as const;
 
+export const FLOW_TRIGGERS = ["manual", "epoch", "cron", "webhook"] as const;
+
 export const ORG_ACTIONS = [
   "hire",
   "fire",
@@ -98,13 +100,8 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
   if (!def.id?.trim()) errors.push("flow id is required");
   if (!def.name?.trim()) errors.push("flow name is required");
   if (!def.steps?.length) errors.push("flow needs at least one step");
-  if (
-    def.trigger !== undefined &&
-    def.trigger !== "manual" &&
-    def.trigger !== "epoch" &&
-    def.trigger !== "cron"
-  ) {
-    errors.push(`unknown trigger "${def.trigger}" (manual | epoch | cron)`);
+  if (def.trigger !== undefined && !FLOW_TRIGGERS.includes(def.trigger)) {
+    errors.push(`unknown trigger "${def.trigger}" (${FLOW_TRIGGERS.join(" | ")})`);
   }
   if (def.trigger === "cron" && !isValidCron(def.schedule ?? "")) {
     errors.push(

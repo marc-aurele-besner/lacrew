@@ -38,6 +38,39 @@ export {
   type GithubAppTokenSource,
 } from "./githubApp.js";
 export {
+  createWebhookSurface,
+  mapWebhookInput,
+  readPath,
+  webhookMaxBodyBytes,
+  type WebhookAccept,
+  type WebhookCreateInput,
+  type WebhookDelivery,
+  type WebhookInputMap,
+  type WebhookJob,
+  type WebhookSurface,
+  type WebhookTrigger,
+} from "./webhooks.js";
+export {
+  generateWebhookSecret,
+  isWebhookScheme,
+  signGithubDelivery,
+  signLacrewDelivery,
+  verifyWebhookSignature,
+  webhookToleranceSec,
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  WEBHOOK_SCHEMES,
+  type SignatureCheck,
+  type SignatureFailure,
+  type WebhookScheme,
+} from "./webhookSignature.js";
+export {
+  createWebhookStoreFromEnv,
+  createMemoryWebhookStore,
+  createPgWebhookStore,
+  type WebhookStore,
+} from "./webhookStore.js";
+export {
   createAuditStoreFromEnv,
   createMemoryAuditStore,
   createPgAuditStore,

@@ -17,6 +17,8 @@ import type { ConnectorRegistry } from "./connectors.js";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
+import { webhookMaxBodyBytes, type WebhookInputMap, type WebhookSurface } from "./webhooks.js";
+import type { WebhookScheme } from "./webhookSignature.js";
 import type { QueueProvider } from "./queue/index.js";
 import type { ModelProvider } from "./model/index.js";
 
@@ -28,6 +30,8 @@ export interface OrchestratorAppOptions {
   mcpBackend?: McpToolBackend;
   /** Absent when no connector is registered — the normal state, not an error. */
   connectors?: ConnectorRegistry;
+  /** Absent when the embedder wired no queue-backed webhook surface. */
+  webhooks?: WebhookSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -51,6 +55,20 @@ async function bodyOf<T>(c: Context): Promise<T> {
   return (await c.req.json().catch(() => ({}))) as T;
 }
 
+function msgOf(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/** Map a trigger-management failure onto the status its cause deserves. */
+function triggerErrorStatus(err: unknown): number {
+  const msg = msgOf(err, "");
+  if (msg === "flow_not_found" || msg === "webhook_trigger_not_found") return 404;
+  // Sealing is a deployment gap, not a bad request: the operator's payload was
+  // fine and the fix is an env var, so a 4xx would point them at the wrong file.
+  if (msg === "webhook_sealing_unavailable" || msg === "webhook_secret_unreadable") return 503;
+  return 400;
+}
+
 /** One standard cron field: `*`, numbers, ranges, lists, and steps. */
 const CRON_FIELD = /^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/;
 
@@ -61,7 +79,8 @@ function isValidCron(expr: string): boolean {
 }
 
 export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
-  const { runtime, queue, model, flows, mcpBackend, connectors, mcpUseMock, authToken } = options;
+  const { runtime, queue, model, flows, mcpBackend, connectors, webhooks, mcpUseMock, authToken } =
+    options;
   const app = new Hono();
 
   app.use("*", async (c, next) => {
@@ -73,7 +92,17 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
     }
     // Health stays open so pools/load balancers can probe without the token.
-    if (authToken && !(c.req.method === "GET" && c.req.path === "/health")) {
+    // Hook deliveries too: a webhook producer is an external system that has
+    // the trigger's HMAC secret and no reason to hold the operator's bearer
+    // token. `POST /hooks/:id` authenticates every request against that
+    // signature and rejects an unsigned one — it is not an unauthenticated
+    // route, it is one authenticated by a different, narrower credential.
+    const isHookDelivery = c.req.method === "POST" && c.req.path.startsWith("/hooks/");
+    if (
+      authToken &&
+      !isHookDelivery &&
+      !(c.req.method === "GET" && c.req.path === "/health")
+    ) {
       if (!isAuthorized(c.req.header("authorization"), authToken)) {
         return jsonBig(c, { error: "unauthorized" }, 401);
       }
@@ -103,6 +132,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         templates: flows.templates().length,
         store: flows.storeName,
       },
+      webhooks: webhooks
+        ? {
+            triggers: webhooks.list().length,
+            enabled: webhooks.list().filter((t) => t.enabled).length,
+            store: webhooks.storeName,
+            maxBodyBytes: webhookMaxBodyBytes(),
+          }
+        : { triggers: 0, store: null },
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
       governance: { autoExecute: autoExecuteEnabled() },
@@ -223,6 +260,115 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.get("/flows/runs", (c) => jsonBig(c, { runs: flows.runs(), mode: runtime.mode }));
 
   app.get("/flows/templates", (c) => jsonBig(c, { templates: flows.templates() }));
+
+  /**
+   * Webhook flow triggers (F2.22). The management routes sit behind the normal
+   * bearer token; only `POST /hooks/:triggerId` is carved out of it, because
+   * its caller is an external producer authenticating with an HMAC instead.
+   */
+  app.get("/flows/triggers", (c) =>
+    webhooks
+      ? jsonBig(c, {
+          triggers: webhooks.list(),
+          store: webhooks.storeName,
+          maxBodyBytes: webhookMaxBodyBytes(),
+        })
+      : jsonBig(c, { error: "webhooks_unavailable" }, 503),
+  );
+
+  app.post("/flows/triggers", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const body = await bodyOf<{
+      flowId?: string;
+      principal?: `0x${string}`;
+      scheme?: WebhookScheme;
+      input?: WebhookInputMap;
+      description?: string;
+      secret?: string;
+    }>(c);
+    if (!body.flowId?.trim()) return jsonBig(c, { error: "flow_id_required" }, 400);
+    try {
+      const { trigger, secret } = await webhooks.create({ ...body, flowId: body.flowId });
+      // The only time the secret is ever served. It is sealed at rest and the
+      // process holds it to verify with; there is no read-it-back route.
+      return jsonBig(c, { trigger, secret, secretShownOnce: true }, 201);
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_trigger") }, triggerErrorStatus(err));
+    }
+  });
+
+  app.post("/flows/triggers/rotate", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const body = await bodyOf<{ id?: string; secret?: string }>(c);
+    if (!body.id) return jsonBig(c, { error: "id_required" }, 400);
+    try {
+      const { trigger, secret } = await webhooks.rotate(body.id, body.secret);
+      return jsonBig(c, { trigger, secret, secretShownOnce: true });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "rotate_failed") }, triggerErrorStatus(err));
+    }
+  });
+
+  app.post("/flows/triggers/enabled", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const body = await bodyOf<{ id?: string; enabled?: boolean }>(c);
+    if (!body.id) return jsonBig(c, { error: "id_required" }, 400);
+    if (typeof body.enabled !== "boolean") return jsonBig(c, { error: "enabled_required" }, 400);
+    try {
+      return jsonBig(c, { trigger: await webhooks.setEnabled(body.id, body.enabled) });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "update_failed") }, triggerErrorStatus(err));
+    }
+  });
+
+  app.post("/flows/triggers/delete", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const body = await bodyOf<{ id?: string }>(c);
+    if (!body.id) return jsonBig(c, { error: "id_required" }, 400);
+    return jsonBig(c, { removed: await webhooks.remove(body.id) });
+  });
+
+  app.get("/flows/triggers/deliveries", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const limit = Number(c.req.query("limit") ?? 50);
+    return jsonBig(c, {
+      deliveries: await webhooks.deliveries(
+        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 50,
+        c.req.query("triggerId") ?? undefined,
+      ),
+    });
+  });
+
+  /**
+   * The hook surface itself. Reads the raw body — not `bodyOf` — because the
+   * HMAC covers the exact bytes sent, and re-serializing a parsed object would
+   * verify a different string than the producer signed.
+   */
+  app.post("/hooks/:triggerId", async (c) => {
+    if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
+    const declared = Number(c.req.header("content-length") ?? Number.NaN);
+    // Refuse on the declared length before reading, so an oversized body is
+    // never buffered in the first place.
+    if (Number.isFinite(declared) && declared > webhookMaxBodyBytes()) {
+      return jsonBig(c, { error: "webhook_body_too_large" }, 413);
+    }
+    const rawBody = await c.req.text().catch(() => "");
+    const accepted = await webhooks.accept({
+      triggerId: c.req.param("triggerId"),
+      rawBody,
+      header: (name) => c.req.header(name),
+      ...(Number.isFinite(declared) ? { contentLength: declared } : {}),
+    });
+    if (!accepted.ok) return jsonBig(c, { error: accepted.error }, accepted.status);
+    if (accepted.status === 200) {
+      return jsonBig(c, { accepted: true, duplicate: true, deliveryKey: accepted.deliveryKey }, 200);
+    }
+    return jsonBig(
+      c,
+      { accepted: true, runId: accepted.runId, deliveryKey: accepted.deliveryKey },
+      202,
+    );
+  });
 
   /**
    * Boot (or rotate) a session key. Scopes narrow what the key may do; omitting
