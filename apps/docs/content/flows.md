@@ -13,17 +13,17 @@ they do for any other agent action.
 
 ## Step kinds
 
-| Kind | What it does | Edges |
-| --- | --- | --- |
-| `model` | LLM completion via the orchestrator's `ModelProvider` | `next` |
-| `tool` | LaCrew MCP tool call (org tree, pending intents, approve, …) | `next` |
-| `gate` | Proposes a spend intent and branches on the policy verdict | `onAllow` / `onEscalate` / `onDeny` |
-| `branch` | String/number condition on a prior output | `onTrue` / `onFalse` |
-| `switch` | Multi-way match on a prior output | one edge per case / `onDefault` |
-| `agent` | Delegates to another agent, under that agent's own policy | `next` |
-| `org` | Hire, fire, reparent, activate, or change a cap / whitelist / policy | `onAllow` / `onEscalate` / `onDeny` |
-| `budget` | Raise a grant, stream an allowance, run the next epoch | `onAllow` / `onEscalate` / `onDeny` |
-| `governance` | Propose, vote, veto, or execute | `next` |
+| Kind         | What it does                                                         | Edges                               |
+| ------------ | -------------------------------------------------------------------- | ----------------------------------- |
+| `model`      | LLM completion via the orchestrator's `ModelProvider`                | `next`                              |
+| `tool`       | LaCrew MCP tool call (org tree, pending intents, approve, …)         | `next`                              |
+| `gate`       | Proposes a spend intent and branches on the policy verdict           | `onAllow` / `onEscalate` / `onDeny` |
+| `branch`     | String/number condition on a prior output                            | `onTrue` / `onFalse`                |
+| `switch`     | Multi-way match on a prior output                                    | one edge per case / `onDefault`     |
+| `agent`      | Delegates to another agent, under that agent's own policy            | `next`                              |
+| `org`        | Hire, fire, reparent, activate, or change a cap / whitelist / policy | `onAllow` / `onEscalate` / `onDeny` |
+| `budget`     | Raise a grant, stream an allowance, run the next epoch               | `onAllow` / `onEscalate` / `onDeny` |
+| `governance` | Propose, vote, veto, or execute                                      | `next`                              |
 
 Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
 `{{steps.<id>.json}}`, and `{{steps.<id>.verdict}}`. Steps fall through in
@@ -34,11 +34,11 @@ Cycles are rejected — recurrence belongs to the trigger layer instead:
 
 A flow carries a `scope` that decides who can see and invoke it:
 
-| Level | Visible to |
-| --- | --- |
-| `org` (default) | every node in the org |
-| `team` | the node at `scope.ref` and everyone reporting under it |
-| `agent` | the agent at `scope.ref`, plus its managers |
+| Level           | Visible to                                              |
+| --------------- | ------------------------------------------------------- |
+| `org` (default) | every node in the org                                   |
+| `team`          | the node at `scope.ref` and everyone reporting under it |
+| `agent`         | the agent at `scope.ref`, plus its managers             |
 
 Scope is also a **policy ceiling**. A run always executes as its invoking
 principal — never as the scope — so effective authority is
@@ -78,11 +78,11 @@ only — letting it rewrite the org chart would be exactly the custody LaCrew
 refuses. So these steps always raise a **governance proposal**, and the policy
 verdict picks the tier:
 
-| Verdict | Result |
-| --- | --- |
-| `ALLOW` | low-tier proposal — executes on quorum, no timelock |
+| Verdict    | Result                                               |
+| ---------- | ---------------------------------------------------- |
+| `ALLOW`    | low-tier proposal — executes on quorum, no timelock  |
 | `ESCALATE` | high-tier proposal — timelock plus human veto window |
-| `DENY` | nothing is raised; the step routes to `onDeny` |
+| `DENY`     | nothing is raised; the step routes to `onDeny`       |
 
 Authority is read from `SpendCapPolicy` rather than the full stack: the target
 of an org action is a node, not a payee, so consulting `WhitelistPolicy` would
@@ -103,7 +103,7 @@ decision:
 
 An `agent` step can hand work to another agent — a prompt, or a whole flow via
 `flowId`. The nested run gets its own principal, so the delegate acts under its
-*own* policy stack: a flow cannot borrow authority by invoking a more
+_own_ policy stack: a flow cannot borrow authority by invoking a more
 privileged agent.
 
 Delegation is bounded. `validateFlow` rejects cycles between a flow's own
@@ -116,6 +116,8 @@ for the parent to ignore.
 ## Triggers
 
 `trigger: "manual"` (default) runs from the UI, SDK, or CLI. `trigger:
+"webhook"` makes the flow startable by a signed HTTP delivery (see
+[Webhook triggers](#webhook-triggers)). `trigger:
 "epoch"` turns the pipeline into an automation: the orchestrator fires it on
 every payroll epoch, right after allowances stream (both the queue schedule
 and `POST /epoch` do this, and the run is tagged `trigger: "epoch"` in the
@@ -125,8 +127,9 @@ epoch-triggered out of the box.
 ## Persistence
 
 Definitions and run traces persist to Postgres when `DATABASE_URL` is set
-(`orchestrator_flows` / `orchestrator_flow_runs`, same `@lacrew/db` family as
-the audit trail) and hydrate back on boot; without a database everything
+(`orchestrator_flows` / `orchestrator_flow_runs`, plus
+`orchestrator_webhook_triggers` / `orchestrator_webhook_deliveries` — same
+`@lacrew/db` family as the audit trail) and hydrate back on boot; without a database everything
 still works in memory. `/health` reports which store is active under
 `flows.store`.
 
@@ -146,7 +149,8 @@ const budgetGuardedSpend = flow("budget-guarded-spend", "Budget-guarded spend")
     next: null,
   })
   .model("po-note", {
-    prompt: "Spend escalated: {{steps.spend.json}}. Draft the purchase-order note.",
+    prompt:
+      "Spend escalated: {{steps.spend.json}}. Draft the purchase-order note.",
     next: null,
   })
   .build();
@@ -158,7 +162,10 @@ const flows = createFlowsClient({
 
 await flows.save(budgetGuardedSpend);
 const run = await flows.run("budget-guarded-spend", { input: "manual run" });
-console.log(run.status, run.steps.map((s) => s.summary));
+console.log(
+  run.status,
+  run.steps.map((s) => s.summary),
+);
 ```
 
 `runFlow(def, backend)` executes a definition in-process against any
@@ -185,16 +192,30 @@ lacrew flows code tpl-content-daily     # print the code-first snippet
 
 ## Orchestrator HTTP surface
 
-| Route | Purpose |
-| --- | --- |
-| `GET /flows` | List saved definitions |
-| `POST /flows` | Save (validates; body `{ flow }`) |
-| `POST /flows/delete` | Remove (body `{ id }`) |
-| `POST /flows/run` | Run by `{ id }` or inline `{ flow }`, optional `input` |
-| `GET /flows/runs` | Recent run traces (newest first) |
-| `GET /flows/templates` | First-party template catalog |
+| Route                            | Purpose                                                                            |
+| -------------------------------- | ---------------------------------------------------------------------------------- |
+| `GET /flows`                     | List saved definitions                                                             |
+| `POST /flows`                    | Save (validates; body `{ flow }`)                                                  |
+| `POST /flows/delete`             | Remove (body `{ id }`)                                                             |
+| `POST /flows/run`                | Run by `{ id }` or inline `{ flow }`, optional `input`                             |
+| `GET /flows/runs`                | Recent run traces (newest first)                                                   |
+| `GET /flows/templates`           | First-party template catalog                                                       |
+| `GET /flows/triggers`            | Registered webhook triggers (never the secret)                                     |
+| `POST /flows/triggers`           | Mint one (body `{ flowId, principal?, scheme?, input? }`); returns the secret once |
+| `POST /flows/triggers/rotate`    | New secret (body `{ id }`); the old one stops verifying                            |
+| `POST /flows/triggers/enabled`   | Enable / disable (body `{ id, enabled }`)                                          |
+| `POST /flows/triggers/delete`    | Remove (body `{ id }`)                                                             |
+| `GET /flows/triggers/deliveries` | Delivery log (`?triggerId=`, `?limit=`)                                            |
+| `POST /hooks/:triggerId`         | Signed delivery — HMAC, not the bearer token                                       |
 
-Every save and run lands in the audit trail as `FlowSaved` / `FlowRun` events.
+Every save and run lands in the audit trail as `FlowSaved` / `FlowRun` events;
+trigger changes and accepted deliveries land as `WebhookTriggerChanged` /
+`WebhookDelivery`.
+
+`POST /hooks/:triggerId` is the one route outside `LACREW_ORCH_TOKEN`, because
+its caller is an external producer holding the trigger's HMAC secret rather
+than the operator's bearer token. It is not an unauthenticated route — every
+request is verified against that signature and an unsigned one is refused.
 
 ## LangChain
 
@@ -222,11 +243,11 @@ const result = await runFlow(budgetGuardedSpend, backend);
 
 A flow carries a `scope` that decides who can see and invoke it:
 
-| Level | Visible to |
-| --- | --- |
-| `org` (default) | every node in the org |
-| `team` | the node at `scope.ref` and everyone reporting under it |
-| `agent` | the agent at `scope.ref`, plus its managers |
+| Level           | Visible to                                              |
+| --------------- | ------------------------------------------------------- |
+| `org` (default) | every node in the org                                   |
+| `team`          | the node at `scope.ref` and everyone reporting under it |
+| `agent`         | the agent at `scope.ref`, plus its managers             |
 
 Scope is also a **policy ceiling**. A run always executes as its invoking
 principal — never as the scope — so effective authority is
@@ -248,11 +269,11 @@ only — letting it rewrite the org chart would be exactly the custody LaCrew
 refuses. So these steps always raise a **governance proposal**, and the policy
 verdict picks the tier:
 
-| Verdict | Result |
-| --- | --- |
-| `ALLOW` | low-tier proposal — executes on quorum, no timelock |
+| Verdict    | Result                                               |
+| ---------- | ---------------------------------------------------- |
+| `ALLOW`    | low-tier proposal — executes on quorum, no timelock  |
 | `ESCALATE` | high-tier proposal — timelock plus human veto window |
-| `DENY` | nothing is raised; the step routes to `onDeny` |
+| `DENY`     | nothing is raised; the step routes to `onDeny`       |
 
 Authority is read from `SpendCapPolicy` rather than the full stack: the target
 of an org action is a node, not a payee, so consulting `WhitelistPolicy` would
@@ -273,7 +294,7 @@ decision:
 
 An `agent` step can hand work to another agent — a prompt, or a whole flow via
 `flowId`. The nested run gets its own principal, so the delegate acts under its
-*own* policy stack: a flow cannot borrow authority by invoking a more
+_own_ policy stack: a flow cannot borrow authority by invoking a more
 privileged agent.
 
 Delegation is bounded. `validateFlow` rejects cycles between a flow's own
@@ -285,14 +306,147 @@ for the parent to ignore.
 
 ## Triggers
 
-Flows fire three ways: `manual` (default), `epoch` (after every payroll
-stream, even in mock mode), or `cron` with a 5-field UTC `schedule`
+Flows fire four ways: `manual` (default), `epoch` (after every payroll
+stream, even in mock mode), `cron` with a 5-field UTC `schedule`
 expression (`*/5 * * * *` style — minute resolution, fired at most once per
-matching minute by the orchestrator's provider-agnostic scheduler):
+matching minute by the orchestrator's provider-agnostic scheduler), or
+`webhook` — a signed HTTP delivery from outside the org:
 
 ```json
 { "trigger": "cron", "schedule": "0 9 * * 1-5" }
 ```
+
+## Webhook triggers
+
+A `webhook` flow is started by a signed HTTP delivery, so a crew can react to a
+PR opening or a post publishing instead of waiting for a human to press Run.
+
+The declaration and the credential live in different places on purpose. The
+flow definition says `"trigger": "webhook"` — that is what makes it externally
+startable, and it travels with the definition through export and the
+marketplace. The _trigger record_ — id, secret, principal, input mapping — is
+held by the orchestrator, because a secret inside a shareable definition would
+leak with every copy.
+
+### Registering a trigger
+
+```bash
+curl -X POST "$ORCH/flows/triggers" \
+  -H "authorization: Bearer $LACREW_ORCH_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "flowId": "pr-triage",
+        "principal": "0xWorkerAgent",
+        "scheme": "lacrew",
+        "input": { "fields": { "pr": "pull_request.number", "title": "pull_request.title" } }
+      }'
+```
+
+The response carries the secret **once**:
+
+```json
+{
+  "trigger": { "id": "wht_…", "secretVersion": 1 },
+  "secret": "…",
+  "secretShownOnce": true
+}
+```
+
+There is no route that reads it back. Lose it and rotate
+(`POST /flows/triggers/rotate`), which invalidates the previous secret
+immediately.
+
+Secrets are sealed at rest with the same AES-256-GCM envelope as session keys
+(`LACREW_SESSION_KEY`). With `DATABASE_URL` set and no sealing key configured,
+minting a trigger fails with `webhook_sealing_unavailable` rather than writing
+a cleartext secret to Postgres.
+
+### Signing a delivery
+
+Two schemes, picked at registration:
+
+| Scheme             | Header                              | Signed material                                                          |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------------ |
+| `lacrew` (default) | `X-Lacrew-Signature: sha256=<hex>`  | `<unix-seconds>.<raw body>`, with the same value in `X-Lacrew-Timestamp` |
+| `github`           | `X-Hub-Signature-256: sha256=<hex>` | the raw body alone — what GitHub sends                                   |
+
+The `lacrew` scheme signs the timestamp too, so a captured delivery cannot be
+replayed once it drifts past the tolerance window (300s;
+`LACREW_WEBHOOK_TOLERANCE_SEC`). The `github` scheme has no timestamp to sign,
+so replay protection there rests entirely on the `X-GitHub-Delivery`
+idempotency key — a property of the producer, not something the scheme asserts.
+
+```bash
+BODY='{"pull_request":{"number":7,"title":"Add hooks"}}'
+TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -r | cut -d' ' -f1)
+
+curl -X POST "$ORCH/hooks/$TRIGGER_ID" \
+  -H 'content-type: application/json' \
+  -H "X-Lacrew-Timestamp: $TS" \
+  -H "X-Lacrew-Signature: sha256=$SIG" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d "$BODY"
+```
+
+A verified delivery answers `202 { "accepted": true, "runId": "run-wh-…" }`
+and the run happens on a queue worker. The producer's socket is never what
+keeps a funded run alive — a flow that takes minutes of model time would
+otherwise be retried by every sane webhook sender while it was still working.
+
+### Wiring GitHub
+
+Point a repository webhook (or a `repository_dispatch`) at
+`$ORCH/hooks/<triggerId>`, set its secret to the trigger's secret, choose
+_application/json_, and register the trigger with `"scheme": "github"`. GitHub's
+`X-GitHub-Delivery` header is picked up as the idempotency key automatically, so
+its redeliveries answer `200 duplicate` rather than starting a second run.
+
+### Input mapping
+
+The flow's `input` is a string. Without a mapping the whole body is passed
+through as JSON, which makes `{{input}}` and top-level `{{input.action}}`
+available. `fields` builds a flat object from dot paths — flat because
+`{{input.x}}` only reaches the top level, so a nested passthrough would render
+as an empty string and read like a missing field rather than an unreachable
+one. `path` lifts a single value:
+
+```json
+{ "input": { "fields": { "pr": "pull_request.number" } } }
+{ "input": { "path": "pull_request.title" } }
+```
+
+### What a hook does not grant
+
+A webhook decides _who may start_ a flow. It never widens what the flow may
+do: the run executes as the trigger's principal down the same path as a manual
+run, so the principal's policy stack, its session key's onchain ceiling, and
+its pause state all still apply. A gate inside a webhook-started flow escalates
+to Approvals exactly as it would otherwise.
+
+### Failure modes
+
+| Condition                                    | Status | Error                                                     |
+| -------------------------------------------- | ------ | --------------------------------------------------------- |
+| Unknown trigger id                           | 404    | `webhook_trigger_not_found`                               |
+| Missing / malformed / wrong signature        | 401    | `webhook_signature_missing` \| `_malformed` \| `_invalid` |
+| Timestamp outside the tolerance window       | 401    | `webhook_timestamp_stale`                                 |
+| Trigger disabled                             | 403    | `webhook_trigger_disabled`                                |
+| Principal paused                             | 403    | `webhook_principal_paused`                                |
+| Body over 1 MiB (`LACREW_WEBHOOK_MAX_BYTES`) | 413    | `webhook_body_too_large`                                  |
+| Body is not JSON                             | 400    | `webhook_body_invalid`                                    |
+| Delivery key already seen                    | 200    | `{ "duplicate": true }`                                   |
+
+A paused principal is _rejected_ rather than skipped: a webhook producer
+retries, and a silent skip would let a paused agent's events vanish behind a
+2xx on every one of them.
+
+Rejections are logged to the trigger's delivery log under their own key, never
+the producer's — a rejected delivery established no idempotency, and reusing
+its key would make the correctly-signed retry look like a replay of the
+failure and get dropped. The log records the reason code, the byte count and
+the run id; never the request body, which is attacker-supplied and routinely
+full of someone else's personal data.
 
 ## Templates and the marketplace
 

@@ -70,15 +70,15 @@ pnpm --filter @lacrew/orchestrator dev
 Every read answers from the chain (or the persisted trail) — mock mode serves
 `[]`, never fixtures; the unavailable app answers 503, never an empty org:
 
-| Endpoint | What it reads |
-| --- | --- |
-| `GET /policies` | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router) |
-| `GET /usage` | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total |
-| `GET /assets` | The asset stacks the org can budget in (primary first) |
-| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`) |
-| `GET /treasury/balances` | Real per-asset holdings from each Treasury |
-| `GET /agents/balances` | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance *in* the account, not what the Treasury reserved for it |
-| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked |
+| Endpoint                 | What it reads                                                                                                                                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /policies`          | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router)                                                  |
+| `GET /usage`             | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total                         |
+| `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                           |
+| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                         |
+| `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                       |
+| `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it |
+| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                   |
 
 ### Wallet watchlist
 
@@ -273,7 +273,7 @@ export LACREW_ISSUER_PRIVATE_KEY=0x…   # the key the orchestrator holds
 
 On a local chain where `PRIVATE_KEY` is root, the orchestrator authorises this key at boot (`setIssuer`). On a real chain, root authorises it out of band — from the root wallet — and the orchestrator holds only the issuer key:
 
-```bash
+````bash
 # PRIVATE_KEY here is root; run once to authorise the issuer address.
 lacrew session-set-issuer 0x<issuer address> --rpc
 lacrew session-issuer --rpc   # read it back
@@ -292,7 +292,7 @@ curl -s -X POST http://127.0.0.1:8788/model/complete \
 # Anthropic, OpenAI, or OpenRouter once a key is set — see .env.example.
 # First key wins in that order; LACREW_MODEL_PROVIDER pins one explicitly.
 curl -s http://127.0.0.1:8788/health | jq .model
-```
+````
 
 ## MCP tools
 
@@ -355,6 +355,28 @@ lacrew.xyz API forwards the same `LACREW_ORCH_TOKEN` env automatically; the
 example crews send it when `ORCH_TOKEN` is set. Always set the token when the
 port is reachable beyond localhost.
 
+`POST /hooks/:triggerId` is the one exception besides `/health`, and it is not
+an open route: a webhook producer is an external system holding that trigger's
+HMAC secret rather than the operator's bearer token, and every delivery is
+verified against that signature before anything is enqueued. See
+[Webhook triggers](/docs/flows#webhook-triggers).
+
+## Webhook triggers (self-host)
+
+The hook surface lives on the public orchestrator, so event-driven crews do not
+need the cloud. Two env vars shape it:
+
+| Var                            | Default   | Purpose                                                                                                                                                                                                              |
+| ------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LACREW_SESSION_KEY`           | unset     | Seals trigger secrets at rest (`openssl rand -base64 32`). Required once `DATABASE_URL` is set — minting a trigger without it fails `webhook_sealing_unavailable` rather than writing a cleartext secret to Postgres |
+| `LACREW_WEBHOOK_MAX_BYTES`     | `1048576` | Body cap; an oversized delivery is refused on its declared `content-length` before it is buffered                                                                                                                    |
+| `LACREW_WEBHOOK_TOLERANCE_SEC` | `300`     | Replay window for the timestamped `lacrew` scheme                                                                                                                                                                    |
+
+With `DATABASE_URL` set, deliveries are dispatched through pg-boss and the
+`(trigger_id, delivery_key)` unique index makes a redelivery a no-op across
+replicas. Without one, triggers live in the process and do not survive a
+restart — the honest single-node behaviour, not a silently degraded queue.
+
 ## Governance auto-execute (opt-in)
 
 By default a proposal that has cleared its quorum — and, for high tier, its
@@ -387,14 +409,16 @@ docker run --rm -p 8788:8788 lacrew-orchestrator
 
 ## Troubleshooting
 
-| Symptom | Check |
-| --- | --- |
-| `GET /health` → `mode: "mock"` | Set `ANVIL_RPC` + `PRIVATE_KEY`; ensure Anvil is up and `31337.json` exists |
-| `queue.provider` not `pg-boss` | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate |
-| `EADDRINUSE :8788` | Another orchestrator still running — kill the old process after `tsx` reloads |
-| Propose reverts / no session | `POST /boot` first; confirm SessionRegistry grants for the worker |
-| `401 unauthorized` | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env) |
-| Cloud API `notification_prefs` missing | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate` |
+| Symptom                                          | Check                                                                                                                              |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health` → `mode: "mock"`                   | Set `ANVIL_RPC` + `PRIVATE_KEY`; ensure Anvil is up and `31337.json` exists                                                        |
+| `queue.provider` not `pg-boss`                   | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate                                                                   |
+| `EADDRINUSE :8788`                               | Another orchestrator still running — kill the old process after `tsx` reloads                                                      |
+| Propose reverts / no session                     | `POST /boot` first; confirm SessionRegistry grants for the worker                                                                  |
+| `401 unauthorized`                               | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env)      |
+| `webhook_sealing_unavailable` on trigger create  | `DATABASE_URL` set without `LACREW_SESSION_KEY` — generate one with `openssl rand -base64 32` and restart                          |
+| Webhook delivery `401 webhook_signature_invalid` | Signature computed over re-serialized JSON; sign the exact bytes sent, and check the scheme matches how the trigger was registered |
+| Cloud API `notification_prefs` missing           | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate`                                               |
 
 ## Cloud pairing (lacrew.xyz)
 
