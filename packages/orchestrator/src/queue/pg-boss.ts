@@ -7,7 +7,7 @@ import PgBoss from "pg-boss";
 import { assertValidSchemaName, getDatabaseSchema, getDatabaseUrl } from "@lacrew/db";
 import type { QueueHandlers, QueueJobName, QueueProvider, QueueStatus } from "./types.js";
 
-const QUEUES: QueueJobName[] = ["epoch", "tick", "flow-cron"];
+const QUEUES: QueueJobName[] = ["epoch", "tick", "flow-cron", "webhook"];
 
 export class PgBossQueue implements QueueProvider {
   readonly name = "pg-boss" as const;
@@ -57,6 +57,17 @@ export class PgBossQueue implements QueueProvider {
     if (handlers.onFlowCron) {
       await boss.work("flow-cron", async () => {
         await handlers.onFlowCron!();
+      });
+    }
+    if (handlers.onWebhook) {
+      // One job per accepted delivery, claimed by exactly one replica — which
+      // is the half of webhook idempotency this layer owns. The other half is
+      // the unique delivery key, which stops a *second* delivery from ever
+      // becoming a second job.
+      await boss.work<Record<string, unknown>>("webhook", async (jobs) => {
+        for (const job of Array.isArray(jobs) ? jobs : [jobs]) {
+          await handlers.onWebhook!(job.data ?? {});
+        }
       });
     }
     this.ready = true;

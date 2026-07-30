@@ -16,6 +16,7 @@ import { getOrchToken } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createFlowsSurface } from "./flows.js";
+import { createWebhookSurface, type WebhookJob } from "./webhooks.js";
 import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
@@ -87,6 +88,17 @@ async function main(): Promise<void> {
     );
   }
   const flows = createFlowsSurface({ runtime, model, mcpBackend, connectors });
+  // Webhook deliveries are accepted on the HTTP thread and run on a queue
+  // worker, so the surface is handed the enqueue rather than the queue itself —
+  // it has no business scheduling anything else.
+  const webhooks = createWebhookSurface({
+    runtime,
+    flows,
+    enqueue: async (job) => {
+      await queue.enqueue("webhook", job as unknown as Record<string, unknown>);
+    },
+  });
+
   const app = createOrchestratorApp({
     runtime,
     queue,
@@ -94,6 +106,7 @@ async function main(): Promise<void> {
     flows,
     mcpBackend,
     connectors,
+    webhooks,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,
@@ -163,6 +176,18 @@ async function main(): Promise<void> {
       `[@lacrew/orchestrator] flows hydrated: ${hydrated.flows} definitions, ${hydrated.runs} runs (${flows.storeName})`,
     );
   }
+  // After flows: a trigger points at a definition, and hydrating it first would
+  // make every restored hook look like it names a flow that does not exist.
+  try {
+    const restored = await webhooks.hydrate();
+    if (restored > 0) {
+      console.log(
+        `[@lacrew/orchestrator] ${restored} webhook trigger(s) restored (${webhooks.storeName})`,
+      );
+    }
+  } catch (err) {
+    console.error("[@lacrew/orchestrator] webhook trigger hydration failed:", err);
+  }
 
   await queue.start({
     onEpoch: async () => {
@@ -176,6 +201,7 @@ async function main(): Promise<void> {
       return result;
     },
     onTick: async () => runtime.tick(),
+    onWebhook: async (data) => webhooks.deliver(data as unknown as WebhookJob),
     onFlowCron: async () => {
       const result = await flows.runCronDue();
       // The governance auto-executor (F0.6) rides the same minute sweep: the

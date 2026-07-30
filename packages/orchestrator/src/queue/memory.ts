@@ -30,13 +30,15 @@ export class InMemoryQueue implements QueueProvider {
   private epochSchedule: string | null = null;
   private flowCronTimer: ReturnType<typeof setInterval> | null = null;
   private flowCronSchedule: string | null = null;
+  /** Detached webhook jobs still in flight; awaited by `drain()`. */
+  private readonly inflight = new Set<Promise<void>>();
 
   async start(handlers: QueueHandlers = {}): Promise<void> {
     this.handlers = handlers;
     this.ready = true;
     while (this.pending.length > 0) {
       const job = this.pending.shift();
-      if (job) await this.run(job.name);
+      if (job) await this.run(job.name, job.data);
     }
   }
 
@@ -54,13 +56,39 @@ export class InMemoryQueue implements QueueProvider {
     this.flowCronSchedule = null;
   }
 
-  async enqueue(name: QueueJobName, _data?: Record<string, unknown>): Promise<string | null> {
+  async enqueue(name: QueueJobName, data?: Record<string, unknown>): Promise<string | null> {
     if (!this.ready) {
-      this.pending.push({ name, data: _data });
+      this.pending.push({ name, data });
       return `mem_pending_${name}_${Date.now()}`;
     }
-    await this.run(name);
+    if (name === "webhook") {
+      // Detached on purpose: the caller is an HTTP handler answering a webhook
+      // producer, and awaiting the flow here would hold that socket open for
+      // the whole run — the thing durable mode exists to avoid. Tracked so
+      // tests (and shutdown) have something to wait on.
+      const job = this.run(name, data)
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error("[@lacrew/orchestrator] memory webhook job failed", err);
+        })
+        .finally(() => {
+          this.inflight.delete(job);
+        });
+      this.inflight.add(job);
+      return `mem_${name}_${Date.now()}`;
+    }
+    await this.run(name, data);
     return `mem_${name}_${Date.now()}`;
+  }
+
+  /**
+   * Settle detached jobs. Durable providers have a real queue to inspect;
+   * in-process there is nowhere else to look, so this is how a caller waits.
+   */
+  async drain(): Promise<void> {
+    while (this.inflight.size > 0) {
+      await Promise.all([...this.inflight]);
+    }
   }
 
   /**
@@ -135,9 +163,10 @@ export class InMemoryQueue implements QueueProvider {
     };
   }
 
-  private async run(name: QueueJobName): Promise<void> {
+  private async run(name: QueueJobName, data?: Record<string, unknown>): Promise<void> {
     if (name === "epoch" && this.handlers.onEpoch) await this.handlers.onEpoch();
     if (name === "tick" && this.handlers.onTick) await this.handlers.onTick();
     if (name === "flow-cron" && this.handlers.onFlowCron) await this.handlers.onFlowCron();
+    if (name === "webhook" && this.handlers.onWebhook) await this.handlers.onWebhook(data ?? {});
   }
 }

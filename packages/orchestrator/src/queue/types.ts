@@ -3,7 +3,7 @@
  * Later: BullMQ + Upstash Redis behind the same interface.
  */
 
-export type QueueJobName = "epoch" | "tick" | "flow-cron";
+export type QueueJobName = "epoch" | "tick" | "flow-cron" | "webhook";
 
 export interface QueueStatus {
   provider: "memory" | "pg-boss";
@@ -19,6 +19,13 @@ export interface QueueHandlers {
   onTick?: () => Promise<unknown>;
   /** Sweep cron-triggered flows for the current minute. */
   onFlowCron?: () => Promise<unknown>;
+  /**
+   * Run one already-verified, already-claimed webhook delivery. Unlike the
+   * others this handler receives the job payload: the delivery was accepted on
+   * an HTTP thread that must not wait for the flow, so everything the run needs
+   * has to travel through the queue.
+   */
+  onWebhook?: (data: Record<string, unknown>) => Promise<unknown>;
 }
 
 export interface QueueProvider {

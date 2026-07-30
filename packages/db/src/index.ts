@@ -26,6 +26,7 @@ export {
 export {
   upsertWebhookTrigger,
   deleteWebhookTrigger,
+  getWebhookTrigger,
   listWebhookTriggers,
   claimWebhookDelivery,
   insertWebhookDelivery,

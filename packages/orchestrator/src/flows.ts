@@ -47,6 +47,12 @@ export type FlowsSurface = {
     flow?: FlowDefinition;
     input?: string;
     trigger?: FlowTrigger;
+    /**
+     * Caller-supplied run id. Lets a dispatcher name the run before the work
+     * starts — a webhook answers its producer with a runId while the run is
+     * still queued — and makes a redelivered job land on the same row.
+     */
+    runId?: string;
     /** Agent the run executes as; defaults to the crew worker. */
     as?: `0x${string}`;
   }): Promise<FlowRunResult>;
@@ -197,6 +203,7 @@ export function createFlowsSurface(opts: {
       flow?: FlowDefinition;
       input?: string;
       trigger?: FlowTrigger;
+      runId?: string;
       as?: `0x${string}`;
     },
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
@@ -217,11 +224,13 @@ export function createFlowsSurface(opts: {
       def,
       backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id]),
       {
-      input: input.input,
-      trigger: input.trigger,
-      principal: { agent: principal },
-      mocked,
-    });
+        input: input.input,
+        trigger: input.trigger,
+        ...(input.runId ? { runId: input.runId } : {}),
+        principal: { agent: principal },
+        mocked,
+      },
+    );
     pushRun(result);
     opts.runtime.recordAudit({
       type: "FlowRun",

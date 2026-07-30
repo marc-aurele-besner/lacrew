@@ -49,12 +49,43 @@ export async function upsertWebhookTrigger(
     .onConflictDoUpdate({ target: webhookTriggers.id, set: values });
 }
 
-export async function deleteWebhookTrigger(handle: DbHandle, id: string): Promise<void> {
-  await handle.db.delete(webhookTriggers).where(eq(webhookTriggers.id, id));
-  await handle.db.delete(webhookDeliveries).where(eq(webhookDeliveries.triggerId, id));
+export async function getWebhookTrigger(
+  handle: DbHandle,
+  id: string,
+): Promise<WebhookTriggerRow | null> {
+  const rows = await handle.db
+    .select()
+    .from(webhookTriggers)
+    .where(eq(webhookTriggers.id, id))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    flowId: row.flowId,
+    principal: row.principal,
+    scheme: row.scheme,
+    secretSealed: row.secretSealed,
+    secretVersion: row.secretVersion,
+    enabled: row.enabled,
+    inputMap: row.inputMap,
+    description: row.description,
+  };
 }
 
-export async function listWebhookTriggers(handle: DbHandle): Promise<WebhookTriggerRow[]> {
+export async function deleteWebhookTrigger(
+  handle: DbHandle,
+  id: string,
+): Promise<void> {
+  await handle.db.delete(webhookTriggers).where(eq(webhookTriggers.id, id));
+  await handle.db
+    .delete(webhookDeliveries)
+    .where(eq(webhookDeliveries.triggerId, id));
+}
+
+export async function listWebhookTriggers(
+  handle: DbHandle,
+): Promise<WebhookTriggerRow[]> {
   const rows = await handle.db
     .select()
     .from(webhookTriggers)
@@ -81,7 +112,9 @@ export async function listWebhookTriggers(handle: DbHandle): Promise<WebhookTrig
  */
 export async function claimWebhookDelivery(
   handle: DbHandle,
-  row: Pick<WebhookDeliveryRow, "triggerId" | "deliveryKey" | "result"> & { bytes?: number | null },
+  row: Pick<WebhookDeliveryRow, "triggerId" | "deliveryKey" | "result"> & {
+    bytes?: number | null;
+  },
 ): Promise<boolean> {
   const inserted = await handle.db
     .insert(webhookDeliveries)
@@ -126,7 +159,11 @@ export async function settleWebhookDelivery(
 ): Promise<void> {
   await handle.db
     .update(webhookDeliveries)
-    .set({ result: row.result, reason: row.reason ?? null, runId: row.runId ?? null })
+    .set({
+      result: row.result,
+      reason: row.reason ?? null,
+      runId: row.runId ?? null,
+    })
     .where(
       and(
         eq(webhookDeliveries.triggerId, row.triggerId),
@@ -142,7 +179,9 @@ export async function recentWebhookDeliveries(
   triggerId?: string,
 ): Promise<WebhookDeliveryRow[]> {
   const base = handle.db.select().from(webhookDeliveries);
-  const rows = await (triggerId ? base.where(eq(webhookDeliveries.triggerId, triggerId)) : base)
+  const rows = await (
+    triggerId ? base.where(eq(webhookDeliveries.triggerId, triggerId)) : base
+  )
     .orderBy(desc(webhookDeliveries.at), desc(webhookDeliveries.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -161,8 +200,13 @@ export async function recentWebhookDeliveries(
  * without bound. Replay protection past the retention window is the signature
  * timestamp's job, not this table's.
  */
-export async function pruneWebhookDeliveries(handle: DbHandle, days: number): Promise<void> {
+export async function pruneWebhookDeliveries(
+  handle: DbHandle,
+  days: number,
+): Promise<void> {
   await handle.db
     .delete(webhookDeliveries)
-    .where(sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`);
+    .where(
+      sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`,
+    );
 }
