@@ -11,7 +11,14 @@ export {
   GOVERNANCE_ACTIONS,
   type FlowValidationResult,
 } from "./validate.js";
-export { runFlow, interpolate, createMockFlowBackend, type RunFlowOptions } from "./run.js";
+export {
+  runFlow,
+  interpolate,
+  createMockFlowBackend,
+  FlowWaitingError,
+  isFlowWaiting,
+  type RunFlowOptions,
+} from "./run.js";
 export { flow, FlowBuilder } from "./builder.js";
 export { flowToCode, flowRunSnippet } from "./codegen.js";
 export { flowTemplates, getFlowTemplate } from "./templates.js";

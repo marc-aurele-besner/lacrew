@@ -1,15 +1,22 @@
 /**
- * `lacrew connectors …` — the connector definitions that ship, and the config
- * an operator pastes into `LACREW_CONNECTORS` (F2.13).
+ * `lacrew connectors …` — the connector definitions that ship, the config an
+ * operator pastes into `LACREW_CONNECTORS` (F2.13), and the write policy those
+ * routes run under (F2.24).
  *
  * `lacrew crews show github-experts` names the routes the crew calls and says
- * to register them first. This is where they come from. Fully offline: a preset
- * is data, and `config` prints JSON rather than writing anywhere, so what the
- * operator admits stays their decision.
+ * to register them first. This is where they come from. `list` / `show` /
+ * `config` are fully offline: a preset is data, and `config` prints JSON rather
+ * than writing anywhere, so what the operator admits stays their decision.
  *
  * `config` refuses to emit a write route with no policy target instead of
  * printing something that would fail at boot — the error names the address that
  * is missing and what it stands for.
+ *
+ * `mode`, `asks`, and `answer` talk to a running orchestrator, because a mode
+ * is per-deployment state and an ask is a question waiting in a live thread.
+ * `answer` posts an ordinary conversation message: there is no route that
+ * resolves an ask directly, and adding one would be a second way to release a
+ * write that the thread has no record of.
  */
 
 import {
@@ -162,11 +169,202 @@ function printConfig(id: string, args: string[]): void {
   console.log(JSON.stringify([connector], null, 2));
 }
 
-export function cmdConnectors(args: string[]): void {
+/* ——— live surface: write policy and pending asks (F2.24) ——— */
+
+type ModeRule = {
+  scope: { level: "workspace" | "crew" | "agent"; ref?: string };
+  route: string;
+  mode: string;
+  at: string;
+};
+
+type AskRow = {
+  id: string;
+  connector: string;
+  route: string;
+  method: string;
+  path: string;
+  principal: string;
+  threadId: string;
+  questionId: string;
+  status: string;
+  outcome?: string;
+  createdAt: string;
+  expiresAt: string;
+  flowId?: string;
+  runId?: string;
+};
+
+function orchUrl(args: string[]): string {
+  return (
+    flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788"
+  ).replace(/\/$/, "");
+}
+
+async function orchFetch<T>(
+  args: string[],
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const token = process.env.ORCH_TOKEN?.trim();
+  const res = await fetch(`${orchUrl(args)}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  return body;
+}
+
+function scopeLabel(scope: ModeRule["scope"]): string {
+  return scope.level === "workspace" ? "workspace" : `${scope.level} ${scope.ref}`;
+}
+
+/** `--scope workspace` / `--scope crew:0x…` / `--scope agent:0x…`. */
+function parseScope(raw: string | undefined): ModeRule["scope"] {
+  const value = (raw ?? "workspace").trim();
+  if (value === "workspace") return { level: "workspace" };
+  const colon = value.indexOf(":");
+  const level = colon > 0 ? value.slice(0, colon) : value;
+  const ref = colon > 0 ? value.slice(colon + 1) : "";
+  if ((level !== "crew" && level !== "agent") || !ref) {
+    throw new Error(`--scope expects workspace, crew:<address>, or agent:<address>, got "${value}"`);
+  }
+  return { level, ref };
+}
+
+async function printModes(args: string[]): Promise<void> {
+  const body = await orchFetch<{ rules: ModeRule[]; modes: string[] }>(args, "/connectors/modes");
+  console.log("Connector write policy\n");
+  console.log("  auto  admitted by policy, called without asking");
+  console.log("  ask   admitted by policy, a human confirms in-thread first");
+  console.log("  deny  never called, the network is never reached\n");
+  if (body.rules.length === 0) {
+    console.log("No rules. Every write route runs at its declared default.");
+  } else {
+    for (const rule of body.rules) {
+      console.log(`  ${rule.mode.padEnd(5)} ${rule.route.padEnd(34)} ${scopeLabel(rule.scope)}`);
+    }
+  }
+  console.log("\nA rule only narrows: it cannot admit a write the policy stack refuses.");
+  console.log("Set one:    lacrew connectors mode github.merge_pull_request ask");
+  console.log("Clear one:  lacrew connectors mode github.merge_pull_request --clear");
+}
+
+async function setMode(args: string[]): Promise<void> {
+  const route = args[0];
+  if (!route || route.startsWith("-")) {
+    console.error(
+      "usage: lacrew connectors mode <connector.route|connector.*> <auto|ask|deny> [--scope …]\n" +
+        "       lacrew connectors mode <route> --clear [--scope …]",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const rest = args.slice(1);
+  const clear = rest.includes("--clear");
+  const mode = clear ? null : rest.find((a) => !a.startsWith("-"));
+  if (!clear && !mode) {
+    console.error("a mode is required: auto | ask | deny (or --clear to remove the rule)");
+    process.exitCode = 1;
+    return;
+  }
+  const scope = parseScope(flagValue(rest, "--scope"));
+  const body = await orchFetch<{ rule?: ModeRule; cleared?: boolean }>(
+    rest,
+    "/connectors/modes",
+    { method: "PUT", body: JSON.stringify({ scope, route, mode }) },
+  );
+  if (clear) {
+    console.log(
+      body.cleared
+        ? `Cleared ${route} for ${scopeLabel(scope)} — it now runs at whatever it inherits.`
+        : `No rule for ${route} at ${scopeLabel(scope)}.`,
+    );
+    return;
+  }
+  console.log(`${route} → ${body.rule?.mode} for ${scopeLabel(scope)}`);
+}
+
+async function printAsks(args: string[]): Promise<void> {
+  const status = flagValue(args, "--status") ?? "pending";
+  const body = await orchFetch<{ asks: AskRow[] }>(
+    args,
+    `/connectors/asks?status=${encodeURIComponent(status)}`,
+  );
+  if (body.asks.length === 0) {
+    console.log(`No ${status} connector asks.`);
+    return;
+  }
+  for (const ask of body.asks) {
+    console.log(`${ask.id}  ${ask.connector}.${ask.route}  ${ask.status}`);
+    console.log(`  ${ask.method} ${ask.path}`);
+    console.log(`  as ${ask.principal || "—"}${ask.flowId ? ` · flow ${ask.flowId}` : ""}${ask.runId ? ` · run ${ask.runId}` : ""}`);
+    console.log(`  thread ${ask.threadId} · question ${ask.questionId} · expires ${ask.expiresAt}`);
+    console.log(`  Answer:  lacrew connectors answer ${ask.id} yes|no --as <you>`);
+    console.log("");
+  }
+}
+
+async function answerAsk(args: string[]): Promise<void> {
+  const [id, decision] = args;
+  const rest = args.slice(2);
+  const author = flagValue(rest, "--as");
+  if (!id || (decision !== "yes" && decision !== "no") || !author) {
+    console.error(
+      "usage: lacrew connectors answer <askId> <yes|no> --as <human identifier>\n" +
+        "  Only yes or no counts. Free text is stored as a claim and releases nothing.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const asks = await orchFetch<{ asks: AskRow[] }>(rest, "/connectors/asks?status=pending");
+  const ask = asks.asks.find((a) => a.id === id);
+  if (!ask) {
+    console.error(`No pending ask "${id}". List them: lacrew connectors asks`);
+    process.exitCode = 1;
+    return;
+  }
+  await orchFetch(rest, "/messages", {
+    method: "POST",
+    body: JSON.stringify({
+      thread: ask.threadId,
+      author,
+      authorKind: "human",
+      kind: "answer",
+      replyTo: ask.questionId,
+      body: decision,
+    }),
+  });
+  console.log(
+    decision === "yes"
+      ? `Confirmed ${ask.connector}.${ask.route}. The run picks up where it stopped and calls once.`
+      : `Declined ${ask.connector}.${ask.route}. Nothing was called.`,
+  );
+  console.log("This confirmed an external write only — it approved no spend and changed no policy.");
+}
+
+export async function cmdConnectors(args: string[]): Promise<void> {
   const sub = args[0] ?? "list";
   const rest = args.slice(1);
   try {
     switch (sub) {
+      case "modes":
+        await printModes(rest);
+        return;
+      case "mode":
+        await setMode(rest);
+        return;
+      case "asks":
+        await printAsks(rest);
+        return;
+      case "answer":
+        await answerAsk(rest);
+        return;
       case "list":
         printList();
         return;
@@ -191,11 +389,18 @@ export function cmdConnectors(args: string[]): void {
         return;
       }
       case "help":
-        console.log(`lacrew connectors — connector definitions that ship
+        console.log(`lacrew connectors — connector definitions, and the policy their writes run under
 
+Offline (a preset is data):
   list                     Presets available
   show <id>                Routes, credential, and what must be bound
   config <id> [flags]      JSON for LACREW_CONNECTORS
+
+Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
+  modes                    Write-mode rules, and what auto/ask/deny mean
+  mode <route> <mode>      Narrow a write route (--scope, --clear)
+  asks                     Writes waiting on a human (--status)
+  answer <askId> yes|no    Confirm or refuse one, as a human seat (--as)
 
 Flags for config:
   --auth <mode>                 Credential mode (see: connectors show <id>)
@@ -207,9 +412,20 @@ Flags for config:
   --credential-header <name>    Send a token-mode credential in another header
   --id <name>                   Register under a different connector id
 
+Flags for mode / asks / answer:
+  --scope workspace|crew:0x…|agent:0x…   Where a rule applies (default workspace)
+  --clear                                Remove the rule instead of setting one
+  --status <status>                      pending (default) | approved | declined | expired | consumed
+  --as <identifier>                      The human seat answering
+
 Register it:
   export LACREW_CONNECTORS="$(lacrew connectors config github --policy-target merge_pull_request=0x…)"
   # or write the JSON to a file and point LACREW_CONNECTORS at the path
+
+Modes narrow, never widen:
+  ALLOW / ESCALATE / DENY is the chain's answer to "may this crew act at all".
+  auto / ask / deny is the operator's answer to "and should a human see it first".
+  A route with a policy target is checked against the stack whatever its mode says.
 `);
         return;
       default:

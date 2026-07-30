@@ -230,7 +230,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "connectors") {
-    cmdConnectors(rest);
+    await cmdConnectors(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -737,8 +737,9 @@ Commands:
                             (see: lacrew flows help)
   crews <sub>               Vertical crew blueprints — list, show <id>,
                             plan <id> (the calls that stand a crew up)
-  connectors <sub>          Connector presets — list, show <id>, config <id>
-                            (JSON for LACREW_CONNECTORS)
+  connectors <sub>          Connectors — list, show <id>, config <id>
+                            (JSON for LACREW_CONNECTORS); write policy —
+                            modes, mode <route> <auto|ask|deny>, asks, answer
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

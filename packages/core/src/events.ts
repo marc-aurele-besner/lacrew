@@ -66,6 +66,41 @@ export type ProtocolEventType =
    * reason code instead.
    */
   | "WebhookDelivery"
+  /**
+   * A connector write route's mode was set or cleared (F2.24).
+   *
+   * `auto` / `ask` / `deny` is an operator control in the same family as a
+   * pause or a directive edit: it never widens what a crew may reach, but
+   * moving a merge route from `ask` to `auto` removes the human from the loop
+   * on every future merge, and that decision should be attributable to whoever
+   * made it rather than inferred from the absence of questions.
+   */
+  | "ConnectorWritePolicyChanged"
+  /**
+   * A write in `ask` mode stopped to ask a human (F2.24).
+   *
+   * Carries the fingerprint of the request that a "yes" would release, never
+   * the arguments: a rendered path routinely names a private repository or a
+   * customer, and the trail is not the place to publish one. Nothing was
+   * called when this row was written — that is the whole content of the event.
+   */
+  | "ConnectorAsk"
+  /**
+   * An ask ended: `approved`, `declined`, or `expired` (F2.24).
+   *
+   * A confirmation is a claim, not an authority — it releases a step policy
+   * had already admitted and admits nothing on its own. `expired` is here for
+   * the same reason the other two are: a write that never happened because
+   * nobody answered is an outcome an operator needs to be able to find.
+   */
+  | "ConnectorAskResolved"
+  /**
+   * Someone replied to an ask without answering it (F2.24). The question was
+   * re-posted and the write is still waiting; recorded because a reply that
+   * looks like a decision and is not is exactly what a later reader would
+   * otherwise mistake for one.
+   */
+  | "ConnectorAskUnresolved"
   | "MarketplacePurchase"
   | "MarketplaceListed"
   | "MarketplaceWithdrawn"

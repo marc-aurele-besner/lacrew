@@ -308,7 +308,7 @@ export type FlowStepTrace = {
   stepId: string;
   kind: FlowStepKind;
   label?: string;
-  status: "ok" | "error";
+  status: "ok" | "error" | "waiting";
   /** Model: { text }. Tool: raw result. Gate: { verdict, intentId?, txHash? }. Branch: { result }. */
   output?: unknown;
   /** One-line human summary for run UIs. */
@@ -319,7 +319,41 @@ export type FlowStepTrace = {
   ms: number;
 };
 
-export type FlowRunStatus = "completed" | "error" | "max_steps";
+/**
+ * Why a run stopped short of finishing, and what it is waiting for.
+ *
+ * `reason` is a stable code (`connector_ask`), `token` names the thing that
+ * will release it (an ask id), and `detail` is the one line a human reads in a
+ * run list. A waiting run is not a failed run and must not be rendered as one:
+ * nothing went wrong, and something is expected to happen next.
+ */
+export type FlowWaiting = {
+  stepId: string;
+  reason: string;
+  token?: string;
+  detail?: string;
+};
+
+/**
+ * Everything needed to pick a run back up where it stopped.
+ *
+ * Plain JSON on purpose — it is persisted next to the thing being waited on and
+ * read back by a different process than the one that produced it. Carrying the
+ * finished step traces means the resumed run reports as one run, rather than as
+ * a stub that starts mid-flow with no record of how it got there.
+ */
+export type FlowResumeState = {
+  /** The step to re-enter. It re-executes from the start, not from mid-step. */
+  stepId: string;
+  /** Outputs of every step that already ran, keyed by step id. */
+  outputs: Record<string, { text?: string; json?: string; verdict?: string }>;
+  /** Traces of the steps that already ran, in execution order. */
+  steps: FlowStepTrace[];
+  input?: string;
+  startedAt?: string;
+};
+
+export type FlowRunStatus = "completed" | "error" | "max_steps" | "waiting";
 
 export type FlowRunResult = {
   runId: string;
@@ -335,6 +369,10 @@ export type FlowRunResult = {
   input?: string;
   steps: FlowStepTrace[];
   mocked?: boolean;
+  /** Set when `status` is "waiting": what the run stopped on. */
+  waiting?: FlowWaiting;
+  /** Set when `status` is "waiting": hand this back to `runFlow` to continue. */
+  resume?: FlowResumeState;
 };
 
 /** Prebuilt flow shipped with LaCrew; doubles as the marketplace catalog entry. */

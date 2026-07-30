@@ -18,6 +18,9 @@ import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createFlowsSurface } from "./flows.js";
 import { createWebhookSurface, type WebhookJob } from "./webhooks.js";
 import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
+import { createConnectorModes } from "./connectorPolicy.js";
+import { connectorAskTtlMs, createConnectorAsks } from "./connectorAsks.js";
+import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
@@ -70,6 +73,28 @@ async function main(): Promise<void> {
   const connectorDefs = loadConnectorsFromEnv(process.env, (path) =>
     readFileSync(path, "utf8"),
   );
+  // Write policy (F2.24) is built whether or not connectors are registered:
+  // the rules outlive any one config, and an operator who narrows a route
+  // before wiring the connector should not find the rule gone afterwards.
+  const connectorModes = createConnectorModes({ store: runtime.store });
+  const connectorAsks = createConnectorAsks({
+    store: runtime.store,
+    postQuestion: ({ threadId, author, body, options }) =>
+      runtime.postMessage({
+        scope: scopeOfThread(threadId) ?? { kind: "org" },
+        author,
+        authorKind: "agent",
+        kind: "question",
+        body,
+        options,
+      }),
+    onEvent: (event) => runtime.recordAudit(event),
+    ttlMs: connectorAskTtlMs(),
+  });
+  // The answer that releases a suspended write is an ordinary message; nothing
+  // in the conversation knows that, and this is the only place it is read.
+  runtime.onMessage((message) => connectorAsks.observe(message));
+
   const connectors =
     connectorDefs.length > 0
       ? createConnectorRegistry({
@@ -80,6 +105,8 @@ async function main(): Promise<void> {
           checkPolicy: async (target) =>
             (await runtime.checkPolicy({ agent: runtime.defaultAgent, target, value: 0n }))
               .verdict,
+          resolveMode: (route, id, subject) => connectorModes.resolve(route, id, subject),
+          asks: connectorAsks,
         })
       : undefined;
   if (connectorDefs.length > 0) {
@@ -87,7 +114,13 @@ async function main(): Promise<void> {
       `[@lacrew/orchestrator] ${connectorDefs.length} connector(s): ${connectors!.toolNames().join(", ")}`,
     );
   }
-  const flows = createFlowsSurface({ runtime, model, mcpBackend, connectors });
+  const flows = createFlowsSurface({
+    runtime,
+    model,
+    mcpBackend,
+    connectors,
+    asks: connectorAsks,
+  });
   // Webhook deliveries are accepted on the HTTP thread and run on a queue
   // worker, so the surface is handed the enqueue rather than the queue itself —
   // it has no business scheduling anything else.
@@ -106,6 +139,8 @@ async function main(): Promise<void> {
     flows,
     mcpBackend,
     connectors,
+    connectorModes,
+    connectorAsks,
     webhooks,
     mcpUseMock,
     authToken,
@@ -169,6 +204,26 @@ async function main(): Promise<void> {
           "with no directive. Paused agents are NOT paused. Fix the store and restart.",
       );
     }
+
+    // Connector write policy (F2.24). Loud on failure for the same reason as
+    // controls: with no rules loaded every write is back on its declared
+    // default, and with no asks loaded a confirmation someone already spent
+    // looks like a question that was never asked.
+    try {
+      const modes = await connectorModes.hydrate();
+      const asks = await connectorAsks.hydrate();
+      if (modes > 0 || asks > 0) {
+        console.log(
+          `[@lacrew/orchestrator] connector write policy: ${modes} rule(s), ${asks} ask(s) restored`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[@lacrew/orchestrator] connector write policy could not be read: every write route is " +
+          "running at its declared default and past confirmations are unknown. Fix the store and restart.",
+        err,
+      );
+    }
   }
   const hydrated = await flows.hydrate();
   if (hydrated.flows > 0 || hydrated.runs > 0) {
@@ -204,6 +259,17 @@ async function main(): Promise<void> {
     onWebhook: async (data) => webhooks.deliver(data as unknown as WebhookJob),
     onFlowCron: async () => {
       const result = await flows.runCronDue();
+      // Ask-mode writes that nobody answered (F2.24). Rides the same minute
+      // sweep so exactly one replica expires each ask; the suspended run then
+      // resumes into a step that refuses instead of calling.
+      try {
+        const expired = await connectorAsks.sweep();
+        if (expired.length > 0) {
+          console.log(`[@lacrew/orchestrator] ${expired.length} connector ask(s) timed out`);
+        }
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] connector ask sweep failed:", err);
+      }
       // The governance auto-executor (F0.6) rides the same minute sweep: the
       // queue already dispatches it to exactly one replica per tick. Opt-in —
       // executing governance without a human press is a policy decision.

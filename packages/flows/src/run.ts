@@ -2,6 +2,7 @@ import type {
   FlowBackend,
   FlowDefinition,
   FlowPrincipal,
+  FlowResumeState,
   FlowRunResult,
   FlowStep,
   FlowStepTrace,
@@ -13,6 +14,46 @@ import { fallThrough, validateFlow } from "./validate.js";
 const MAX_STEPS = 64;
 
 type StepOutputs = Record<string, { text?: string; json?: string; verdict?: string }>;
+
+/**
+ * Thrown by a backend to stop a run without failing it.
+ *
+ * Some steps cannot finish now and are not wrong: a connector write in `ask`
+ * mode is waiting on a human, and the honest thing for the run to do is stop
+ * and say so. It cannot block instead — a run that sat on the event loop for
+ * the hours a person takes to answer would tie a funded run's lifetime to a
+ * process that will be redeployed before then.
+ *
+ * The marker property, not the prototype, is what `isFlowWaiting` tests. Two
+ * copies of this package in one process (the cloud links `@lacrew/flows` from
+ * disk) would otherwise produce an error that fails `instanceof` against the
+ * class the engine imported, and a wait would be recorded as a crash.
+ */
+export class FlowWaitingError extends Error {
+  readonly __flowWaiting = true as const;
+  readonly reason: string;
+  readonly token?: string;
+  readonly detail?: string;
+
+  constructor(input: { reason: string; token?: string; detail?: string }) {
+    super(`flow_waiting:${input.reason}${input.token ? `:${input.token}` : ""}`);
+    this.name = "FlowWaitingError";
+    this.reason = input.reason;
+    if (input.token) this.token = input.token;
+    if (input.detail) this.detail = input.detail;
+  }
+}
+
+export function isFlowWaiting(
+  err: unknown,
+): err is { reason: string; token?: string; detail?: string; message: string } {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { __flowWaiting?: unknown }).__flowWaiting === true &&
+    typeof (err as { reason?: unknown }).reason === "string"
+  );
+}
 
 /**
  * Interpolate `{{input}}`, `{{input.<key>}}`, and
@@ -149,6 +190,13 @@ export type RunFlowOptions = {
   mocked?: boolean;
   /** Observer invoked after each step completes — live progress for CLIs/UIs. */
   onStep?: (trace: FlowStepTrace) => void;
+  /**
+   * Continue a run that stopped with status "waiting", from the state its
+   * result carried. The waiting step re-executes from the beginning: whatever
+   * suspended it is expected to answer differently now, and re-entering the
+   * step is what lets the same code path do the work it deferred.
+   */
+  resume?: FlowResumeState;
 };
 
 /**
@@ -161,11 +209,14 @@ export async function runFlow(
   backend: FlowBackend,
   opts: RunFlowOptions = {},
 ): Promise<FlowRunResult> {
-  const startedAt = new Date().toISOString();
+  // A resumed run keeps the original start time: the wait is part of how long
+  // the run took, and restamping it would report an hour-long pause as instant.
+  const startedAt = opts.resume?.startedAt ?? new Date().toISOString();
   const runId = opts.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const steps: FlowStepTrace[] = [];
-  const outputs: StepOutputs = {};
-  const ctx = { input: opts.input, steps: outputs };
+  const steps: FlowStepTrace[] = [...(opts.resume?.steps ?? [])];
+  const outputs: StepOutputs = { ...(opts.resume?.outputs ?? {}) };
+  const input = opts.resume ? (opts.resume.input ?? opts.input) : opts.input;
+  const ctx = { input, steps: outputs };
 
   const invalid = validateFlow(def);
   if (!invalid.ok) {
@@ -176,7 +227,7 @@ export async function runFlow(
       status: "error",
       startedAt,
       finishedAt: new Date().toISOString(),
-      input: opts.input,
+      input,
       steps: [
         {
           stepId: "validate",
@@ -192,8 +243,37 @@ export async function runFlow(
   }
 
   const byId = new Map(def.steps.map((s) => [s.id, s]));
-  let current: string | null = def.entry ?? def.steps[0]?.id ?? null;
+  let current: string | null = opts.resume?.stepId ?? def.entry ?? def.steps[0]?.id ?? null;
   let status: FlowRunResult["status"] = "completed";
+  let waiting: FlowRunResult["waiting"];
+  // A step the definition no longer has: the flow was edited while a run of it
+  // sat waiting. Failing here beats resuming into whatever step now happens to
+  // carry that id, which would run work the operator had already removed.
+  if (opts.resume && current && !byId.has(current)) {
+    return {
+      runId,
+      flowId: def.id,
+      flowName: def.name,
+      status: "error",
+      trigger: opts.trigger ?? "manual",
+      principal: opts.principal,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      input,
+      steps: [
+        ...steps,
+        {
+          stepId: current,
+          kind: "branch",
+          status: "error",
+          error: `resume_step_missing:${current}`,
+          next: null,
+          ms: 0,
+        },
+      ],
+      mocked: opts.mocked,
+    };
+  }
 
   while (current) {
     if (steps.length >= MAX_STEPS) {
@@ -372,10 +452,23 @@ export async function runFlow(
         }
       }
     } catch (err) {
-      trace.status = "error";
-      trace.error = err instanceof Error ? err.message : String(err);
-      trace.next = null;
-      status = "error";
+      if (isFlowWaiting(err)) {
+        trace.status = "waiting";
+        trace.summary = err.detail ?? err.message;
+        trace.next = null;
+        status = "waiting";
+        waiting = {
+          stepId: step.id,
+          reason: err.reason,
+          ...(err.token ? { token: err.token } : {}),
+          ...(err.detail ? { detail: err.detail } : {}),
+        };
+      } else {
+        trace.status = "error";
+        trace.error = err instanceof Error ? err.message : String(err);
+        trace.next = null;
+        status = "error";
+      }
     }
 
     trace.ms = Date.now() - t0;
@@ -386,7 +479,7 @@ export async function runFlow(
       /* observer errors never break the run */
     }
     current = trace.next;
-    if (status === "error") break;
+    if (status === "error" || status === "waiting") break;
   }
 
   return {
@@ -398,9 +491,21 @@ export async function runFlow(
     principal: opts.principal,
     startedAt,
     finishedAt: new Date().toISOString(),
-    input: opts.input,
+    input,
     steps,
     mocked: opts.mocked,
+    ...(waiting
+      ? {
+          waiting,
+          resume: {
+            stepId: waiting.stepId,
+            outputs,
+            steps,
+            startedAt,
+            ...(input === undefined ? {} : { input }),
+          },
+        }
+      : {}),
   };
 }
 

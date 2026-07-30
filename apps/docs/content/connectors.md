@@ -245,6 +245,116 @@ branch rather than a failed run:
 The registry re-checks regardless, so a flow that skipped the question still
 cannot merge. The check is the courtesy; the registry is the control.
 
+## Writes also run in a mode: auto, ask, deny
+
+A policy target answers "is this crew admitted to do this at all". It cannot
+answer the question operators ask constantly, which is "policy allows the merge,
+and I still want to see it first". So every write route also has a **mode**, and
+the vocabulary is the onchain one turned outward:
+
+| Onchain verdict | Write mode | What happens |
+| --- | --- | --- |
+| `ALLOW` | `auto` | admitted, and called without asking |
+| `ESCALATE` | `ask` | admitted, and a human confirms in-thread before the call |
+| `DENY` | `deny` | never called, and the network is never reached |
+
+The parallel is deliberate. An operator who has learned what ESCALATE means for
+a spend already knows what `ask` means for a publish.
+
+**A mode only ever narrows.** `auto` admits nothing — a route with a
+`policyTarget` is still checked against the stack first, and a `DENY` there
+refuses the call whatever the mode says. The most this control can do is require
+a confirmation or refuse outright, which is why an operator cannot widen a crew's
+reach by editing a dropdown. Reads carry no mode at all: a confirmation that
+gates nothing teaches people to click through the ones that matter.
+
+The three refusals are distinct codes, because they send an operator to
+different places:
+
+| Code | Cause | Where the fix is |
+| --- | --- | --- |
+| `connector_mode_denied` | mode is `deny` | the mode rule |
+| `connector_denied` | policy stack said DENY / ESCALATE | governance |
+| `connector_ask_declined` | a human answered `no` | nowhere — it worked |
+| `connector_ask_timeout` | nobody answered in time | the question, still in the thread |
+
+### What `ask` actually does
+
+The run **stops**. It does not block: a person answers in minutes or hours, and
+a run that waited would tie a funded crew's work to one process surviving a
+redeploy. The step posts a `question` into the principal's thread, the run is
+suspended to durable state with status `waiting`, and whichever replica handles
+the answer resumes it at the same step.
+
+```
+… pr-merge · waiting · 1 steps · run run-abc
+  waiting on a human to confirm github.merge_pull_request (ask_9f2c…)
+  Answer it:  lacrew connectors asks
+```
+
+Only `yes` and `no` count. "sure, go ahead" is a sentence a person means as a
+yes and a parser can only guess at, and a wrong guess is a merge nobody
+authorised — so free text resolves nothing, the question is re-posted, and the
+write stays in the queue.
+
+A confirmation is keyed to the **request**, not to the route: method, rendered
+path, and the fields the route forwards are hashed into a fingerprint. Merge a
+different pull request and it is a different ask with its own question. One yes
+is spent once and never applies again, including across a restart.
+
+An ask that nobody answers expires (default 24 hours,
+`LACREW_CONNECTOR_ASK_TTL_MS`) and the step fails closed. Nothing is called.
+
+### The confirmation is a claim, not an approval
+
+Answering `yes` releases a step the policy stack had **already** admitted. It
+admits nothing on its own, and a write that also moves money still raises its
+intent and still meets the escalation path. The answer is an ordinary
+conversation message with an ordinary author, resolved server-side; there is no
+route that resolves an ask directly, because one would be a second way to
+release a write with no record in the thread.
+
+### Setting a mode
+
+Presets ship `ask` on the routes whose mistakes are public and hard to take
+back — merge a pull request, publish a post, send a tweet. Typefully's
+`create_draft` does not, because that route cannot publish.
+
+```bash
+lacrew connectors modes                                   # rules + what each mode means
+lacrew connectors mode github.merge_pull_request ask      # workspace-wide
+lacrew connectors mode github.* deny --scope agent:0x…    # one seat, every route
+lacrew connectors mode github.merge_pull_request --clear  # back to what it inherits
+```
+
+Rules resolve narrowest-first — **agent, then crew, then workspace, then the
+route's own default** — and an exact route beats a `<connector>.*` at the same
+level. A crew rule names the node it hangs from and applies to every seat below
+it, so "this desk never publishes" is one rule rather than one per worker.
+Clearing a rule is not the same as setting `auto`: it removes the exception, so
+the route goes back to inheriting.
+
+### Working the queue
+
+```bash
+lacrew connectors asks                                    # writes waiting on a human
+lacrew connectors answer ask_9f2c yes --as human:ops
+```
+
+The same questions appear in the Questions rail and on `GET /messages`, because
+they are the same messages. Every ask emits `ConnectorAsk` when it is raised and
+`ConnectorAskResolved` when it ends — `approved`, `declined`, or `expired`. The
+payload carries the fingerprint and never the arguments: a rendered path
+routinely names a private repository, and the trail is not the place to publish
+one. Changing a mode emits `ConnectorWritePolicyChanged`, because moving a merge
+from `ask` to `auto` removes the human from every future merge and that should
+be attributable to whoever did it.
+
+One gap worth knowing: an ask-mode write inside a **delegated** flow (an `agent`
+step naming another flow) fails the delegating step rather than suspending. The
+ask holds the child run's state, and releasing it would leave the parent parked
+with nothing to continue it.
+
 ## Asking what is actually wired
 
 Connectors are configured from the environment, so an operator surface has no
@@ -262,8 +372,15 @@ curl -s localhost:8788/connectors | jq .
       "baseUrl": "https://api.github.com",
       "auth": { "kind": "bearer", "envVars": ["GH_TOKEN"], "ready": true },
       "routes": [
-        { "name": "get_pull_request", "method": "GET", "effect": "read", "policyTarget": null },
-        { "name": "merge_pull_request", "method": "PUT", "effect": "write", "policyTarget": "0x…" }
+        {
+          "name": "get_pull_request", "method": "GET", "effect": "read",
+          "policyTarget": null, "mode": null, "effectiveMode": null
+        },
+        {
+          "name": "merge_pull_request", "method": "PUT", "effect": "write",
+          "policyTarget": "0x…", "mode": "ask",
+          "effectiveMode": { "mode": "deny", "source": { "kind": "rule", "scope": { "level": "workspace" }, "route": "github.*" } }
+        }
       ]
     }
   ],
@@ -275,6 +392,11 @@ curl -s localhost:8788/connectors | jq .
 not. Keeping them apart is the point — a catalog that merges them tells an
 operator a crew can merge pull requests when nothing is wired.
 
+`mode` is what the route declares; `effectiveMode` is what would actually apply,
+and what decided it. Pass `?as=0x…` to resolve it for one seat — without it the
+answer is the workspace's, which is the one nobody's flow runs under once a
+single override exists.
+
 `auth` names the environment variables the connector reads and whether they are
 set. Never a value: "is my token there?" is answerable without reading it, and a
 status route that reads it is an exfiltration route. A `github-app` connector
@@ -284,8 +406,9 @@ expires — again, not the token.
 ## Every call is on the audit trail
 
 Each call emits a `ToolCalled` event: connector, route, method, effect, status,
-duration, and whether a policy check gated it. Never the response body — a PR
-diff or a draft post has no business in an audit row — and never the credential.
+duration, whether a policy check gated it, and the mode a write ran in. Never
+the response body — a PR diff or a draft post has no business in an audit row —
+and never the credential.
 
 A `write` row is a crew acting on the world, which makes this the trail an
 operator reads when asking what their agents actually did.

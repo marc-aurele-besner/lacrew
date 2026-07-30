@@ -14,15 +14,17 @@ import {
   validateFlow,
   type FlowBackend,
   type FlowDefinition,
+  type FlowResumeState,
   type FlowRunResult,
   type FlowTemplate,
   type FlowTrigger,
 } from "@lacrew/flows";
 import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { OrgNode } from "@lacrew/core";
+import type { ConnectorAskRecord, ConnectorAsksSurface } from "./connectorAsks.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import { createFlowStoreFromEnv, type FlowStore } from "./flowStore.js";
-import { ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
+import { ancestorsOf, ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import type { ModelProvider } from "./model/index.js";
 import type { CrewRuntime } from "./runtime.js";
@@ -74,6 +76,12 @@ export type FlowsSurface = {
   }): Promise<FlowRunResult>;
   runs(): FlowRunResult[];
   templates(): FlowTemplate[];
+  /**
+   * Continue a run suspended on an ask-mode connector write (F2.24), from the
+   * state stored on the ask. Called when the human answers, and when an
+   * unanswered ask expires — the resumed step then refuses instead of calling.
+   */
+  resumeAsk(ask: ConnectorAskRecord): Promise<FlowRunResult | null>;
   /** Run every saved flow with the given trigger (queue epoch hook). */
   runTriggered(trigger: FlowTrigger): Promise<FlowRunResult[]>;
   /** Run cron-triggered flows whose schedule matches `now` (once per minute). */
@@ -102,6 +110,11 @@ export function createFlowsSurface(opts: {
    * before connectors existed, rather than a silent no-op.
    */
   connectors?: ConnectorRegistry;
+  /**
+   * Ask-mode confirmations (F2.24). Given one, this surface registers itself as
+   * the thing that resumes a suspended run when the answer lands.
+   */
+  asks?: ConnectorAsksSurface;
 }): FlowsSurface {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
@@ -129,6 +142,8 @@ export function createFlowsSurface(opts: {
     ceiling: `0x${string}` | undefined,
     sessionLimits: ReturnType<typeof scopeSessionLimits>,
     chain: string[],
+    /** Identifies the run to an ask-mode write, so it can be resumed. */
+    run: { flowId: string; runId: string; managers: string[] },
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
     const bound = createRuntimeMcpBackend(opts.runtime, {
@@ -145,7 +160,12 @@ export function createFlowsSurface(opts: {
         // Connectors are checked before the MCP dispatch so a `lacrew_*` name
         // can never be shadowed by a registered route.
         if (!name.startsWith("lacrew_") && opts.connectors?.handles(name)) {
-          return opts.connectors.call(name, args);
+          return opts.connectors.call(name, args, {
+            principal,
+            managers: run.managers,
+            flowId: run.flowId,
+            runId: run.runId,
+          });
         }
         return runMcpTool(name, fillGateDefaults(name, args, principal, opts.runtime), {
           backend: bound,
@@ -183,6 +203,16 @@ export function createFlowsSurface(opts: {
         },
         chain,
       );
+      if (result.status === "waiting") {
+        // A nested run cannot be suspended and picked up later: the ask holds
+        // the *child's* resume state, and releasing it would leave the parent
+        // parked with nothing to continue it. Failing the delegating step says
+        // so, rather than reporting a run that quietly did half its work.
+        throw new Error(
+          `flow_delegate_waiting (${flowId}): ${result.waiting?.detail ?? result.waiting?.reason ?? "waiting"}` +
+            " — an ask-mode connector write cannot be confirmed inside a delegated flow",
+        );
+      }
       if (result.status === "error") {
         // A delegate that failed must fail the delegating step. Returning the
         // failure as data would let the parent run report "completed".
@@ -207,6 +237,10 @@ export function createFlowsSurface(opts: {
   };
 
   const pushRun = (result: FlowRunResult): void => {
+    // A resumed run carries the id it suspended under, so it replaces its own
+    // waiting entry rather than appearing twice — once stalled, once finished.
+    const existing = runRing.findIndex((r) => r.runId === result.runId);
+    if (existing >= 0) runRing.splice(existing, 1);
     runRing.push(result);
     if (runRing.length > RUN_RING_MAX) runRing.splice(0, runRing.length - RUN_RING_MAX);
     // Fire-and-forget; the store swallows its own errors.
@@ -222,6 +256,8 @@ export function createFlowsSurface(opts: {
       runId?: string;
       refresh?: boolean;
       as?: `0x${string}`;
+      /** Continue a suspended run rather than starting at the entry step. */
+      resume?: FlowResumeState;
     },
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
     chain: string[] = [],
@@ -237,22 +273,37 @@ export function createFlowsSurface(opts: {
     if (!def) throw new Error("flow_not_found");
 
     const principal = input.as ?? opts.runtime.defaultAgent;
-    if (input.as && !visibleTo(def, input.as, await orgNodes())) {
+    const nodes = await orgNodes();
+    if (input.as && !visibleTo(def, input.as, nodes)) {
       throw new Error("flow_out_of_scope");
     }
 
+    const runId =
+      input.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const result = await runFlow(
       def,
-      backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id]),
+      backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id], {
+        flowId: def.id,
+        runId,
+        // Nearest-first, which is the order crew mode rules are resolved in.
+        managers: [...ancestorsOf(nodes, principal)],
+      }),
       {
         input: input.input,
         trigger: input.trigger,
-        ...(input.runId ? { runId: input.runId } : {}),
+        runId,
         principal: { agent: principal },
         mocked,
+        ...(input.resume ? { resume: input.resume } : {}),
       },
     );
     pushRun(result);
+    // The suspended run is attached to the thing holding it up, so whichever
+    // replica handles the answer can continue it. Without this the run is a
+    // trace nobody can pick back up.
+    if (result.status === "waiting" && result.resume && result.waiting?.token) {
+      await opts.asks?.attachResume(result.waiting.token, result.resume);
+    }
     opts.runtime.recordAudit({
       type: "FlowRun",
       at: result.finishedAt,
@@ -266,10 +317,29 @@ export function createFlowsSurface(opts: {
         steps: result.steps.length,
         verdicts: result.steps.filter((s) => s.verdict).map((s) => s.verdict),
         mocked: result.mocked ?? false,
+        ...(result.waiting ? { waiting: result.waiting.reason } : {}),
       },
     });
     return result;
   };
+
+  const resumeAsk = async (ask: ConnectorAskRecord): Promise<FlowRunResult | null> => {
+    if (!ask.resume || !ask.flowId) return null;
+    try {
+      return await runOne({
+        id: ask.flowId,
+        runId: ask.runId,
+        as: ask.principal ? (ask.principal as `0x${string}`) : undefined,
+        resume: ask.resume,
+      });
+    } catch (err) {
+      console.error(`[@lacrew/orchestrator] resuming flow "${ask.flowId}" failed:`, err);
+      return null;
+    }
+  };
+  opts.asks?.setResumer(async (ask) => {
+    await resumeAsk(ask);
+  });
 
   const surface: FlowsSurface = {
     list: async (as) => {
@@ -313,6 +383,7 @@ export function createFlowsSurface(opts: {
       return existed;
     },
     run: runOne,
+    resumeAsk,
     runs: () => [...runRing].reverse(),
     templates: () => flowTemplates,
     runCronDue: async (now = new Date()) => {

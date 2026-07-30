@@ -7,13 +7,22 @@
 import { Hono, type Context } from "hono";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
-import { isSessionScope, SESSION_SCOPES, type SessionScope } from "@lacrew/core";
+import { isSessionScope, SESSION_SCOPES, type OrgNode, type SessionScope } from "@lacrew/core";
+import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { connectorPresets } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
+import type { ConnectorAsksSurface } from "./connectorAsks.js";
+import {
+  CONNECTOR_WRITE_MODES,
+  isConnectorWriteMode,
+  parseModeScope,
+  validateModeRoute,
+  type ConnectorModesSurface,
+} from "./connectorPolicy.js";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
@@ -31,6 +40,10 @@ export interface OrchestratorAppOptions {
   mcpBackend?: McpToolBackend;
   /** Absent when no connector is registered — the normal state, not an error. */
   connectors?: ConnectorRegistry;
+  /** Write-mode rules (F2.24); absent in embedders that wired none. */
+  connectorModes?: ConnectorModesSurface;
+  /** Pending and resolved ask-mode confirmations (F2.24). */
+  connectorAsks?: ConnectorAsksSurface;
   /** Absent when the embedder wired no queue-backed webhook surface. */
   webhooks?: WebhookSurface;
   mcpUseMock: boolean;
@@ -80,9 +93,34 @@ function isValidCron(expr: string): boolean {
 }
 
 export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
-  const { runtime, queue, model, flows, mcpBackend, connectors, webhooks, mcpUseMock, authToken } =
-    options;
+  const {
+    runtime,
+    queue,
+    model,
+    flows,
+    mcpBackend,
+    connectors,
+    connectorModes,
+    connectorAsks,
+    webhooks,
+    mcpUseMock,
+    authToken,
+  } = options;
   const app = new Hono();
+
+  /**
+   * The seat's reporting line, nearest first — what a crew-scoped write rule
+   * resolves through. An unreadable chart yields none, which falls back to the
+   * workspace rule or the route's own default rather than to a guess.
+   */
+  const managersOf = async (agent: string): Promise<string[]> => {
+    try {
+      const nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+      return [...ancestorsOf(nodes, agent)];
+    } catch {
+      return [];
+    }
+  };
 
   app.use("*", async (c, next) => {
     if (c.req.method === "OPTIONS") {
@@ -175,8 +213,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * that conflates them is how an operator thinks a crew can merge when it
    * cannot.
    */
-  app.get("/connectors", (c) => {
-    const registered = connectors?.describe() ?? [];
+  app.get("/connectors", async (c) => {
+    // `?as=` asks the question an operator actually has: what mode would *this
+    // seat* run under. Without it the answer is the workspace's, which is the
+    // one nobody's flow runs under once a single override exists. The chart is
+    // read for the same reason: a crew rule applies through the reporting line,
+    // so resolving without the ancestors would show a rule that does not exist.
+    const as = c.req.query("as");
+    const registered = connectors?.describe(as ? { principal: as, managers: await managersOf(as) } : {}) ?? [];
     const live = new Set(registered.map((r) => r.id));
     return jsonBig(c, {
       connectors: registered,
@@ -203,9 +247,91 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
             params: r.params ?? [],
             requiresPolicyTarget: Boolean(r.policyTarget?.required),
             ...(r.policyTarget ? { policyTargetNote: r.policyTarget.note } : {}),
+            // The mode this route would ship with, so the catalog says what
+            // registering it actually turns on rather than leaving an operator
+            // to discover their first merge stopped for a question.
+            defaultMode: r.effect === "write" ? (r.mode ?? "auto") : null,
           })),
         })),
       mode: runtime.mode,
+    });
+  });
+
+  /* ——— connector write policy (F2.24) ——— */
+
+  /**
+   * The rules narrowing write routes, and the vocabulary a UI renders.
+   *
+   * Served whole rather than per-connector: a rule may name a route whose
+   * connector is not registered in this process, and hiding those would make an
+   * operator's own configuration invisible to them.
+   */
+  app.get("/connectors/modes", (c) =>
+    connectorModes
+      ? jsonBig(c, { rules: connectorModes.list(), modes: CONNECTOR_WRITE_MODES })
+      : jsonBig(c, { error: "connector_modes_unavailable" }, 503),
+  );
+
+  /**
+   * Set or clear one rule. `mode` absent clears it, falling the route back to
+   * what it inherits — which is not the same as setting `auto`, and the two are
+   * kept distinct so an operator can remove an exception rather than pin it.
+   */
+  app.put("/connectors/modes", async (c) => {
+    if (!connectorModes) return jsonBig(c, { error: "connector_modes_unavailable" }, 503);
+    const body = await bodyOf<{ scope?: unknown; route?: string; mode?: string | null }>(c);
+    const scope = parseModeScope(body.scope);
+    if (!scope) return jsonBig(c, { error: "scope_required" }, 400);
+    const route = body.route?.trim() ?? "";
+    const invalid = validateModeRoute(route);
+    if (invalid) return jsonBig(c, { error: invalid }, 400);
+
+    if (body.mode === null || body.mode === undefined) {
+      const cleared = await connectorModes.clear(scope, route);
+      if (cleared) {
+        runtime.recordAudit({
+          type: "ConnectorWritePolicyChanged",
+          at: new Date().toISOString(),
+          payload: { scope, route, mode: null, action: "cleared" },
+        });
+      }
+      return jsonBig(c, { cleared, rules: connectorModes.list() });
+    }
+    if (!isConnectorWriteMode(body.mode)) {
+      return jsonBig(
+        c,
+        { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` },
+        400,
+      );
+    }
+    try {
+      const rule = await connectorModes.set({ scope, route, mode: body.mode });
+      runtime.recordAudit({
+        type: "ConnectorWritePolicyChanged",
+        at: rule.at,
+        payload: { scope, route, mode: rule.mode, action: "set" },
+      });
+      return jsonBig(c, { rule, rules: connectorModes.list() });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_connector_mode") }, 400);
+    }
+  });
+
+  /**
+   * Ask-mode confirmations. `?status=pending` is the queue a human works from;
+   * the resolved ones stay readable because "who said yes to that merge" is the
+   * question asked after the fact, not before.
+   */
+  app.get("/connectors/asks", (c) => {
+    if (!connectorAsks) return jsonBig(c, { error: "connector_asks_unavailable" }, 503);
+    const status = c.req.query("status");
+    const all = connectorAsks.list();
+    return jsonBig(c, {
+      asks: status ? all.filter((a) => a.status === status) : all,
+      // Answering happens through the thread, not here: a route that resolved
+      // an ask directly would be a second, unauthenticated-by-conversation way
+      // to release a write.
+      answerVia: "POST /messages with kind=answer, replyTo=<questionId>, body=yes|no",
     });
   });
 

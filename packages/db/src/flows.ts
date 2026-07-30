@@ -87,19 +87,32 @@ export async function listFlowDefinitions(handle: DbHandle): Promise<FlowDefinit
   }));
 }
 
+/**
+ * Record a run, or update it in place.
+ *
+ * A run id is written more than once now that a run can suspend on an ask-mode
+ * connector write (F2.24) and be resumed hours later: first as `waiting`, then
+ * again when it finishes. The later write is the same run, further along, so it
+ * replaces the row — leaving the first one would report a merge that has since
+ * happened as still waiting on a human.
+ */
 export async function insertFlowRun(handle: DbHandle, row: FlowRunRow): Promise<void> {
+  const values = {
+    runId: row.runId,
+    flowId: row.flowId,
+    status: row.status,
+    principal: row.principal ?? null,
+    startedAt: new Date(row.startedAt),
+    finishedAt: new Date(row.finishedAt),
+    result: row.result,
+  };
   await handle.db
     .insert(flowRuns)
-    .values({
-      runId: row.runId,
-      flowId: row.flowId,
-      status: row.status,
-      principal: row.principal ?? null,
-      startedAt: new Date(row.startedAt),
-      finishedAt: new Date(row.finishedAt),
-      result: row.result,
-    })
-    .onConflictDoNothing();
+    .values(values)
+    .onConflictDoUpdate({
+      target: flowRuns.runId,
+      set: { status: values.status, finishedAt: values.finishedAt, result: values.result },
+    });
 }
 
 /** Most recent runs, newest → oldest. */

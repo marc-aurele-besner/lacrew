@@ -403,6 +403,7 @@ export class CrewRuntime {
   private readonly agentControls: AgentControls;
   /** The crew's conversation — claims and questions, never authority (F1.7). */
   private readonly conversation: Conversation;
+  private readonly messageObservers = new Set<(message: Message) => void>();
   /** Local audit ring for onchain mode (demo works without indexer). */
   private readonly localAudit: ProtocolEvent[] = [];
   /** Distinguishes same-millisecond local events; see pushAudit. */
@@ -410,6 +411,16 @@ export class CrewRuntime {
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
   private readonly auditStore: AuditStore;
   private readonly runtimeStore: RuntimeStore;
+
+  /**
+   * The durable store behind this runtime, for surfaces that persist beside it
+   * (connector write policy and its asks, F2.24) rather than inside it. They
+   * share one store so a self-host deployment configures one database, not one
+   * per feature.
+   */
+  get store(): RuntimeStore {
+    return this.runtimeStore;
+  }
 
   constructor(options: CrewRuntimeOptions) {
     this.mode = options.mode ?? "mock";
@@ -1112,7 +1123,29 @@ export class CrewRuntime {
         refs: message.refs?.length ?? 0,
       },
     });
+    for (const observer of this.messageObservers) {
+      try {
+        observer(message);
+      } catch {
+        // An observer that throws must not fail the post. A message is a claim
+        // and it has already been made; refusing it here would lose the claim
+        // to a bug in something that only watches.
+      }
+    }
     return message;
+  }
+
+  /**
+   * Watch messages as they land.
+   *
+   * Used by ask-mode connector writes (F2.24) to notice the answer that
+   * releases a suspended run. Deliberately an observer rather than a branch in
+   * `postMessage`: this module must not learn to read a message as a decision,
+   * because the moment it does, a message is authority.
+   */
+  onMessage(observer: (message: Message) => void): () => void {
+    this.messageObservers.add(observer);
+    return () => this.messageObservers.delete(observer);
   }
 
   thread(scope: ThreadScope, limit = 100): Message[] {
