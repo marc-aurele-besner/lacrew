@@ -75,3 +75,31 @@ export {
   type FlowTriggerRecord,
 } from "./client.js";
 export { cronMatches, isValidCron, parseCron } from "./cron.js";
+export {
+  DEFAULT_SKILL_PACK_LABEL,
+  SKILL_PACK_LIMITS,
+  describeMissing,
+  exportSkillPack,
+  hasMissingRequirements,
+  installSkillPack,
+  installedSkillPacks,
+  missingRequirements,
+  packSkillKey,
+  parseSkillPack,
+  removeSkillPack,
+  skillPackScopeFits,
+  skillPackSkills,
+  validateSkillPack,
+  type InstalledSkillPack,
+  type MissingRequirements,
+  type SkillPack,
+  type SkillPackAvailability,
+  type SkillPackInstallResult,
+  type SkillPackRemoveResult,
+  type SkillPackRequires,
+  type SkillPackScope,
+  type SkillPackSkill,
+  type SkillPackValidation,
+  type SkillSource,
+} from "./skillPacks.js";
+export { firstPartySkillPacks, getSkillPack } from "./skillPackLibrary.js";
