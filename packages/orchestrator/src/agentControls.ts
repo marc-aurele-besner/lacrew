@@ -52,6 +52,16 @@ export type Skill = {
   /** When this applies — the trigger, not the procedure. */
   when?: string;
   instructions: string;
+  /**
+   * Set when a skill pack installed this skill (F2.23): which pack, at which
+   * version, and its id inside that pack. Absent means somebody wrote it here,
+   * which is what makes uninstalling a pack exact — it removes what the pack
+   * put there and cannot take a hand-written skill with it.
+   *
+   * Never rendered into the prompt. It is provenance for the operator and for
+   * the installer, and a model reading it would be reading configuration.
+   */
+  source?: { pack: string; version: string; skill: string };
 };
 
 /**
@@ -186,6 +196,18 @@ export function normalizeLayers(layers: readonly BriefLayer[]): BriefLayer[] {
         name: trimmed(s.name),
         ...(trimmed(s.when) ? { when: trimmed(s.when) } : {}),
         instructions: trimmed(s.instructions),
+        // Carried through rather than rebuilt from the rendered fields: a
+        // normalization that dropped it would make every stored skill look
+        // hand-written, and an uninstall would then find nothing to remove.
+        ...(s.source?.pack && s.source.skill
+          ? {
+              source: {
+                pack: trimmed(s.source.pack),
+                version: trimmed(s.source.version),
+                skill: trimmed(s.source.skill),
+              },
+            }
+          : {}),
       }));
     out.push({
       label: trimmed(layer.label) || "unlabelled",

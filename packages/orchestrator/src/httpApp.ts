@@ -7,6 +7,13 @@
 import { Hono, type Context } from "hono";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
+import { firstPartySkillPacks, getSkillPack, missingRequirements, type SkillPack } from "@lacrew/flows";
+import {
+  createSkillPacksSurface,
+  readSkillPack,
+  SkillPackRequirementsError,
+  SkillPackTooLargeError,
+} from "./skillPacks.js";
 import { isSessionScope, SESSION_SCOPES, type OrgNode, type SessionScope } from "@lacrew/core";
 import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
@@ -628,15 +635,54 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   /**
    * Replace an agent's standing brief. Layers are applied in the order given
    * and their labels are stored, never interpreted — see agentControls.ts.
+   *
+   * A layer carries three things and all three are read here. Taking only
+   * `text` would make every save through this route a silent uninstall of the
+   * resources and skills the layer already had, which is how an installed pack
+   * disappears the next time somebody edits the guidelines above it.
    */
   app.put("/agents/brief", async (c) => {
     const body = await bodyOf<{
       agent?: string;
-      layers?: Array<{ label?: string; text?: string }>;
+      layers?: Array<{
+        label?: string;
+        text?: string;
+        resources?: Array<{ kind?: string; ref?: string; note?: string }>;
+        skills?: Array<{
+          name?: string;
+          when?: string;
+          instructions?: string;
+          source?: { pack?: string; version?: string; skill?: string };
+        }>;
+      }>;
     }>(c);
     if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
     if (!Array.isArray(body.layers)) return jsonBig(c, { error: "layers_required" }, 400);
-    const layers = body.layers.map((l) => ({ label: String(l.label ?? ""), text: String(l.text ?? "") }));
+    const layers = body.layers.map((l) => ({
+      label: String(l.label ?? ""),
+      text: String(l.text ?? ""),
+      resources: (Array.isArray(l.resources) ? l.resources : []).map((r) => ({
+        kind: String(r.kind ?? ""),
+        ref: String(r.ref ?? ""),
+        ...(r.note ? { note: String(r.note) } : {}),
+      })),
+      skills: (Array.isArray(l.skills) ? l.skills : []).map((s) => ({
+        name: String(s.name ?? ""),
+        ...(s.when ? { when: String(s.when) } : {}),
+        instructions: String(s.instructions ?? ""),
+        // Provenance round-trips so an edit through the directive editor does
+        // not orphan a pack's skills from the pack that installed them.
+        ...(s.source?.pack && s.source.skill
+          ? {
+              source: {
+                pack: String(s.source.pack),
+                version: String(s.source.version ?? ""),
+                skill: String(s.source.skill),
+              },
+            }
+          : {}),
+      })),
+    }));
     try {
       const brief = runtime.setAgentBrief(body.agent as `0x${string}`, layers);
       return jsonBig(c, {
@@ -647,6 +693,123 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
     } catch (err) {
       return jsonBig(c, { error: err instanceof Error ? err.message : "brief_failed" }, 400);
+    }
+  });
+
+  /* ——— skill packs (F2.23) ——— */
+
+  const skillPacks = createSkillPacksSurface({
+    runtime,
+    listFlowIds: async () => (await flows.list()).map((f) => f.id),
+    listConnectors: () => ({
+      ids: connectors?.list().map((conn) => conn.id) ?? [],
+      tools: connectors?.toolNames() ?? [],
+    }),
+    listMcpTools: () => listLacrewMcpTools().map((tool) => tool.name),
+  });
+
+  /**
+   * The packs that ship, each with what it needs and whether this deployment
+   * has it.
+   *
+   * The readiness is computed rather than stored: a connector registered after
+   * this list was last read must not leave a pack showing as uninstallable, and
+   * a credential unset since must not leave one showing as ready.
+   */
+  app.get("/skills/packs", async (c) => {
+    const available = await skillPacks.availability();
+    return jsonBig(c, {
+      packs: firstPartySkillPacks.map((pack) => {
+        const missing = missingRequirements(pack, available);
+        return {
+          id: pack.id,
+          version: pack.version,
+          name: pack.name,
+          summary: pack.summary,
+          scope: pack.scope,
+          skills: pack.skills.map((s) => ({ id: s.id, name: s.name, trigger: s.trigger })),
+          requires: pack.requires ?? {},
+          missing,
+          installable: missing.flows.length + missing.connectors.length + missing.mcpTools.length === 0,
+        };
+      }),
+      available,
+      mode: runtime.mode,
+    });
+  });
+
+  /** Which packs one agent's directive currently carries. */
+  app.get("/agents/skills", async (c) => {
+    const agent = c.req.query("agent");
+    if (!agent) return jsonBig(c, { error: "agent_required" }, 400);
+    return jsonBig(c, {
+      agent,
+      packs: skillPacks.installed(agent as `0x${string}`),
+      brief: runtime.agentBrief(agent as `0x${string}`),
+      mode: runtime.mode,
+    });
+  });
+
+  /**
+   * Install a pack onto an agent's directive — either one that ships (`packId`)
+   * or one the caller supplies inline (`pack`), which is the path a file, an
+   * export, or a marketplace payload takes.
+   *
+   * Three refusals, each with its own status because they need different
+   * fixes: a malformed pack is 400, a requirement this deployment does not
+   * meet is 409 (register the thing, then retry), and a directive that would
+   * blow its rendered ceiling is 413.
+   */
+  app.post("/agents/skills/install", async (c) => {
+    const body = await bodyOf<{ agent?: string; packId?: string; pack?: unknown; label?: string }>(c);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+
+    let pack: SkillPack | undefined;
+    if (body.pack !== undefined) {
+      const read = readSkillPack(body.pack);
+      if (!read.pack) return jsonBig(c, { error: "invalid_skill_pack", errors: read.errors }, 400);
+      pack = read.pack;
+    } else if (body.packId) {
+      pack = getSkillPack(body.packId);
+      if (!pack) return jsonBig(c, { error: `unknown_skill_pack: ${body.packId}` }, 404);
+    } else {
+      return jsonBig(c, { error: "pack_or_packId_required" }, 400);
+    }
+
+    try {
+      const report = await skillPacks.install(body.agent as `0x${string}`, pack, {
+        ...(body.label ? { label: body.label } : {}),
+      });
+      return jsonBig(c, {
+        ...report,
+        systemPrompt: runtime.systemPromptFor(body.agent),
+        mode: runtime.mode,
+      });
+    } catch (err) {
+      if (err instanceof SkillPackRequirementsError) {
+        return jsonBig(c, { error: err.message, pack: err.pack, missing: err.missing }, 409);
+      }
+      if (err instanceof SkillPackTooLargeError) {
+        return jsonBig(c, { error: err.message, pack: err.pack, chars: err.chars }, 413);
+      }
+      return jsonBig(c, { error: msgOf(err, "skill_pack_install_failed") }, 400);
+    }
+  });
+
+  /** Remove every skill a pack installed, leaving hand-written ones in place. */
+  app.post("/agents/skills/remove", async (c) => {
+    const body = await bodyOf<{ agent?: string; packId?: string }>(c);
+    if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
+    if (!body.packId) return jsonBig(c, { error: "packId_required" }, 400);
+    try {
+      const result = skillPacks.remove(body.agent as `0x${string}`, body.packId);
+      return jsonBig(c, {
+        ...result,
+        brief: runtime.agentBrief(body.agent as `0x${string}`),
+        mode: runtime.mode,
+      });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "skill_pack_remove_failed") }, 400);
     }
   });
 
