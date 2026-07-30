@@ -17,6 +17,7 @@ export {
 export {
   upsertFlowDefinition,
   deleteFlowDefinition,
+  getFlowDefinition,
   listFlowDefinitions,
   insertFlowRun,
   recentFlowRuns,

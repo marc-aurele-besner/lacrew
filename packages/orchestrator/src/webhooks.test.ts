@@ -1,10 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { flow } from "@lacrew/flows";
+import { flow, type FlowDefinition } from "@lacrew/flows";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import { CrewRuntime } from "./runtime.js";
 import { createFlowsSurface } from "./flows.js";
-import { createMemoryFlowStore } from "./flowStore.js";
+import { createMemoryFlowStore, type FlowStore } from "./flowStore.js";
 import { MemoryModelProvider } from "./model/index.js";
 import {
   createWebhookSurface,
@@ -656,6 +656,59 @@ describe("webhook triggers", () => {
       config: { audience: PUBSUB_AUD, serviceAccountEmail: PUBSUB_SA },
     });
     await assert.rejects(() => webhooks.rotate(trigger.id), /source_has_no_secret/);
+  });
+
+  it("runs a flow the delivering replica never hydrated", async () => {
+    // The queue hands a delivery to whichever replica is free, and that one's
+    // boot-time flow map holds only what existed when it started. Without a
+    // read-through the run dies as flow_not_found on a flow that plainly
+    // exists — which is exactly what a live two-replica run produced.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const model = new MemoryModelProvider();
+
+    const saved = new Map<string, FlowDefinition>();
+    const sharedStore: FlowStore = {
+      name: "shared",
+      save: async (def) => {
+        saved.set(def.id, def);
+      },
+      remove: async (id) => {
+        saved.delete(id);
+      },
+      list: async () => [...saved.values()],
+      get: async (id) => saved.get(id) ?? null,
+      appendRun: async () => {},
+      recentRuns: async () => [],
+      close: async () => {},
+    };
+
+    // Replica A saves the flow.
+    const flowsA = createFlowsSurface({ runtime, model, store: sharedStore });
+    const def = flow("late-flow", "Late").model("s", { prompt: "{{input}}" }).build();
+    await flowsA.save({ ...def, trigger: "webhook" });
+
+    // Replica B booted earlier: it hydrated nothing and never sees the save.
+    const flowsB = createFlowsSurface({ runtime, model, store: sharedStore });
+    assert.equal((await flowsB.list()).length, 0, "B's map is empty by construction");
+
+    const jobs: WebhookJob[] = [];
+    const webhooksB = createWebhookSurface({
+      runtime,
+      flows: flowsB,
+      store: createMemoryWebhookStore(),
+      enqueue: async (job) => {
+        jobs.push(job);
+      },
+    });
+    // Registering has to see the flow too, or a hook could never be attached
+    // from a replica that booted first.
+    const { trigger, secret } = await createSigned(webhooksB, { flowId: "late-flow" });
+    const accepted = await deliver(webhooksB, trigger.id, secret);
+    assert.equal(accepted.ok && accepted.status, 202);
+
+    const result = await webhooksB.deliver(jobs[0]!);
+    assert.equal(result?.status, "completed");
+    assert.equal(result?.flowId, "late-flow");
   });
 
   it("forgets a removed trigger", async () => {

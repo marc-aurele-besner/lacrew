@@ -318,7 +318,10 @@ export function createWebhookSurface(opts: {
   const requireWebhookFlow = async (
     flowId: string,
   ): Promise<FlowDefinition> => {
-    const def = (await opts.flows.list()).find((f) => f.id === flowId);
+    // Always through the store: this runs on registration and on every
+    // delivery, both of which can land on a replica that booted before the flow
+    // was saved, and both of which already touch the database anyway.
+    const def = await opts.flows.get(flowId, { refresh: true });
     if (!def) throw new Error("flow_not_found");
     if (def.trigger !== "webhook")
       throw new Error("flow_not_webhook_triggered");
@@ -660,6 +663,10 @@ export function createWebhookSurface(opts: {
           input: job.input,
           trigger: "webhook",
           runId: job.runId,
+          // This worker may never have seen the flow: the queue hands a
+          // delivery to whichever replica is free, and its boot-time map holds
+          // only the flows that existed when it started.
+          refresh: true,
           ...(trigger.principal ? { as: trigger.principal } : {}),
         });
         await store.settleDelivery({

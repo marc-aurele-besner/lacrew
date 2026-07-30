@@ -49,6 +49,26 @@ export async function upsertFlowDefinition(
     });
 }
 
+export async function getFlowDefinition(
+  handle: DbHandle,
+  id: string,
+): Promise<FlowDefinitionRow | null> {
+  const rows = await handle.db
+    .select()
+    .from(flowDefinitions)
+    .where(eq(flowDefinitions.id, id))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    definition: row.definition,
+    scopeLevel: row.scopeLevel,
+    scopeRef: row.scopeRef,
+  };
+}
+
 export async function deleteFlowDefinition(handle: DbHandle, id: string): Promise<void> {
   await handle.db.delete(flowDefinitions).where(eq(flowDefinitions.id, id));
 }
