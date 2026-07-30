@@ -361,6 +361,18 @@ Secrets are sealed at rest with the same AES-256-GCM envelope as session keys
 minting a trigger fails with `webhook_sealing_unavailable` rather than writing
 a cleartext secret to Postgres.
 
+### Event sources
+
+`scheme` picks how a delivery proves it is genuine, which delivery it is, what
+happened, and where the payload lives. Providers differ on all four:
+
+| Source | Authenticates with | Idempotency key | Event type |
+| --- | --- | --- | --- |
+| `lacrew` (default) | HMAC over `<unix-seconds>.<body>` | `Idempotency-Key` | — |
+| `github` | HMAC over the body | `X-GitHub-Delivery` | `X-GitHub-Event` + body `action` |
+| `google-pubsub` | Google-signed OIDC token — **no shared secret** | Pub/Sub `messageId` | `message.attributes.eventType` |
+
+
 ### Signing a delivery
 
 Two schemes, picked at registration:
@@ -394,6 +406,26 @@ and the run happens on a queue worker. The producer's socket is never what
 keeps a funded run alive — a flow that takes minutes of model time would
 otherwise be retried by every sane webhook sender while it was still working.
 
+### Filtering events
+
+A trigger with no `events` runs on every delivery. Naming them subscribes:
+
+```json
+{ "events": ["pull_request", "release.published"] }
+```
+
+Matching is by dotted prefix, so `pull_request` covers `pull_request.opened`
+without listing each action — but only in that direction: a filter for
+`pull_request.opened` is *not* satisfied by a bare `pull_request`.
+
+An unsubscribed delivery answers `200 { "skipped": "event_not_selected" }`, not
+a 4xx. GitHub disables a hook that keeps erroring, and "not interested" is not a
+delivery failure. The skip is recorded in the delivery log with the event type,
+so a quiet hook can be told apart from a broken one.
+
+A delivery whose type the provider never declared always passes the filter:
+"I could not tell what this was" is not "you did not ask for this".
+
 ### Wiring GitHub
 
 Point a repository webhook (or a `repository_dispatch`) at
@@ -401,6 +433,45 @@ Point a repository webhook (or a `repository_dispatch`) at
 _application/json_, and register the trigger with `"scheme": "github"`. GitHub's
 `X-GitHub-Delivery` header is picked up as the idempotency key automatically, so
 its redeliveries answer `200 duplicate` rather than starting a second run.
+
+### Google Pub/Sub push (Gmail, Calendar, Drive)
+
+Pub/Sub push does not sign the body — it authenticates the *sender*, with a
+Google-signed OIDC token in `Authorization: Bearer`. There is no shared secret,
+so the trigger binds to what it will accept instead:
+
+```bash
+curl -X POST "$ORCH/flows/triggers" \
+  -H "authorization: Bearer $LACREW_ORCH_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+        "flowId": "inbox-triage",
+        "scheme": "google-pubsub",
+        "config": {
+          "audience": "https://orch.example.com/hooks/PLACEHOLDER",
+          "serviceAccountEmail": "pusher@my-project.iam.gserviceaccount.com"
+        },
+        "input": { "fields": { "mailbox": "emailAddress", "historyId": "historyId" } }
+      }'
+```
+
+Both `audience` and `serviceAccountEmail` are **required**, and refused at
+creation rather than discovered on the first live event. This is the part that
+makes the source safe: anyone can have Google mint a valid token for their own
+service account and point their own subscription at your URL, so a signature
+proving only "Google signed this" authorizes nothing. The audience you
+configured plus the service account you expect are the binding.
+
+The envelope is unwrapped before mapping. Pub/Sub delivers
+`{ "message": { "data": "<base64>", "messageId": "…" } }` and the flow's input
+mapping sees the *decoded* message — mapping `emailAddress` against the envelope
+would read nothing and look like a typo rather than an unreachable path.
+`messageId` becomes the idempotency key.
+
+Google's signing keys come from their JWKS endpoint and are cached. An
+unreachable key set answers `503` (retrying helps); a key absent from a current
+key set answers `401` (it will not).
+
 
 ### Input mapping
 
@@ -415,6 +486,21 @@ one. `path` lifts a single value:
 { "input": { "fields": { "pr": "pull_request.number" } } }
 { "input": { "path": "pull_request.title" } }
 ```
+
+### From the CLI
+
+All of this is also `lacrew flows triggers`, so a self-hosted operator never has
+to hand-roll a signature:
+
+```bash
+lacrew flows triggers create --flow pr-triage --source github \
+  --events pull_request --field pr=pull_request.number --field title=pull_request.title
+lacrew flows triggers list
+lacrew flows triggers curl <triggerId>       # a runnable signing example
+lacrew flows triggers deliveries <triggerId>
+lacrew flows triggers rotate <triggerId>
+```
+
 
 ### What a hook does not grant
 
@@ -436,6 +522,9 @@ to Approvals exactly as it would otherwise.
 | Body over 1 MiB (`LACREW_WEBHOOK_MAX_BYTES`) | 413    | `webhook_body_too_large`                                  |
 | Body is not JSON                             | 400    | `webhook_body_invalid`                                    |
 | Delivery key already seen                    | 200    | `{ "duplicate": true }`                                   |
+| Event type not subscribed | 200 | `{ "skipped": "event_not_selected" }` |
+| Pub/Sub token for another audience or service account | 401 | `webhook_token_audience_invalid` \| `_email_invalid` |
+| Google's key set unreachable | 503 | `webhook_jwks_unavailable` |
 
 A paused principal is _rejected_ rather than skipped: a webhook producer
 retries, and a silent skip would let a paused agent's events vanish behind a

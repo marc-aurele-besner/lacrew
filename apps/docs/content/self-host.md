@@ -372,6 +372,17 @@ need the cloud. Two env vars shape it:
 | `LACREW_WEBHOOK_MAX_BYTES`     | `1048576` | Body cap; an oversized delivery is refused on its declared `content-length` before it is buffered                                                                                                                    |
 | `LACREW_WEBHOOK_TOLERANCE_SEC` | `300`     | Replay window for the timestamped `lacrew` scheme                                                                                                                                                                    |
 
+Three event sources ship: `lacrew` and `github` verify an HMAC over the raw
+bytes; `google-pubsub` verifies a Google-signed OIDC token instead, binding to
+the `audience` and `serviceAccountEmail` the trigger was created with. That
+binding is what makes it safe — anyone can have Google sign a token for their
+own service account, so the signature alone authorizes nothing. Google's key set
+is fetched and cached; an unreachable one answers 503 rather than failing a
+delivery closed.
+
+Everything is drivable from the CLI (`lacrew flows triggers …`), so the cloud UI
+is a convenience rather than a requirement.
+
 With `DATABASE_URL` set, deliveries are dispatched through pg-boss and the
 `(trigger_id, delivery_key)` unique index makes a redelivery a no-op across
 replicas. Without one, triggers live in the process and do not survive a
