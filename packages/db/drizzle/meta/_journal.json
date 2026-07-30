@@ -71,6 +71,13 @@
       "when": 1785252880677,
       "tag": "0009_giant_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785429710737,
+      "tag": "0010_closed_human_robot",
+      "breakpoints": true
     }
   ]
 }

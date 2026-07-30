@@ -24,6 +24,18 @@ export {
   type FlowRunRow,
 } from "./flows.js";
 export {
+  upsertWebhookTrigger,
+  deleteWebhookTrigger,
+  listWebhookTriggers,
+  claimWebhookDelivery,
+  insertWebhookDelivery,
+  settleWebhookDelivery,
+  recentWebhookDeliveries,
+  pruneWebhookDeliveries,
+  type WebhookTriggerRow,
+  type WebhookDeliveryRow,
+} from "./webhooks.js";
+export {
   upsertSessionRow,
   markSessionRevokedRow,
   recentSessionRows,
