@@ -13,8 +13,11 @@ import { writeFileSync } from "node:fs";
 import { getConnectorPreset } from "@lacrew/orchestrator";
 import {
   crewBlueprints,
+  crewFlowOwner,
   crewMonthlyGrantUsd,
   crewPlan,
+  crewSampleNeeds,
+  crewSampleRun,
   formatUsdc,
   getCrewBlueprint,
   getFlowTemplate,
@@ -145,11 +148,45 @@ function printBlueprint(bp: CrewBlueprint): void {
     );
   }
 
+  printSample(bp);
+
   if (!check.ok) {
     console.log("\nBlueprint does not validate:");
     for (const err of check.errors) console.log(`  ✗ ${err}`);
   }
   console.log(`\nPlan it:  lacrew crews plan ${bp.id}`);
+}
+
+/**
+ * The certified first run, and what has to be wired before it means anything.
+ *
+ * A blueprint with no fixture says so rather than leaving the section out: the
+ * absence is the answer to "how do I check this works", and an operator who
+ * reads nothing here should learn that they are choosing the run input
+ * themselves, not that the question was never asked.
+ */
+function printSample(bp: CrewBlueprint, pointer = true): void {
+  const sample = crewSampleRun(bp.id);
+  console.log("\nFirst run");
+  if (!sample) {
+    console.log("  No certified sample ships for this blueprint — choose a flow and an input.");
+    return;
+  }
+  const owner = crewFlowOwner(bp, sample.flow);
+  const needs = crewSampleNeeds(sample);
+  console.log(`  ${sample.flow}${owner ? ` · runs as ${owner.label}` : ""}`);
+  console.log(`  ${sample.summary}`);
+  console.log(`  ${sample.safety}`);
+  if (needs) {
+    const wants = [
+      ...(needs.model ? ["a model provider key"] : []),
+      ...needs.connectors.map((id) => `the ${id} connector`),
+    ];
+    if (wants.length > 0) {
+      console.log(`  Wire first: ${wants.join(", ")} — without them the run returns stub text.`);
+    }
+  }
+  if (pointer) console.log(`  lacrew crews sample ${bp.id}`);
 }
 
 /**
@@ -227,6 +264,39 @@ export function cmdCrews(args: string[]): void {
       return;
     }
 
+    /*
+      The run input, on its own, so it can be piped straight into a run rather
+      than retyped out of the `show` output. Exits non-zero when the blueprint
+      has no fixture: a script asking for one and getting an empty body should
+      stop, not run a flow with no input.
+    */
+    case "sample": {
+      const bp = id ? getCrewBlueprint(id) : undefined;
+      if (!bp) {
+        console.error(
+          `Usage: lacrew crews sample <id> [--json]  (${crewBlueprints.map((b) => b.id).join(", ")})`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const sample = crewSampleRun(bp.id);
+      if (!sample) {
+        console.error(`No certified sample run ships for "${bp.id}".`);
+        process.exitCode = 1;
+        return;
+      }
+      if (hasFlag(rest, "--json")) {
+        console.log(JSON.stringify(sample.input));
+        return;
+      }
+      printSample(bp, false);
+      console.log(
+        `\n  lacrew flows run ${sample.flow} --input '${JSON.stringify(sample.input)}'` +
+          `${crewFlowOwner(bp, sample.flow) ? " --as <that seat's address>" : ""}`,
+      );
+      return;
+    }
+
     case "plan": {
       const bp = id ? getCrewBlueprint(id) : undefined;
       if (!bp) {
@@ -255,10 +325,11 @@ export function cmdCrews(args: string[]): void {
     }
 
     default:
-      console.log(`Usage: lacrew crews <list|show|plan>
+      console.log(`Usage: lacrew crews <list|show|sample|plan>
 
   list                       First-party crew blueprints
   show <id> [--json]         Org chart, budgets, ladder, guardrails, flows
+  sample <id> [--json]       The certified first run and its input
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
 `);
