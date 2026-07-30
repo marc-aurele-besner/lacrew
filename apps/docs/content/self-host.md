@@ -337,6 +337,22 @@ export GITHUB_APP_INSTALLATION_ID=48213991
 `GET /connectors` reports what is registered, which env vars each connector
 reads and whether they are set — never a value.
 
+## Skill packs
+
+A pack is the procedure half of a vertical: named skills, each with a trigger,
+installed onto a seat's directive. Nothing about it is authority — it is
+instruction, and an install refuses outright when the flows, connector routes or
+tools it names are not registered here. See [Skill packs](./skill-packs.md).
+
+```bash
+lacrew skills list --url http://127.0.0.1:8788   # ✓/✗ per pack, with what is missing
+lacrew skills install github-pr-triage --agent 0xSEAT
+lacrew skills installed --agent 0xSEAT
+```
+
+Directives are stored in Postgres when `DATABASE_URL` is set, so an installed
+pack survives a restart; without it, it lives as long as the process does.
+
 ## HTTP auth
 
 The orchestrator HTTP surface is open by default (fine for localhost demos). Set
