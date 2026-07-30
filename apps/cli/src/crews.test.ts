@@ -93,6 +93,36 @@ describe("lacrew crews", () => {
     assert.doesNotMatch(out, /needs:/);
   });
 
+  it("shows the certified first run, who it runs as, and what to wire first", () => {
+    const { out } = capture(["show", "github-experts"]);
+    assert.match(out, /First run/);
+    assert.match(out, /bot-pr-triage · runs as Reviewer/);
+    assert.match(out, /Wire first: a model provider key, the github connector/);
+  });
+
+  it("says a blueprint has no certified sample rather than omitting the section", () => {
+    const { out } = capture(["show", "research-desk"]);
+    assert.match(out, /First run/);
+    assert.match(out, /No certified sample ships/);
+  });
+
+  it("emits the sample input alone so it can be piped into a run", () => {
+    const { out } = capture(["sample", "github-experts", "--json"]);
+    assert.deepEqual(JSON.parse(out), {
+      owner: "marc-aurele-besner",
+      repo: "lacrew",
+      number: 94,
+    });
+  });
+
+  // A script asking for an input and getting an empty body must stop, not run
+  // a flow with nothing in it.
+  it("exits non-zero for a blueprint with no sample", () => {
+    const { err, code } = capture(["sample", "research-desk", "--json"]);
+    assert.match(err, /No certified sample run ships/);
+    assert.equal(code, 1);
+  });
+
   it("writes the plan as JSON when asked", () => {
     const file = join(tmp, "plan.json");
     const { out } = capture(["plan", "content-studio", "--out", file]);

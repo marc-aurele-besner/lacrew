@@ -57,6 +57,16 @@ export {
   type EnforcementLayer,
 } from "./crews.js";
 export {
+  crewSampleRun,
+  crewSampleRuns,
+  crewSampleNeeds,
+  crewFlowNeeds,
+  crewFlowOwner,
+  flowInputKeys,
+  type CrewSampleNeeds,
+  type CrewSampleRun,
+} from "./crewSamples.js";
+export {
   createFlowsClient,
   type FlowsClient,
   type FlowsClientOptions,
