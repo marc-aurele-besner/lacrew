@@ -63,16 +63,28 @@ function printStep(trace: FlowStepTrace): void {
   const line =
     trace.status === "error"
       ? `  ✗ ${glyph} ${trace.stepId}${verdict} — ${trace.error}`
-      : `  ✓ ${glyph} ${trace.stepId}${verdict} — ${trace.summary ?? ""}`;
+      : // A step waiting on a human is not a step that failed, and reading it
+        // as one would send an operator hunting a bug in a flow that is fine.
+        trace.status === "waiting"
+        ? `  … ${glyph} ${trace.stepId}${verdict} — ${trace.summary ?? "waiting"}`
+        : `  ✓ ${glyph} ${trace.stepId}${verdict} — ${trace.summary ?? ""}`;
   console.log(`${line} (${trace.ms}ms)`);
 }
 
 function printRun(run: FlowRunResult): void {
+  const glyph = run.status === "completed" ? "●" : run.status === "waiting" ? "…" : "✗";
   console.log(
-    `${run.status === "completed" ? "●" : "✗"} ${run.flowId} · ${run.status}` +
+    `${glyph} ${run.flowId} · ${run.status}` +
       `${run.trigger && run.trigger !== "manual" ? ` · trigger=${run.trigger}` : ""}` +
       `${run.mocked ? " · mocked" : ""} · ${run.steps.length} steps · run ${run.runId}`,
   );
+  if (run.status === "waiting") {
+    console.log(
+      `  ${run.waiting?.detail ?? run.waiting?.reason ?? "waiting"}` +
+        `${run.waiting?.token ? ` (${run.waiting.token})` : ""}`,
+    );
+    console.log("  Answer it:  lacrew connectors asks");
+  }
 }
 
 export async function cmdFlows(args: string[]): Promise<void> {
