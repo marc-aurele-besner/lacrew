@@ -38,6 +38,27 @@ export {
   type GithubAppTokenSource,
 } from "./githubApp.js";
 export {
+  describeEventSources,
+  eventSelected,
+  getEventSource,
+  isEventSource,
+  EVENT_SOURCES,
+  type EventSource,
+  type EventSourceConfig,
+  type EventSourceId,
+  type DeliveryContext,
+  type SourceVerification,
+} from "./eventSources.js";
+export {
+  verifyGoogleOidcToken,
+  resetGoogleJwksCache,
+  GOOGLE_JWKS_URL,
+  type GoogleOidcCheck,
+  type GoogleOidcClaims,
+  type GoogleOidcFailure,
+  type JwksFetcher,
+} from "./googleOidc.js";
+export {
   createWebhookSurface,
   mapWebhookInput,
   readPath,

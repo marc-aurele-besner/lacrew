@@ -360,7 +360,18 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       ...(Number.isFinite(declared) ? { contentLength: declared } : {}),
     });
     if (!accepted.ok) return jsonBig(c, { error: accepted.error }, accepted.status);
-    if (accepted.status === 200) {
+    if ("skipped" in accepted) {
+      return jsonBig(
+        c,
+        {
+          accepted: true,
+          skipped: accepted.skipped,
+          ...(accepted.eventType ? { eventType: accepted.eventType } : {}),
+        },
+        200,
+      );
+    }
+    if ("duplicate" in accepted) {
       return jsonBig(c, { accepted: true, duplicate: true, deliveryKey: accepted.deliveryKey }, 200);
     }
     return jsonBig(

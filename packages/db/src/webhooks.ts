@@ -14,6 +14,8 @@ export interface WebhookTriggerRow {
   secretVersion: number;
   enabled: boolean;
   inputMap?: Record<string, unknown> | null;
+  events?: string[] | null;
+  config?: Record<string, unknown> | null;
   description?: string | null;
 }
 
@@ -40,6 +42,8 @@ export async function upsertWebhookTrigger(
     secretVersion: row.secretVersion,
     enabled: row.enabled,
     inputMap: row.inputMap ?? null,
+    events: row.events ?? null,
+    config: row.config ?? null,
     description: row.description ?? null,
     updatedAt: new Date(),
   };
@@ -69,6 +73,8 @@ export async function getWebhookTrigger(
     secretVersion: row.secretVersion,
     enabled: row.enabled,
     inputMap: row.inputMap,
+    events: row.events,
+    config: row.config,
     description: row.description,
   };
 }
@@ -99,6 +105,8 @@ export async function listWebhookTriggers(
     secretVersion: row.secretVersion,
     enabled: row.enabled,
     inputMap: row.inputMap,
+    events: row.events,
+    config: row.config,
     description: row.description,
   }));
 }
