@@ -3,17 +3,23 @@
  *
  * Two provenances, deliberately distinguishable. Three trace to a filled
  * design-partner intake and carry `intake.file`: every number in them answers a
- * question a real operator was asked. Three are author-drafted patterns with no
- * file — common team shapes whose caps and grants are a starting point somebody
- * reasoned about. Presenting them identically would lend partner-derived
- * authority to a guess, so the field is absent rather than pointed at a
- * document that does not exist.
+ * question a real operator was asked. The rest are author-drafted patterns with
+ * no file — common team shapes whose caps and grants are a starting point
+ * somebody reasoned about. Presenting them identically would lend
+ * partner-derived authority to a guess, so the field is absent rather than
+ * pointed at a document that does not exist.
  *
- * The patterns ship no flows on purpose. A blueprint's flows are the part most
- * specific to how one team actually works, and inventing them would be the same
- * fabrication one level down — these give the org shape, the budgets, the
- * guardrails and the standing directives, and leave the flows to whoever
+ * Three of the patterns ship no flows, and that is a judgement about them
+ * rather than a rule: how a support desk or an on-call rota actually works is
+ * the part most specific to one team, and inventing it would be the same
+ * fabrication one level down. They give the org shape, the budgets, the
+ * guardrails and the standing directives, and leave the pipeline to whoever
  * installs them.
+ *
+ * The four DeFi patterns do ship a flow each, because their pipeline is the
+ * claim being made. "This crew can only advise" is not a sentence in a summary
+ * — it is a policy check the flow performs against a router nobody admitted,
+ * and it is only checkable because the flow is there to run.
  *
  * Every number here traces to an answer: caps come from question 6 ("where's
  * your line"), grants from question 5 (the monthly budget, divided by the
@@ -1294,6 +1300,936 @@ const platformOncall: CrewBlueprint = {
   ],
 };
 
+const lpAdvisor: CrewBlueprint = {
+  id: "lp-advisor",
+  name: "LP position advisor",
+  vertical: "trading",
+  caresFor: {
+    kind: "position",
+    label: "LP positions this crew advises on",
+    hint: "Add the pools and the wallets holding liquidity in them. This crew advises on positions it does not own, so a wallet not listed here is one it has no business reading.",
+    placeholder: "Aerodrome · WETH/USDC · 0x1f98…",
+    notePlaceholder: "Chain, fee tier, and who actually executes a rebalance",
+  },
+  summary:
+    "Mapper, range analyst, and a depth watch under an advisory lead. Reads liquidity positions in wallets it does not control and writes the rebalance a human executes. No venue and no payout address is admitted to it, so the advice is a structural fact rather than a promise.",
+  intake: {
+    persona:
+      "Someone with liquidity spread across several chains and DEXes who wants a standing read on it without handing anyone the keys",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 700,
+    monthlyUsdMax: 1000,
+    note: "Model usage, RPC reads, and subgraph queries. There is no trading inventory here at all — the crew never holds a position, so the only thing streaming is the cost of looking.",
+  },
+  humanSeats: [
+    {
+      id: "position-owner",
+      label: "Position owner",
+      holds:
+        "Root key, and the wallets themselves. Executes every rebalance the crew recommends. The crew's output is a memo; this seat is what turns one into a transaction.",
+    },
+  ],
+  roles: [
+    {
+      id: "advisory-lead",
+      label: "Advisory lead",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns what the crew is willing to recommend. Reviews a rebalance before it reaches the owner and refuses the ones that rest on a number nobody read.",
+      capUsdc: usdc(300),
+      grantUsdc: usdc(60),
+      spends: ["model-api", "rpc-provider", "payout-wallet"],
+      tools: ["lacrew_check_policy", "lacrew_say"],
+      flows: ["lp-range-review"],
+    },
+    {
+      id: "position-mapper",
+      label: "Position mapper",
+      kind: "worker_agent",
+      reportsTo: "advisory-lead",
+      charter:
+        "Resolves what a watched wallet actually holds: which pools, which ranges, how much liquidity, what fees have accrued. Reports a position it could not read as unread rather than as empty.",
+      capUsdc: usdc(20),
+      grantUsdc: usdc(50),
+      spends: ["model-api", "rpc-provider", "data-feed"],
+      tools: ["lacrew_check_policy", "lacrew_say"],
+      flows: ["lp-range-review"],
+    },
+    {
+      id: "range-analyst",
+      label: "Range analyst",
+      kind: "worker_agent",
+      reportsTo: "advisory-lead",
+      charter:
+        "Judges each position against its range and its fees, and writes the concrete alternative: new bounds, size, and what moving costs. Will compute a rebalance and be refused when it tries to place one.",
+      capUsdc: usdc(20),
+      grantUsdc: usdc(45),
+      spends: ["model-api", "data-feed", "dex-router"],
+      tools: ["lacrew_check_policy"],
+      flows: ["lp-range-review"],
+    },
+    {
+      id: "depth-watch",
+      label: "Depth watch",
+      kind: "worker_agent",
+      reportsTo: "advisory-lead",
+      charter:
+        "Watches pool depth and volume on the pools the crew advises on, so a recommendation that assumed liquidity is caught when the liquidity leaves.",
+      capUsdc: usdc(20),
+      grantUsdc: usdc(40),
+      spends: ["model-api", "data-feed", "rpc-provider"],
+      tools: ["lacrew_say"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model API",
+      kind: "service",
+      whitelisted: true,
+      note: "Assessment and memo completions. The cost that scales with how many positions are watched.",
+    },
+    {
+      id: "rpc-provider",
+      label: "RPC provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Multi-chain EVM reads. Metered, and the only way to see a position at all.",
+    },
+    {
+      id: "data-feed",
+      label: "Pool and price feed",
+      kind: "service",
+      whitelisted: true,
+      note: "Subgraph queries, pool APY history, and spot prices. Metered reads and nothing else.",
+    },
+    {
+      id: "dex-router",
+      label: "DEX routers",
+      kind: "venue",
+      whitelisted: false,
+      note: "Deliberately unadmitted. The analyst computes a rebalance and is refused when it tries to place one, and the flow asks policy about this target on purpose so the refusal is recorded rather than assumed.",
+    },
+    {
+      id: "payout-wallet",
+      label: "Withdrawal address",
+      kind: "payout",
+      whitelisted: false,
+      note: "There is no admitted withdrawal address. This crew has nowhere to send anything, which is a stronger claim than a small cap would be.",
+    },
+  ],
+  connectors: [
+    {
+      id: "uniswap",
+      routes: ["query"],
+      usedBy: "flow",
+      note: "Resolves a wallet's positions, ranges and accrued fees from the v3 subgraph. GRAPH_API_KEY. The review flow does not work until this is registered — which deployment id is read decides which chain, and that is the operator's choice.",
+    },
+    {
+      id: "defillama-yields",
+      routes: ["pool_chart"],
+      usedBy: "operator",
+      note: "APY and TVL history per pool, for judging whether a pool's fees are trending rather than sampling one day. Public, no credential. The shipped flow does not call it yet; wiring it is how the depth watch gets a baseline.",
+    },
+    {
+      id: "coingecko",
+      routes: ["simple_price"],
+      usedBy: "operator",
+      note: "Spot prices for valuing a position and estimating divergence loss against holding. COINGECKO_API_KEY. Not called by the shipped flow, which reasons over the subgraph's own figures.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "rpc-keys",
+      label: "RPC and subgraph API keys",
+      boundary:
+        "Held by the orchestrator, scoped per provider. They grant reads and only reads — but they grant reads of any address, and nothing in LaCrew narrows them to the watch list.",
+    },
+    {
+      id: "wallet-custody",
+      label: "The wallets themselves",
+      boundary:
+        "Held by the owner and never by the crew. LaCrew is not what stops the crew spending from them; not having the keys is.",
+    },
+  ],
+  escalation: [
+    {
+      when: "A position in a pool or on a chain the crew was not asked to watch",
+      to: "advisory-lead",
+      via: "escalation",
+    },
+    {
+      when: "Any recommendation that would place a trade rather than describe one",
+      to: "human_root",
+      via: "policy",
+    },
+    {
+      when: "Policy answering ALLOW for a router — somebody admitted a venue to an advisory crew",
+      to: "human_root",
+      via: "flow",
+    },
+    {
+      when: "Admitting a venue or a withdrawal address",
+      to: "human_root",
+      via: "governance",
+    },
+  ],
+  governance: [
+    { change: "Admitting a venue or a withdrawal address", tier: "high" },
+    { change: "Raising a seat's cap", tier: "high" },
+    { change: "Adding a wallet to the watch list", tier: "low" },
+    { change: "Hiring or retiring a seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "The crew moves a position it was only asked to look at",
+      enforcedBy: "policy",
+      how: "No venue and no payout target is admitted, so WhitelistPolicy returns DENY for every router and every withdrawal address. Admitting one is a high-tier proposal with a timelock and a human veto.",
+    },
+    {
+      never: "A recommendation is mistaken for a rebalance that happened",
+      enforcedBy: "flow",
+      how: "The review flow asks `lacrew_check_policy` about the router and writes the memo on the refusal, so the memo states its own status. A run that somehow got ALLOW routes to an alert instead of a handoff.",
+    },
+    {
+      never: "Reading a wallet nobody put on the watch list",
+      enforcedBy: "monitoring",
+      how: "The watch list is the crew's `caresFor` rows, and the run input names the owner being read. Guardian sees which addresses were queried.",
+      residualRisk:
+        "An RPC read is not a transaction. No policy module sees it and nothing onchain refuses it, so the watch list is a convention this crew keeps rather than a boundary anything enforces. A seat that reads a wallet it should not have read leaves a log entry, not a revert.",
+    },
+    {
+      never: "A seat pulls straight from the org treasury",
+      enforcedBy: "treasury",
+      how: "Treasury streams down the tree through EpochStreamer and seats spend their own allowance. There is no path from a leaf to the treasury balance.",
+    },
+    {
+      never: "Unlimited spend from a compromised seat",
+      enforcedBy: "session",
+      how: "A run's session key carries maxValue = min(seat cap, flow scope cap) and expires; EscalationRouter reverts an over-ceiling propose with SessionValueExceeded.",
+    },
+  ],
+  flows: ["lp-range-review"],
+  outOfScope: [
+    "Executing rebalances. Not as a policy choice that could be relaxed — no venue is admitted, so there is nothing for an execution step to call. A crew that both advises and executes is a different blueprint with a different guardrail list.",
+    "Impermanent loss as a realised number. What the crew reports is an estimate against a price path nobody re-ran, and a figure presented as realised PnL would be a claim the data does not support.",
+    "Gas timing. Whether a rebalance is worth doing now rather than tonight depends on the mempool, and this crew reads pool state on a schedule.",
+    "Custody of anything. The wallets belong to the owner. The crew's guarantee comes from not holding keys, which is a stronger property than any cap.",
+  ],
+};
+
+const yieldDesk: CrewBlueprint = {
+  id: "yield-desk",
+  name: "Stablecoin yield desk",
+  vertical: "trading",
+  caresFor: {
+    kind: "market",
+    label: "Lending markets this desk is admitted to",
+    hint: "Add each market the desk may allocate into, with its chain and asset. A market not listed here is one the allocator will be denied on until governance admits it.",
+    placeholder: "Aave v3 · Base · USDC",
+    notePlaceholder: "Chain, asset, and the ceiling you are comfortable leaving there",
+  },
+  summary:
+    "Rate scout, risk scorer, and an allocator under a treasury lead. Parks idle stablecoins in admitted lending markets and rotates when the spread pays for the move. The risk control is not a model's opinion — it is which markets are on the whitelist at all.",
+  intake: {
+    persona:
+      "A small treasury holding stablecoins it does not want idle, and does not want chasing whatever pays most this week either",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 900,
+    monthlyUsdMax: 1400,
+    note: "Model usage, rate and TVL data, and the gas overhead of rotating. The capital being allocated is treasury under governance, not a seat's per-epoch stream.",
+  },
+  humanSeats: [
+    {
+      id: "treasurer",
+      label: "Treasurer",
+      holds:
+        "Root key; sole vote on the high tier. Owns which protocols the desk is allowed to touch, which is the only decision here that really matters.",
+    },
+  ],
+  roles: [
+    {
+      id: "treasury-lead",
+      label: "Treasury lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns the allocation and the cash floor. Clears escalated moves, and reports what the desk earned against what it risked to earn it.",
+      capUsdc: usdc(5000),
+      grantUsdc: usdc(80),
+      spends: ["model-api", "rpc-provider", "treasury-wallet"],
+      tools: ["lacrew_list_pending_intents", "lacrew_approve_intent", "lacrew_say"],
+      flows: ["yield-rotation-check"],
+    },
+    {
+      id: "rate-scout",
+      label: "Rate scout",
+      kind: "worker_agent",
+      reportsTo: "treasury-lead",
+      charter:
+        "Reads supply rates across the admitted markets and reports the spread against where the capital already sits, net of what moving costs.",
+      capUsdc: usdc(25),
+      grantUsdc: usdc(60),
+      spends: ["model-api", "data-feed"],
+      tools: ["lacrew_check_policy", "lacrew_say"],
+      flows: ["yield-rotation-check"],
+    },
+    {
+      id: "risk-scorer",
+      label: "Risk scorer",
+      kind: "worker_agent",
+      reportsTo: "treasury-lead",
+      charter:
+        "Discounts a headline rate for what is underneath it: how much of the yield is emissions, how deep the market is, and whether the capital could actually be withdrawn on a bad day.",
+      capUsdc: usdc(25),
+      grantUsdc: usdc(50),
+      spends: ["model-api", "data-feed"],
+      tools: ["lacrew_say"],
+      flows: [],
+    },
+    {
+      id: "allocator",
+      label: "Allocator",
+      kind: "worker_agent",
+      reportsTo: "treasury-lead",
+      charter:
+        "Proposes the move into an admitted market, in clip sizes, leaving the cash floor intact. The only seat that touches a lending market at all.",
+      capUsdc: usdc(2000),
+      grantUsdc: usdc(70),
+      spends: [
+        "aave-market",
+        "morpho-market",
+        "compound-market",
+        "unadmitted-market",
+        "rpc-provider",
+      ],
+      tools: ["lacrew_propose_intent", "lacrew_check_policy"],
+      flows: ["yield-rotation-check"],
+      dedicatedPolicy:
+        "the only seat that may touch a lending market; the org-wide whitelist admits a market for every seat and cannot express that on its own",
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model API",
+      kind: "service",
+      whitelisted: true,
+      note: "Rate comparison and risk-scoring completions.",
+    },
+    {
+      id: "data-feed",
+      label: "Rate and TVL feed",
+      kind: "service",
+      whitelisted: true,
+      note: "Reserve data and pool-level yield history. What the scout reads instead of guessing a rate.",
+    },
+    {
+      id: "rpc-provider",
+      label: "RPC provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Multi-chain EVM reads and the allocator's sends. Metered.",
+    },
+    {
+      id: "aave-market",
+      label: "Aave v3 markets",
+      kind: "venue",
+      whitelisted: true,
+      note: "Admitted lending market. Adding a chain's deployment is a high-tier proposal, not a config change.",
+    },
+    {
+      id: "morpho-market",
+      label: "Morpho markets",
+      kind: "venue",
+      whitelisted: true,
+      note: "Admitted lending market. Curated vaults have a curator, which is a trust assumption the risk scorer is expected to name.",
+    },
+    {
+      id: "compound-market",
+      label: "Compound v3 markets",
+      kind: "venue",
+      whitelisted: true,
+      note: "Admitted lending market, single-borrow-asset by design, which is why it scores differently from the others.",
+    },
+    {
+      id: "treasury-wallet",
+      label: "Treasury wallet",
+      kind: "payout",
+      whitelisted: true,
+      note: "The only address idle capital returns to. A second one is a high-tier proposal.",
+    },
+    {
+      id: "unadmitted-market",
+      label: "Every market nobody admitted",
+      kind: "venue",
+      whitelisted: false,
+      note: "Deliberately unadmitted, as one entry. The allocator will find a better rate somewhere off this list and be refused — admission is the risk control here, so this refusal is the mechanism working rather than a gap in it.",
+    },
+  ],
+  connectors: [
+    {
+      id: "aave",
+      routes: ["query"],
+      usedBy: "flow",
+      note: "Supply and borrow rates, liquidity, caps and utilisation for the admitted markets. Public, no credential. The rotation check does not work until this is registered.",
+    },
+    {
+      id: "defillama",
+      routes: ["get_protocol_tvl"],
+      usedBy: "flow",
+      note: "The protocol's current TVL, so a rate is read alongside whether money is leaving the thing paying it. Public, no credential, and eighteen bytes per call.",
+    },
+    {
+      id: "defillama-yields",
+      routes: ["list_pools"],
+      usedBy: "operator",
+      note: "Every tracked pool's APY, its base and reward split, and TVL — how the scout would widen its search past the admitted list. Around eleven megabytes, so register a longer timeoutMs and filter it before a model sees it. Not called by the shipped flow.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "rpc-keys",
+      label: "RPC and data provider keys",
+      boundary:
+        "Held by the orchestrator, scoped per provider. Rate limits are the provider's; LaCrew bounds what they cost, not what they return.",
+    },
+  ],
+  escalation: [
+    {
+      when: "An allocation larger than the allocator's clip size",
+      to: "treasury-lead",
+      via: "escalation",
+    },
+    {
+      when: "A market the desk has not admitted",
+      to: "human_root",
+      via: "policy",
+    },
+    {
+      when: "A move that would take the desk below its cash floor",
+      to: "human_root",
+      via: "flow",
+    },
+    {
+      when: "Admitting a lending market, or raising the desk's total allocation",
+      to: "human_root",
+      via: "governance",
+    },
+  ],
+  governance: [
+    { change: "Admitting a lending market or a protocol", tier: "high" },
+    { change: "Admitting a payout address", tier: "high" },
+    { change: "Raising the allocator's cap or the desk's total allocation", tier: "high" },
+    { change: "Rotating a data vendor", tier: "low" },
+    { change: "Hiring or retiring a worker seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "Capital lands in a market nobody admitted",
+      enforcedBy: "policy",
+      how: "WhitelistPolicy returns DENY for any target not admitted, and admitting one is a high-tier proposal with a timelock and a human veto. The allocator's own list includes an unadmitted entry precisely so this path is exercised rather than assumed.",
+    },
+    {
+      never: "Any seat but the allocator moves capital into a market",
+      enforcedBy: "policy",
+      how: "The allocator carries a dedicated stack bound through EscalationRouter.setNodePolicy, because the org-wide whitelist admits a market for every seat and cannot separate them.",
+    },
+    {
+      never: "The desk chases an emission APY into something it cannot exit",
+      enforcedBy: "monitoring",
+      how: "The risk scorer discounts the headline rate for the emission share and the market's depth, and the rotation flow asks whether the spread survives that haircut.",
+      residualRisk:
+        "Nothing onchain reads an APY. The haircut is a model's judgement, and a bad haircut produces a bad allocation into an *admitted* market — which every policy module answers ALLOW to, correctly. The whitelist bounds where the money can go, not whether going there was clever.",
+    },
+    {
+      never: "The desk allocates everything and cannot pay its own costs",
+      enforcedBy: "flow",
+      how: "The rotation check is asked whether the move leaves the cash floor intact, and routes to a hold when it does not.",
+      residualRisk:
+        "The floor is a step in one pipeline. A run that never fires leaves it unchecked, and no contract knows the number — an allocation made outside this flow is bounded by the allocator's cap and nothing else.",
+    },
+    {
+      never: "A seat pulls straight from the org treasury",
+      enforcedBy: "treasury",
+      how: "Treasury streams down the tree through EpochStreamer and seats spend their own allowance. The capital being allocated moves under governance, not as a seat's stream.",
+    },
+    {
+      never: "Unlimited spend from a compromised seat",
+      enforcedBy: "session",
+      how: "A run's session key carries maxValue = min(seat cap, flow scope cap) and expires; EscalationRouter reverts an over-ceiling propose with SessionValueExceeded.",
+    },
+  ],
+  flows: ["yield-rotation-check"],
+  outOfScope: [
+    "Anything but stablecoins. A desk that also held volatile collateral would need a liquidation guardrail, and none of the rails here are that.",
+    "Leverage and looping. Recursive supply-and-borrow turns a rate into a liquidation price, which is a different job with a different escalation ladder.",
+    "Bridging between chains. Moving capital across a bridge is not admitted, so a multi-chain rotation stops at the chain the capital is already on.",
+    "The risk score as a fact. It is a model's discount on a headline number, and the blueprint says so in its guardrails rather than presenting it as diligence.",
+  ],
+};
+
+const riskWatch: CrewBlueprint = {
+  id: "risk-watch",
+  name: "Protocol risk watch",
+  vertical: "ops",
+  caresFor: {
+    kind: "protocol",
+    label: "Protocols this crew watches",
+    hint: "Add every protocol the org holds a position in, plus the oracle and the stable each one depends on. A protocol not listed here is one nobody is watching.",
+    placeholder: "Ethena USDe · sUSDe vault · Ethereum",
+    notePlaceholder: "The oracle it reads, and what a break in it would cost the org",
+  },
+  summary:
+    "Peg watch, oracle watch, and an event watch under a risk lead. Watches the protocols the org already has money in and escalates — it can stop a sibling crew's seat, but it cannot unwind anything. Every guardrail here states what it still does not cover, because detection is not prevention.",
+  intake: {
+    persona:
+      "An operator running several crews with real onchain exposure, who found out about the last depeg from a group chat",
+  },
+  epoch: "day",
+  budget: {
+    monthlyUsdMin: 400,
+    monthlyUsdMax: 700,
+    note: "Model usage and data reads at a half-hourly cadence. Sized per day rather than per week because a watch that stops mid-week is worse than one that never ran.",
+  },
+  humanSeats: [
+    {
+      id: "operator",
+      label: "Operator",
+      holds:
+        "Root key; sole vote on the high tier. Decides whether a flagged protocol means unwinding, and does the unwinding — this crew never does.",
+    },
+  ],
+  roles: [
+    {
+      id: "risk-lead",
+      label: "Risk lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns the watch list and the thresholds. Decides when a signal is worth waking somebody for, and proposes deactivating the seat trading a protocol that has gone bad.",
+      capUsdc: usdc(200),
+      grantUsdc: usdc(6),
+      spends: ["model-api", "remediation-venue"],
+      tools: ["lacrew_org_action", "lacrew_list_pending_intents", "lacrew_say"],
+      flows: ["risk-sweep"],
+    },
+    {
+      id: "peg-watch",
+      label: "Peg watch",
+      kind: "worker_agent",
+      reportsTo: "risk-lead",
+      charter:
+        "Watches the stables the org's positions depend on and reports a drift with the reading it came from, so a stale feed is legible as one afterwards.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(4),
+      spends: ["model-api", "data-feed"],
+      tools: ["lacrew_say"],
+      flows: ["risk-sweep"],
+    },
+    {
+      id: "oracle-watch",
+      label: "Oracle watch",
+      kind: "worker_agent",
+      reportsTo: "risk-lead",
+      charter:
+        "Checks that the price feeds the watched protocols read are fresh and are still the feeds those protocols read. Reports the source alongside the number.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(4),
+      spends: ["model-api", "data-feed", "rpc-provider"],
+      tools: ["lacrew_say"],
+      flows: [],
+    },
+    {
+      id: "event-watch",
+      label: "Event watch",
+      kind: "worker_agent",
+      reportsTo: "risk-lead",
+      charter:
+        "Watches admin and upgrade events on the watched protocols, and the governance proposals that would change a risk parameter before the parameter changes.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(4),
+      spends: ["model-api", "rpc-provider", "indexer-api"],
+      tools: ["lacrew_say", "lacrew_read_thread"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model API",
+      kind: "service",
+      whitelisted: true,
+      note: "Assessment completions, every half hour, across every watched protocol. The cost that scales with the watch list.",
+    },
+    {
+      id: "data-feed",
+      label: "Price and TVL feed",
+      kind: "service",
+      whitelisted: true,
+      note: "Spot prices, protocol TVL, and chain totals for the denominator. Metered reads.",
+    },
+    {
+      id: "rpc-provider",
+      label: "RPC provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Reading oracle freshness and protocol state directly, rather than trusting an aggregator to be current.",
+    },
+    {
+      id: "indexer-api",
+      label: "Indexer API",
+      kind: "service",
+      whitelisted: true,
+      note: "Admin and upgrade events, and governance calldata. Metered, and the one surface where a risk parameter change is visible before it lands.",
+    },
+    {
+      id: "remediation-venue",
+      label: "Venues the org trades on",
+      kind: "venue",
+      whitelisted: false,
+      note: "Deliberately unadmitted. This crew reports; it does not unwind. An attempt to exit a position on the protocol it just flagged comes back DENY, which is why the alert has to reach a human to be worth anything.",
+    },
+  ],
+  connectors: [
+    {
+      id: "coingecko",
+      routes: ["simple_price"],
+      usedBy: "flow",
+      note: "The peg reading. COINGECKO_API_KEY. The sweep does not work until this is registered — a peg watch with no price feed reports an all-clear on nothing.",
+    },
+    {
+      id: "defillama",
+      routes: ["get_protocol_tvl", "list_chains"],
+      usedBy: "flow",
+      note: "The protocol's TVL and the chain totals it is read against, so 'money is leaving' is distinguishable from 'money is leaving everywhere'. Public, no credential.",
+    },
+    {
+      id: "aave",
+      routes: ["query"],
+      usedBy: "operator",
+      note: "Reserve caps, LTV and liquidation thresholds — the parameter drift the event watch is looking for on a lending protocol. Public, no credential. Not called by the shipped sweep, which reads price and TVL.",
+    },
+  ],
+  externalScopes: [
+    {
+      id: "data-keys",
+      label: "Price, indexer and RPC keys",
+      boundary:
+        "Held by the orchestrator, scoped per provider. A rate limit hit here shows up as a sweep that read nothing, which is why the flow is written to say what it read.",
+    },
+    {
+      id: "sibling-authority",
+      label: "Authority over another crew's seat",
+      boundary:
+        "Granted by whoever passes this crew an executor address to halt. LaCrew bounds whether the deactivation lands; it does not decide whose seat was handed over.",
+    },
+  ],
+  escalation: [
+    {
+      when: "A first signal on a watched protocol — a drift, a stale feed, an upgrade event",
+      to: "risk-lead",
+      via: "escalation",
+    },
+    {
+      when: "A confirmed depeg, or TVL leaving a protocol faster than its chain",
+      to: "human_root",
+      via: "escalation",
+    },
+    {
+      when: "Deactivating a seat that belongs to another crew",
+      to: "human_root",
+      via: "governance",
+    },
+    {
+      when: "Anything that would have this crew trade rather than report",
+      to: "human_root",
+      via: "policy",
+    },
+  ],
+  governance: [
+    { change: "Deactivating a sibling crew's seat", tier: "high" },
+    { change: "Hiring or firing the risk lead", tier: "high" },
+    { change: "Adding or removing a protocol from the watch list", tier: "low" },
+    { change: "Changing a threshold", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "A depeg is noticed after the org is already out of the money",
+      enforcedBy: "monitoring",
+      how: "The sweep runs every half hour against the peg, the protocol's TVL, and the chain totals it is read against, and fails closed: an unreadable assessment routes to the halt rather than past it.",
+      residualRisk:
+        "Thirty minutes is the resolution. A peg that breaks and settles between two runs is invisible, and a run is only as good as the feed it read — which is why the flow is written to state what it read rather than only what it concluded.",
+    },
+    {
+      never: "A flagged protocol keeps being traded by a sibling crew",
+      enforcedBy: "escalation",
+      how: "The sweep proposes deactivating the seat that trades it. Deactivation is reversible, so the flow reaches for it rather than for firing anyone.",
+      residualRisk:
+        "Deactivation is a proposal whenever policy escalates it, so the sibling crew keeps trading until somebody votes. The gap between the flag and the vote is the exposure, and the alert names which of the two states it is in for exactly that reason.",
+    },
+    {
+      never: "This crew unwinds a position itself",
+      enforcedBy: "policy",
+      how: "No venue is admitted, so any attempt to trade on the protocol it just flagged comes back DENY.",
+      residualRisk:
+        "A DENY stops the trade, not the loss. Nothing here shortens the time between the alert and a human acting on it, and that interval is where the money actually goes.",
+    },
+    {
+      never: "An oracle staleness alert on a feed nobody reads any more",
+      enforcedBy: "monitoring",
+      how: "The oracle watch reads freshness from the feed directly rather than from an aggregator's copy, and reports the source alongside the number.",
+      residualRisk:
+        "Freshness is read from the feed the crew was pointed at. A protocol that quietly switched oracles keeps reporting a fresh number from the wrong source, and the crew has no way to notice the switch — the watch list is maintained by a human.",
+    },
+    {
+      never: "A seat pulls straight from the org treasury",
+      enforcedBy: "treasury",
+      how: "Treasury streams down the tree through EpochStreamer and seats spend their own allowance.",
+      residualRisk:
+        "The topology bounds the loss to a day's allowance, not to zero. A seat burning its stream on useless reads is a bill, and only Guardian will say so.",
+    },
+    {
+      never: "Unlimited spend from a compromised seat",
+      enforcedBy: "session",
+      how: "A run's session key carries maxValue = min(seat cap, flow scope cap) and expires; EscalationRouter reverts an over-ceiling propose with SessionValueExceeded.",
+      residualRisk:
+        "A key that cannot overspend can still file a false all-clear, and an all-clear is the only thing this crew is really trusted for. The cap bounds the money and says nothing about the claim.",
+    },
+  ],
+  flows: ["risk-sweep"],
+  outOfScope: [
+    "Remediation. The crew can stop a seat from trading; unwinding the position is the operator's, and the alert is written on the assumption that a person is about to do it.",
+    "Paging. Deciding who to wake and how is a rota tool's job. This crew decides that someone should be.",
+    "Root cause. The sweep writes what changed and when — an explanation of why would be a claim the readings do not support.",
+    "The executor accounts themselves. The seat this crew may halt is handed to it as a run input, because a blueprint can only bind seats it owns. Halting across crews has no first-class shape yet.",
+  ],
+};
+
+const governanceDesk: CrewBlueprint = {
+  id: "governance-desk",
+  name: "Governance delegate desk",
+  vertical: "research",
+  caresFor: {
+    kind: "protocol",
+    label: "Protocols this desk votes in",
+    hint: "Add every protocol the org holds a governance token in, and the clause of the mandate that decides how the desk votes there. A protocol not listed here is one the desk has no standing in.",
+    placeholder: "Compound · COMP · Tally",
+    notePlaceholder: "The mandate clause that decides how this one is voted",
+  },
+  summary:
+    "Proposal scout, rationale writer, and a conflict checker under a delegate lead. Votes the org's tokens against a written mandate and publishes why. Worth reading for what it admits: a vote moves no value, so the spend cap, the whitelist and the allowance all answer ALLOW, and none of them is what keeps this desk honest.",
+  intake: {
+    persona:
+      "An org holding governance tokens in several protocols, currently voting late, inconsistently, or not at all",
+  },
+  epoch: "week",
+  budget: {
+    monthlyUsdMin: 350,
+    monthlyUsdMax: 550,
+    note: "Model usage for reading proposals and drafting rationales, plus the gas of casting votes. Proposals arrive weekly, so the allowance is sized weekly.",
+  },
+  humanSeats: [
+    {
+      id: "mandate-owner",
+      label: "Mandate owner",
+      holds:
+        "Root key; sole vote on the high tier. Owns the written mandate, which is the only thing that decides how this desk votes — and is a document, not a policy module.",
+    },
+  ],
+  roles: [
+    {
+      id: "delegate-lead",
+      label: "Delegate lead agent",
+      kind: "manager_agent",
+      reportsTo: "root",
+      charter:
+        "Owns the desk's voting record. Clears the proposals that fall outside the mandate, casts the votes that fall inside it, and reads the published rationale against what was actually voted.",
+      capUsdc: usdc(100),
+      grantUsdc: usdc(32),
+      spends: ["model-api", "rpc-provider", "governor-contract", "treasury-payout"],
+      tools: ["lacrew_governance", "lacrew_list_pending_intents", "lacrew_say"],
+      flows: ["governance-vote-cycle"],
+    },
+    {
+      id: "proposal-scout",
+      label: "Proposal scout",
+      kind: "worker_agent",
+      reportsTo: "delegate-lead",
+      charter:
+        "Reads a proposal and states what it changes rather than what its author says it changes. Refuses to summarise an executable payload it cannot decode.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(25),
+      spends: ["model-api", "data-feed"],
+      tools: ["lacrew_read_thread", "lacrew_say"],
+      flows: ["governance-vote-cycle"],
+    },
+    {
+      id: "rationale-writer",
+      label: "Rationale writer",
+      kind: "worker_agent",
+      reportsTo: "delegate-lead",
+      charter:
+        "Writes the rationale published with each vote, citing the mandate clause it rests on and the strongest argument the other way.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(25),
+      spends: ["model-api"],
+      tools: ["lacrew_say"],
+      flows: ["governance-vote-cycle"],
+    },
+    {
+      id: "conflict-checker",
+      label: "Conflict checker",
+      kind: "worker_agent",
+      reportsTo: "delegate-lead",
+      charter:
+        "Answers one question per proposal: does this organisation gain or lose money if it passes. Says so even when the connection is indirect, because that answer is what routes the proposal to a human.",
+      capUsdc: usdc(10),
+      grantUsdc: usdc(20),
+      spends: ["model-api", "data-feed", "rpc-provider"],
+      tools: ["lacrew_check_policy", "lacrew_say"],
+      flows: [],
+    },
+  ],
+  targets: [
+    {
+      id: "model-api",
+      label: "Model API",
+      kind: "service",
+      whitelisted: true,
+      note: "Reading proposals and drafting rationales. The bulk of what this desk costs.",
+    },
+    {
+      id: "data-feed",
+      label: "Holdings and proposal feed",
+      kind: "service",
+      whitelisted: true,
+      note: "What the org holds, and the forum and proposal text the scout reads. Metered.",
+    },
+    {
+      id: "rpc-provider",
+      label: "RPC provider",
+      kind: "service",
+      whitelisted: true,
+      note: "Reading voting power and proposal state onchain rather than trusting an interface's copy.",
+    },
+    {
+      id: "governor-contract",
+      label: "Governor contracts",
+      kind: "venue",
+      whitelisted: true,
+      note: "Admitted, because casting a vote is a call to one. Worth stating plainly what that admission does and does not do: a vote transfers nothing, so the spend cap, the whitelist and the allowance all return ALLOW on it. The policy stack bounds this desk's money and not its votes.",
+    },
+    {
+      id: "treasury-payout",
+      label: "Withdrawal address",
+      kind: "payout",
+      whitelisted: false,
+      note: "Deliberately unadmitted. A proposal that would route funds to this org can be voted on; the funds cannot be received by this crew.",
+    },
+  ],
+  connectors: [],
+  externalScopes: [
+    {
+      id: "delegation",
+      label: "The org's delegated voting power",
+      boundary:
+        "Held by whoever delegated it, under the protocol's own governance contract. LaCrew can bound what this desk spends; the voting power is the protocol's to count and the delegator's to withdraw.",
+    },
+    {
+      id: "mandate-doc",
+      label: "The written mandate",
+      boundary:
+        "A document the mandate owner maintains. Nothing reads it but a model, and nothing enforces it but a human reading the rationale afterwards.",
+    },
+  ],
+  escalation: [
+    {
+      when: "A proposal the written mandate does not cover",
+      to: "delegate-lead",
+      via: "escalation",
+    },
+    {
+      when: "Any proposal that moves value to or from this org",
+      to: "human_root",
+      via: "escalation",
+    },
+    {
+      when: "Changing the mandate, or who the org delegates to",
+      to: "human_root",
+      via: "governance",
+    },
+    {
+      when: "Executing a proposal rather than voting on it",
+      to: "human_root",
+      via: "policy",
+    },
+  ],
+  governance: [
+    { change: "Changing the written mandate", tier: "high" },
+    { change: "Changing who the org delegates its voting power to", tier: "high" },
+    { change: "Adding a protocol the desk votes in", tier: "low" },
+    { change: "Hiring or retiring a worker seat", tier: "low" },
+  ],
+  guardrails: [
+    {
+      never: "The desk votes outside the written mandate",
+      enforcedBy: "monitoring",
+      how: "The vote cycle decides against the mandate and publishes the clause it rested on, so the record and the reasoning land together for review.",
+      residualRisk:
+        "Nothing onchain reads a mandate. A vote is a call to a governor that moves no value, so the cap, the whitelist and the allowance all return ALLOW — correctly, and uselessly. What actually holds is the flow's routing and a human reading the rationale afterwards, which is a habit rather than a guarantee.",
+    },
+    {
+      never: "A vote that unlocks money for this org is cast by the crew that benefits",
+      enforcedBy: "escalation",
+      how: "The conflict checker is asked about the org's exposure before the decision step, and anything touching it routes to the human root instead of to a vote.",
+      residualRisk:
+        "The escalation depends on the crew classifying the proposal correctly. A transfer hidden inside an executable payload reads as routine to a model, and no policy module decodes calldata — which is why the scout's charter is to refuse a payload it cannot decode rather than summarise it.",
+    },
+    {
+      never: "The org's voting power is redelegated without a vote",
+      enforcedBy: "governance",
+      how: "Changing the delegate is a high-tier proposal with a timelock and a human veto.",
+      residualRisk:
+        "That covers a delegation LaCrew's governance module carries out. Tokens held anywhere else can be redelegated by whoever holds them, and this desk would not see it happen.",
+    },
+    {
+      never: "The desk executes a proposal it voted on",
+      enforcedBy: "policy",
+      how: "No payout address is admitted, so anything routing funds through this crew comes back DENY, and the flow has no execute step.",
+      residualRisk:
+        "Execution targets the governor, which *is* admitted, and executing a ripe proposal moves no value from this org either. So 'never execute' is the flow's rule and the escalation ladder's, not the whitelist's — the whitelist only refuses the payout that would follow.",
+    },
+    {
+      never: "A seat pulls straight from the org treasury",
+      enforcedBy: "treasury",
+      how: "Treasury streams down the tree through EpochStreamer and seats spend their own allowance.",
+      residualRisk:
+        "The topology bounds the loss to an epoch's allowance rather than to zero.",
+    },
+    {
+      never: "Unlimited spend from a compromised seat",
+      enforcedBy: "session",
+      how: "A run's session key carries maxValue = min(seat cap, flow scope cap) and expires; EscalationRouter reverts an over-ceiling propose with SessionValueExceeded.",
+      residualRisk:
+        "The cap bounds the money. It says nothing about a vote, which is the only thing this desk does that matters — a compromised seat here votes wrong rather than spends.",
+    },
+  ],
+  flows: ["governance-vote-cycle"],
+  outOfScope: [
+    "Finding the proposals. No Snapshot or Tally connector ships, so a proposal is handed to the flow rather than discovered by it. A desk that claimed to watch every forum would be claiming a surface that does not exist yet.",
+    "Writing proposals for other organisations. Drafting is a different job from voting, and it carries a reputational exposure none of these rails touch.",
+    "Forum engagement. The desk publishes a rationale; arguing for it in a thread is a person's work.",
+    "Treating the vote as enforced. It is not, and the guardrails say so rather than implying the policy stack covers it.",
+  ],
+};
+
 export const crewBlueprints: CrewBlueprint[] = [
   defiDesk,
   githubExperts,
@@ -1301,6 +2237,10 @@ export const crewBlueprints: CrewBlueprint[] = [
   researchDesk,
   supportDesk,
   platformOncall,
+  lpAdvisor,
+  yieldDesk,
+  riskWatch,
+  governanceDesk,
 ];
 
 export function getCrewBlueprint(id: string): CrewBlueprint | undefined {

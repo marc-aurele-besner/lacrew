@@ -839,6 +839,138 @@ const coingecko: ConnectorPreset = {
   ],
 };
 
+/* ------------------------------------------------------------------ *
+ * Market data — what the advisory and monitoring crews read.
+ *
+ * Same posture as the desk surfaces above: every route is a read, none of
+ * them carries a policy target, and supplying or withdrawing from a lending
+ * market is an onchain intent through the policy stack rather than anything
+ * reachable from here.
+ *
+ * Two of these carry a size warning in their route descriptions, and it is
+ * not decoration. `callConnector` reads the whole response body and the flow
+ * runtime stringifies it into `{{steps.<id>.json}}` — there is no size cap on
+ * that path, so an 11 MB bulk route handed straight to a model step is an
+ * 11 MB prompt. The crews that ship call the narrow routes; the bulk ones are
+ * for building a watch list once, outside a flow.
+ * ------------------------------------------------------------------ */
+
+const defillama: ConnectorPreset = {
+  id: "defillama",
+  title: "DefiLlama TVL API",
+  summary:
+    "Protocol and chain TVL — what a risk watch reads to see money leaving before a headline says so. Public, and read-only.",
+  baseUrl: "https://api.llama.fi",
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The open API serves TVL and protocol metadata unauthenticated. The Pro tier is a different host that carries the key in the path, which would be a different connector and is not this one.",
+    },
+  ],
+  routes: [
+    {
+      name: "get_protocol_tvl",
+      method: "GET",
+      path: "/tvl/{protocol}",
+      description:
+        "One protocol's current TVL as a bare number. The cheapest way to see a drop — eighteen bytes on the wire, so a sweep can afford to run it every half hour.",
+      effect: "read",
+    },
+    {
+      name: "list_chains",
+      method: "GET",
+      path: "/v2/chains",
+      description:
+        "Current TVL per chain. The denominator for \"is this protocol bleeding, or is the whole chain?\" — around fifty kilobytes.",
+      effect: "read",
+    },
+    {
+      name: "chain_tvl_history",
+      method: "GET",
+      path: "/v2/historicalChainTvl/{chain}",
+      description:
+        "Daily TVL series for one chain, for a drift baseline rather than a single reading taken out of context.",
+      effect: "read",
+    },
+    {
+      name: "list_protocols",
+      method: "GET",
+      path: "/protocols",
+      description:
+        "Every tracked protocol with current TVL, chains, category and audit links. Around eight megabytes — read it to build a watch list once, not inside a flow that hands the result to a model.",
+      effect: "read",
+    },
+    {
+      name: "get_protocol",
+      method: "GET",
+      path: "/protocol/{protocol}",
+      description:
+        "One protocol's full TVL history broken out by chain and token. Tens of megabytes for a large protocol; prefer `get_protocol_tvl` when only the current number matters.",
+      effect: "read",
+    },
+  ],
+};
+
+const defillamaYields: ConnectorPreset = {
+  id: "defillama-yields",
+  title: "DefiLlama yields API",
+  summary:
+    "Pool-level APY, TVL and their history across lending markets and DEX pools. A second connector rather than a route on the first, because DefiLlama serves yields from a different host — `api.llama.fi/pools` is a 404, and a route pointed at the wrong host is a failure found mid-run.",
+  baseUrl: "https://yields.llama.fi",
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The yields API is public and read-only. Nothing here can move funds, and there is no write endpoint on this host to leave out.",
+    },
+  ],
+  routes: [
+    {
+      name: "pool_chart",
+      method: "GET",
+      path: "/chart/{pool}",
+      description:
+        "APY and TVL history for one pool, keyed by DefiLlama's own pool id — a uuid, not a pool address. Around two hundred kilobytes.",
+      effect: "read",
+    },
+    {
+      name: "list_pools",
+      method: "GET",
+      path: "/pools",
+      description:
+        "Every tracked pool with current APY, its base and reward split, TVL and a seven-day impermanent-loss estimate. Around eleven megabytes — register a longer `timeoutMs`, and filter it before a model ever sees it.",
+      effect: "read",
+    },
+  ],
+};
+
+const aave: ConnectorPreset = {
+  id: "aave",
+  title: "Aave v3 API (GraphQL)",
+  summary:
+    "Reserve data for every Aave v3 market: supply and borrow APY, liquidity, caps, utilisation, e-mode. Read-only by construction — supplying or withdrawing is an onchain intent through the policy stack, never an HTTP call.",
+  baseUrl: "https://api.v3.aave.com",
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The v3 API answers market and reserve queries unauthenticated. `api.aave.com` and `api.v4.aave.com` are different schemas for different protocol versions, so this preset pins the v3 host rather than following a redirect into one of them.",
+    },
+  ],
+  routes: [
+    {
+      name: "query",
+      method: "POST",
+      path: "/graphql",
+      description:
+        "GraphQL against the Aave v3 API — `markets(request: { chainIds: [...] })`, `market`, `reserve`, `chains`. Which markets a desk reads rides in the query rather than the route, and GraphQL projects fields, so a reserve sweep comes back in kilobytes rather than megabytes.",
+      effect: "read",
+      params: ["query", "variables", "operationName"],
+    },
+  ],
+};
+
 /** Every preset that ships. */
 export const connectorPresets: ConnectorPreset[] = [
   github,
@@ -853,6 +985,9 @@ export const connectorPresets: ConnectorPreset[] = [
   uniswap,
   tenderly,
   coingecko,
+  defillama,
+  defillamaYields,
+  aave,
 ];
 
 export function getConnectorPreset(id: string): ConnectorPreset | undefined {

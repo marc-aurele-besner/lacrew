@@ -655,7 +655,403 @@ const contentDailySocial: FlowTemplate = {
     .build(),
 };
 
-/** Templates that make up the three first-party crew blueprints. */
+/* ------------------------------------------------------------------ *
+ * LP position advisor (author-drafted pattern)
+ *
+ * The only pipeline here that asks policy a question it expects to be
+ * refused. The crew advises on positions it does not own, and no venue is
+ * admitted to it, so the refusal is what turns an analysis into a memo a
+ * human executes. An ALLOW would mean somebody admitted a router to an
+ * advisory crew, which is drift worth naming rather than acting on.
+ * ------------------------------------------------------------------ */
+
+const lpRangeReview: FlowTemplate = {
+  id: "tpl-lp-range-review",
+  name: "LP: range and fee review",
+  description:
+    "Resolve a watched wallet's LP positions, judge each against its range and accrued fees, and write the rebalance memo. The crew never places the trade — its policy stack has nowhere to place it.",
+  category: "trading",
+  author: "LaCrew",
+  definition: flow("lp-range-review", "LP: range and fee review")
+    .describe(
+      'Run input is JSON: {"owner":"0x…","subgraph_id":"…"} — the wallet to read and the Uniswap v3 deployment to read it from. Runs as the position mapper. Note the GraphQL filter is written with spaces inside its braces: an adjacent "{{" would be read as an interpolation placeholder and eaten before the query was ever sent.',
+    )
+    .trigger("cron")
+    .schedule("0 7 * * *")
+    .source({ templateId: "tpl-lp-range-review", author: "LaCrew" })
+    .tool(
+      "positions",
+      "uniswap.query",
+      {
+        subgraph_id: "{{input.subgraph_id}}",
+        query:
+          '{ positions(where: { owner: "{{input.owner}}" }) { id liquidity tickLower tickUpper depositedToken0 depositedToken1 collectedFeesToken0 collectedFeesToken1 pool { id feeTier tick totalValueLockedUSD } } }',
+      },
+      { label: "Resolve the wallet's positions", next: "assess" },
+    )
+    .model("assess", {
+      label: "Judge the positions",
+      system:
+        "You review liquidity positions for a crew that advises and never trades. You are describing what is true of a position, not arguing for a trade.",
+      prompt:
+        "Positions: {{steps.positions.json}}\n\nFor each position, work out whether the current tick sits inside its range, how the fees collected compare to the divergence loss against simply holding, and whether the pool's depth has moved enough to matter. Then reply with exactly one word for the wallet as a whole: REBALANCE, HOLD, or EXIT.",
+      next: "route",
+    })
+    .switch("route", {
+      label: "REBALANCE / HOLD / EXIT",
+      when: { source: "{{steps.assess.text}}" },
+      cases: [
+        { value: "REBALANCE", next: "rebalance-plan" },
+        { value: "HOLD", next: "hold-note" },
+        { value: "EXIT", next: "exit-memo" },
+      ],
+      onDefault: "hold-note",
+    })
+    .model("rebalance-plan", {
+      label: "Plan the new range",
+      prompt:
+        "Positions: {{steps.positions.json}}\nAssessment: {{steps.assess.text}}\n\nWrite the concrete rebalance: which position, the new lower and upper tick, the size to move, and what it costs in gas and forgone fees to move it. State the price move that would make this the wrong call.",
+      next: "lead-review",
+    })
+    .agent("lead-review", {
+      label: "Have the advisory lead check the plan",
+      action: "invoke",
+      agent: "{{crew.advisory-lead}}",
+      prompt:
+        "Review this rebalance before it goes to a human: {{steps.rebalance-plan.text}}\n\nSay what you would change, or that it stands.",
+      next: "execution-check",
+    })
+    .tool(
+      "execution-check",
+      "lacrew_check_policy",
+      { target: "{{target.dex-router}}", value: "0" },
+      { label: "Confirm the desk still cannot execute", next: "may-execute" },
+    )
+    .branch("may-execute", {
+      label: "Was a router admitted?",
+      when: { source: "{{steps.execution-check.json}}", op: "contains", value: "ALLOW" },
+      onTrue: "drift-alert",
+      onFalse: "handoff",
+    })
+    .model("drift-alert", {
+      label: "Flag the drift",
+      prompt:
+        "Policy answered ALLOW for a router on a crew that is only supposed to advise: {{steps.execution-check.json}}\n\nWrite the alert for the human root. This crew's whole guarantee is that it has nowhere to trade, and something admitted a venue to it. Name what to revoke.",
+      next: null,
+    })
+    .model("handoff", {
+      label: "Write the memo",
+      prompt:
+        "Plan: {{steps.rebalance-plan.text}}\nLead's review: {{steps.lead-review.json}}\nPolicy refused execution, as designed: {{steps.execution-check.json}}\n\nWrite the memo the wallet's owner acts on: the position, the new range, the size, and the one thing that would make this wrong. Say plainly that this is advice and that nothing has been placed.",
+      next: null,
+    })
+    .model("hold-note", {
+      label: "Log the hold",
+      prompt:
+        "Assessment: {{steps.assess.text}}\nPositions: {{steps.positions.json}}\n\nWrite the one-line entry: which positions are in range, and what would have to move for that to change.",
+      next: null,
+    })
+    .model("exit-memo", {
+      label: "Write the exit memo",
+      prompt:
+        "Assessment: {{steps.assess.text}}\nPositions: {{steps.positions.json}}\n\nWrite the memo arguing the position should be closed: why the fees no longer pay for the exposure, and what closing it costs. This is advice; the owner closes it.",
+      next: null,
+    })
+    .build(),
+};
+
+/* ------------------------------------------------------------------ *
+ * Stablecoin yield desk (author-drafted pattern)
+ * ------------------------------------------------------------------ */
+
+const yieldRotationCheck: FlowTemplate = {
+  id: "tpl-yield-rotation-check",
+  name: "Yield: rotation check",
+  description:
+    "Every epoch, compare the admitted lending markets against where the capital already sits and rotate only when the spread pays for the move. The allocation is a gate, so a size past the clip waits for the treasury lead onchain.",
+  category: "treasury",
+  author: "LaCrew",
+  definition: flow("yield-rotation-check", "Yield: rotation check")
+    .describe(
+      'Run input is the desk\'s current allocation and its cash floor, plus {"protocol":"…"} naming the protocol to check TVL on. Runs as the rate scout. The reserve query is written with spaces inside its braces so no adjacent "{{" is read as a placeholder.',
+    )
+    .trigger("epoch")
+    .source({ templateId: "tpl-yield-rotation-check", author: "LaCrew" })
+    .tool(
+      "reserves",
+      "aave.query",
+      {
+        query:
+          "query M { markets(request: { chainIds: [1] }) { name address reserves { underlyingToken { symbol } supplyInfo { apy { value } } borrowInfo { apy { value } } } } }",
+      },
+      { label: "Read the admitted market's reserves", next: "protocol-tvl" },
+    )
+    .tool(
+      "protocol-tvl",
+      "defillama.get_protocol_tvl",
+      { protocol: "{{input.protocol}}" },
+      { label: "Check the protocol is not bleeding", next: "spread" },
+    )
+    .model("spread", {
+      label: "Is the spread worth the move?",
+      system:
+        "You allocate stablecoins across lending markets. A rate you cannot exit is not a rate. You are paid to be boring.",
+      prompt:
+        "Current allocation and cash floor: {{input}}\nReserves: {{steps.reserves.json}}\nProtocol TVL: {{steps.protocol-tvl.json}}\n\nDoes the best admitted market beat where the capital already sits, after gas and after a haircut for the risk you are taking on — and does the move leave the cash floor intact? Reply with exactly one word: ROTATE, HOLD, or DERISK.",
+      next: "route",
+    })
+    .switch("route", {
+      label: "ROTATE / HOLD / DERISK",
+      when: { source: "{{steps.spread.text}}" },
+      cases: [
+        { value: "ROTATE", next: "allocate" },
+        { value: "HOLD", next: "hold-note" },
+        { value: "DERISK", next: "derisk-memo" },
+      ],
+      onDefault: "hold-note",
+    })
+    .gate("allocate", {
+      label: "Allocate into the admitted market",
+      target: "{{target.aave-market}}",
+      value: "250000000",
+      onAllow: "moved",
+      onEscalate: "lead-memo",
+      onDeny: "denied-note",
+    })
+    .model("moved", {
+      label: "File the allocation",
+      prompt:
+        "Allocation allowed under policy: {{steps.allocate.json}}\nReasoning: {{steps.spread.text}}\n\nWrite the one-line entry: which market, how much, the rate it was moved for, and what the cash floor stands at afterwards.",
+      next: null,
+    })
+    .model("lead-memo", {
+      label: "Memo for the treasury lead",
+      prompt:
+        "The allocation escalated and sits pending the treasury lead onchain: {{steps.allocate.json}}\nReserves: {{steps.reserves.json}}\n\nWrite the two-sentence memo they read before approving. Lead with what happens to the capital if the market's liquidity dries up, not with the rate.",
+      next: null,
+    })
+    .model("denied-note", {
+      label: "Record the refusal",
+      prompt:
+        "Policy denied the allocation: {{steps.allocate.json}}\n\nWrite one line naming which limit refused it — a market nobody admitted, or a size past the allocator's cap — and that admitting a market is a high-tier proposal with a timelock.",
+      next: null,
+    })
+    .model("hold-note", {
+      label: "Log the hold",
+      prompt:
+        "Reasoning: {{steps.spread.text}}\nAllocation: {{input}}\n\nWrite the one-line epoch entry: where the capital sits, what it earns, and the spread that would have moved it.",
+      next: null,
+    })
+    .model("derisk-memo", {
+      label: "Write the de-risk memo",
+      prompt:
+        "Reasoning: {{steps.spread.text}}\nReserves: {{steps.reserves.json}}\nProtocol TVL: {{steps.protocol-tvl.json}}\n\nWrite what should be unwound and why the rate stopped paying for the risk. Name the number that changed your mind.",
+      next: null,
+    })
+    .build(),
+};
+
+/* ------------------------------------------------------------------ *
+ * Protocol risk watch (author-drafted pattern)
+ *
+ * The sibling crew's executor arrives as a run input rather than a
+ * `{{crew.*}}` placeholder. A seat in another crew is not a role this
+ * blueprint has, and binding cannot resolve one it does not own — so the
+ * account this sweep may halt is handed to it, which is also the more
+ * honest shape: the crew is given the authority, it does not assume it.
+ * ------------------------------------------------------------------ */
+
+const riskSweep: FlowTemplate = {
+  id: "tpl-risk-sweep",
+  name: "Risk: protocol sweep",
+  description:
+    "Every half hour, read the peg, the protocol's TVL and the chain it sits on, and either halt the seat that trades it or log the all-clear. An unreadable assessment halts — a watch that fails open is not a watch.",
+  category: "escalation",
+  author: "LaCrew",
+  definition: flow("risk-sweep", "Risk: protocol sweep")
+    .describe(
+      'Run input is JSON: {"ids":"…","protocol":"…","executor":"0x…"} — the coin ids to price, the protocol to read TVL for, and the account to deactivate if this goes bad. The executor is an input because it belongs to another crew, and a blueprint can only bind seats it owns.',
+    )
+    .trigger("cron")
+    .schedule("*/30 * * * *")
+    .source({ templateId: "tpl-risk-sweep", author: "LaCrew" })
+    .tool(
+      "price",
+      "coingecko.simple_price",
+      { ids: "{{input.ids}}", vs_currencies: "usd" },
+      { label: "Read the peg", next: "tvl" },
+    )
+    .tool(
+      "tvl",
+      "defillama.get_protocol_tvl",
+      { protocol: "{{input.protocol}}" },
+      { label: "Read the protocol's TVL", next: "chains" },
+    )
+    .tool("chains", "defillama.list_chains", undefined, {
+      label: "Read the chain totals for context",
+      next: "org",
+    })
+    .tool("org", "lacrew_get_org_tree", undefined, {
+      label: "Read the org",
+      next: "assess",
+    })
+    .model("assess", {
+      label: "Assess the exposure",
+      system:
+        "You watch protocols an organisation already has money in. You are paid to notice, early, and to be wrong in the direction of caution.",
+      prompt:
+        "Peg: {{steps.price.json}}\nProtocol TVL: {{steps.tvl.json}}\nChain totals: {{steps.chains.json}}\nOrg: {{steps.org.json}}\n\nIs the stable holding its peg, is TVL leaving this protocol faster than it is leaving the chain it sits on, and has anything about the protocol's risk parameters changed? Reply with exactly one word: DEPEG, FLIGHT, PARAM, or CLEAR.",
+      next: "route",
+    })
+    .switch("route", {
+      label: "DEPEG / FLIGHT / PARAM / CLEAR",
+      when: { source: "{{steps.assess.text}}" },
+      cases: [
+        { value: "DEPEG", next: "halt-sibling" },
+        { value: "FLIGHT", next: "halt-sibling" },
+        { value: "PARAM", next: "escalate-note" },
+        { value: "CLEAR", next: "clear-note" },
+      ],
+      onDefault: "halt-sibling",
+    })
+    .org("halt-sibling", {
+      label: "Deactivate the seat that trades it",
+      action: "deactivate",
+      node: "{{input.executor}}",
+      onAllow: "notify",
+      onEscalate: "notify",
+      onDeny: "escalate-note",
+    })
+    .model("notify", {
+      label: "Alert the human root",
+      prompt:
+        "Assessment: {{steps.assess.text}}\nHalt outcome: {{steps.halt-sibling.json}}\nPeg: {{steps.price.json}}\nTVL: {{steps.tvl.json}}\n\nWrite the alert the human root reads on their phone: what changed, whether the seat is already stopped or the deactivation is only a proposal waiting on a vote, and what re-enables it. If it is waiting on a vote, say so first — the crew keeps trading until somebody votes.",
+      next: null,
+    })
+    .model("escalate-note", {
+      label: "Escalate to a human",
+      prompt:
+        "Assessment: {{steps.assess.text}}\nHalt outcome, if one was attempted: {{steps.halt-sibling.json}}\nTVL: {{steps.tvl.json}}\n\nWrite what changed in the protocol's risk parameters, or which limit refused the deactivation, and name who has to act. Do not imply anything has been stopped.",
+      next: null,
+    })
+    .model("clear-note", {
+      label: "Log the all-clear",
+      prompt:
+        "Peg: {{steps.price.json}}\nTVL: {{steps.tvl.json}}\n\nWrite the one-line sweep entry. Say what was read, so an all-clear on a stale feed is legible as one later.",
+      next: null,
+    })
+    .build(),
+};
+
+/* ------------------------------------------------------------------ *
+ * Governance delegate desk (author-drafted pattern)
+ *
+ * The only pipeline here whose onchain action moves no value. Nothing in
+ * the policy stack meaningfully constrains a vote — the cap, the whitelist
+ * and the allowance all answer ALLOW — so what holds this flow honest is
+ * its own routing and a human reading the rationale afterwards. The
+ * blueprint's guardrails say exactly that rather than implying otherwise.
+ * ------------------------------------------------------------------ */
+
+const governanceVoteCycle: FlowTemplate = {
+  id: "tpl-governance-vote-cycle",
+  name: "Governance: vote cycle",
+  description:
+    "Read one proposal, check whether the org has a position it moves, decide against the written mandate, and cast the vote with a published rationale. Anything that moves value to or from this org goes to a human instead.",
+  category: "governance",
+  author: "LaCrew",
+  definition: flow("governance-vote-cycle", "Governance: vote cycle")
+    .describe(
+      'Run input is the proposal text plus {"proposalId":"…"}. Runs as the proposal scout. This flow does not discover proposals — no Snapshot or Tally connector ships, so one is handed to it rather than invented.',
+    )
+    .trigger("cron")
+    .schedule("0 10 * * 2")
+    .source({ templateId: "tpl-governance-vote-cycle", author: "LaCrew" })
+    .tool("pending", "lacrew_list_pending_intents", undefined, {
+      label: "See what is already waiting on a human",
+      next: "read",
+    })
+    .model("read", {
+      label: "Read the proposal",
+      system:
+        "You read governance proposals for an organisation that holds tokens. You describe what a proposal does, not what its author says it does.",
+      prompt:
+        "Proposal: {{input}}\n\nIn three lines: what this actually changes, who is better off if it passes, and what it costs if it passes and the case for it turns out to be wrong.",
+      next: "conflict",
+    })
+    .agent("conflict", {
+      label: "Check the org's own exposure",
+      action: "invoke",
+      agent: "{{crew.conflict-checker}}",
+      prompt:
+        "Proposal: {{steps.read.text}}\n\nDoes this organisation hold a position this proposal moves, or would it receive or lose money if it passes? Answer plainly, and say so even if the connection is indirect.",
+      next: "mandate",
+    })
+    .model("mandate", {
+      label: "Decide against the mandate",
+      prompt:
+        "Proposal: {{steps.read.text}}\nOur exposure: {{steps.conflict.json}}\nAlready pending a human: {{steps.pending.json}}\n\nDecide against the written mandate. If the proposal moves value to or from this org, or the mandate does not cover it, the answer is ESCALATE — a desk voting on its own payout is not a judgement call. Reply with exactly one word: FOR, AGAINST, ABSTAIN, or ESCALATE.",
+      next: "route",
+    })
+    .switch("route", {
+      label: "FOR / AGAINST / ABSTAIN / ESCALATE",
+      when: { source: "{{steps.mandate.text}}" },
+      cases: [
+        { value: "FOR", next: "rationale-for" },
+        { value: "AGAINST", next: "rationale-against" },
+        { value: "ABSTAIN", next: "abstain-note" },
+        { value: "ESCALATE", next: "human-note" },
+      ],
+      onDefault: "human-note",
+    })
+    .model("rationale-for", {
+      label: "Write the rationale",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\n\nWrite the rationale to publish with a vote in favour. Cite the clause of the mandate it rests on, and state the strongest argument against it.",
+      next: "cast-for",
+    })
+    .governance("cast-for", {
+      label: "Vote for",
+      action: "vote",
+      proposalId: "{{input.proposalId}}",
+      support: true,
+      next: "record",
+    })
+    .model("rationale-against", {
+      label: "Write the rationale",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\n\nWrite the rationale to publish with a vote against. Cite the clause of the mandate it rests on, and state what would change your mind.",
+      next: "cast-against",
+    })
+    .governance("cast-against", {
+      label: "Vote against",
+      action: "vote",
+      proposalId: "{{input.proposalId}}",
+      support: false,
+      next: "record",
+    })
+    .model("record", {
+      label: "Record the vote",
+      prompt:
+        "Vote for: {{steps.cast-for.json}}\nVote against: {{steps.cast-against.json}}\nRationale: {{steps.rationale-for.text}}{{steps.rationale-against.text}}\n\nWrite the audit line: which proposal, which way, and the mandate clause it rested on. This line is what a human reviews after the fact, which is the only thing standing between the mandate and a vote outside it.",
+      next: null,
+    })
+    .model("abstain-note", {
+      label: "Record the abstention",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\n\nWrite why the desk stood aside, and what would have to be true for it to vote next time.",
+      next: null,
+    })
+    .model("human-note", {
+      label: "Hand it to a human",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\nDecision: {{steps.mandate.text}}\n\nWrite why this one is a human's decision rather than the desk's, and the smallest thing that would settle it. If the org stands to gain or lose money here, lead with that.",
+      next: null,
+    })
+    .build(),
+};
+
+/** Templates that make up the first-party crew blueprints. */
 export const crewFlowTemplates: FlowTemplate[] = [
   deskOpportunityScan,
   deskExecuteTrade,
@@ -666,4 +1062,8 @@ export const crewFlowTemplates: FlowTemplate[] = [
   mergeWindowDigest,
   contentWeeklyBrief,
   contentDailySocial,
+  lpRangeReview,
+  yieldRotationCheck,
+  riskSweep,
+  governanceVoteCycle,
 ];

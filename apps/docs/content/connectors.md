@@ -103,6 +103,9 @@ what is still unbound.
 | `uniswap` | Pool state and liquidity via the v3 subgraph | — | `token` → `GRAPH_API_KEY` |
 | `tenderly` | Dry-run a call before proposing it | — | `token` → `TENDERLY_ACCESS_KEY` |
 | `coingecko` | Prices and market context | — | `token` → `COINGECKO_API_KEY` |
+| `defillama` | Protocol and chain TVL — money leaving before a headline says so | — | `none` |
+| `defillama-yields` | Pool-level APY and its history | — | `none` |
+| `aave` | Aave v3 reserve data: supply and borrow rates, liquidity, caps | — | `none` |
 
 GitHub is the only one that offers an App today, and it is the only one whose
 service supports the shape. Where a service has something closer to it than a
@@ -110,12 +113,26 @@ personal token — GitLab's project access tokens, Notion's integration secrets,
 scoped to what is shared with them rather than to a person — the preset's note
 says so, so the choice is on screen when you make it.
 
-Three things worth reading off that table:
+Four things worth reading off that table:
 
-**The desk's presets have no writes at all.** A swap is an onchain intent that
-goes through `lacrew_propose_intent` and the policy stack. A connector that could
-execute one would be a second execution path with none of that enforcement, so
-`uniswap`, `tenderly` and `coingecko` read and simulate, and nothing else.
+**No DeFi preset has a write at all.** A swap, or a supply into a lending
+market, is an onchain intent that goes through `lacrew_propose_intent` and the
+policy stack. A connector that could execute one would be a second execution
+path with none of that enforcement, so `uniswap`, `tenderly`, `coingecko`,
+`defillama`, `defillama-yields` and `aave` read and simulate, and nothing else.
+
+**DefiLlama is two presets because it is two hosts.** A connector has exactly
+one base URL, and DefiLlama serves TVL from `api.llama.fi` while yields live on
+`yields.llama.fi` — `api.llama.fi/pools` is a 404. Folding them together would
+ship a route that fails in the middle of a run, which is the transcription
+mistake presets exist to prevent, so they are separate and a test pins the two
+base URLs apart.
+
+Two of those routes are bulk: `defillama.list_protocols` is around eight
+megabytes and `defillama-yields.list_pools` around eleven. Nothing in the
+connector path caps a response size, and a flow that interpolates one into a
+model step sends the whole thing as a prompt. Register a longer `timeoutMs`,
+and use them to build a watch list rather than inside a pipeline.
 
 **Where the publish gate actually sits.** For `typefully` it is the arg
 allowlist: `create_draft` and `schedule_draft` are the same endpoint, and the
