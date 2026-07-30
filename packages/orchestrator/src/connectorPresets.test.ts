@@ -404,12 +404,36 @@ test("nothing in the desk's presets can execute a trade", () => {
   // The desk reads prices and simulates calls; moving funds stays an onchain
   // intent through the policy stack. A write appearing here later would be a
   // second execution path with none of that enforcement.
-  for (const id of ["uniswap", "tenderly", "coingecko"]) {
+  for (const id of ["uniswap", "tenderly", "coingecko", "defillama", "defillama-yields", "aave"]) {
     const preset = getConnectorPreset(id)!;
     assert.deepEqual(
       preset.routes.filter((r) => r.effect === "write"),
       [],
       `${id} ships a write route`,
+    );
+  }
+});
+
+test("DefiLlama is two presets because it is two hosts", () => {
+  // `api.llama.fi/pools` is a 404 — yields live on their own host. Merging the
+  // two into one connector would ship a route that fails in the middle of a
+  // run, which is the transcription mistake presets exist to prevent.
+  const tvl = buildConnectorPreset("defillama");
+  const yields = buildConnectorPreset("defillama-yields");
+  assert.equal(tvl.baseUrl, "https://api.llama.fi");
+  assert.equal(yields.baseUrl, "https://yields.llama.fi");
+  assert.notEqual(tvl.baseUrl, yields.baseUrl);
+  assert.deepEqual(validateConnector(tvl), []);
+  assert.deepEqual(validateConnector(yields), []);
+});
+
+test("the market-data presets are public, and asking them for a credential is an error", () => {
+  for (const id of ["defillama", "defillama-yields", "aave"]) {
+    const connector = buildConnectorPreset(id);
+    assert.deepEqual(connector.auth, { kind: "none" }, `${id} sends a credential`);
+    assert.throws(
+      () => buildConnectorPreset(id, { tokenEnv: "SOME_TOKEN" }),
+      new RegExp(`connector_preset_takes_no_credential:${id}`),
     );
   }
 });
