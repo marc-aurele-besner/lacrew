@@ -12,17 +12,34 @@ import {
 } from "./index.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import { BRIEF_MAX_CHARS } from "./agentControls.js";
+import { createConnectorModes } from "./connectorPolicy.js";
+import { createConnectorAsks } from "./connectorAsks.js";
+import { scopeOfThread } from "./conversation.js";
 
 function buildApp(authToken?: string, connectors?: ConnectorRegistry) {
   const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   const model = new MemoryModelProvider();
   const flows = createFlowsSurface({ runtime, model });
+  const connectorModes = createConnectorModes({});
+  const connectorAsks = createConnectorAsks({
+    postQuestion: ({ threadId, author, body, options }) =>
+      runtime.postMessage({
+        scope: scopeOfThread(threadId) ?? { kind: "org" },
+        author,
+        authorKind: "agent",
+        kind: "question",
+        body,
+        options,
+      }),
+  });
   return createOrchestratorApp({
     runtime,
     queue: new InMemoryQueue(),
     model,
     flows,
     connectors,
+    connectorModes,
+    connectorAsks,
     mcpUseMock: true,
     authToken,
     isDbReady: () => false,
@@ -954,5 +971,138 @@ describe("POST /epoch/schedule", () => {
     };
     assert.equal(body.openQuestions.length, 1);
     assert.equal(body.openQuestions[0]?.body, "merge?");
+  });
+});
+
+describe("connector write policy routes (F2.24)", () => {
+  const app = () => buildApp();
+
+  it("serves the rules and the vocabulary, empty to begin with", async () => {
+    const res = await app().request("/connectors/modes");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { rules: unknown[]; modes: string[] };
+    assert.deepEqual(body.rules, []);
+    assert.deepEqual(body.modes, ["auto", "ask", "deny"]);
+  });
+
+  it("sets, replaces, and clears a rule", async () => {
+    const a = app();
+    const put = (payload: unknown) =>
+      a.request("/connectors/modes", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+    const set = await put({
+      scope: { level: "workspace" },
+      route: "github.merge_pull_request",
+      mode: "deny",
+    });
+    assert.equal(set.status, 200);
+    assert.equal(((await set.json()) as { rules: unknown[] }).rules.length, 1);
+
+    const replaced = await put({
+      scope: { level: "workspace" },
+      route: "github.merge_pull_request",
+      mode: "ask",
+    });
+    const rules = ((await replaced.json()) as { rules: Array<{ mode: string }> }).rules;
+    assert.equal(rules.length, 1, "a rule is replaced, not appended");
+    assert.equal(rules[0]!.mode, "ask");
+
+    // A cleared rule falls back to what the route inherits, which is not the
+    // same as pinning it to auto — so clearing removes the row.
+    const cleared = await put({
+      scope: { level: "workspace" },
+      route: "github.merge_pull_request",
+      mode: null,
+    });
+    const after = (await cleared.json()) as { cleared: boolean; rules: unknown[] };
+    assert.equal(after.cleared, true);
+    assert.deepEqual(after.rules, []);
+  });
+
+  it("refuses a loose glob and an unknown mode", async () => {
+    const a = app();
+    const bad = await a.request("/connectors/modes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { level: "workspace" }, route: "github.merge_*", mode: "ask" }),
+    });
+    assert.equal(bad.status, 400);
+
+    const unknown = await a.request("/connectors/modes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { level: "workspace" }, route: "github.*", mode: "maybe" }),
+    });
+    assert.equal(unknown.status, 400);
+
+    const noScope = await a.request("/connectors/modes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { level: "crew" }, route: "github.*", mode: "ask" }),
+    });
+    assert.equal(noScope.status, 400, "a crew rule with no ref names nothing");
+  });
+
+  it("records a rule change on the audit trail", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const model = new MemoryModelProvider();
+    const connectorModes = createConnectorModes({});
+    const built = createOrchestratorApp({
+      runtime,
+      queue: new InMemoryQueue(),
+      model,
+      flows: createFlowsSurface({ runtime, model }),
+      connectorModes,
+      mcpUseMock: true,
+      isDbReady: () => false,
+      isDbConfigured: () => false,
+    });
+    await built.request("/connectors/modes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { level: "workspace" }, route: "github.*", mode: "deny" }),
+    });
+    const events = await runtime.audit();
+    const change = events.find((e) => e.type === "ConnectorWritePolicyChanged");
+    assert.ok(change, "moving a route out of the human's path is attributable");
+    assert.equal((change.payload as { mode: string }).mode, "deny");
+  });
+
+  it("serves asks and points at the thread as the only way to answer", async () => {
+    const res = await app().request("/connectors/asks");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { asks: unknown[]; answerVia: string };
+    assert.deepEqual(body.asks, []);
+    assert.match(body.answerVia, /POST \/messages/);
+  });
+
+  it("describes each write route with its default and effective mode", async () => {
+    const connectors = createConnectorRegistry({
+      connectors: [
+        buildConnectorPreset("github", {
+          policyTargets: {
+            merge_pull_request: "0x00000000000000000000000000000000000000aa",
+          },
+        }),
+      ],
+      env: { GITHUB_TOKEN: "ghp_x" },
+    });
+    const res = await buildApp(undefined, connectors).request("/connectors");
+    const body = (await res.json()) as {
+      connectors: Array<{
+        routes: Array<{ name: string; effect: string; mode: string | null }>;
+      }>;
+    };
+    const routes = body.connectors[0]!.routes;
+    assert.equal(routes.find((r) => r.name === "merge_pull_request")!.mode, "ask");
+    assert.equal(
+      routes.find((r) => r.name === "get_pull_request")!.mode,
+      null,
+      "a read carries no mode at all",
+    );
   });
 });

@@ -364,3 +364,214 @@ test("config loads from inline JSON or a file, and no config is not an error", (
     /connector_config_unreadable/,
   );
 });
+
+/* ——— write modes (F2.24) ——— */
+
+test("deny mode never reaches the network, and says so distinctly", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => "ALLOW",
+    resolveMode: () => ({ mode: "deny", source: { kind: "route-default" } }),
+  });
+
+  await assert.rejects(
+    () => registry.call("github.merge_pull_request", { owner: "acme", repo: "site", number: 7 }),
+    /connector_mode_denied:github\.merge_pull_request/,
+  );
+  assert.equal(calls.length, 0, "no HTTP request, and no policy read either");
+});
+
+test("deny is answered before the policy stack is even asked", async () => {
+  let policyReads = 0;
+  const { impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => {
+      policyReads += 1;
+      return "ALLOW";
+    },
+    resolveMode: () => ({ mode: "deny", source: { kind: "route-default" } }),
+  });
+  await assert.rejects(() => registry.call("github.merge_pull_request", { owner: "a", repo: "b", number: 1 }));
+  assert.equal(policyReads, 0);
+});
+
+test("a policy DENY refuses before any question is asked", async () => {
+  let gated = 0;
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => "DENY",
+    resolveMode: () => ({ mode: "ask", source: { kind: "route-default" } }),
+    asks: {
+      gate: async () => {
+        gated += 1;
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => registry.call("github.merge_pull_request", { owner: "acme", repo: "site", number: 7 }),
+    /connector_denied:github\.merge_pull_request:DENY/,
+  );
+  assert.equal(gated, 0, "a route policy refused must not spam a human with a question");
+  assert.equal(calls.length, 0);
+});
+
+test("ask mode gates on the built request, not the raw args", async () => {
+  const { calls, impl } = recordingFetch();
+  const gates: unknown[] = [];
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => "ALLOW",
+    resolveMode: () => ({ mode: "ask", source: { kind: "route-default" } }),
+    asks: {
+      gate: async (input) => {
+        gates.push(input);
+      },
+    },
+  });
+
+  await registry.call(
+    "github.merge_pull_request",
+    { owner: "acme", repo: "site", number: 7, merge_method: "squash", sneaky: "dropped" },
+    { principal: "0x00000000000000000000000000000000000000a1", runId: "run-1", flowId: "pr-triage" },
+  );
+
+  assert.deepEqual(gates, [
+    {
+      connector: "github",
+      route: "merge_pull_request",
+      method: "PUT",
+      path: "/repos/acme/site/pulls/7/merge",
+      args: { merge_method: "squash" },
+      principal: "0x00000000000000000000000000000000000000a1",
+      flowId: "pr-triage",
+      runId: "run-1",
+    },
+  ]);
+  assert.equal(calls.length, 1, "the gate returned, so the call went out once");
+});
+
+test("ask mode with nowhere to put the question refuses rather than calling", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => "ALLOW",
+    resolveMode: () => ({ mode: "ask", source: { kind: "route-default" } }),
+  });
+  await assert.rejects(
+    () => registry.call("github.merge_pull_request", { owner: "a", repo: "b", number: 1 }),
+    /connector_ask_unavailable/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("reads are untouched by modes", async () => {
+  const { calls, impl } = recordingFetch({ body: { number: 7 } });
+  let gated = 0;
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    resolveMode: () => ({ mode: "deny", source: { kind: "route-default" } }),
+    asks: {
+      gate: async () => {
+        gated += 1;
+      },
+    },
+  });
+  const result = await registry.call("github.get_pull_request", {
+    owner: "acme",
+    repo: "site",
+    number: 7,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(gated, 0);
+});
+
+test("an admitted write in auto mode still goes straight out", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    checkPolicy: async () => "ALLOW",
+    resolveMode: () => ({ mode: "auto", source: { kind: "route-default" } }),
+    asks: {
+      gate: async () => {
+        throw new Error("ask machinery must not be reached in auto mode");
+      },
+    },
+  });
+  const result = await registry.call("github.merge_pull_request", {
+    owner: "acme",
+    repo: "site",
+    number: 7,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+});
+
+test("a route declaring a mode is described with it, and reads carry none", () => {
+  const registry = createConnectorRegistry({
+    connectors: [
+      githubConnector({
+        routes: [
+          ...githubConnector().routes.filter((r) => r.name !== "merge_pull_request"),
+          {
+            name: "merge_pull_request",
+            method: "PUT",
+            path: "/repos/{owner}/{repo}/pulls/{number}/merge",
+            effect: "write",
+            mode: "ask",
+            policyTarget: "0x00000000000000000000000000000000000000aa",
+          },
+        ],
+      }),
+    ],
+    env: TOKEN_ENV,
+  });
+  const routes = registry.describe()[0]!.routes;
+  const merge = routes.find((r) => r.name === "merge_pull_request")!;
+  const read = routes.find((r) => r.name === "get_pull_request")!;
+  assert.equal(merge.mode, "ask");
+  assert.equal(merge.effectiveMode?.mode, "ask");
+  assert.equal(read.mode, null);
+  assert.equal(read.effectiveMode, null);
+});
+
+test("a read that declares a mode is refused at registration", () => {
+  assert.throws(
+    () =>
+      createConnectorRegistry({
+        connectors: [
+          githubConnector({
+            routes: [
+              {
+                name: "get_pull_request",
+                method: "GET",
+                path: "/repos/{owner}/{repo}/pulls/{number}",
+                effect: "read",
+                mode: "ask",
+              },
+            ],
+          }),
+        ],
+        env: TOKEN_ENV,
+      }),
+    /is a read and cannot carry a mode/,
+  );
+});

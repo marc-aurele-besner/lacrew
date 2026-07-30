@@ -23,7 +23,10 @@
  *    route may name a `policyTarget` — an address standing for the authority to
  *    take that action — so "may this crew merge?" is asked of the same policy
  *    stack that answers "may this crew spend?", and is admitted or revoked by
- *    the same governance.
+ *    the same governance. A write also runs in a **mode** — `auto`, `ask`, or
+ *    `deny` (`connectorPolicy.ts`) — which can only ever narrow what policy
+ *    already admitted: require a human to confirm in-thread, or refuse the
+ *    route outright without reaching the network.
  * 4. **Every call is audited.** Connector, route, status, and duration land on
  *    the audit trail. Never the response body, never the token.
  *
@@ -32,6 +35,13 @@
  */
 
 import type { ProtocolEvent } from "@lacrew/core";
+import type { ConnectorAsksSurface } from "./connectorAsks.js";
+import {
+  isConnectorWriteMode,
+  type ConnectorModeResolution,
+  type ConnectorModeSubject,
+  type ConnectorWriteMode,
+} from "./connectorPolicy.js";
 import { resolveConnectorConfig, type ConnectorConfigEntry } from "./connectorPresets.js";
 import {
   createGithubAppTokenSource,
@@ -84,6 +94,17 @@ export type ConnectorRoute = {
    * forgetting a step.
    */
   policyTarget?: `0x${string}`;
+  /**
+   * Default write mode for this route when no operator rule narrows it
+   * (`connectorPolicy.ts`). Omitted means `auto`. A preset sets `ask` on the
+   * routes whose mistakes are public and hard to take back — a merge, a
+   * publish — because the safe default is the one an operator has to *widen*
+   * rather than the one they have to remember to narrow.
+   *
+   * Meaningless on a read, and refused there: a confirmation that gates
+   * nothing teaches operators to click through confirmations.
+   */
+  mode?: ConnectorWriteMode;
 };
 
 export type Connector = {
@@ -124,6 +145,15 @@ export type ConnectorRouteView = {
   params: string[];
   /** The address gating this route, or null. Public by design — admitting it is. */
   policyTarget: string | null;
+  /** The route's declared default mode; null on reads, which carry none. */
+  mode: ConnectorWriteMode | null;
+  /**
+   * The mode that would actually apply, and what decided it. Null on reads.
+   * Resolved for the subject `describe()` was asked about — an operator surface
+   * showing a workspace default beside a seat that overrides it is showing the
+   * one number nobody's flow will run under.
+   */
+  effectiveMode: ConnectorModeResolution | null;
 };
 
 /**
@@ -147,6 +177,22 @@ export type ConnectorView = {
   routes: ConnectorRouteView[];
 };
 
+/**
+ * Who is making a call, and on whose behalf.
+ *
+ * Every field is optional because a call can arrive without a run behind it
+ * (`POST /mcp/call` from an operator), but a write in `ask` mode needs enough
+ * of it to address a question and to resume the run afterwards. Absent a
+ * principal the question goes to the org thread, which is the honest place for
+ * "somebody asked this orchestrator to do something".
+ */
+export type ConnectorCallContext = ConnectorModeSubject & {
+  flowId?: string;
+  runId?: string;
+  /** Overrides the default `agent:<principal>` thread for an ask. */
+  threadId?: string;
+};
+
 export type ConnectorRegistry = {
   /** Every registered connector, for tool listings and the CLI. */
   list(): Connector[];
@@ -154,9 +200,13 @@ export type ConnectorRegistry = {
   toolNames(): string[];
   /** Whether `name` is a connector tool (as opposed to a `lacrew_*` tool). */
   handles(name: string): boolean;
-  call(name: string, args: Record<string, unknown>): Promise<ConnectorCallResult>;
+  call(
+    name: string,
+    args: Record<string, unknown>,
+    ctx?: ConnectorCallContext,
+  ): Promise<ConnectorCallResult>;
   /** Wiring state for an operator surface. Contains no credential material. */
-  describe(): ConnectorView[];
+  describe(subject?: ConnectorModeSubject): ConnectorView[];
 };
 
 export type ConnectorRegistryOptions = {
@@ -173,6 +223,22 @@ export type ConnectorRegistryOptions = {
    * a registry that cannot ask must not answer for the policy stack.
    */
   checkPolicy?: (target: `0x${string}`) => Promise<string>;
+  /**
+   * Resolves the mode a write route runs in for one caller. Absent, every write
+   * runs at its declared default — which is `auto` unless the route says
+   * otherwise, i.e. exactly the behaviour connectors had before modes existed.
+   */
+  resolveMode?: (
+    route: ConnectorRoute,
+    connectorId: string,
+    subject: ConnectorModeSubject,
+  ) => ConnectorModeResolution;
+  /**
+   * Ask-mode machinery. Absent, an `ask` route is refused rather than called:
+   * a registry with nowhere to put the question cannot answer it, and calling
+   * anyway would turn "confirm this first" into "do it".
+   */
+  asks?: Pick<ConnectorAsksSurface, "gate">;
   /** Injected for tests so token expiry is drivable; defaults to `Date.now`. */
   now?: () => number;
 };
@@ -281,6 +347,15 @@ export function validateConnector(connector: Connector): string[] {
     if (route.policyTarget && route.effect === "read") {
       errors.push(`route "${connector.id}.${route.name}" is a read and cannot carry a policyTarget`);
     }
+    if (route.mode !== undefined && !isConnectorWriteMode(route.mode)) {
+      errors.push(`route "${connector.id}.${route.name}" mode must be auto | ask | deny`);
+    }
+    // Same reasoning as the policy target above: a read that declares a mode is
+    // a control that would gate nothing, and reading it as one later is the
+    // comfortable mistake this file exists to avoid.
+    if (route.mode && route.effect === "read") {
+      errors.push(`route "${connector.id}.${route.name}" is a read and cannot carry a mode`);
+    }
   }
   return errors;
 }
@@ -355,7 +430,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
     toolNames: () =>
       [...byId.values()].flatMap((c) => c.routes.map((r) => `${c.id}.${r.name}`)),
     handles: (name) => resolve(name) !== undefined,
-    describe: () =>
+    describe: (subject = {}) =>
       [...byId.values()].map((connector) => {
         const envVars = connectorEnvVars(connector);
         return {
@@ -381,13 +456,35 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
             effect: route.effect,
             params: route.params ?? [],
             policyTarget: route.policyTarget ?? null,
+            mode: route.effect === "write" ? (route.mode ?? "auto") : null,
+            effectiveMode:
+              route.effect === "write"
+                ? (opts.resolveMode?.(route, connector.id, subject) ?? {
+                    mode: route.mode ?? "auto",
+                    source: { kind: "route-default" as const },
+                  })
+                : null,
           })),
         };
       }),
-    call: async (name, args) => {
+    call: async (name, args, ctx = {}) => {
       const hit = resolve(name);
       if (!hit) throw new Error(`unknown_connector_tool:${name}`);
       const { connector, route } = hit;
+
+      // Modes only narrow, so `deny` is answered first: there is no reading of
+      // the policy stack that would let a refused route through, and asking the
+      // chain about a call that is never going out is a read for nothing.
+      const mode =
+        route.effect === "write"
+          ? (opts.resolveMode?.(route, connector.id, ctx).mode ?? route.mode ?? "auto")
+          : "auto";
+      if (mode === "deny") {
+        // Distinct from `connector_denied`: the operator refused this route, the
+        // policy stack did not. Collapsing the two would have an operator
+        // hunting a governance change that never happened.
+        throw new Error(`connector_mode_denied:${name}`);
+      }
 
       if (route.policyTarget) {
         if (!opts.checkPolicy) {
@@ -401,9 +498,8 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
         }
       }
 
-      const url = new URL(
-        `${connector.baseUrl.replace(/\/$/, "")}${renderPath(route, args)}`,
-      );
+      const path = renderPath(route, args);
+      const url = new URL(`${connector.baseUrl.replace(/\/$/, "")}${path}`);
       const allowed = new Set(route.params ?? []);
       const payload: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(args)) {
@@ -414,6 +510,24 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
         for (const [key, value] of Object.entries(payload)) {
           url.searchParams.set(key, String(value));
         }
+      }
+
+      // Asked *after* the request is built, so what the human confirms is what
+      // would actually go out — the filled-in path and the fields the route
+      // forwards, not the raw args a flow happened to pass.
+      if (mode === "ask") {
+        if (!opts.asks) throw new Error(`connector_ask_unavailable:${name}`);
+        await opts.asks.gate({
+          connector: connector.id,
+          route: route.name,
+          method: route.method,
+          path,
+          args: payload,
+          ...(ctx.principal ? { principal: ctx.principal } : {}),
+          ...(ctx.flowId ? { flowId: ctx.flowId } : {}),
+          ...(ctx.runId ? { runId: ctx.runId } : {}),
+          ...(ctx.threadId ? { threadId: ctx.threadId } : {}),
+        });
       }
 
       const started = Date.now();
@@ -484,6 +598,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           ok: result.ok,
           ms: result.ms,
           policyChecked: Boolean(route.policyTarget),
+          ...(route.effect === "write" ? { mode } : {}),
         },
       });
       return result;

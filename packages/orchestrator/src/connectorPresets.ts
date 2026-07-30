@@ -27,6 +27,15 @@
  *    route that needs one is refused at build time unless the operator binds it
  *    — the alternative is shipping a merge route admitted by nothing, which is
  *    exactly the comfortable mistake the policy target exists to prevent.
+ *
+ * What a preset *does* decide is the write's default **mode** (F2.24). Routes
+ * whose mistakes are public and hard to take back — merge a pull request,
+ * publish a post, send a tweet — ship as `ask`, so the first run of a new crew
+ * stops for a human rather than discovering the flow was wrong in production.
+ * Typefully's `create_draft` does not, because that route cannot publish: a
+ * confirmation there would gate nothing and teach operators to click through
+ * the ones that matter. An operator can widen any of it with a rule; the
+ * defaults are the direction it is safer to be wrong in, not a ceiling.
  */
 
 import type { Connector, ConnectorAuth, ConnectorRoute } from "./connectors.js";
@@ -213,6 +222,7 @@ const github: ConnectorPreset = {
       description: "Merge a pull request. `sha` pins the head the decision was made against.",
       effect: "write",
       params: ["merge_method", "commit_title", "commit_message", "sha"],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "The crew's merge authority — not a payee. Admitting this address is a governance proposal; revoking it turns merging off org-wide without touching GitHub. In the `github-experts` blueprint this is the `merge-authority` target.",
@@ -288,6 +298,7 @@ const gitlab: ConnectorPreset = {
         "merge_when_pipeline_succeeds",
         "sha",
       ],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "The crew's merge authority — not a payee. Revoking this address stops merging org-wide without touching GitLab or rotating the token.",
@@ -429,6 +440,7 @@ const twitter: ConnectorPreset = {
       description: "Publish. There is no draft state here — this is live the moment it returns 201.",
       effect: "write",
       params: ["text", "reply", "quote_tweet_id", "poll", "reply_settings", "media"],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "The crew's publishing authority. Revoking this address stops the crew posting immediately and org-wide, which is faster than rotating a token and does not break the reads.",
@@ -487,6 +499,7 @@ const typefully: ConnectorPreset = {
         "File a draft with a schedule date, which sends it at that time with nobody looking again.",
       effect: "write",
       params: ["content", "threadify", "share", "schedule-date", "auto_retweet_enabled", "auto_plug_enabled"],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "The crew's publishing authority. Leave it unbound and the crew can still file drafts — that is the intended posture for a studio whose guardrail is that a human approves what ships.",
@@ -546,6 +559,7 @@ const ghost: ConnectorPreset = {
         "Create a post. `posts` carries Ghost's array body, including `status` — so this route drafts or publishes depending on what the flow sends. Ghost's `?source=html` cannot be reached from here (query parameters are not sent on writes), so the body must be lexical or mobiledoc.",
       effect: "write",
       params: ["posts"],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "Publishing authority for the site. The body decides draft versus published, so admitting this address admits both — bind it only for a crew allowed to publish.",
@@ -559,6 +573,7 @@ const ghost: ConnectorPreset = {
         "Update a post. This is how a draft becomes published, so it carries the same authority as creating one.",
       effect: "write",
       params: ["posts"],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "Publishing authority: flipping `status` to published is an update, not a create.",
@@ -614,6 +629,7 @@ const medium: ConnectorPreset = {
         "license",
         "notifyFollowers",
       ],
+      mode: "ask",
       policyTarget: {
         required: true,
         note: "Publishing authority for the account. `publishStatus: \"draft\"` is still this route, so admitting it admits publishing.",

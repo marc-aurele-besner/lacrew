@@ -6,11 +6,16 @@
  */
 
 import type { AgentControlRecord } from "./agentControls.js";
+import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
+import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
 import type { Message } from "./conversation.js";
 import {
   allAgentControlRows,
   createDb,
+  deleteConnectorMode,
   insertMessageRow,
+  listConnectorModes,
+  recentConnectorAsks,
   recentMessageRows,
   getDatabaseUrl,
   insertIntentRow,
@@ -19,8 +24,11 @@ import {
   recentSessionRows,
   resolveIntentRows,
   upsertAgentControlRow,
+  upsertConnectorAsk,
+  upsertConnectorMode,
   upsertSessionRow,
   type AgentControlRow,
+  type ConnectorAskRow,
   type DbHandle,
   type IntentRow,
   type SessionRow,
@@ -30,7 +38,7 @@ export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
 
 
-export interface RuntimeStore {
+export interface RuntimeStore extends ConnectorModeStore, ConnectorAskStore {
   readonly name: string;
   /** Upsert a session by keyId; must never throw into the caller's flow. */
   saveSession(record: SessionRecord): Promise<void>;
@@ -57,6 +65,15 @@ export interface RuntimeStore {
   close(): Promise<void>;
 }
 
+/**
+ * Asks kept across a restart.
+ *
+ * Larger than the event rings because the resolved ones matter as much as the
+ * pending ones: a spent "yes" that fell out of the store is a confirmation the
+ * next run could spend again.
+ */
+const ASK_RING_MAX = 500;
+
 const MEMORY_MAX = 200;
 /** Conversation is read as a thread, so it keeps more history than the event rings. */
 const MESSAGE_RING_MAX = 500;
@@ -67,6 +84,8 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const intents: IntentRecord[] = [];
   const controls = new Map<string, AgentControlRecord>();
   const messages: Message[] = [];
+  const connectorModes = new Map<string, ConnectorModeRecord>();
+  const connectorAsks = new Map<string, ConnectorAskRecord>();
 
   return {
     name: "memory",
@@ -111,7 +130,92 @@ export function createMemoryRuntimeStore(): RuntimeStore {
         messages.splice(0, messages.length - MESSAGE_RING_MAX);
       }
     },
+    loadConnectorModes: async () => [...connectorModes.values()],
+    saveConnectorMode: async (record) => {
+      connectorModes.set(modeKey(record.scope, record.route), record);
+    },
+    removeConnectorMode: async (scopeKey, route) => {
+      connectorModes.delete(`${scopeKey}|${route}`);
+    },
+    loadConnectorAsks: async () => [...connectorAsks.values()],
+    saveConnectorAsk: async (record) => {
+      connectorAsks.set(record.id, record);
+      if (connectorAsks.size > ASK_RING_MAX) {
+        // Insertion order: the oldest ask is the first key, and an ask old
+        // enough to fall off has long since expired.
+        const oldest = connectorAsks.keys().next().value;
+        if (oldest) connectorAsks.delete(oldest);
+      }
+    },
     close: async () => {},
+  };
+}
+
+/** Same key the Postgres unique constraint uses, so the two agree on identity. */
+function scopeKeyOf(scope: ConnectorModeScope): string {
+  return scope.level === "workspace"
+    ? "workspace"
+    : `${scope.level}:${scope.ref.trim().toLowerCase()}`;
+}
+
+function modeKey(scope: ConnectorModeScope, route: string): string {
+  return `${scopeKeyOf(scope)}|${route}`;
+}
+
+function modeScopeFromRow(raw: unknown): ConnectorModeScope | null {
+  const level = (raw as { level?: unknown } | null)?.level;
+  const ref = (raw as { ref?: unknown } | null)?.ref;
+  if (level === "workspace") return { level: "workspace" };
+  if ((level === "crew" || level === "agent") && typeof ref === "string" && ref.trim()) {
+    return { level, ref };
+  }
+  return null;
+}
+
+/** Exported shape ↔ row. The resume state rides as opaque JSON both ways. */
+function askToRow(record: ConnectorAskRecord): ConnectorAskRow {
+  return {
+    id: record.id,
+    connector: record.connector,
+    route: record.route,
+    method: record.method,
+    path: record.path,
+    fingerprint: record.fingerprint,
+    args: record.args,
+    principal: record.principal,
+    threadId: record.threadId,
+    questionId: record.questionId,
+    flowId: record.flowId ?? null,
+    runId: record.runId ?? null,
+    status: record.status,
+    outcome: record.outcome ?? null,
+    resume: (record.resume as unknown as Record<string, unknown> | undefined) ?? null,
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    resolvedAt: record.resolvedAt ?? null,
+  };
+}
+
+function askFromRow(row: ConnectorAskRow): ConnectorAskRecord {
+  return {
+    id: row.id,
+    connector: row.connector,
+    route: row.route,
+    method: row.method,
+    path: row.path,
+    fingerprint: row.fingerprint,
+    args: row.args ?? {},
+    principal: row.principal,
+    threadId: row.threadId,
+    questionId: row.questionId,
+    ...(row.flowId ? { flowId: row.flowId } : {}),
+    ...(row.runId ? { runId: row.runId } : {}),
+    status: row.status as ConnectorAskRecord["status"],
+    ...(row.outcome ? { outcome: row.outcome as ConnectorAskRecord["outcome"] } : {}),
+    ...(row.resume ? { resume: row.resume as unknown as ConnectorAskRecord["resume"] } : {}),
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
   };
 }
 
@@ -271,6 +375,66 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await insertMessageRow(db(), messageToRow(message));
       } catch (err) {
         warn("message save", err);
+      }
+    },
+    loadConnectorModes: async () => {
+      try {
+        const rows = await listConnectorModes(db());
+        return rows.flatMap((row) => {
+          const scope = modeScopeFromRow(row.scope);
+          // A row whose scope no longer parses is one this build cannot honour.
+          // Dropping it silently would apply "no rule" — which is `auto` — so
+          // it is reported instead.
+          if (!scope) {
+            warn("connector mode load", new Error(`unreadable scope: ${JSON.stringify(row.scope)}`));
+            return [];
+          }
+          return [{ scope, route: row.route, mode: row.mode as ConnectorModeRecord["mode"], at: row.updatedAt }];
+        });
+      } catch (err) {
+        // Rethrown, like agent controls: an empty answer here reads as "nothing
+        // was ever narrowed", which would put every ask-mode write back on
+        // `auto` because a database was briefly unreachable.
+        warn("connector modes load", err);
+        throw err;
+      }
+    },
+    saveConnectorMode: async (record) => {
+      try {
+        await upsertConnectorMode(db(), {
+          scopeKey: scopeKeyOf(record.scope),
+          scope: record.scope as unknown as Record<string, unknown>,
+          route: record.route,
+          mode: record.mode,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("connector mode save", err);
+      }
+    },
+    removeConnectorMode: async (scopeKey, route) => {
+      try {
+        await deleteConnectorMode(db(), scopeKey, route);
+      } catch (err) {
+        warn("connector mode delete", err);
+      }
+    },
+    loadConnectorAsks: async () => {
+      try {
+        return (await recentConnectorAsks(db(), ASK_RING_MAX)).map(askFromRow);
+      } catch (err) {
+        // Rethrown for the same reason: with no asks loaded, a spent "yes"
+        // looks like a question that was never asked, and the next call would
+        // mint a fresh one instead of refusing to spend it twice.
+        warn("connector asks load", err);
+        throw err;
+      }
+    },
+    saveConnectorAsk: async (record) => {
+      try {
+        await upsertConnectorAsk(db(), askToRow(record));
+      } catch (err) {
+        warn("connector ask save", err);
       }
     },
     close: async () => {
