@@ -23,6 +23,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { cmdConnectors } from "./connectors.js";
 import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
+import { cmdSkills } from "./skills.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
@@ -231,6 +232,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "connectors") {
     await cmdConnectors(rest);
+    return;
+  }
+  if (cmd === "skills") {
+    await cmdSkills(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -740,6 +745,8 @@ Commands:
   connectors <sub>          Connectors — list, show <id>, config <id>
                             (JSON for LACREW_CONNECTORS); write policy —
                             modes, mode <route> <auto|ask|deny>, asks, answer
+  skills <sub>              Installable directive skills — list, show <id>,
+                            install <id> --agent 0x…, installed, remove, export
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint
