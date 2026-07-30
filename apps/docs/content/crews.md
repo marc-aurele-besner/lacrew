@@ -22,6 +22,38 @@ Three first-party blueprints come from filled design-partner intakes
 | `github-experts` | Dev | Watcher, reviewer, merger, fixer, release scribe under a review lead |
 | `content-studio` | Content | Ideation, writer, three-seat review board, visual packager, social desk under an editor manager |
 
+The rest are author-drafted patterns. They carry no `intake.file`, and the
+absence is the honest signal rather than an oversight: their caps and grants are
+a starting point somebody reasoned about, not a figure a real operator gave.
+Pointing them at a document that does not exist would lend partner-derived
+authority to a guess.
+
+| Blueprint | Vertical | Shape |
+| --- | --- | --- |
+| `research-desk` | Research | Source scout, analyst and librarian under a research lead |
+| `support-desk` | Support | Triager and responder under a desk lead |
+| `platform-oncall` | Ops | Monitor and remediator under an on-call lead |
+| `lp-advisor` | Trading | Position mapper, range analyst and depth watch under an advisory lead |
+| `yield-desk` | Trading | Rate scout, risk scorer and allocator under a treasury lead |
+| `risk-watch` | Ops | Peg, oracle and event watches under a risk lead |
+| `governance-desk` | Research | Proposal scout, rationale writer and conflict checker under a delegate lead |
+
+The first three ship no flows, because how a support desk or an on-call rota
+actually works is the part most specific to one team, and inventing it would be
+the same fabrication one level down. The four DeFi patterns each ship one,
+because there the pipeline *is* the claim: "this crew can only advise" is not a
+sentence in a summary, it is a policy check `lp-range-review` performs against a
+router nobody admitted — and it is only checkable because the flow runs it.
+
+Each of the four is built around a different layer:
+
+| Blueprint | What it demonstrates |
+| --- | --- |
+| `lp-advisor` | A crew with no execution authority at all. No venue and no payout target is admitted, so the advice is a property of the whitelist rather than a promise |
+| `yield-desk` | Admission as the risk control. It carries an unadmitted-market entry so the refusal path is exercised, and its allocator holds a dedicated stack because the org-wide whitelist admits a market for every seat at once |
+| `risk-watch` | Detection is not prevention. Every guardrail states its residual risk, not only the `monitoring` ones validation demands it of |
+| `governance-desk` | An onchain action that moves no value. The cap, the whitelist and the allowance all answer ALLOW on a vote, and the blueprint says so instead of implying the policy stack covers it |
+
 ## What a blueprint holds
 
 ```ts
