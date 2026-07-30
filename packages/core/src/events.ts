@@ -47,6 +47,25 @@ export type ProtocolEventType =
    * operator scans when asking what their agents actually did.
    */
   | "ToolCalled"
+  /**
+   * A webhook flow trigger was created, rotated, enabled, disabled, or removed
+   * (F2.22). A hook URL is standing authority to start a funded flow from
+   * outside the org, so who minted one — and who rotated its secret — belongs
+   * in the trail. The payload never carries the secret, sealed or otherwise;
+   * only its version, which is what a delivery line can be matched against.
+   */
+  | "WebhookTriggerChanged"
+  /**
+   * One signed delivery was accepted and enqueued (F2.22).
+   *
+   * Records the delivery key, the run it started, and the principal it will run
+   * as — never the request body, which is attacker-supplied, unbounded, and
+   * routinely full of someone else's personal data. Rejected deliveries are not
+   * here: they changed nothing, and an unauthenticated caller must not be able
+   * to write to the audit ring. They land in the trigger's delivery log with a
+   * reason code instead.
+   */
+  | "WebhookDelivery"
   | "MarketplacePurchase"
   | "MarketplaceListed"
   | "MarketplaceWithdrawn"

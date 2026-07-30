@@ -256,7 +256,7 @@ export type FlowStep =
   | GovernanceStep;
 export type FlowStepKind = FlowStep["kind"];
 
-export type FlowTrigger = "manual" | "epoch" | "cron";
+export type FlowTrigger = "manual" | "epoch" | "cron" | "webhook";
 
 export type FlowDefinition = {
   id: string;
@@ -266,6 +266,14 @@ export type FlowDefinition = {
    * When the flow runs: "manual" (default) via UI/SDK/CLI, or "epoch" —
    * automatically on every payroll epoch (the orchestrator's queue fires it
    * after allowances stream, turning the pipeline into an automation).
+   *
+   * "webhook" declares the flow externally startable: a signed delivery to the
+   * orchestrator's hook surface enqueues a run. The trigger record (id, secret,
+   * principal, input mapping) lives in the orchestrator, never in the
+   * definition — definitions are listed, exported, and shared through the
+   * marketplace, and a secret in one would leak with every copy. The
+   * declaration still has to be here, so a flow cannot be made remotely
+   * startable without its own definition saying so.
    */
   trigger?: FlowTrigger;
   /** 5-field UTC cron expression; required when trigger is "cron". */
