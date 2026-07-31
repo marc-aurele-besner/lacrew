@@ -101,6 +101,15 @@ export {
   type PlanRequirementRow,
 } from "./planRequired.js";
 export {
+  upsertDualControlRule,
+  deleteDualControlRule,
+  listDualControlRules,
+  upsertDualControlReview,
+  recentDualControlReviews,
+  type DualControlRuleRow,
+  type DualControlReviewRow,
+} from "./dualControl.js";
+export {
   upsertSessionRow,
   markSessionRevokedRow,
   recentSessionRows,
