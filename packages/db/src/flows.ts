@@ -1,7 +1,13 @@
 /** Query helpers for the flows surface (keeps Drizzle inside @lacrew/db). */
 
 import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
-import { flowCheckpoints, flowDefinitions, flowRunState, flowRuns } from "./schema/flows.js";
+import {
+  flowCheckpoints,
+  flowDefinitions,
+  flowRunState,
+  flowRuns,
+  humanGates,
+} from "./schema/flows.js";
 import type { DbHandle } from "./client.js";
 
 export interface FlowDefinitionRow {
@@ -418,5 +424,88 @@ export async function recentFlowRuns(handle: DbHandle, limit: number): Promise<F
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt.toISOString(),
     result: row.result,
+  }));
+}
+
+export interface HumanGateRow {
+  id: string;
+  flowId?: string | null;
+  runId?: string | null;
+  stepId: string;
+  prompt: string;
+  options: Array<Record<string, unknown>>;
+  assignee?: string | null;
+  principal: string;
+  threadId: string;
+  questionId: string;
+  status: string;
+  outcome?: string | null;
+  optionId?: string | null;
+  answeredBy?: string | null;
+  resume?: Record<string, unknown> | null;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt?: string | null;
+}
+
+export async function upsertHumanGate(handle: DbHandle, row: HumanGateRow): Promise<void> {
+  const values = {
+    id: row.id,
+    flowId: row.flowId ?? null,
+    runId: row.runId ?? null,
+    stepId: row.stepId,
+    prompt: row.prompt,
+    options: row.options,
+    assignee: row.assignee ?? null,
+    principal: row.principal,
+    threadId: row.threadId,
+    questionId: row.questionId,
+    status: row.status,
+    outcome: row.outcome ?? null,
+    optionId: row.optionId ?? null,
+    answeredBy: row.answeredBy ?? null,
+    resume: row.resume ?? null,
+    createdAt: new Date(row.createdAt),
+    expiresAt: new Date(row.expiresAt),
+    resolvedAt: row.resolvedAt ? new Date(row.resolvedAt) : null,
+  };
+  await handle.db
+    .insert(humanGates)
+    .values(values)
+    .onConflictDoUpdate({ target: humanGates.id, set: values });
+}
+
+/**
+ * Every gate, newest first, bounded.
+ *
+ * Resolved gates load too, not only open ones: the record of a decision the run
+ * already acted on is what stops a restart from replaying the released branch,
+ * so dropping them at hydration would reopen exactly the hole the id closes.
+ */
+export async function recentHumanGates(handle: DbHandle, limit: number): Promise<HumanGateRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(humanGates)
+    .orderBy(desc(humanGates.createdAt))
+    .limit(limit);
+  return rows.map((row) => ({
+    id: row.id,
+    flowId: row.flowId,
+    runId: row.runId,
+    stepId: row.stepId,
+    prompt: row.prompt,
+    options: row.options ?? [],
+    assignee: row.assignee,
+    principal: row.principal,
+    threadId: row.threadId,
+    questionId: row.questionId,
+    status: row.status,
+    outcome: row.outcome,
+    optionId: row.optionId,
+    answeredBy: row.answeredBy,
+    resume: row.resume,
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
   }));
 }

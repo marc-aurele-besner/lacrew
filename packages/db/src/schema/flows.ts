@@ -127,3 +127,50 @@ export const flowCheckpoints = pgTable(
     index("flow_checkpoints_run_idx").on(table.runId),
   ],
 );
+
+/**
+ * Blocking human gates (F2.27): the questions holding runs, and the decisions
+ * that released them.
+ *
+ * One row per (run, step) — the id is derived from that pair, so re-entering a
+ * gate after a restart finds the question it already posted instead of asking a
+ * second time. The decision is kept after the run consumes it: a record of a
+ * spent answer is what stops one "yes" from releasing the same branch twice.
+ */
+export const humanGates = pgTable(
+  "orchestrator_human_gates",
+  {
+    /** Deterministic: run + flow + step + principal. */
+    id: text("id").primaryKey(),
+    flowId: text("flow_id"),
+    runId: text("run_id"),
+    stepId: text("step_id").notNull(),
+    /** The question as a person read it, already interpolated. */
+    prompt: text("prompt").notNull(),
+    /** `[{ id, label }]` — the only answers that resolve this gate. */
+    options: jsonb("options").notNull().$type<Array<Record<string, unknown>>>(),
+    /** Human seat or role the question was addressed to. Advisory. */
+    assignee: text("assignee"),
+    principal: text("principal").notNull().default(""),
+    threadId: text("thread_id").notNull(),
+    questionId: text("question_id").notNull(),
+    /** `pending` | `answered` | `timed_out` | `cancelled` | `consumed`. */
+    status: text("status").notNull(),
+    /** How it ended, kept once `status` becomes `consumed`. */
+    outcome: text("outcome"),
+    /** The option picked, on an answered gate. */
+    optionId: text("option_id"),
+    /** The human seat that picked it, as the conversation attributed it. */
+    answeredBy: text("answered_by"),
+    /** FlowResumeState, so whichever replica reads the answer can continue. */
+    resume: jsonb("resume").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("human_gates_question_idx").on(table.questionId),
+    index("human_gates_status_idx").on(table.status),
+    index("human_gates_run_idx").on(table.runId),
+  ],
+);
