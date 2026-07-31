@@ -24,6 +24,7 @@ they do for any other agent action.
 | `org`        | Hire, fire, reparent, activate, or change a cap / whitelist / policy | `onAllow` / `onEscalate` / `onDeny` |
 | `budget`     | Raise a grant, stream an allowance, run the next epoch               | `onAllow` / `onEscalate` / `onDeny` |
 | `governance` | Propose, vote, veto, or execute                                      | `next`                              |
+| `human`      | **Stops** the run until a person picks an option                     | one port per option / `timeoutPort` |
 | `wait`       | Parks the run until a human or an event releases it                  | `next`                              |
 
 Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
@@ -150,10 +151,11 @@ therefore stop and be picked back up later, by a different replica.
 | `error`     | Failed                                                        |
 | `cancelled` | Ended by an operator; **never** resumable                     |
 
-A run pauses in three ways: a `wait` step it declared, an `ask`-mode connector
-write waiting on a human ([connectors](./connectors.md)), or an operator asking
-for a pause. `waiting.reason` says which — `awaiting_human`,
-`awaiting_webhook`, `connector_ask`, or `operator`.
+A run pauses in four ways: a `wait` step it declared, a `human` gate holding it
+until someone decides, an `ask`-mode connector write waiting on a human
+([connectors](./connectors.md)), or an operator asking for a pause.
+`waiting.reason` says which — `awaiting_human`, `awaiting_webhook`,
+`human_gate`, `connector_ask`, or `operator`.
 
 ```ts
 const flows = createFlowsClient({ baseUrl, token });
@@ -201,6 +203,70 @@ Pausing an **agent** (`POST /agents/pause`) cancels that agent's parked runs
 with the reason attached: a paused agent should spend nothing, and a resumable
 run is authority waiting to be spent. Resuming a run always uses the run's
 original principal and scope, so a pause can never launder authority.
+
+## Blocking human gates
+
+A `human` step is the one that says "a person decides before the rest of this
+runs". Entering it posts **one** question into the run's thread, parks the run
+on the durable state above, and goes no further. When someone answers with one
+of the offered options, the run resumes down that option's port.
+
+```ts
+flow("shortlist", "Publish the shortlist")
+  .model("draft", { prompt: "Draft a shortlist from {{input}}", next: "signoff" })
+  .human("signoff", {
+    prompt: "Publish this shortlist?\n{{steps.draft.text}}",
+    options: [
+      { id: "yes", label: "Publish", port: "publish" },
+      { id: "no", label: "Skip", port: "memo" },
+    ],
+    timeoutMs: 4 * 60 * 60 * 1000,
+    timeoutPort: "memo",
+  })
+  .tool("publish", "typefully.create_draft", { content: "{{steps.draft.text}}" }, { next: null })
+  .model("memo", { prompt: "Record that nothing was published.", next: null })
+  .build();
+```
+
+The rules the step enforces:
+
+- **Exactly one question per run**, whatever happens. The gate is keyed by the
+  run and the step, so a resume — or a second replica picking the run up —
+  finds the question that is already open instead of asking again.
+- **Only the listed options resolve it.** "sure, go ahead" decides nothing: the
+  question is re-posted and the run stays parked, because a guess here publishes
+  something nobody chose.
+- **Only a human answers.** The author is resolved server-side when the message
+  is posted; an agent replying `yes` in its own thread leaves the gate open and
+  lands on the audit trail (`HumanGateUnresolved`).
+- **A timeout fails closed.** With a `timeoutPort` the run takes that branch;
+  without one it stops. Nobody answering is never read as a yes. The deadline
+  comes from `timeoutMs` (minimum 5 minutes) or `LACREW_HUMAN_GATE_TTL_MS`
+  (default a day), and the sweep that expires it runs once a minute on the
+  queue, so exactly one replica times each gate out.
+- **A cancelled run closes its gate.** A late answer then lands on a closed
+  question rather than restarting a run the operator ended.
+
+A gate is **control, not authority**. It releases a pipeline the running
+principal was already allowed to execute — it approves no spend, changes no
+policy, and signs nothing onchain. A spend downstream of a gate still meets the
+policy stack and the escalation path exactly as it would have without one; if
+money moves, an onchain `gate` step and the Approvals path are still what decide
+it.
+
+Open gates are readable at `GET /flows/gates?status=pending` (`lacrew flows
+gates`), and answered in the thread:
+
+```
+POST /messages {"thread":"agent:0x…","replyTo":"<questionId>","kind":"answer",
+                "authorKind":"human","body":"yes"}
+```
+
+There is deliberately no route that resolves a gate directly: a second way in
+would be one the conversation never gets to attribute to a seat. Every gate
+emits `HumanGateOpened`, then `HumanGateResolved` or `HumanGateTimedOut`, with
+the run and question ids — never the rendered prompt, which can name a private
+repo or a counterparty.
 
 ## Code-first
 

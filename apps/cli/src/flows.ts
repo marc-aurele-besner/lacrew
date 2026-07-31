@@ -242,6 +242,47 @@ export async function cmdFlows(args: string[]): Promise<void> {
       return;
     }
 
+    /**
+     * The questions holding runs (F2.27). Listed here rather than under the
+     * conversation because what an operator wants is the *run* that is stopped,
+     * and the answer that unblocks it — which is a message, not a command.
+     */
+    case "gates": {
+      const status = flagValue(rest, "--status") ?? "pending";
+      const gates = await orchClient(rest).gates(status === "all" ? {} : { status });
+      if (gates.length === 0) {
+        console.log(status === "all" ? "No human gates yet." : `No ${status} human gates.`);
+        return;
+      }
+      for (const gate of gates) {
+        console.log(
+          `${gate.status === "pending" ? "…" : "▪"} ${gate.id} · ${gate.flowId ?? "?"} · ` +
+            `step "${gate.stepId}" · ${gate.status}` +
+            `${gate.optionId ? ` → ${gate.optionId}` : ""}` +
+            `${gate.answeredBy ? ` by ${gate.answeredBy}` : ""}`,
+        );
+        console.log(`  ${gate.prompt.split("\n")[0] ?? ""}`);
+        console.log(
+          `  options: ${gate.options.map((o) => o.id).join(" | ")} · ` +
+            (gate.status === "pending" ? `expires ${gate.expiresAt}` : `since ${gate.createdAt}`),
+        );
+        if (gate.status === "pending") {
+          // No `lacrew answer` command on purpose: the answer has to come from
+          // a human seat in the thread, and a CLI subcommand would be a second
+          // way in that the conversation never gets to attribute.
+          console.log(
+            `  answer:  POST /messages {"thread":"${gate.threadId}",` +
+              `"replyTo":"${gate.questionId}","kind":"answer","authorKind":"human",` +
+              `"body":"${gate.options[0]?.id ?? "yes"}"}`,
+          );
+        }
+      }
+      console.log(
+        "\nA gate is answered by a human in the thread — there is no command that resolves one.",
+      );
+      return;
+    }
+
     case "pause":
     case "resume":
     case "cancel": {
@@ -315,6 +356,8 @@ Commands:
                                        capped by the flow's scope
   flows runs                           Recent run traces (newest first)
   flows open                           Runs still going or parked on something
+  flows gates [--status pending|all]   Blocking human gates (F2.27): which runs
+                                       are stopped on a person, and on what
   flows pause <runId> [--reason …]     Stop a run at its next step boundary
   flows resume <runId>                 Continue a paused run from its checkpoint
   flows cancel <runId> [--reason …]    End a run for good (never resumable)
