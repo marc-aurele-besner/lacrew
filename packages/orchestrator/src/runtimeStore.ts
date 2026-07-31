@@ -10,8 +10,14 @@ import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
 import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
 import type { PlanRequiredStore } from "./planRequired.js";
+import type { DualControlReviewRecord, DualControlStore } from "./dualControl.js";
 import {
+  dualControlScopeKey,
+  formatReviewer,
+  parseReviewer,
   planRequiredScopeKey,
+  type DualControlMode,
+  type DualControlRecord,
   type PlanRequiredMode,
   type PlanRequiredRecord,
 } from "@lacrew/flows";
@@ -26,13 +32,16 @@ import {
   allAgentControlRows,
   createDb,
   deleteConnectorMode,
+  deleteDualControlRule,
   deleteExternalMcpTool,
   deletePlanRequirement,
   insertMessageRow,
   listConnectorModes,
+  listDualControlRules,
   listExternalMcpTools,
   listPlanRequirements,
   recentConnectorAsks,
+  recentDualControlReviews,
   recentHumanGates,
   recentMessageRows,
   getDatabaseUrl,
@@ -44,6 +53,8 @@ import {
   upsertAgentControlRow,
   upsertConnectorAsk,
   upsertConnectorMode,
+  upsertDualControlReview,
+  upsertDualControlRule,
   upsertExternalMcpTool,
   upsertHumanGate,
   upsertPlanRequirement,
@@ -51,6 +62,7 @@ import {
   type AgentControlRow,
   type ConnectorAskRow,
   type DbHandle,
+  type DualControlReviewRow,
   type HumanGateRow,
   type IntentRow,
   type SessionRow,
@@ -65,7 +77,8 @@ export interface RuntimeStore
     ConnectorAskStore,
     HumanGateStore,
     ExternalMcpStore,
-    PlanRequiredStore {
+    PlanRequiredStore,
+    DualControlStore {
   readonly name: string;
   /** Upsert a session by keyId; must never throw into the caller's flow. */
   saveSession(record: SessionRecord): Promise<void>;
@@ -116,6 +129,8 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const humanGates = new Map<string, HumanGateRecord>();
   const externalMcpTools = new Map<string, ExternalMcpToolRecord>();
   const planRequirements = new Map<string, PlanRequiredRecord>();
+  const dualControlRules = new Map<string, DualControlRecord>();
+  const dualControlReviews = new Map<string, DualControlReviewRecord>();
 
   return {
     name: "memory",
@@ -201,6 +216,25 @@ export function createMemoryRuntimeStore(): RuntimeStore {
       if (humanGates.size > ASK_RING_MAX) {
         const oldest = humanGates.keys().next().value;
         if (oldest) humanGates.delete(oldest);
+      }
+    },
+    // One row per configured scope, so unbounded: a trimmed row is a crew that
+    // silently stops needing a second pair of eyes.
+    loadDualControlRules: async () => [...dualControlRules.values()],
+    saveDualControlRule: async (record) => {
+      dualControlRules.set(dualControlScopeKey(record.scope), record);
+    },
+    removeDualControlRule: async (scopeKey) => {
+      dualControlRules.delete(scopeKey);
+    },
+    loadDualControlReviews: async () => [...dualControlReviews.values()],
+    saveDualControlReview: async (record) => {
+      dualControlReviews.set(record.id, record);
+      if (dualControlReviews.size > ASK_RING_MAX) {
+        // Insertion order: the oldest review is the first key, and one old
+        // enough to fall off has long since expired.
+        const oldest = dualControlReviews.keys().next().value;
+        if (oldest) dualControlReviews.delete(oldest);
       }
     },
     close: async () => {},
@@ -321,6 +355,67 @@ function gateFromRow(row: HumanGateRow): HumanGateRecord {
     ...(row.optionId ? { optionId: row.optionId } : {}),
     ...(row.answeredBy ? { answeredBy: row.answeredBy } : {}),
     ...(row.resume ? { resume: row.resume as unknown as HumanGateRecord["resume"] } : {}),
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
+  };
+}
+
+/** Same shape both ways; the resume state rides as opaque JSON. */
+function reviewToRow(record: DualControlReviewRecord): DualControlReviewRow {
+  return {
+    id: record.id,
+    tool: record.tool,
+    effect: record.effect,
+    fingerprint: record.fingerprint,
+    args: record.args,
+    value: record.value ?? null,
+    actor: record.actor,
+    reviewer: record.reviewer,
+    reviewers: record.reviewers,
+    human: record.human,
+    escalated: record.escalated,
+    humanOverride: record.humanOverride,
+    threadId: record.threadId,
+    questionId: record.questionId,
+    flowId: record.flowId ?? null,
+    runId: record.runId ?? null,
+    status: record.status,
+    outcome: record.outcome ?? null,
+    decidedBy: record.decidedBy ?? null,
+    decidedByKind: record.decidedByKind ?? null,
+    resume: (record.resume as unknown as Record<string, unknown> | undefined) ?? null,
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    resolvedAt: record.resolvedAt ?? null,
+  };
+}
+
+function reviewFromRow(row: DualControlReviewRow): DualControlReviewRecord {
+  return {
+    id: row.id,
+    tool: row.tool,
+    effect: row.effect === "spend" ? "spend" : "write",
+    fingerprint: row.fingerprint,
+    args: row.args ?? {},
+    ...(row.value ? { value: row.value } : {}),
+    actor: row.actor,
+    reviewer: row.reviewer,
+    reviewers: row.reviewers ?? [],
+    human: row.human,
+    escalated: row.escalated,
+    humanOverride: row.humanOverride,
+    threadId: row.threadId,
+    questionId: row.questionId,
+    ...(row.flowId ? { flowId: row.flowId } : {}),
+    ...(row.runId ? { runId: row.runId } : {}),
+    status: row.status as DualControlReviewRecord["status"],
+    ...(row.outcome ? { outcome: row.outcome as DualControlReviewRecord["outcome"] } : {}),
+    ...(row.decidedBy ? { decidedBy: row.decidedBy } : {}),
+    ...(row.decidedByKind
+      ? { decidedByKind: row.decidedByKind === "human" ? "human" : "agent" }
+      : {}),
+    ...(row.resume ? { resume: row.resume as unknown as DualControlReviewRecord["resume"] } : {}),
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
@@ -672,6 +767,80 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await upsertHumanGate(db(), gateToRow(record));
       } catch (err) {
         warn("human gate save", err);
+      }
+    },
+    loadDualControlRules: async () => {
+      try {
+        return (await listDualControlRules(db())).flatMap((row) => {
+          const scope = modeScopeFromRow(row.scope);
+          const reviewer = parseReviewer(row.reviewer);
+          // A row this process cannot read is dropped rather than guessed at:
+          // reviewing to the wrong seat is worse than the loud refusal the
+          // caller turns an unreadable rule set into.
+          if (!scope || !reviewer) return [];
+          return [
+            {
+              scope,
+              mode: row.mode as DualControlMode,
+              reviewer,
+              threshold: {
+                minSpend: row.minSpend,
+                connectorWrites: row.connectorWrites,
+                orgMutators: row.orgMutators,
+              },
+              timeoutMs: row.timeoutMs,
+              at: row.updatedAt,
+            } satisfies DualControlRecord,
+          ];
+        });
+      } catch (err) {
+        // Rethrown: this control fails closed, so the caller has to know the
+        // rules are unreadable rather than run a crew as if nobody had asked
+        // for a second pair of eyes.
+        warn("dual control rules load", err);
+        throw err;
+      }
+    },
+    saveDualControlRule: async (record) => {
+      try {
+        await upsertDualControlRule(db(), {
+          scopeKey: dualControlScopeKey(record.scope),
+          scope: record.scope as unknown as Record<string, unknown>,
+          mode: record.mode,
+          reviewer: formatReviewer(record.reviewer),
+          minSpend: record.threshold.minSpend,
+          connectorWrites: record.threshold.connectorWrites,
+          orgMutators: record.threshold.orgMutators,
+          timeoutMs: record.timeoutMs,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("dual control rule save", err);
+      }
+    },
+    removeDualControlRule: async (scopeKey) => {
+      try {
+        await deleteDualControlRule(db(), scopeKey);
+      } catch (err) {
+        warn("dual control rule delete", err);
+      }
+    },
+    loadDualControlReviews: async () => {
+      try {
+        return (await recentDualControlReviews(db(), ASK_RING_MAX)).map(reviewFromRow);
+      } catch (err) {
+        // Rethrown for the same reason as the gates: a decision somebody
+        // already made that this process cannot see is one the parked run would
+        // ask for again — and a spent concurrence it could spend twice.
+        warn("dual control reviews load", err);
+        throw err;
+      }
+    },
+    saveDualControlReview: async (record) => {
+      try {
+        await upsertDualControlReview(db(), reviewToRow(record));
+      } catch (err) {
+        warn("dual control review save", err);
       }
     },
     close: async () => {

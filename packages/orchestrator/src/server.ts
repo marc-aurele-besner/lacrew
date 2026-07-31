@@ -29,6 +29,7 @@ import {
 } from "./externalMcp.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { createPlanRequirements, planRequiredFromEnv } from "./planRequired.js";
+import { createDualControl, dualControlFromEnv } from "./dualControl.js";
 import { createEvalRunner } from "./evalRunner.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
@@ -140,12 +141,50 @@ async function main(): Promise<void> {
     seed: [planRequiredFromEnv() ?? []].flat(),
     onEvent: (event) => runtime.recordAudit(event),
   });
-  // The answer that releases a suspended write — or a paused pipeline — is an
-  // ordinary message; nothing in the conversation knows that, and this is the
-  // only place it is read.
+  // Dual control (F2.32). Built beside plan-required and from the environment
+  // too, and a bad value stops the boot for the stronger reason: an
+  // orchestrator whose reviewer setting is unreadable would run a crew with
+  // nobody checking its merges while its config says somebody is.
+  const dualControl = createDualControl({
+    store: runtime.store,
+    postQuestion: ({ threadId, author, body, options, to }) =>
+      runtime.postMessage({
+        scope: scopeOfThread(threadId) ?? { kind: "org" },
+        author,
+        authorKind: "agent",
+        kind: "question",
+        body,
+        options,
+        ...(to ? { to } : {}),
+      }),
+    // Read per call, not cached: a reparent has to move a seat's reviewer with
+    // it, and a fired or paused reviewer has to stop being asked. A chart this
+    // process cannot reach yields nothing, which resolves to "ask a person" —
+    // the safe direction for a control that exists to add a reviewer.
+    orgSeats: async () => {
+      try {
+        const nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+        return nodes.map((node) => ({
+          account: node.account,
+          kind: node.kind,
+          parent: node.parent,
+          active: node.active,
+          paused: runtime.isAgentPaused(node.account),
+        }));
+      } catch {
+        return [];
+      }
+    },
+    seed: [dualControlFromEnv() ?? []].flat(),
+    onEvent: (event) => runtime.recordAudit(event),
+  });
+  // The answer that releases a suspended write — or a paused pipeline, or an
+  // effect awaiting a second pair of eyes — is an ordinary message; nothing in
+  // the conversation knows that, and this is the only place it is read.
   runtime.onMessage((message) => {
     connectorAsks.observe(message);
     humanGates.observe(message);
+    dualControl.observe(message);
   });
 
   const connectors =
@@ -234,6 +273,7 @@ async function main(): Promise<void> {
     asks: connectorAsks,
     gates: humanGates,
     planRequired,
+    dualControl,
   });
   // Webhook deliveries are accepted on the HTTP thread and run on a queue
   // worker, so the surface is handed the enqueue rather than the queue itself —
@@ -265,6 +305,7 @@ async function main(): Promise<void> {
     connectors,
     connectorModes,
     planRequired,
+    dualControl,
     ...(externalMcp ? { externalMcp } : {}),
     // The suite ships with @lacrew/flows, so it is always available; the
     // runner spawns a child per run rather than holding anything open.
@@ -380,6 +421,26 @@ async function main(): Promise<void> {
         "[@lacrew/orchestrator] plan-required rules could not be read: every crew is acting " +
           "without having to plan first. Onchain and connector controls are unaffected. " +
           "Fix the store and restart.",
+        err,
+      );
+    }
+
+    // Dual control (F2.32). Fatal-adjacent, unlike plan-required above: this
+    // control fails closed, so a process that cannot read its rules refuses the
+    // effects they cover rather than running crews as if nobody had asked for a
+    // second pair of eyes. The line says so plainly, because the operator's
+    // next question is why merges stopped.
+    try {
+      const loaded = await dualControl.hydrate();
+      if (loaded.rules > 0 || loaded.reviews > 0) {
+        console.log(
+          `[@lacrew/orchestrator] dual control: ${loaded.rules} rule(s), ${loaded.reviews} review(s) restored`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[@lacrew/orchestrator] dual-control rules could not be read: every effect they cover " +
+          "will be refused on this replica until the store is readable. Fix the store and restart.",
         err,
       );
     }
@@ -534,6 +595,19 @@ async function main(): Promise<void> {
         }
       } catch (err) {
         console.error("[@lacrew/orchestrator] human gate sweep failed:", err);
+      }
+      // Reviews nobody concurred with (F2.32). Same minute sweep; the parked
+      // run then resumes into a step that fails closed, which is the direction
+      // a second pair of eyes has to fail in.
+      try {
+        const expiredReviews = await dualControl.sweep();
+        if (expiredReviews.length > 0) {
+          console.log(
+            `[@lacrew/orchestrator] ${expiredReviews.length} dual-control review(s) timed out`,
+          );
+        }
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] dual-control sweep failed:", err);
       }
       // Crew heartbeats (F2.21) ride the same minute sweep, which is what makes
       // a tick exactly-once across replicas: the queue hands this job to one
