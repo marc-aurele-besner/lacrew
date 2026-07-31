@@ -11,6 +11,7 @@ import type {
   OrgStep,
   SwitchStep,
   ToolStep,
+  WaitStep,
 } from "./types.js";
 import { validateFlow } from "./validate.js";
 
@@ -133,6 +134,12 @@ export class FlowBuilder {
   /** Vote, veto, execute, or raise a generic governance proposal. */
   governance(id: string, opts: StepOpts<GovernanceStep>): this {
     this.def.steps.push({ id, kind: "governance", ...opts });
+    return this;
+  }
+
+  /** Park the run here until a human, a webhook, or an operator releases it. */
+  wait(id: string, opts: StepOpts<WaitStep> = {}): this {
+    this.def.steps.push({ id, kind: "wait", ...opts });
     return this;
   }
 

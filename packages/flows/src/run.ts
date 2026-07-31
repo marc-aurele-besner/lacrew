@@ -1,5 +1,10 @@
 import type {
+  FlowAttempt,
+  FlowAttemptOutcome,
   FlowBackend,
+  FlowCheckpoint,
+  FlowCheckpointSink,
+  FlowControl,
   FlowDefinition,
   FlowPrincipal,
   FlowResumeState,
@@ -13,6 +18,42 @@ import { fallThrough, validateFlow } from "./validate.js";
 
 /** Cycle validation already rejects loops; this bounds pathological definitions. */
 const MAX_STEPS = 64;
+
+/**
+ * LaCrew MCP tools that only read. Everything else — a policy-gated write, a
+ * message posted into a thread, any connector route — is assumed to change
+ * something a second call would change again.
+ */
+const READ_ONLY_TOOLS = new Set([
+  "lacrew_get_org_tree",
+  "lacrew_list_pending_intents",
+  "lacrew_check_policy",
+  "lacrew_read_thread",
+]);
+
+/**
+ * Whether re-entering this step could do the same work twice.
+ *
+ * The question a resume has to answer, and it is answered pessimistically for
+ * anything this package cannot see the far side of: a `<connector>.<route>`
+ * call is the operator's own surface, and its method is not in the definition.
+ * Being wrong in the cautious direction costs an attempt record; being wrong in
+ * the other direction is a second payment.
+ */
+export function stepHasSideEffects(step: FlowStep): boolean {
+  switch (step.kind) {
+    case "gate":
+    case "org":
+    case "budget":
+    case "governance":
+    case "agent":
+      return true;
+    case "tool":
+      return !READ_ONLY_TOOLS.has(step.tool);
+    default:
+      return false;
+  }
+}
 
 type StepOutputs = Record<string, { text?: string; json?: string; verdict?: string }>;
 
@@ -117,6 +158,10 @@ function truncate(s: string, n = 160): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Shared edge resolution for every policy-gated kind (gate / org / budget). */
 function routeVerdict(
   def: FlowDefinition,
@@ -198,6 +243,25 @@ export type RunFlowOptions = {
    * step is what lets the same code path do the work it deferred.
    */
   resume?: FlowResumeState;
+  /**
+   * Durable state (F2.26). Given one, every completed step is checkpointed
+   * before the next one starts, and every side-effecting step opens an attempt
+   * record before its call goes out. Omitted, the run behaves exactly as it did
+   * before checkpoints existed — the engine keeps no storage of its own.
+   */
+  checkpoints?: FlowCheckpointSink;
+  /**
+   * Asked before each step whether the run may proceed. This is how an operator
+   * pauses or cancels a run that is already moving: the decision lands between
+   * two steps, never inside one, so nothing is abandoned mid-write.
+   */
+  control?: (ctx: {
+    runId: string;
+    /** The step about to run. */
+    stepId: string;
+    /** Steps completed so far. */
+    seq: number;
+  }) => Promise<FlowControl> | FlowControl;
 };
 
 /**
@@ -247,6 +311,15 @@ export async function runFlow(
   let current: string | null = opts.resume?.stepId ?? def.entry ?? def.steps[0]?.id ?? null;
   let status: FlowRunResult["status"] = "completed";
   let waiting: FlowRunResult["waiting"];
+  const sink = opts.checkpoints;
+  /** Continues the numbering across a resume: a run has one sequence, not one per attempt. */
+  let seq = steps.length;
+  /**
+   * True only while the first step of a resumed run executes. A `wait` step is
+   * released by the resume itself; a later one in the same pass is a fresh wait
+   * and must park the run again.
+   */
+  let releasing = Boolean(opts.resume);
   // A step the definition no longer has: the flow was edited while a run of it
   // sat waiting. Failing here beats resuming into whatever step now happens to
   // carry that id, which would run work the operator had already removed.
@@ -282,6 +355,32 @@ export async function runFlow(
       break;
     }
     const step = byId.get(current) as FlowStep;
+
+    if (opts.control) {
+      let decision: FlowControl = "continue";
+      try {
+        decision = await opts.control({ runId, stepId: step.id, seq });
+      } catch {
+        // An unreadable control answer is not a decision. A run that was
+        // already authorised to run keeps going: stalling every run on a
+        // transient store hiccup would turn a blip into a queue of stalls.
+        decision = "continue";
+      }
+      if (decision === "cancel") {
+        status = "cancelled";
+        break;
+      }
+      if (decision === "pause") {
+        status = "waiting";
+        waiting = {
+          stepId: step.id,
+          reason: "operator",
+          detail: `paused before "${step.label ?? step.id}"`,
+        };
+        break;
+      }
+    }
+
     const t0 = Date.now();
     const trace: FlowStepTrace = {
       stepId: step.id,
@@ -292,7 +391,30 @@ export async function runFlow(
       ms: 0,
     };
 
+    // Opened before the call, settled after it. A crash in between leaves the
+    // attempt open, which is the only state that tells a restarting
+    // orchestrator "this write may already have happened".
+    const attempt: FlowAttempt | undefined =
+      sink && stepHasSideEffects(step)
+        ? {
+            runId,
+            flowId: def.id,
+            stepId: step.id,
+            kind: step.kind,
+            seq: seq + 1,
+            key: `${runId}:${step.id}:${seq + 1}`,
+            idempotent: step.idempotent === true,
+            startedAt: new Date().toISOString(),
+          }
+        : undefined;
+    let opened = false;
+    let outcome: FlowAttemptOutcome = "ok";
+
     try {
+      if (attempt) {
+        await sink?.begin?.(attempt);
+        opened = true;
+      }
       switch (step.kind) {
         case "model": {
           const result = await backend.complete({
@@ -451,9 +573,26 @@ export async function runFlow(
           trace.next = step.next === undefined ? fallThrough(def, step.id) : step.next;
           break;
         }
+        case "wait": {
+          if (!releasing) {
+            throw new FlowWaitingError({
+              reason: step.reason ?? "awaiting_human",
+              ...(step.token ? { token: interpolate(step.token, ctx) } : {}),
+              detail: step.detail
+                ? interpolate(step.detail, ctx)
+                : `waiting at "${step.label ?? step.id}"`,
+            });
+          }
+          outputs[step.id] = { text: "released", json: JSON.stringify({ released: true }) };
+          trace.output = { released: true };
+          trace.summary = "released — the wait is over";
+          trace.next = step.next === undefined ? fallThrough(def, step.id) : step.next;
+          break;
+        }
       }
     } catch (err) {
       if (isFlowWaiting(err)) {
+        outcome = "paused";
         trace.status = "waiting";
         trace.summary = err.detail ?? err.message;
         trace.next = null;
@@ -465,6 +604,7 @@ export async function runFlow(
           ...(err.detail ? { detail: err.detail } : {}),
         };
       } else {
+        outcome = "error";
         trace.status = "error";
         trace.error = err instanceof Error ? err.message : String(err);
         trace.next = null;
@@ -472,14 +612,78 @@ export async function runFlow(
       }
     }
 
+    if (attempt && opened) {
+      try {
+        await sink?.settle?.(attempt, outcome);
+      } catch (err) {
+        // The call may already have gone out and we can no longer say so
+        // durably. Reporting the run as fine would hand a resume the same
+        // write to redo, so the run fails here and is reconciled by hand.
+        trace.status = "error";
+        trace.error = `attempt_settle_failed:${step.id}: ${errText(err)}`;
+        trace.next = null;
+        status = "error";
+      }
+    }
+
     trace.ms = Date.now() - t0;
     steps.push(trace);
+    seq += 1;
+    releasing = false;
     try {
       opts.onStep?.(trace);
     } catch {
       /* observer errors never break the run */
     }
     current = trace.next;
+
+    if (sink) {
+      const paused = status === "waiting";
+      // A paused run re-enters the step it paused on; a running one moves to
+      // the cursor the step routed to.
+      const next = paused ? (waiting?.stepId ?? null) : current;
+      const checkpoint: FlowCheckpoint = {
+        runId,
+        flowId: def.id,
+        seq,
+        stepId: step.id,
+        nextStepId: next,
+        status: paused ? "paused" : "running",
+        ...(paused && waiting ? { pause: waiting } : {}),
+        ...(next
+          ? {
+              state: {
+                stepId: next,
+                // Snapshots: the live objects keep changing after this returns.
+                outputs: { ...outputs },
+                steps: [...steps],
+                startedAt,
+                ...(input === undefined ? {} : { input }),
+              },
+            }
+          : {}),
+        at: new Date().toISOString(),
+      };
+      try {
+        await sink.record(checkpoint);
+      } catch (err) {
+        // The step happened; the record of it did not. Continuing would run the
+        // next step from a cursor no restart could recover, so the run stops
+        // here with the reason on the trail rather than pretending otherwise.
+        status = "error";
+        waiting = undefined;
+        steps.push({
+          stepId: step.id,
+          kind: step.kind,
+          status: "error",
+          error: `checkpoint_failed:${step.id}: ${errText(err)}`,
+          next: null,
+          ms: 0,
+        });
+        break;
+      }
+    }
+
     if (status === "error" || status === "waiting") break;
   }
 

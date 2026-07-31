@@ -76,6 +76,17 @@ type FlowStepBase = {
   /** Free-form note shown in builders; never sent to models. */
   note?: string;
   /**
+   * Declares that running this step twice is the same as running it once.
+   *
+   * Only consulted for side-effecting steps, and only after a crash: a run
+   * whose write attempt never finalized is reconciled by re-entering the step
+   * when it says this, and failed closed when it does not (F2.26). Untrue here
+   * is a double spend, so it stays opt-in and off by default — the operator is
+   * asserting something about the far side of the call, which is a claim this
+   * package cannot check.
+   */
+  idempotent?: boolean;
+  /**
    * Canvas presentation (visual builder only; ignored by runFlow / validate / codegen).
    * `edgeLabels` offsets mid-edge pills; `refs` are n8n-style extra data inputs
    * (source step ids keyed by handle id) that do not affect control-flow edges.
@@ -244,6 +255,26 @@ export type GovernanceStep = FlowStepBase & {
   next?: string | null;
 };
 
+/**
+ * Suspend the run here until something outside it says to continue.
+ *
+ * The pause is declared by the flow rather than discovered by a backend, which
+ * is what a human gate or an external event needs: a step that says "a person
+ * signs off before the rest of this runs" belongs in the definition an operator
+ * reads, not in the failure mode of a connector call. Resuming re-enters the
+ * step and falls through — the wait is over, so the step's work is to continue.
+ */
+export type WaitStep = FlowStepBase & {
+  kind: "wait";
+  /** Stable pause code recorded on the run; defaults to "awaiting_human". */
+  reason?: FlowPauseReason;
+  /** Names the thing that will release it (an ask id, a delivery key); interpolated. */
+  token?: string;
+  /** The one line a human reads in a stalled-run list; interpolated. */
+  detail?: string;
+  next?: string | null;
+};
+
 export type FlowStep =
   | ModelStep
   | ToolStep
@@ -253,7 +284,8 @@ export type FlowStep =
   | AgentStep
   | OrgStep
   | BudgetStep
-  | GovernanceStep;
+  | GovernanceStep
+  | WaitStep;
 export type FlowStepKind = FlowStep["kind"];
 
 export type FlowTrigger = "manual" | "epoch" | "cron" | "webhook";
@@ -332,6 +364,21 @@ export type FlowStepTrace = {
 };
 
 /**
+ * The vocabulary of pause codes this package produces.
+ *
+ * `connector_ask` is an ask-mode write waiting on a human (F2.24);
+ * `awaiting_human` and `awaiting_webhook` are declared by a `wait` step;
+ * `operator` is a person pausing a run that was mid-flight. A backend may still
+ * suspend with a reason of its own — `FlowWaiting.reason` stays a string, since
+ * an integration knows things this package does not.
+ */
+export type FlowPauseReason =
+  | "connector_ask"
+  | "awaiting_human"
+  | "awaiting_webhook"
+  | "operator";
+
+/**
  * Why a run stopped short of finishing, and what it is waiting for.
  *
  * `reason` is a stable code (`connector_ask`), `token` names the thing that
@@ -341,7 +388,7 @@ export type FlowStepTrace = {
  */
 export type FlowWaiting = {
   stepId: string;
-  reason: string;
+  reason: FlowPauseReason | (string & {});
   token?: string;
   detail?: string;
 };
@@ -365,7 +412,97 @@ export type FlowResumeState = {
   startedAt?: string;
 };
 
-export type FlowRunStatus = "completed" | "error" | "max_steps" | "waiting";
+/**
+ * Terminal unless it says otherwise: `waiting` is the paused state (parked and
+ * resumable), `cancelled` is an operator ending a run for good. A cancelled run
+ * never resumes — that is the whole point of the status, and the surface that
+ * owns run state is what enforces it.
+ */
+export type FlowRunStatus =
+  | "completed"
+  | "error"
+  | "max_steps"
+  | "waiting"
+  | "cancelled";
+
+/**
+ * What a caller may do to a run between two steps.
+ *
+ * Consulted by `runFlow` before each step because that is the only place a
+ * decision can be honoured without abandoning work already in flight: a pause
+ * that landed mid-write would either lose the call's result or duplicate it.
+ */
+export type FlowControl = "continue" | "pause" | "cancel";
+
+/**
+ * The durable record of a step that finished (F2.26).
+ *
+ * Written *before* the next step starts, so the process that dies between two
+ * steps leaves behind exactly one honest cursor: everything up to `stepId`
+ * happened, `nextStepId` did not. `state` is what a resume hands back to
+ * `runFlow`; it is absent on the checkpoint of a step the run ended on, since
+ * there is nothing left to re-enter.
+ *
+ * Checkpoints are operational state, never an authority surface. Resuming from
+ * one re-runs the same policy checks against the same principal — it does not
+ * carry a verdict forward, and it cannot admit anything policy would refuse.
+ */
+export type FlowCheckpoint = {
+  runId: string;
+  flowId: string;
+  /** Monotonic within a run: 1 for the first completed step. */
+  seq: number;
+  /** The step whose completion this records. */
+  stepId: string;
+  /** Cursor — the step a resume enters, or null when the run went no further. */
+  nextStepId: string | null;
+  status: "running" | "paused";
+  /** Set when `status` is "paused": what the run is parked on. */
+  pause?: FlowWaiting;
+  state?: FlowResumeState;
+  at: string;
+};
+
+/**
+ * An in-flight side-effecting step: opened before the call goes out, settled
+ * once it returned.
+ *
+ * A crash between the two leaves the attempt open, which is the one state a
+ * resume must not treat as "not started yet". `key` is stable per (run, step,
+ * seq), so a redelivered resume of the same cursor reconciles against the same
+ * attempt rather than opening a second one.
+ */
+export type FlowAttempt = {
+  runId: string;
+  flowId: string;
+  stepId: string;
+  kind: FlowStepKind;
+  seq: number;
+  key: string;
+  /** The step's own claim that a repeat is harmless; see `FlowStepBase`. */
+  idempotent: boolean;
+  startedAt: string;
+};
+
+/** How an attempt ended. `paused` means the call never went out. */
+export type FlowAttemptOutcome = "ok" | "error" | "paused";
+
+/**
+ * Where durability actually lives. The engine stays storage-free: the
+ * orchestrator binds this to Postgres (or to memory, for tests), and a run
+ * given no sink runs exactly as it did before checkpoints existed.
+ *
+ * `record` is awaited, and a throw fails the run. Continuing past a checkpoint
+ * that was not written would leave a side-effecting step with no durable record
+ * that it ran — the precise state resume is not allowed to guess about.
+ */
+export interface FlowCheckpointSink {
+  record(checkpoint: FlowCheckpoint): Promise<void>;
+  /** Open an attempt on a side-effecting step, before the call goes out. */
+  begin?(attempt: FlowAttempt): Promise<void>;
+  /** Close it once the call returned, threw, or suspended. */
+  settle?(attempt: FlowAttempt, outcome: FlowAttemptOutcome): Promise<void>;
+}
 
 export type FlowRunResult = {
   runId: string;
