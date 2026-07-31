@@ -28,6 +28,7 @@ import {
   loadExternalMcpServersFromEnv,
 } from "./externalMcp.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
+import { createPlanRequirements, planRequiredFromEnv } from "./planRequired.js";
 import { createEvalRunner } from "./evalRunner.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
@@ -125,6 +126,20 @@ async function main(): Promise<void> {
     onEvent: (event) => runtime.recordAudit(event),
     ttlMs: humanGateTtlMs(),
   });
+  // Plan-required mode (F2.31). Built before the surfaces it guards, and from
+  // the environment as well as the store: a self-host operator sets
+  // LACREW_PLAN_REQUIRED once, and a bad value stops the boot rather than
+  // starting an orchestrator whose crews are unsupervised in a way its config
+  // says they are not.
+  const planRequired = createPlanRequirements({
+    store: runtime.store,
+    // Read live from the conversation: a plan posted a second ago by the run
+    // being checked has to count.
+    messagesIn: (threadId) =>
+      runtime.thread(scopeOfThread(threadId) ?? { kind: "org" }, 200),
+    seed: [planRequiredFromEnv() ?? []].flat(),
+    onEvent: (event) => runtime.recordAudit(event),
+  });
   // The answer that releases a suspended write — or a paused pipeline — is an
   // ordinary message; nothing in the conversation knows that, and this is the
   // only place it is read.
@@ -218,6 +233,7 @@ async function main(): Promise<void> {
     ...(externalMcp ? { externalMcp } : {}),
     asks: connectorAsks,
     gates: humanGates,
+    planRequired,
   });
   // Webhook deliveries are accepted on the HTTP thread and run on a queue
   // worker, so the surface is handed the enqueue rather than the queue itself —
@@ -248,6 +264,7 @@ async function main(): Promise<void> {
     mcpBackend,
     connectors,
     connectorModes,
+    planRequired,
     ...(externalMcp ? { externalMcp } : {}),
     // The suite ships with @lacrew/flows, so it is always available; the
     // runner spawns a child per run rather than holding anything open.
@@ -342,6 +359,27 @@ async function main(): Promise<void> {
       console.error(
         "[@lacrew/orchestrator] connector write policy could not be read: every write route is " +
           "running at its declared default and past confirmations are unknown. Fix the store and restart.",
+        err,
+      );
+    }
+
+    // Plan-required rules (F2.31). Loud but not fatal: unlike the controls
+    // above, this one fails *open* by design — a crew whose requirement could
+    // not be read keeps working, bounded by every onchain and connector control
+    // as before, and the line is here so nobody reads a quiet trail as a crew
+    // that has been planning all along.
+    try {
+      const requirements = await planRequired.hydrate();
+      if (requirements > 0) {
+        console.log(
+          `[@lacrew/orchestrator] plan-required: ${requirements} rule(s) restored`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[@lacrew/orchestrator] plan-required rules could not be read: every crew is acting " +
+          "without having to plan first. Onchain and connector controls are unaffected. " +
+          "Fix the store and restart.",
         err,
       );
     }

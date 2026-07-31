@@ -200,6 +200,12 @@ export type ConnectorRegistry = {
   toolNames(): string[];
   /** Whether `name` is a connector tool (as opposed to a `lacrew_*` tool). */
   handles(name: string): boolean;
+  /**
+   * Whether a route reads or writes, by tool name; undefined when this registry
+   * does not hold it. Read by plan-required mode (F2.31), which gates writes
+   * and must never gate a read.
+   */
+  effectOf(name: string): "read" | "write" | undefined;
   call(
     name: string,
     args: Record<string, unknown>,
@@ -430,6 +436,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
     toolNames: () =>
       [...byId.values()].flatMap((c) => c.routes.map((r) => `${c.id}.${r.name}`)),
     handles: (name) => resolve(name) !== undefined,
+    effectOf: (name) => resolve(name)?.route.effect,
     describe: (subject = {}) =>
       [...byId.values()].map((connector) => {
         const envVars = connectorEnvVars(connector);

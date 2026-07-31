@@ -50,6 +50,16 @@ import {
   validateModeRoute,
   type ConnectorModesSurface,
 } from "./connectorPolicy.js";
+import {
+  isPlanRequired,
+  type PlanRequirementsSurface,
+} from "./planRequired.js";
+import {
+  PLAN_REQUIRED_MODES,
+  parsePlanRequiredScope,
+  planRequiredScopeKey,
+  type PlanRequiredMode,
+} from "@lacrew/flows";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
@@ -69,6 +79,8 @@ export interface OrchestratorAppOptions {
   connectors?: ConnectorRegistry;
   /** Write-mode rules (F2.24); absent in embedders that wired none. */
   connectorModes?: ConnectorModesSurface;
+  /** Plan-required rules (F2.31); absent in embedders that wired none. */
+  planRequired?: PlanRequirementsSurface;
   /** Attached third-party MCP servers (F2.30); absent when none is configured. */
   externalMcp?: ExternalMcpRegistry;
   /** Eval suite runner (F2.29); absent in embedders that wired none. */
@@ -148,6 +160,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     mcpBackend,
     connectors,
     connectorModes,
+    planRequired,
     externalMcp,
     evals,
     connectorAsks,
@@ -576,6 +589,83 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
+  /* ——— plan-required mode (F2.31) ——— */
+
+  /**
+   * The requirements in force, and the vocabulary a UI renders.
+   *
+   * `?as=<address>` also answers the question an operator actually has — "what
+   * does *this* seat run under?" — by resolving the rules the way a call would,
+   * so an inherited setting is legible without re-implementing precedence in a
+   * dashboard.
+   */
+  app.get("/plan-required", async (c) => {
+    if (!planRequired) return jsonBig(c, { error: "plan_required_unavailable" }, 503);
+    const as = c.req.query("as")?.trim();
+    return jsonBig(c, {
+      rules: planRequired.list(),
+      modes: PLAN_REQUIRED_MODES,
+      ...(as
+        ? { effective: planRequired.resolve({ principal: as, managers: await managersOf(as) }) }
+        : {}),
+    });
+  });
+
+  /**
+   * Set or clear the rule at one scope. `mode` absent clears it, falling the
+   * scope back to what it inherits — distinct from setting `off`, which pins it
+   * against a broader rule someone adds later.
+   */
+  app.put("/plan-required", async (c) => {
+    if (!planRequired) return jsonBig(c, { error: "plan_required_unavailable" }, 503);
+    const body = await bodyOf<{
+      scope?: unknown;
+      mode?: string | null;
+      windowMs?: number;
+      minPlanChars?: number;
+      acceptUpstreamPlan?: boolean;
+    }>(c);
+    const scope = parsePlanRequiredScope(body.scope);
+    if (!scope) return jsonBig(c, { error: "scope_required" }, 400);
+
+    if (body.mode === null || body.mode === undefined) {
+      const cleared = await planRequired.clear(scope);
+      if (cleared) {
+        runtime.recordAudit({
+          type: "PlanRequiredChanged",
+          at: new Date().toISOString(),
+          payload: { scope: planRequiredScopeKey(scope), mode: null, action: "cleared" },
+        });
+      }
+      return jsonBig(c, { cleared, rules: planRequired.list() });
+    }
+    try {
+      const rule = await planRequired.set({
+        scope,
+        mode: body.mode as PlanRequiredMode,
+        ...(typeof body.windowMs === "number" ? { windowMs: body.windowMs } : {}),
+        ...(typeof body.minPlanChars === "number" ? { minPlanChars: body.minPlanChars } : {}),
+        ...(typeof body.acceptUpstreamPlan === "boolean"
+          ? { acceptUpstreamPlan: body.acceptUpstreamPlan }
+          : {}),
+      });
+      runtime.recordAudit({
+        type: "PlanRequiredChanged",
+        at: rule.at,
+        payload: {
+          scope: planRequiredScopeKey(scope),
+          mode: rule.mode,
+          windowMs: rule.windowMs,
+          acceptUpstreamPlan: rule.acceptUpstreamPlan,
+          action: "set",
+        },
+      });
+      return jsonBig(c, { rule, rules: planRequired.list() });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_plan_required") }, 400);
+    }
+  });
+
   /**
    * Ask-mode confirmations. `?status=pending` is the queue a human works from;
    * the resolved ones stay readable because "who said yes to that merge" is the
@@ -623,6 +713,27 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       as?: string;
     }>(c);
     if (!body.name?.trim()) return jsonBig(c, { error: "name_required" }, 400);
+    // Plan-required (F2.31) is asked here too, and first: a tool call outside a
+    // flow is the same side effect, and a mode that only bound flows would be a
+    // control an agent walks around by using the tool surface directly.
+    if (planRequired) {
+      const as = body.as?.trim();
+      try {
+        await planRequired.check({
+          tool: body.name,
+          // With no `as`, the call acts as the process-wide worker — the same
+          // identity `runMcpTool` would sign it with.
+          principal: as || runtime.defaultAgent,
+          managers: as ? await managersOf(as) : [],
+          effectOf: (tool) => connectors?.effectOf(tool) ?? externalMcp?.effectOf(tool),
+        });
+      } catch (err) {
+        if (isPlanRequired(err)) return jsonBig(c, { error: err.message }, 409);
+        // The checker failing is not the caller's problem: this control fails
+        // open, and everything behind it is still bounded as before.
+        console.error("[@lacrew/orchestrator] plan-required check failed:", err);
+      }
+    }
     // An external tool goes through the allowlist like any other caller would:
     // this route is how an operator tries one out, not a way around the policy.
     // `as` resolves the seat's rules; without it the workspace's apply.
