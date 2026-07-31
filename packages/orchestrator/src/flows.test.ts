@@ -28,6 +28,9 @@ function recordingStore() {
   const defs = new Map<string, FlowDefinition>();
   const runs: FlowRunResult[] = [];
   const store: FlowStore = {
+    // Run state (pause / resume) comes from the memory store; only the
+    // definition + run-history halves are what these assertions are about.
+    ...createMemoryFlowStore(),
     name: "recording",
     save: async (def) => {
       defs.set(def.id, def);

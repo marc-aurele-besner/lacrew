@@ -40,6 +40,15 @@ export type ProtocolEventType =
   | "FlowSaved"
   | "FlowRun"
   /**
+   * A run's lifecycle was changed by a person rather than by the flow (F2.26):
+   * paused mid-flight, resumed from a checkpoint, or cancelled for good.
+   *
+   * Separate from `FlowRun` because the question they answer is different — not
+   * "what did the crew do" but "who stopped it, and when". A cancelled run that
+   * had already spent leaves both rows, and the pair is the record.
+   */
+  | "FlowRunLifecycle"
+  /**
    * A flow reached outside LaCrew through an operator-registered connector.
    * Carries what was called and how it went — connector, route, method,
    * effect, status, duration — and never the response body or the credential.

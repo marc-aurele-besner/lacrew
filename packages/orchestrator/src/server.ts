@@ -238,6 +238,20 @@ async function main(): Promise<void> {
       `[@lacrew/orchestrator] flows hydrated: ${hydrated.flows} definitions, ${hydrated.runs} runs (${flows.storeName})`,
     );
   }
+  // Runs in flight when this process (or the one before it) stopped: resumed
+  // from their last checkpoint, or failed closed if they were mid-write (F2.26).
+  // After definitions, because a resume runs against the flow it started under.
+  try {
+    const recovered = await flows.hydrateRuns();
+    if (recovered.resumed + recovered.failed + recovered.paused > 0) {
+      console.log(
+        `[@lacrew/orchestrator] flow runs recovered: ${recovered.resumed} resumed, ` +
+          `${recovered.failed} failed closed, ${recovered.paused} still paused`,
+      );
+    }
+  } catch (err) {
+    console.error("[@lacrew/orchestrator] flow run recovery failed:", err);
+  }
   // After flows: a trigger points at a definition, and hydrating it first would
   // make every restored hook look like it names a flow that does not exist.
   try {
