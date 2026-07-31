@@ -178,6 +178,43 @@ so a `DENY` still merges, and the golden scenario has to go red naming
 `github.merge_pull_request`. An eval suite that survives that mutation is
 decoration.
 
+## Running them from a workspace
+
+CI answers "did anyone break this on the way in". An operator has a different
+question — *my* desk, the blueprint I installed, right now — and reading a badge
+on someone else's repository is not an answer to it. So the orchestrator serves
+the same suite:
+
+```bash
+curl -s http://127.0.0.1:8788/flows/eval | jq '.scenarios[].id'
+curl -s -X POST http://127.0.0.1:8788/flows/eval \
+  -H 'content-type: application/json' \
+  -d '{"blueprint":"github-experts"}' | jq '{ok, passed, failed, matched}'
+```
+
+`{"ids":[…]}`, `{"flow":"…"}` and `{"blueprint":"…"}` all filter; naming
+nothing runs everything. A filter that matches no scenario reports
+`matched: 0` rather than a green suite — a pass that tested nothing is the one
+result worth refusing to render as success.
+
+**The suite runs in a child process**, and that is not an implementation
+detail. The harness blocks `fetch` for the duration of a run; inside a
+long-lived orchestrator that block would fail every connector call, model
+completion and RPC read in flight. A funded crew's work must not break because
+somebody pressed "run evals". The child exists to be blocked, and this
+process's `fetch` is untouched.
+
+One run at a time. A second request while one is in flight is refused with
+`409 eval_already_running` rather than queued: the caller wants the state of
+things now, and a queue would hand them a stale answer later. A run that
+outlives `LACREW_EVAL_TIMEOUT_MS` (default 120s) is killed and reported as
+`504 eval_timeout`.
+
+Each run leaves a `FlowEvalRun` audit row — counts and timing, never a
+scenario's contents. An eval changes nothing, so the row is not evidence about
+the crew; it is evidence about when the question was last asked, which is what
+a reader wants when a desk starts behaving differently.
+
 ## When to add one
 
 Add a scenario when you:

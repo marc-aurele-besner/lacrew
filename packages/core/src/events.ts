@@ -143,6 +143,17 @@ export type ProtocolEventType =
    */
   | "HumanGateUnresolved"
   /**
+   * Somebody ran the eval suite against this deployment (F2.29).
+   *
+   * An eval changes nothing — no spend, no call, no state — so this row is not
+   * evidence about the crew. It is evidence about the *question being asked*:
+   * a desk whose scenarios were last run in March, or a run that went from
+   * green to two failures after a template edit, is exactly what a reader wants
+   * to find when a crew starts behaving differently. Counts and timing only;
+   * what each scenario asserts is served by the run itself.
+   */
+  | "FlowEvalRun"
+  /**
    * A crew reached outside LaCrew through an **external** MCP server (F2.30).
    *
    * Distinct from `ToolCalled`, which is an operator-written connector route:
