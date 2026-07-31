@@ -288,6 +288,13 @@ const defiDesk: CrewBlueprint = {
       how: "The cold wallet is the only admitted payout target and no bridge is admitted, so both come back DENY until governance says otherwise.",
     },
     {
+      never: "The executor proposes a trade nobody else looked at",
+      enforcedBy: "flow",
+      how: "Recommended: dual control (F2.32) on the executor seat in `spends_and_writes` with a clip-size threshold, so a propose above it parks until the desk manager concurs in the thread. `lacrew dual-control set --agent <executor> --mode spends_and_writes --min-spend <clip>`.",
+      residualRisk:
+        "Off-chain and off by default — an operator has to turn it on, and a manager agent concurring is review rather than trust, since whatever compromised the executor may reach it too. Caps, the whitelist and escalation are what actually bound the money.",
+    },
+    {
       never: "Unlimited spend from a compromised seat",
       enforcedBy: "session",
       how: "A run's session key carries maxValue = min(seat cap, flow scope cap) and expires; EscalationRouter reverts an over-ceiling propose with SessionValueExceeded.",
@@ -539,6 +546,13 @@ const githubExperts: CrewBlueprint = {
       never: "Spending with a vendor nobody approved",
       enforcedBy: "policy",
       how: "WhitelistPolicy denies any target that is not admitted; admitting one is a high-tier proposal.",
+    },
+    {
+      never: "One seat both writes the change and merges it",
+      enforcedBy: "flow",
+      how: "Recommended: dual control (F2.32) on the merge path in `risky_writes`, so `github.merge_pull_request` parks until the review lead concurs in the thread. `lacrew dual-control set --crew <review-lead> --mode risky_writes --reviewer manager`.",
+      residualRisk:
+        "Off-chain and off by default. A reviewer agent on the same orchestrator is a second reading, not a second trust boundary — set `--reviewer role:human` for repos where a wrong merge is not recoverable.",
     },
     {
       never: "A PR from an author impersonating a bot gets merged",

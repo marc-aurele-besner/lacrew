@@ -34,6 +34,7 @@ Three different questions, and it is worth keeping them apart:
 | Control | Question it answers | Who decides | Where |
 | --- | --- | --- | --- |
 | Plan-required (F2.31) | did the agent say what it was about to do? | the agent itself | orchestrator |
+| [Dual control](./dual-control.md) (F2.32) | does a second seat agree with this effect? | another agent, or a person | orchestrator |
 | Human gate (F2.27) | does a person agree, right now? | a human seat | orchestrator |
 | Escalation (`ESCALATE`) | is this spend admitted, and by whom? | the org chart + policy | onchain |
 

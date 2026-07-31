@@ -29,6 +29,7 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 - [Flow & blueprint evals](./evals.md) — the deterministic scenario suite that holds a crew to what its blueprint claims it cannot do
 - [Inference cost budgets](./inference-budgets.md) — what a crew's model calls may cost you, bounded separately from what it may spend onchain
 - [Plan-required mode](./plan-required.md) — no plan, no side effect: make a crew say what it is about to do before it does it
+- [Dual control](./dual-control.md) — a second seat concurs, or the effect does not happen: four-eyes review in front of a merge or a spend
 - [Skill packs](./skill-packs.md) — directive skills as a versioned artifact: install one onto a seat, update it, take it back off
 - [Self-hosting](./self-host.md)
 
