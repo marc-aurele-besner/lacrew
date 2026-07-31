@@ -67,8 +67,15 @@ function printReport(report: PnlReport): void {
   }
 
   const inf = report.totals.inference;
+  // Every call unpriced means the $ figure is not a floor, it is nothing —
+  // printing $0.0000 there would read as free.
+  const inferenceCost = !report.sources.inference.available
+    ? "not measured"
+    : inf.calls > 0 && inf.unpricedCalls === inf.calls
+      ? "price unknown"
+      : usd(inf.usdMicros);
   console.log(
-    `  Inference   ${report.sources.inference.available ? usd(inf.usdMicros) : "not measured"} · ` +
+    `  Inference   ${inferenceCost} · ` +
       `${inf.calls} call(s) · ${inf.inputTokens} in · ${inf.outputTokens} out` +
       (inf.unpricedCalls > 0
         ? `  (${inf.unpricedCalls} unpriced — this is a floor)`

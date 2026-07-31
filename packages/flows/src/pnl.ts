@@ -1179,14 +1179,26 @@ export function pnlToCsv(report: PnlReport): string {
         ]);
       }
     }
+    // A period where *nothing* could be priced leaves the cell empty rather
+    // than writing 0.000000: a spreadsheet sums a zero, and this one would be
+    // the claim that a crew's model calls were free.
+    const inferencePriced = inference.calls - inference.unpricedCalls;
     rows.push([
       scopeLabel,
       seat,
       "inference",
       "calls",
       String(inference.calls),
-      (inference.usdMicros / 1_000_000).toFixed(6),
-      inference.unpricedCalls === 0 ? "yes" : "partial",
+      inference.calls > 0 && inferencePriced === 0
+        ? ""
+        : (inference.usdMicros / 1_000_000).toFixed(6),
+      inference.calls === 0
+        ? "n/a"
+        : inference.unpricedCalls === 0
+          ? "yes"
+          : inferencePriced === 0
+            ? "no"
+            : "partial",
       `${inference.inputTokens} in / ${inference.outputTokens} out tokens; ${inference.unpricedCalls} unpriced`,
     ]);
     rows.push([
@@ -1199,7 +1211,9 @@ export function pnlToCsv(report: PnlReport): string {
         ? ""
         : (connectors.usdMicros / 1_000_000).toFixed(6),
       connectors.usdMicros === null
-        ? "no"
+        ? connectors.calls === 0
+          ? "n/a"
+          : "no"
         : connectors.unpricedCalls === 0
           ? "yes"
           : "partial",

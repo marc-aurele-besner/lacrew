@@ -570,6 +570,28 @@ describe("agent scope", () => {
 });
 
 describe("csv export", () => {
+  it("leaves the inference $ cell empty when no call in the period could be priced", () => {
+    const report = build({
+      usage: [
+        {
+          scopeKey: `crew:${CREW}`,
+          model: "local-model",
+          inputTokens: 100,
+          outputTokens: 20,
+          usdMicros: null,
+          priceSource: "none",
+          at: "2026-07-02T09:00:00.000Z",
+        },
+      ],
+    });
+    const row = pnlToCsv(report)
+      .split("\n")
+      .find((l) => l.includes(",inference,"))!;
+    // `,1,,no,` — one call, no dollars, and the reason stated. A 0.000000 here
+    // is a spreadsheet claiming the crew's model calls were free.
+    assert.match(row, /,inference,calls,1,,no,/);
+  });
+
   it("leaves the $ cell empty when nothing priced the row, and says which", () => {
     const report = build({
       events: [
