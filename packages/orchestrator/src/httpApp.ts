@@ -9,6 +9,13 @@ import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
 import { firstPartySkillPacks, getSkillPack, missingRequirements, type SkillPack } from "@lacrew/flows";
 import {
+  HEARTBEAT_MAX_ITEMS,
+  HEARTBEAT_MIN_INTERVAL_MINUTES,
+  HEARTBEAT_PRESETS,
+  type CrewHeartbeat,
+} from "@lacrew/flows";
+import type { HeartbeatSurface } from "./heartbeat.js";
+import {
   createSkillPacksSurface,
   readSkillPack,
   SkillPackRequirementsError,
@@ -53,6 +60,8 @@ export interface OrchestratorAppOptions {
   connectorAsks?: ConnectorAsksSurface;
   /** Absent when the embedder wired no queue-backed webhook surface. */
   webhooks?: WebhookSurface;
+  /** Crew heartbeats (F2.21); absent in embedders that wired none. */
+  heartbeats?: HeartbeatSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -90,6 +99,16 @@ function triggerErrorStatus(err: unknown): number {
   return 400;
 }
 
+/** Map a heartbeat failure onto the status its cause deserves. */
+function heartbeatErrorStatus(err: unknown): number {
+  const msg = msgOf(err, "");
+  if (msg === "heartbeat_not_found") return 404;
+  // A tick already in flight is not a bad request and not a server fault: the
+  // caller's config is fine and the same call succeeds once it finishes.
+  if (msg === "heartbeat_already_running") return 409;
+  return 400;
+}
+
 /** One standard cron field: `*`, numbers, ranges, lists, and steps. */
 const CRON_FIELD = /^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/;
 
@@ -110,6 +129,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     connectorModes,
     connectorAsks,
     webhooks,
+    heartbeats,
     mcpUseMock,
     authToken,
   } = options;
@@ -186,6 +206,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
             maxBodyBytes: webhookMaxBodyBytes(),
           }
         : { triggers: 0, store: null },
+      heartbeats: heartbeats
+        ? {
+            configured: heartbeats.list().length,
+            enabled: heartbeats.list().filter((h) => h.enabled).length,
+            store: heartbeats.storeName,
+          }
+        : { configured: 0, store: null },
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
       governance: { autoExecute: autoExecuteEnabled() },
@@ -517,6 +544,88 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       { accepted: true, runId: accepted.runId, deliveryKey: accepted.deliveryKey },
       202,
     );
+  });
+
+  /**
+   * Crew heartbeats (F2.21) — the standing checklist a crew works through on
+   * its own cadence. Every route here edits or inspects a *declaration*; the
+   * only one that causes work is `run`, and it runs exactly what the checklist
+   * already named.
+   */
+  app.get("/heartbeats", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    return jsonBig(c, {
+      heartbeats: heartbeats.list(),
+      presets: HEARTBEAT_PRESETS,
+      minIntervalMinutes: HEARTBEAT_MIN_INTERVAL_MINUTES,
+      maxItems: HEARTBEAT_MAX_ITEMS,
+      store: heartbeats.storeName,
+    });
+  });
+
+  app.post("/heartbeats", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    const body = await bodyOf<{ heartbeat?: Partial<CrewHeartbeat> & { crewId?: string } }>(c);
+    const input = body.heartbeat;
+    if (!input?.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    try {
+      return jsonBig(c, {
+        heartbeat: await heartbeats.save({ ...input, crewId: input.crewId }),
+      });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_heartbeat") }, heartbeatErrorStatus(err));
+    }
+  });
+
+  app.post("/heartbeats/enabled", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    const body = await bodyOf<{ crewId?: string; enabled?: boolean }>(c);
+    if (!body.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    if (typeof body.enabled !== "boolean") {
+      return jsonBig(c, { error: "enabled_must_be_boolean" }, 400);
+    }
+    try {
+      return jsonBig(c, {
+        heartbeat: await heartbeats.setEnabled(body.crewId, body.enabled),
+      });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_heartbeat") }, heartbeatErrorStatus(err));
+    }
+  });
+
+  app.post("/heartbeats/delete", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    const body = await bodyOf<{ crewId?: string }>(c);
+    if (!body.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    return jsonBig(c, { removed: await heartbeats.remove(body.crewId) });
+  });
+
+  /**
+   * Work the checklist now. Fires whatever the list names, whatever the clock
+   * says — an operator pressing this is being explicit, and a config they
+   * cannot test until 03:00 is one they cannot check at all. It takes its own
+   * window key so it never suppresses the scheduled tick it was testing.
+   */
+  app.post("/heartbeats/run", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    const body = await bodyOf<{ crewId?: string }>(c);
+    if (!body.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    try {
+      return jsonBig(c, { tick: await heartbeats.runNow(body.crewId) });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "heartbeat_failed") }, heartbeatErrorStatus(err));
+    }
+  });
+
+  app.get("/heartbeats/ticks", async (c) => {
+    if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
+    const limit = Number(c.req.query("limit") ?? 20);
+    return jsonBig(c, {
+      ticks: await heartbeats.ticks(
+        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 20,
+        c.req.query("crewId") ?? undefined,
+      ),
+    });
   });
 
   /**
