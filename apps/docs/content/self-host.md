@@ -153,7 +153,11 @@ pnpm --filter @lacrew/orchestrator dev
 
 With `DATABASE_URL` set the orchestrator persists its restart-surviving state:
 audit events (`orchestrator_audit_events`), flow definitions + runs
-(`orchestrator_flows` / `orchestrator_flow_runs`), and session/intent records
+(`orchestrator_flows` / `orchestrator_flow_runs`), in-flight run state and its
+checkpoints (`orchestrator_flow_run_state` /
+`orchestrator_flow_checkpoints` — what lets a run pause, survive a restart, and
+resume without repeating a write; see
+[run lifecycle](./flows.md#run-lifecycle--pause-resume-cancel)), and session/intent records
 (`orchestrator_sessions` / `orchestrator_intents` — metadata only, session
 private keys never leave the process). `GET /sessions/history` and
 `GET /intents/history` read them back; without a database the same endpoints

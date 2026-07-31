@@ -72,6 +72,7 @@ export {
   createFlowsClient,
   type FlowsClient,
   type FlowsClientOptions,
+  type FlowRunStateRecord,
   type FlowTriggerCreate,
   type FlowTriggerDelivery,
   type FlowTriggerRecord,

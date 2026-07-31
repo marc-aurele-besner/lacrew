@@ -24,6 +24,7 @@ they do for any other agent action.
 | `org`        | Hire, fire, reparent, activate, or change a cap / whitelist / policy | `onAllow` / `onEscalate` / `onDeny` |
 | `budget`     | Raise a grant, stream an allowance, run the next epoch               | `onAllow` / `onEscalate` / `onDeny` |
 | `governance` | Propose, vote, veto, or execute                                      | `next`                              |
+| `wait`       | Parks the run until a human or an event releases it                  | `next`                              |
 
 Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
 `{{steps.<id>.json}}`, and `{{steps.<id>.verdict}}`. Steps fall through in
@@ -133,6 +134,74 @@ Definitions and run traces persist to Postgres when `DATABASE_URL` is set
 still works in memory. `/health` reports which store is active under
 `flows.store`.
 
+## Run lifecycle — pause, resume, cancel
+
+A run outlives the process that started it. After **every completed step** the
+orchestrator writes a checkpoint — the cursor, the outputs so far, the run's
+principal and input — to `orchestrator_flow_checkpoints`, and moves the run's
+cursor in `orchestrator_flow_run_state`, both in one transaction. A run can
+therefore stop and be picked back up later, by a different replica.
+
+| Status      | Meaning                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `running`   | In flight                                                     |
+| `waiting`   | **Paused** — parked and resumable                             |
+| `completed` | Finished                                                      |
+| `error`     | Failed                                                        |
+| `cancelled` | Ended by an operator; **never** resumable                     |
+
+A run pauses in three ways: a `wait` step it declared, an `ask`-mode connector
+write waiting on a human ([connectors](./connectors.md)), or an operator asking
+for a pause. `waiting.reason` says which — `awaiting_human`,
+`awaiting_webhook`, `connector_ask`, or `operator`.
+
+```ts
+const flows = createFlowsClient({ baseUrl, token });
+
+await flows.pauseRun(runId, "checking something"); // honoured at the next step
+const finished = await flows.resumeRun(runId); // continues from the checkpoint
+await flows.cancelRun(runId, "not doing it"); // terminal
+```
+
+Pause and cancel are **requests**, not mutations: the run may be moving inside
+another replica, and the only safe place to honour one is between two steps —
+never inside a write that is already in the air. A cancelled run asked to
+resume answers `409 run_cancelled`.
+
+### No double write on resume
+
+Before every side-effecting step (`gate`, `org`, `budget`, `governance`,
+`agent`, and any connector route) the orchestrator opens an **attempt** record,
+and closes it once the call returns. A process that dies in between leaves the
+attempt open, which is the one state that means "this write may already have
+happened".
+
+On boot the orchestrator reads back every unfinished run and:
+
+- **resumes** runs that stopped cleanly between two steps — the steps that
+  already ran are not repeated;
+- **fails closed** on a run with an open attempt, naming the step and the
+  attempt key to reconcile against. It is not retried, because redoing it could
+  pay twice and skipping it could skip a payment, and only a human knows which
+  happened;
+- **leaves paused runs alone** — they are waiting on something, not stalled.
+
+A step whose repeat is genuinely harmless can opt into the retry:
+
+```ts
+flow("pr-triage", "PR triage")
+  .tool("merge", "github.merge_pull_request", { number: "7" }, { idempotent: true })
+  .build();
+```
+
+`idempotent` is off by default and is a claim about the far side of the call
+that LaCrew cannot check — untrue, it is a double spend.
+
+Pausing an **agent** (`POST /agents/pause`) cancels that agent's parked runs
+with the reason attached: a paused agent should spend nothing, and a resumable
+run is authority waiting to be spent. Resuming a run always uses the run's
+original principal and scope, so a pause can never launder authority.
+
 ## Code-first
 
 ```ts
@@ -187,6 +256,10 @@ lacrew flows run treasury-pulse --local # offline mock run with live trace
 lacrew flows run my-flow --input "hi"   # run on the orchestrator (ORCH_URL/ORCH_TOKEN)
 lacrew flows save my-flow.json          # validate + persist
 lacrew flows runs                       # recent traces, newest first
+lacrew flows open                       # runs still going or parked on something
+lacrew flows pause <runId>              # stop at the next step boundary
+lacrew flows resume <runId>             # continue from the last checkpoint
+lacrew flows cancel <runId>             # end it for good (never resumable)
 lacrew flows code tpl-content-daily     # print the code-first snippet
 ```
 
@@ -199,6 +272,11 @@ lacrew flows code tpl-content-daily     # print the code-first snippet
 | `POST /flows/delete`             | Remove (body `{ id }`)                                                             |
 | `POST /flows/run`                | Run by `{ id }` or inline `{ flow }`, optional `input`                             |
 | `GET /flows/runs`                | Recent run traces (newest first)                                                   |
+| `GET /flows/runs/open`           | Runs still in flight or paused (the stalled-run list)                              |
+| `GET /flows/runs/state`          | One run's state + checkpoint trail (`?runId=`)                                     |
+| `POST /flows/runs/pause`         | Ask a run to stop at its next step (body `{ runId, reason? }`)                      |
+| `POST /flows/runs/resume`        | Continue a paused run (body `{ runId }`); `409` if cancelled                        |
+| `POST /flows/runs/cancel`        | End a run for good (body `{ runId, reason? }`)                                      |
 | `GET /flows/templates`           | First-party template catalog                                                       |
 | `GET /flows/triggers`            | Registered webhook triggers (never the secret)                                     |
 | `POST /flows/triggers`           | Mint one (body `{ flowId, principal?, scheme?, input? }`); returns the secret once |
@@ -208,7 +286,8 @@ lacrew flows code tpl-content-daily     # print the code-first snippet
 | `GET /flows/triggers/deliveries` | Delivery log (`?triggerId=`, `?limit=`)                                            |
 | `POST /hooks/:triggerId`         | Signed delivery — HMAC, not the bearer token                                       |
 
-Every save and run lands in the audit trail as `FlowSaved` / `FlowRun` events;
+Every save and run lands in the audit trail as `FlowSaved` / `FlowRun` events,
+and a pause / resume / cancel as `FlowRunLifecycle`;
 trigger changes and accepted deliveries land as `WebhookTriggerChanged` /
 `WebhookDelivery`.
 

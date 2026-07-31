@@ -774,8 +774,28 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.post("/agents/pause", async (c) => {
     const body = await bodyOf<{ agent?: string; reason?: string }>(c);
     if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
-    const result = await runtime.pauseAgent(body.agent as `0x${string}`, body.reason);
-    return jsonBig(c, { ...result, mode: runtime.mode });
+    const agent = body.agent as `0x${string}`;
+    const result = await runtime.pauseAgent(agent, body.reason);
+    // A run parked on a human is authority waiting to be spent, and pausing an
+    // agent is an operator saying it should spend none. Leaving its paused runs
+    // resumable would make the pause a delay rather than a stop, so they are
+    // cancelled here with the reason attached (F2.26).
+    const wanted = agent.toLowerCase();
+    const cancelled: string[] = [];
+    for (const state of await flows.openRuns()) {
+      if (state.status !== "waiting") continue;
+      if ((state.principal ?? "").toLowerCase() !== wanted) continue;
+      try {
+        await flows.cancel(state.runId, `principal paused${body.reason ? `: ${body.reason}` : ""}`);
+        cancelled.push(state.runId);
+      } catch (err) {
+        console.error(
+          `[@lacrew/orchestrator] could not cancel run ${state.runId} for paused agent ${agent}:`,
+          err,
+        );
+      }
+    }
+    return jsonBig(c, { ...result, cancelledRuns: cancelled, mode: runtime.mode });
   });
 
   app.post("/agents/resume", async (c) => {

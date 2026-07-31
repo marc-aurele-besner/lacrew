@@ -207,6 +207,82 @@ export async function cmdFlows(args: string[]): Promise<void> {
       return;
     }
 
+    /**
+     * Runs that have not finished (F2.26). Separate from `runs` because they
+     * answer different questions: `runs` is what the crew did lately, this is
+     * what it is stuck on — a run parked three days on a confirmation nobody
+     * saw has long since scrolled out of the other list.
+     */
+    case "open": {
+      const runs = await orchClient(rest).openRuns();
+      if (runs.length === 0) {
+        console.log("No runs in flight or waiting.");
+        return;
+      }
+      for (const run of runs) {
+        const age = `since ${run.startedAt}`;
+        console.log(
+          `${run.status === "waiting" ? "…" : "▸"} ${run.runId} · ${run.flowId} · ` +
+            `${run.status}${run.request ? ` (${run.request} requested)` : ""} · ${age}`,
+        );
+        if (run.pause) {
+          console.log(
+            `  ${run.pause.detail ?? run.pause.reason} · at step "${run.pause.stepId}"` +
+              `${run.pause.token ? ` (${run.pause.token})` : ""}`,
+          );
+        }
+        if (run.attempt) {
+          console.log(
+            `  ⚠ a write was in flight when this stopped: step "${run.attempt.stepId}" ` +
+              `(${run.attempt.key})`,
+          );
+        }
+      }
+      console.log("\nContinue one:  lacrew flows resume <runId>");
+      return;
+    }
+
+    case "pause":
+    case "resume":
+    case "cancel": {
+      const runId = rest.find((a) => !a.startsWith("-"));
+      if (!runId) {
+        console.error(`Usage: lacrew flows ${sub} <runId> [--reason "…"]`);
+        process.exitCode = 1;
+        return;
+      }
+      const client = orchClient(rest);
+      const reason = flagValue(rest, "--reason");
+      try {
+        if (sub === "resume") {
+          const run = await client.resumeRun(runId);
+          for (const step of run.steps) printStep(step);
+          printRun(run);
+          return;
+        }
+        const state =
+          sub === "pause"
+            ? await client.pauseRun(runId, reason)
+            : await client.cancelRun(runId, reason);
+        console.log(
+          `${runId} · ${state.status}${state.request ? ` (${state.request} requested — it stops at the next step)` : ""}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // The orchestrator's refusals are answers, not crashes: a cancelled run
+        // that will not resume is the feature working.
+        console.error(
+          msg.includes("run_cancelled")
+            ? `${runId} was cancelled — a cancelled run cannot be resumed.`
+            : msg.includes("run_not_found")
+              ? `No run ${runId} on the orchestrator. See: lacrew flows open`
+              : msg,
+        );
+        process.exitCode = 1;
+      }
+      return;
+    }
+
     case "triggers": {
       await cmdTriggers(rest);
       return;
@@ -238,6 +314,10 @@ Commands:
         [--as 0x…]                    run as that agent; its policy applies,
                                        capped by the flow's scope
   flows runs                           Recent run traces (newest first)
+  flows open                           Runs still going or parked on something
+  flows pause <runId> [--reason …]     Stop a run at its next step boundary
+  flows resume <runId>                 Continue a paused run from its checkpoint
+  flows cancel <runId> [--reason …]    End a run for good (never resumable)
   flows triggers <sub>                 Webhook triggers (F2.22) — see
                                        lacrew flows triggers for the subcommands
   flows code <templateId|file.json>    Print the code-first @lacrew/flows snippet

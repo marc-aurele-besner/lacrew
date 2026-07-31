@@ -345,7 +345,7 @@ describe("flow run lifecycle routes", () => {
       isDbReady: () => false,
       isDbConfigured: () => false,
     });
-    return { app, flows };
+    return { app, flows, runtime };
   }
 
   const post = (app: ReturnType<typeof buildApp>["app"], path: string, body: unknown) =>
@@ -398,6 +398,27 @@ describe("flow run lifecycle routes", () => {
 
     const noId = await post(app, "/flows/runs/pause", {});
     assert.equal(noId.status, 400);
+  });
+
+  it("cancels an agent's parked runs when the agent itself is paused", async () => {
+    const { app, flows, runtime } = buildApp();
+    await flows.save(
+      flow("signoff", "Sign-off")
+        .wait("hold", { detail: "a human signs off" })
+        .model("done", { prompt: "done" })
+        .build(),
+    );
+    const run = await flows.run({ id: "signoff", as: runtime.defaultAgent });
+    assert.equal(run.status, "waiting");
+
+    const paused = await post(app, "/agents/pause", {
+      agent: runtime.defaultAgent,
+      reason: "suspected key leak",
+    });
+    assert.equal(paused.status, 200);
+    const body = (await paused.json()) as { cancelledRuns: string[] };
+    assert.deepEqual(body.cancelledRuns, [run.runId], "the parked run does not outlive the pause");
+    assert.equal((await flows.runState(run.runId))?.status, "cancelled");
   });
 
   it("lists open runs so a stalled one is visible after it scrolls off the ring", async () => {
