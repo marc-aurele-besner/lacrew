@@ -482,6 +482,65 @@ test("a server that cannot be read reports it rather than emptying the allowlist
   assert.match(registry.describe()[0]!.lastRefreshError!, /mcp_http_502/);
 });
 
+test("an unreachable server does not empty a seat's tool list", async () => {
+  const unreachable: McpClient = {
+    serverId: "gh",
+    transport: "http",
+    listTools: async () => {
+      throw new Error("mcp_http_502:gh");
+    },
+    callTool: async () => ({ content: null, isError: false }),
+    close: async () => {},
+  };
+  const registry = createExternalMcpRegistry({
+    servers: [SERVER],
+    env: ENV,
+    clientFor: () => unreachable,
+  });
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "search_issues",
+    enabled: true,
+    effect: "read",
+  });
+  await registry.refresh();
+
+  // The call path still works off the allowlist, so the listing must agree —
+  // "your agent can call nothing" would be false, and acted on.
+  assert.deepEqual(registry.toolNames(), ["mcp__gh__search_issues"]);
+  await registry.call("mcp__gh__search_issues", { q: "bug" });
+});
+
+test("a tool the server dropped leaves the callable list", async () => {
+  const { registry } = harness();
+  await registry.refresh();
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "search_issues",
+    enabled: true,
+    effect: "read",
+  });
+  assert.deepEqual(registry.toolNames(), ["mcp__gh__search_issues"]);
+
+  const far = fakeClient([{ name: "create_issue" }]);
+  const shrunk = createExternalMcpRegistry({
+    servers: [SERVER],
+    env: ENV,
+    clientFor: () => far.client,
+    store: {
+      loadExternalMcpTools: async () => registry.rules(),
+      saveExternalMcpTool: async () => {},
+      removeExternalMcpTool: async () => {},
+    },
+  });
+  await shrunk.hydrate();
+  const [result] = await shrunk.refresh();
+  assert.deepEqual(result!.removed, ["search_issues"]);
+  assert.deepEqual(shrunk.toolNames(), []);
+});
+
 test("records survive a restart through the store", async () => {
   const saved: ExternalMcpToolRecord[] = [];
   const far = fakeClient();

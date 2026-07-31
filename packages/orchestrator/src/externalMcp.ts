@@ -676,11 +676,18 @@ export function createExternalMcpRegistry(
     },
 
     toolNames: (subject = {}) =>
-      [...byId.values()].flatMap((server) =>
-        toolsOf(server, subject)
-          .filter((tool) => tool.enabled && tool.present)
-          .map((tool) => externalToolName(server.id, tool.name)),
-      ),
+      [...byId.values()].flatMap((server) => {
+        // A tool the server no longer publishes is dropped from the list — but
+        // only when there *is* a trustworthy list. With no successful discovery
+        // in this process, `present` is false for everything, and filtering on
+        // it would tell an operator their agent can call nothing while its
+        // flows call the allowlisted tools perfectly well.
+        const listed = discovery.get(server.id);
+        const trust = Boolean(listed && !listed.error);
+        return toolsOf(server, subject)
+          .filter((tool) => tool.enabled && (tool.present || !trust))
+          .map((tool) => externalToolName(server.id, tool.name));
+      }),
 
     describe: (subject = {}) =>
       [...byId.values()].map((server) => {
