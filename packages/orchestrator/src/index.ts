@@ -45,6 +45,21 @@ export {
   type PlanRequirementsSurface,
 } from "./planRequired.js";
 export {
+  DualControlRefusedError,
+  createDualControl,
+  describeReviewers,
+  dualControlFromEnv,
+  isDualControlRefused,
+  reviewFingerprint,
+  type DualControlCheckInput,
+  type DualControlOutcome,
+  type DualControlReviewRecord,
+  type DualControlReviewStatus,
+  type DualControlReviewView,
+  type DualControlStore,
+  type DualControlSurface,
+} from "./dualControl.js";
+export {
   createEvalRunner,
   evalTimeoutMs,
   resolveEvalRunner,

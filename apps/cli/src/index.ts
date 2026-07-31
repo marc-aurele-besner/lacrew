@@ -28,6 +28,7 @@ import { cmdHeartbeat } from "./heartbeat.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
 import { cmdPlanRequired } from "./planRequired.js";
+import { cmdDualControl } from "./dualControl.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
@@ -256,6 +257,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "plan-required") {
     await cmdPlanRequired(rest);
+    return;
+  }
+  if (cmd === "dual-control") {
+    await cmdDualControl(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -781,6 +786,10 @@ Commands:
   plan-required <sub>       No plan, no side effect — list, set --workspace
                             --mode side_effects, clear (a plan approves nothing;
                             see: lacrew plan-required help)
+  dual-control <sub>        A second seat agrees, or it does not happen — list,
+                            reviews, set --workspace --mode risky_writes
+                            --reviewer manager, clear (a concurrence approves
+                            nothing; see: lacrew dual-control help)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

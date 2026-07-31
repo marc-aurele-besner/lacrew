@@ -30,6 +30,7 @@ import type { HumanGateRecord, HumanGatesSurface } from "./humanGates.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ExternalMcpRegistry } from "./externalMcp.js";
 import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
+import type { DualControlReviewRecord, DualControlSurface } from "./dualControl.js";
 import {
   createFlowStoreFromEnv,
   type FlowRunState,
@@ -100,6 +101,13 @@ export type FlowsSurface = {
    * gate times out — the resumed step then takes the timeout port, or stops.
    */
   resumeGate(gate: HumanGateRecord): Promise<FlowRunResult | null>;
+  /**
+   * Continue a run parked on a dual-control review (F2.32), from the state
+   * stored on the review. Called when a second seat concurs or rejects, and
+   * when an unanswered review times out — the resumed step then acts, or fails
+   * closed.
+   */
+  resumeReview(review: DualControlReviewRecord): Promise<FlowRunResult | null>;
   /**
    * Ask a run to stop at its next step boundary (F2.26). A request rather than
    * a mutation: the run may be moving in another replica, and the only safe
@@ -176,6 +184,14 @@ export function createFlowsSurface(opts: {
    * front of is still bounded by the policy stack.
    */
   planRequired?: PlanRequirementsSurface;
+  /**
+   * Dual control (F2.32). Given one, a matching side effect parks the run on a
+   * review by a second seat before anything is dispatched. Absent, crews behave
+   * as they did before the control existed — and unlike plan-required, that is
+   * *not* what an unreadable rule set means: this control fails closed, so the
+   * process that could not read its rules keeps the surface wired and refuses.
+   */
+  dualControl?: DualControlSurface;
 }): FlowsSurface {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
@@ -239,6 +255,35 @@ export function createFlowsSurface(opts: {
   };
 
   /**
+   * Require a second seat's concurrence before this effect (F2.32).
+   *
+   * Asked after plan-required and still before anything is built, so a parked
+   * run means no request was formed and nothing left the process. Unlike the
+   * plan check, a failure *inside* this checker stops the run: dual control is
+   * the second pair of eyes an operator put in front of a merge or a spend, and
+   * a checker that failed open would deliver precisely the unreviewed effect
+   * they were paying to prevent. `FlowWaitingError` and the refusal both
+   * propagate — the first parks the run, the second ends the step.
+   */
+  const requireConcurrence = async (
+    tool: string,
+    args: Record<string, unknown>,
+    principal: `0x${string}`,
+    run: { flowId: string; runId: string; managers: string[] },
+  ): Promise<void> => {
+    if (!opts.dualControl) return;
+    await opts.dualControl.check({
+      tool,
+      args,
+      principal,
+      managers: run.managers,
+      runId: run.runId,
+      flowId: run.flowId,
+      effectOf,
+    });
+  };
+
+  /**
    * A backend bound to one run's identity. Gate defaults, the policy ceiling,
    * and delegation all follow the principal rather than the process-wide worker.
    */
@@ -278,6 +323,11 @@ export function createFlowsSurface(opts: {
         // nothing went out. Reads and the conversation tools classify as no
         // effect and pass straight through.
         await requirePlan(name, principal, run);
+        // Then the second pair of eyes, in that order: an agent that has not
+        // said what it intends has nothing for a reviewer to read, so asking
+        // for review first would put a question in front of a person before the
+        // plan they need to answer it exists.
+        await requireConcurrence(name, args, principal, run);
         if (name === "lacrew_invoke_agent") return delegate(args, chain, principal, run);
         if (name === "lacrew_human_gate") return humanGate(args, principal, run);
         // Connectors are checked before the MCP dispatch so a `lacrew_*` name
@@ -533,6 +583,7 @@ export function createFlowsSurface(opts: {
       // keeps the run from having to know what parked it.
       await opts.asks?.attachResume(result.waiting.token, result.resume);
       await opts.gates?.attachResume(result.waiting.token, result.resume);
+      await opts.dualControl?.attachResume(result.waiting.token, result.resume);
     }
     opts.runtime.recordAudit({
       type: "FlowRun",
@@ -587,6 +638,24 @@ export function createFlowsSurface(opts: {
   };
   opts.gates?.setResumer(async (gate) => {
     await resumeGate(gate);
+  });
+
+  const resumeReview = async (review: DualControlReviewRecord): Promise<FlowRunResult | null> => {
+    if (!review.resume || !review.flowId) return null;
+    try {
+      return await runOne({
+        id: review.flowId,
+        ...(review.runId ? { runId: review.runId } : {}),
+        as: review.actor ? (review.actor as `0x${string}`) : undefined,
+        resume: review.resume,
+      });
+    } catch (err) {
+      console.error(`[@lacrew/orchestrator] resuming flow "${review.flowId}" failed:`, err);
+      return null;
+    }
+  };
+  opts.dualControl?.setResumer(async (review) => {
+    await resumeReview(review);
   });
 
   /** Statuses a run cannot come back from. `waiting` is the one that can. */
@@ -654,8 +723,10 @@ export function createFlowsSurface(opts: {
     if (TERMINAL.has(state.status)) throw new Error(`run_not_cancellable:${state.status}`);
     // Close the questions this run is holding open first. A gate outliving its
     // run is one a person can still answer, and answering it would resume a run
-    // the operator ended (F2.27).
+    // the operator ended (F2.27). A review outlives its run the same way, and a
+    // late concurrence must not restart an effect the operator cancelled.
     await opts.gates?.cancelRun(runId, reason);
+    await opts.dualControl?.cancelRun(runId, reason);
     if (state.status === "waiting") {
       // Nothing is holding a parked run, so the cancel lands now rather than
       // waiting for a worker that is never coming back to it.
@@ -757,6 +828,7 @@ export function createFlowsSurface(opts: {
     run: runOne,
     resumeAsk,
     resumeGate,
+    resumeReview,
     pause,
     resume,
     cancel,

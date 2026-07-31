@@ -134,6 +134,13 @@
       "when": 1785495010152,
       "tag": "0018_same_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785506948835,
+      "tag": "0019_rich_nova",
+      "breakpoints": true
     }
   ]
 }

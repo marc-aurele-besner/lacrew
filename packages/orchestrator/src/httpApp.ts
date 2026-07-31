@@ -54,10 +54,18 @@ import {
   isPlanRequired,
   type PlanRequirementsSurface,
 } from "./planRequired.js";
+import { isDualControlRefused, type DualControlSurface } from "./dualControl.js";
 import {
+  DUAL_CONTROL_MODES,
+  DUAL_CONTROL_REVIEWERS,
   PLAN_REQUIRED_MODES,
+  isFlowWaiting,
+  parseDualControlScope,
   parsePlanRequiredScope,
+  parseReviewer,
   planRequiredScopeKey,
+  dualControlScopeKey,
+  type DualControlMode,
   type PlanRequiredMode,
 } from "@lacrew/flows";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
@@ -81,6 +89,8 @@ export interface OrchestratorAppOptions {
   connectorModes?: ConnectorModesSurface;
   /** Plan-required rules (F2.31); absent in embedders that wired none. */
   planRequired?: PlanRequirementsSurface;
+  /** Dual-control rules and reviews (F2.32); absent in embedders that wired none. */
+  dualControl?: DualControlSurface;
   /** Attached third-party MCP servers (F2.30); absent when none is configured. */
   externalMcp?: ExternalMcpRegistry;
   /** Eval suite runner (F2.29); absent in embedders that wired none. */
@@ -161,6 +171,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     connectors,
     connectorModes,
     planRequired,
+    dualControl,
     externalMcp,
     evals,
     connectorAsks,
@@ -666,6 +677,126 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
+  /* ——— dual control (F2.32) ——— */
+
+  /**
+   * The rules in force, and the vocabulary a UI renders.
+   *
+   * `?as=<address>` answers the question an operator actually has — "what does
+   * *this* seat run under, and who would review it?" — by resolving both the
+   * rule and the reviewer the way a call would, against the live chart. A
+   * reviewer resolved here is the same one the runtime would ask, so a
+   * dashboard never has to re-implement the walk up the org tree.
+   */
+  app.get("/dual-control", async (c) => {
+    if (!dualControl) return jsonBig(c, { error: "dual_control_unavailable" }, 503);
+    const as = c.req.query("as")?.trim();
+    return jsonBig(c, {
+      rules: dualControl.list(),
+      modes: DUAL_CONTROL_MODES,
+      reviewers: DUAL_CONTROL_REVIEWERS,
+      ...(as
+        ? {
+            effective: dualControl.resolve({ principal: as, managers: await managersOf(as) }),
+            reviewer: await dualControl.reviewerFor(as, {
+              principal: as,
+              managers: await managersOf(as),
+            }),
+          }
+        : {}),
+    });
+  });
+
+  /**
+   * Set or clear the rule at one scope. `mode` absent clears it, falling the
+   * scope back to what it inherits — distinct from setting `off`, which pins it
+   * against a broader rule someone adds later.
+   */
+  app.put("/dual-control", async (c) => {
+    if (!dualControl) return jsonBig(c, { error: "dual_control_unavailable" }, 503);
+    const body = await bodyOf<{
+      scope?: unknown;
+      mode?: string | null;
+      reviewer?: string;
+      minSpend?: string;
+      connectorWrites?: boolean;
+      orgMutators?: boolean;
+      timeoutMs?: number;
+    }>(c);
+    const scope = parseDualControlScope(body.scope);
+    if (!scope) return jsonBig(c, { error: "scope_required" }, 400);
+
+    if (body.mode === null || body.mode === undefined) {
+      const cleared = await dualControl.clear(scope);
+      if (cleared) {
+        runtime.recordAudit({
+          type: "DualControlChanged",
+          at: new Date().toISOString(),
+          payload: { scope: dualControlScopeKey(scope), mode: null, action: "cleared" },
+        });
+      }
+      return jsonBig(c, { cleared, rules: dualControl.list() });
+    }
+    const reviewer = body.reviewer === undefined ? undefined : parseReviewer(body.reviewer);
+    if (body.reviewer !== undefined && !reviewer) {
+      return jsonBig(c, { error: `reviewer must be ${DUAL_CONTROL_REVIEWERS.join(" | ")}` }, 400);
+    }
+    try {
+      const rule = await dualControl.set({
+        scope,
+        mode: body.mode as DualControlMode,
+        ...(reviewer ? { reviewer } : {}),
+        ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+        threshold: {
+          ...(typeof body.minSpend === "string" ? { minSpend: body.minSpend } : {}),
+          ...(typeof body.connectorWrites === "boolean"
+            ? { connectorWrites: body.connectorWrites }
+            : {}),
+          ...(typeof body.orgMutators === "boolean" ? { orgMutators: body.orgMutators } : {}),
+        },
+      });
+      runtime.recordAudit({
+        type: "DualControlChanged",
+        at: rule.at,
+        payload: {
+          scope: dualControlScopeKey(scope),
+          mode: rule.mode,
+          reviewer: body.reviewer ?? "manager",
+          minSpend: rule.threshold.minSpend,
+          connectorWrites: rule.threshold.connectorWrites,
+          orgMutators: rule.threshold.orgMutators,
+          timeoutMs: rule.timeoutMs,
+          action: "set",
+        },
+      });
+      return jsonBig(c, { rule, rules: dualControl.list() });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_dual_control") }, 400);
+    }
+  });
+
+  /**
+   * The review queue. `?status=pending` is what is actually holding runs, which
+   * is the distinction a Questions rail needs: a resolved review is history, a
+   * pending one is a crew stopped mid-effect waiting on somebody.
+   */
+  app.get("/dual-control/reviews", (c) => {
+    if (!dualControl) return jsonBig(c, { error: "dual_control_unavailable" }, 503);
+    const status = c.req.query("status");
+    const runId = c.req.query("runId");
+    let all = dualControl.reviews();
+    if (status) all = all.filter((r) => r.status === status);
+    if (runId) all = all.filter((r) => r.runId === runId);
+    return jsonBig(c, {
+      reviews: all,
+      // Concurring happens through the thread, not here: a route that resolved
+      // a review directly would be a second way to release an effect, and one
+      // that never sees whether the answer came from a different seat.
+      answerVia:
+        "POST /messages with kind=answer, replyTo=<questionId>, body=concur|reject, as a seat other than the actor",
+    });
+  });
+
   /**
    * Ask-mode confirmations. `?status=pending` is the queue a human works from;
    * the resolved ones stay readable because "who said yes to that merge" is the
@@ -732,6 +863,45 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         // The checker failing is not the caller's problem: this control fails
         // open, and everything behind it is still bounded as before.
         console.error("[@lacrew/orchestrator] plan-required check failed:", err);
+      }
+    }
+    // Dual control (F2.32) is asked here too, and for the same reason: a mode
+    // that only bound flows would be a second pair of eyes an agent walks
+    // around by calling the tool surface directly. Outside a flow there is no
+    // run to park, so the caller is told a review was opened and answers by
+    // calling again once a second seat has concurred — the review is keyed by
+    // the call, so the retry finds this question rather than minting another.
+    if (dualControl) {
+      const as = body.as?.trim();
+      try {
+        await dualControl.check({
+          tool: body.name,
+          args: body.arguments ?? {},
+          principal: as || runtime.defaultAgent,
+          managers: as ? await managersOf(as) : [],
+          effectOf: (tool) => connectors?.effectOf(tool) ?? externalMcp?.effectOf(tool),
+        });
+      } catch (err) {
+        if (isFlowWaiting(err)) {
+          return jsonBig(
+            c,
+            {
+              status: "waiting",
+              reason: "dual_control",
+              reviewId: err.token,
+              detail: err.detail,
+              answerVia:
+                "POST /messages with kind=answer, replyTo=<questionId>, body=concur|reject, as a different seat",
+            },
+            202,
+          );
+        }
+        // Rejected, timed out, cancelled — or the checker itself failed. All
+        // four refuse: this control fails closed, so a call it could not decide
+        // about is a call that does not go out.
+        if (isDualControlRefused(err)) return jsonBig(c, { error: err.message }, 409);
+        console.error("[@lacrew/orchestrator] dual-control check failed:", err);
+        return jsonBig(c, { error: "dual_control_unavailable" }, 503);
       }
     }
     // An external tool goes through the allowlist like any other caller would:
