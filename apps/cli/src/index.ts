@@ -25,6 +25,7 @@ import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
+import { cmdBudget } from "./budget.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
@@ -241,6 +242,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "heartbeat") {
     await cmdHeartbeat(rest);
+    return;
+  }
+  if (cmd === "budget") {
+    await cmdBudget(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -755,6 +760,9 @@ Commands:
   heartbeat <sub>           A crew's standing checklist — presets, list, show,
                             set --crew <id> --schedule '<cron>' --flow a,b,
                             on/off, run, ticks (see: lacrew heartbeat help)
+  budget <sub>              A crew's inference cost budget — list, show,
+                            set --crew <id> --usd 200 --hard, on/off, usage
+                            (not an onchain budget; see: lacrew budget help)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint
