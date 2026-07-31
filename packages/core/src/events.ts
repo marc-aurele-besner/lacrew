@@ -143,6 +143,33 @@ export type ProtocolEventType =
    */
   | "HumanGateUnresolved"
   /**
+   * A crew's inference cost budget was created, edited, enabled, disabled or
+   * removed (F2.28).
+   *
+   * Raising a cap is the override this feature gives an operator, and it is the
+   * one action that lets a stopped crew start spending again — so it belongs in
+   * the trail beside the breach it answers. The payload carries the limits and
+   * the policy, which are numbers an operator typed, never a prompt or a key.
+   */
+  | "InferenceBudgetChanged"
+  /**
+   * A crew passed the warn line on a cost budget (F2.28). Fired once per
+   * crossing per period: the point is that a human sees it while there is still
+   * room to act, and an alert per call above the line is an alert nobody reads.
+   */
+  | "InferenceBudgetWarned"
+  /**
+   * A crew reached a cost budget's limit (F2.28). Under a `hard` policy this is
+   * also the moment model calls start being refused with
+   * `inference_budget_exceeded`.
+   *
+   * Emphatically **not** an onchain event and not a spend: no funds moved, no
+   * allowance changed, and the policy stack is untouched. It records that an
+   * operational cost ceiling was reached, which is a different question from
+   * anything the chain enforces.
+   */
+  | "InferenceBudgetExceeded"
+  /**
    * A crew's standing checklist was created, edited, enabled, disabled or
    * removed (F2.21).
    *
