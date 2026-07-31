@@ -168,6 +168,67 @@ export type ProtocolEventType =
    */
   | "HumanGateUnresolved"
   /**
+   * An effect stopped for a second pair of eyes (F2.32): the review question
+   * was posted and the run parked.
+   *
+   * The row carries the tool, the acting seat, who was asked and — for a spend
+   * — the amount, plus a fingerprint of the call itself, so a reader can tell
+   * two reviews of the same tool apart. Never the arguments: a call's fields
+   * name repositories and counterparties, and this ring is not the place to
+   * publish one.
+   *
+   * `escalated` is the field worth reading twice. It says the configured
+   * reviewer was unavailable — paused, fired, or the actor itself through a
+   * misconfiguration — and a person was asked instead. A crew whose reviews are
+   * all escalated has a reviewer setting that is not doing what it says.
+   */
+  | "DualControlOpened"
+  /**
+   * A second seat agreed, and the effect proceeded (F2.32).
+   *
+   * Concurring is control, not authority: it released a step the actor was
+   * already permitted to take, and the spend behind it still met the policy
+   * stack, still escalated and still needed its approval. Who agreed is the
+   * question asked afterwards, which is why the seat and whether it was a
+   * person are both on the row.
+   */
+  | "DualControlConcurred"
+  /**
+   * A second seat refused, and the effect was not attempted (F2.32).
+   *
+   * The row an operator reads to find work a crew wanted to do and a reviewer
+   * stopped — the only trace it leaves, since nothing was built and nothing
+   * left the process. Also written when a run is cancelled while an effect was
+   * awaiting review, with `outcome: "cancelled"`.
+   */
+  | "DualControlRejected"
+  /**
+   * Nobody concurred before the deadline (F2.32). The effect fails closed.
+   *
+   * The opposite direction from a human gate's timeout, which takes a declared
+   * port: a review that expired has decided nothing, and for a control whose
+   * whole purpose is a second pair of eyes, "nobody looked" must never read as
+   * "somebody agreed".
+   */
+  | "DualControlTimedOut"
+  /**
+   * Someone replied to a review without resolving it (F2.32): free text that
+   * matched no option, a seat nobody asked — or the **actor answering its own
+   * review**, which is the attack this control exists to stop. The run is still
+   * parked. Recorded because a crew that keeps trying to concur with itself is
+   * exactly what an operator should be able to find.
+   */
+  | "DualControlUnresolved"
+  /**
+   * An operator changed a scope's dual-control rule (F2.32).
+   *
+   * Turning it *down* is the interesting direction — it is the moment a crew
+   * stops needing anyone else's agreement to merge or to spend — and so is
+   * changing the reviewer, which can quietly move a review from a person to an
+   * agent on the same orchestrator.
+   */
+  | "DualControlChanged"
+  /**
    * Somebody ran the eval suite against this deployment (F2.29).
    *
    * An eval changes nothing — no spend, no call, no state — so this row is not
