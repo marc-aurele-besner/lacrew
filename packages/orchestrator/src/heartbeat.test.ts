@@ -150,6 +150,15 @@ describe("heartbeat — when it fires", () => {
     // The tick the operator was testing still happens.
     assert.equal((await heartbeats.sweep(DUE)).length, 1);
   });
+
+  it("runs again on a second press rather than calling the first one still running", async () => {
+    const { heartbeats } = await makeSurface();
+    await heartbeats.save(config());
+    const first = await heartbeats.runNow(CREW);
+    const second = await heartbeats.runNow(CREW);
+    assert.equal(second.status, "ok");
+    assert.notEqual(first.windowKey, second.windowKey);
+  });
 });
 
 describe("heartbeat — working the checklist", () => {

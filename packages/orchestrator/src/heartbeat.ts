@@ -103,6 +103,8 @@ export function createHeartbeatSurface(opts: {
   const configs = new Map<string, CrewHeartbeat>();
   /** Crews this process is mid-tick on; the store covers the other replicas. */
   const inFlight = new Set<string>();
+  /** Distinguishes two presses inside the same millisecond. */
+  let manualSeq = 0;
 
   const principalOf = (config: CrewHeartbeat, item?: HeartbeatItem): `0x${string}` =>
     (item?.as ?? config.principal ?? opts.runtime.defaultAgent) as `0x${string}`;
@@ -457,8 +459,13 @@ export function createHeartbeatSurface(opts: {
       if (await busy(key)) throw new Error("heartbeat_already_running");
       // Prefixed so a pressed run can never take the window a scheduled tick
       // would have used — an operator checking their config must not suppress
-      // the very tick they were testing.
-      const windowKey = `manual:${heartbeatWindowKey(config, new Date())}`;
+      // the very tick they were testing — and stamped to the millisecond rather
+      // than the minute, because two presses a few seconds apart are two things
+      // the operator asked for. Overlap is what `busy` refuses; a minute-shaped
+      // key would have called the second press "already running" when the first
+      // had finished.
+      manualSeq += 1;
+      const windowKey = `manual:${key}@${new Date().toISOString()}#${manualSeq}`;
       const claimed = await store.claimTick({ crewId: key, windowKey });
       if (!claimed) throw new Error("heartbeat_already_running");
       return runChecklist(config, windowKey);
