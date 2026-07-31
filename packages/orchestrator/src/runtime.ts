@@ -34,6 +34,7 @@ import {
   MOCK_WORKER,
   SESSION_SCOPES,
   type AgentWallet,
+  type Allowance,
   type AssetStack,
   type ChainWallets,
   type NodeKind,
@@ -1529,6 +1530,45 @@ export class CrewRuntime {
       }
     }
     return { since: sinceIso, counts, complete: false, store: "memory" };
+  }
+
+  /**
+   * The trail over one window — what a period report (F2.33) is folded from.
+   *
+   * Read from the persisted store when one is wired, because the indexer writes
+   * chain events into the same table from another process and a report that
+   * missed them would understate what a desk spent. Without a store, the
+   * bounded local ring answers and the window is flagged incomplete: a P&L that
+   * silently forgot its oldest rows is a lower bill than the operator will get.
+   */
+  async auditBetween(
+    fromIso: string,
+    toIso: string,
+    limit = 5_000,
+  ): Promise<{ events: ProtocolEvent[]; complete: boolean; store: string }> {
+    const persisted = await this.auditStore.between(fromIso, toIso, limit);
+    if (persisted) {
+      return { ...persisted, store: this.auditStore.name };
+    }
+    const from = Date.parse(fromIso);
+    const to = Date.parse(toIso);
+    // The ring, not the merged `audit()` view: that merge also carries the
+    // client's own copy of each event, and a cost report that counts one spend
+    // twice is worse than one that admits it is partial.
+    const events = this.localAudit.filter((e) => {
+      const t = Date.parse(e.at);
+      return Number.isFinite(t) && t >= from && t < to;
+    });
+    return { events: events.slice(-limit).reverse(), complete: false, store: "memory" };
+  }
+
+  /**
+   * Allowance balances and per-call caps for the org, in one asset's stack.
+   * [] in mock mode — an invented allowance is a claim about money.
+   */
+  async getAllowances(asset?: string): Promise<Allowance[]> {
+    if (!isOnchainClient(this.client)) return [];
+    return this.client.getAllowances(undefined, asset);
   }
 
   async audit(): Promise<ProtocolEvent[]> {

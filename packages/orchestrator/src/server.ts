@@ -39,6 +39,7 @@ import {
   type ModelProvider,
 } from "./model/index.js";
 import { createInferenceBudgets, crewIdForSeat } from "./inferenceBudgets.js";
+import { connectorPricesFromEnv, createPnl } from "./pnl.js";
 import { ancestorsOf } from "./flowScope.js";
 import type { OrgNode } from "@lacrew/core";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
@@ -248,6 +249,18 @@ async function main(): Promise<void> {
   const model = withInferenceBudget(rawModel, budgets);
 
   /**
+   * Crew / seat P&L (F2.33) — a read over the trail, the meter and the two
+   * ceilings. Wired after the budgets surface because the inference lines are
+   * that surface's counters; with no connector price table configured, connector
+   * usage reports in calls and says the price is unknown.
+   */
+  const pnl = createPnl({
+    runtime,
+    budgets,
+    connectorPrices: connectorPricesFromEnv(),
+  });
+
+  /**
    * The crew a seat belongs to, for budget attribution: its nearest manager in
    * the org tree, or itself when it has none. Read per call rather than cached,
    * on the same reasoning the flows surface reads it per run — a reparent that
@@ -315,6 +328,7 @@ async function main(): Promise<void> {
     webhooks,
     heartbeats,
     budgets,
+    pnl,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,

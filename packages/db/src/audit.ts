@@ -1,6 +1,6 @@
 /** Query helpers for the orchestrator audit trail (keeps Drizzle inside @lacrew/db). */
 
-import { count, desc, gte } from "drizzle-orm";
+import { and, count, desc, gte, lt } from "drizzle-orm";
 import { auditEvents } from "./schema/audit.js";
 import type { DbHandle } from "./client.js";
 
@@ -62,6 +62,37 @@ export async function countAuditEventsByType(
     .where(gte(auditEvents.at, new Date(sinceIso)))
     .groupBy(auditEvents.type);
   return rows.map((row) => ({ type: row.type, count: Number(row.count) }));
+}
+
+/**
+ * Every event in `[fromIso, toIso)`, newest first — the read a period report
+ * (F2.33) is folded from.
+ *
+ * Half-open on purpose: two adjacent periods must not both claim a row that
+ * landed exactly on their shared boundary. `limit` is a safety stop, not a
+ * page: the caller has to say whether it truncated, because a P&L served from
+ * a silently cut window understates a bill.
+ */
+export async function auditEventsBetween(
+  handle: DbHandle,
+  fromIso: string,
+  toIso: string,
+  limit: number,
+): Promise<AuditEventRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(auditEvents)
+    .where(and(gte(auditEvents.at, new Date(fromIso)), lt(auditEvents.at, new Date(toIso))))
+    .orderBy(desc(auditEvents.at), desc(auditEvents.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    type: row.type,
+    at: row.at.toISOString(),
+    orgId: row.orgId,
+    payload: row.payload,
+    txHash: row.txHash,
+    logIndex: row.logIndex,
+  }));
 }
 
 /** Most recent events, oldest → newest. */

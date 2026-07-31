@@ -131,6 +131,17 @@ export type InferenceBudgetsSurface = {
   heartbeatBlock(crewId: string): Promise<InferenceBudgetBlock | null>;
   /** Per-call breakdown: model, tokens, estimated USD, run ids. */
   events(subject: BudgetSubject, limit?: number): Promise<InferenceUsageEvent[]>;
+  /**
+   * Metered calls inside an arbitrary window, for the scopes named — the read a
+   * period report (F2.33) folds, as opposed to `events`, which answers for the
+   * budget's own current period.
+   */
+  usageBetween(input: {
+    scopeKeys: readonly string[];
+    fromIso: string;
+    toIso: string;
+    limit?: number;
+  }): Promise<{ events: InferenceUsageEvent[]; complete: boolean }>;
   hydrate(): Promise<number>;
   prune(): Promise<void>;
   storeName: string;
@@ -427,6 +438,9 @@ export function createInferenceBudgets(opts: {
       const period = budget ? budgetPeriod(budget, now()) : null;
       return store.events(limit, scopeKey, period?.key);
     },
+
+    usageBetween: async ({ scopeKeys, fromIso, toIso, limit = 20_000 }) =>
+      store.eventsBetween({ scopeKeys, fromIso, toIso, limit }),
 
     hydrate: async () => (await store.list()).length,
 

@@ -8,6 +8,7 @@ export {
   type LacrewDb,
 } from "./client.js";
 export {
+  auditEventsBetween,
   countAuditEventsByType,
   insertAuditEvent,
   insertChainAuditEvent,
@@ -72,6 +73,7 @@ export {
   addInferenceUsage,
   getInferenceUsage,
   claimInferenceAlert,
+  inferenceUsageEventsBetween,
   insertInferenceUsageEvent,
   recentInferenceUsageEvents,
   pruneInferenceUsageEvents,

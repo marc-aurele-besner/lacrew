@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "node --import tsx --test src/scaffold.test.ts src/env.test.ts src/crews.test.ts src/connectors.test.ts src/skills.test.ts src/mcp.test.ts src/flowTriggers.test.ts src/heartbeat.test.ts src/budget.test.ts src/planRequired.test.ts src/dualControl.test.ts src/evals.test.ts",
+    "test": "node --import tsx --test src/scaffold.test.ts src/env.test.ts src/crews.test.ts src/connectors.test.ts src/skills.test.ts src/mcp.test.ts src/flowTriggers.test.ts src/heartbeat.test.ts src/budget.test.ts src/pnl.test.ts src/planRequired.test.ts src/dualControl.test.ts src/evals.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },

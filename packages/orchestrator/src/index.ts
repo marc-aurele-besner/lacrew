@@ -312,6 +312,13 @@ export {
   type InferenceBudgetsSurface,
 } from "./inferenceBudgets.js";
 export {
+  connectorPricesFromEnv,
+  createPnl,
+  type PnlRequest,
+  type PnlRuntime,
+  type PnlSurface,
+} from "./pnl.js";
+export {
   createInferenceBudgetStoreFromEnv,
   createMemoryInferenceBudgetStore,
   createPgInferenceBudgetStore,

@@ -21,6 +21,8 @@ import {
   type InferenceBudget,
 } from "@lacrew/flows";
 import type { InferenceBudgetsSurface } from "./inferenceBudgets.js";
+import { pnlToCsv } from "@lacrew/flows";
+import type { PnlSurface } from "./pnl.js";
 import {
   createSkillPacksSurface,
   readSkillPack,
@@ -105,6 +107,8 @@ export interface OrchestratorAppOptions {
   heartbeats?: HeartbeatSurface;
   /** Inference & API cost budgets (F2.28); absent in embedders that wired none. */
   budgets?: InferenceBudgetsSurface;
+  /** Crew / seat P&L (F2.33); absent in embedders that wired none. */
+  pnl?: PnlSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -179,6 +183,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     webhooks,
     heartbeats,
     budgets,
+    pnl,
     mcpUseMock,
     authToken,
   } = options;
@@ -1430,6 +1435,55 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 100,
       ),
     });
+  });
+
+  /**
+   * Unified crew / seat P&L for a period (F2.33).
+   *
+   * `?crewId=` is required and `?agentId=` narrows to one seat. The window is
+   * either `?period=calendar_month|calendar_week|epoch` or an explicit
+   * `?from=&to=`; `?epochSeconds=` and `?epochAnchorAt=` say where an epoch
+   * period starts, because the deployment's cadence is a workspace setting this
+   * package is not the owner of.
+   *
+   * `?format=csv` returns the accountant's flat export of the same figures —
+   * the same aggregate, one representation, so the CSV cannot disagree with the
+   * page.
+   *
+   * A read. It approves nothing, moves nothing, and takes no lock.
+   */
+  app.get("/pnl", async (c) => {
+    if (!pnl) return jsonBig(c, { error: "pnl_unavailable" }, 503);
+    const crewId = c.req.query("crewId");
+    if (!crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    const epochSeconds = c.req.query("epochSeconds");
+    try {
+      const report = await pnl.report({
+        crewId,
+        ...(c.req.query("agentId") ? { agentId: c.req.query("agentId")! } : {}),
+        ...(c.req.query("period") ? { period: c.req.query("period")! } : {}),
+        ...(c.req.query("from") ? { from: c.req.query("from")! } : {}),
+        ...(c.req.query("to") ? { to: c.req.query("to")! } : {}),
+        ...(epochSeconds ? { epochSeconds: Number(epochSeconds) } : {}),
+        ...(c.req.query("epochAnchorAt")
+          ? { epochAnchorAt: c.req.query("epochAnchorAt")! }
+          : {}),
+      });
+      if (c.req.query("format") === "csv") {
+        return c.newResponse(pnlToCsv(report), 200, {
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": `attachment; filename="pnl-${report.scope.crewId}-${report.period.key.replace(/[^\w.-]/g, "_")}.csv"`,
+          "access-control-allow-origin": "*",
+        });
+      }
+      return jsonBig(c, { ...report, mode: runtime.mode });
+    } catch (err) {
+      const msg = msgOf(err, "pnl_failed");
+      // A seat that is not in the crew is a 404 for the same reason a foreign
+      // budget is: whether it exists elsewhere is not this caller's business.
+      const status = msg === "agent_not_in_crew" ? 404 : 400;
+      return jsonBig(c, { error: msg }, status);
+    }
   });
 
   /**
