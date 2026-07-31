@@ -190,6 +190,24 @@ describe("external MCP routes", () => {
     assert.equal(narrowing.status, 200);
   });
 
+  it("refuses a malformed scope rather than widening the rule to the workspace", async () => {
+    const h = harness();
+    await h.externalMcp.refresh();
+    const res = await h.app.request("http://x/mcp/servers/tools", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: { level: "team", ref: "0xdesk" },
+        server: "gh",
+        tool: "search_issues",
+        enabled: true,
+        effect: "read",
+      }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(h.externalMcp.resolve("gh", "search_issues").enabled, false);
+  });
+
   it("refuses a rule for a server nobody attached", async () => {
     const h = harness();
     const res = await h.app.request(allow("other", "anything"));

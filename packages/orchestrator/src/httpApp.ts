@@ -400,7 +400,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       effect?: string;
       mode?: string;
     }>(c);
-    const scope = parseModeScope(body.scope) ?? { level: "workspace" as const };
+    // An omitted scope is the workspace. A *malformed* one is a 400 rather than
+    // the same default: silently widening a rule somebody meant for one seat
+    // into one for the whole workspace is the wrong direction to fail in.
+    const scope = body.scope === undefined ? { level: "workspace" as const } : parseModeScope(body.scope);
+    if (!scope) return jsonBig(c, { error: "scope must be workspace, crew:<ref>, or agent:<ref>" }, 400);
     const server = body.server?.trim() ?? "";
     const tool = body.tool?.trim() ?? "";
     if (!server || !tool) return jsonBig(c, { error: "server_and_tool_required" }, 400);
