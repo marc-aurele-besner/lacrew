@@ -251,7 +251,17 @@ export type BriefLayer = {
   label: string;
   text?: string;
   resources?: Array<{ kind: string; ref: string; note?: string }>;
-  skills?: Array<{ name: string; when?: string; instructions: string }>;
+  skills?: Array<{
+    name: string;
+    when?: string;
+    instructions: string;
+    /**
+     * Set when a skill pack put this skill here (F2.23). Absent means a person
+     * wrote it, which is what keeps an uninstall from taking their work with
+     * it. Never rendered — it is provenance, not instruction.
+     */
+    source?: { pack: string; version: string; skill: string };
+  }>;
 };
 
 export type CrewValidationResult = { ok: boolean; errors: string[] };

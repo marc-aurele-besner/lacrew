@@ -132,6 +132,23 @@ export type ProtocolEventType =
    */
   | "AgentDirectiveChanged"
   /**
+   * A skill pack was installed onto, or removed from, an agent's directive
+   * (F2.23).
+   *
+   * `AgentDirectiveChanged` already records that the directive moved; these say
+   * *what* moved it — which pack, at which version, and how many skills it
+   * contributed. That distinction is the one an operator needs when a crew's
+   * behaviour changes after an install: a pack is somebody else's instructions
+   * entering their agents, and the version is what makes "it started doing this
+   * last Tuesday" checkable.
+   *
+   * The payload carries counts and ids, never a skill body. A pack body runs to
+   * thousands of characters, the trail is a bounded ring, and the text is
+   * served in full by the directive itself.
+   */
+  | "SkillPackInstalled"
+  | "SkillPackRemoved"
+  /**
    * Someone posted to the crew's conversation (F1.7).
    *
    * Records that a claim was made and by whom — never that the claim is true.

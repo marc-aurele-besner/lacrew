@@ -201,3 +201,12 @@ export {
   type ModelCompleteInput,
   type ModelCompleteResult,
 } from "./model/index.js";
+export {
+  createSkillPacksSurface,
+  readSkillPack,
+  SkillPackRequirementsError,
+  SkillPackTooLargeError,
+  type SkillPackInstallReport,
+  type SkillPacksDeps,
+  type SkillPacksSurface,
+} from "./skillPacks.js";
