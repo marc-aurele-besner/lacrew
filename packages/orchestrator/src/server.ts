@@ -28,6 +28,7 @@ import {
   loadExternalMcpServersFromEnv,
 } from "./externalMcp.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
+import { createEvalRunner } from "./evalRunner.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import {
@@ -248,6 +249,9 @@ async function main(): Promise<void> {
     connectors,
     connectorModes,
     ...(externalMcp ? { externalMcp } : {}),
+    // The suite ships with @lacrew/flows, so it is always available; the
+    // runner spawns a child per run rather than holding anything open.
+    evals: createEvalRunner(),
     connectorAsks,
     humanGates,
     webhooks,

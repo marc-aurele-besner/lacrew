@@ -34,6 +34,16 @@ export {
   type ConnectorWriteMode,
 } from "./connectorPolicy.js";
 export {
+  createEvalRunner,
+  evalTimeoutMs,
+  resolveEvalRunner,
+  DEFAULT_EVAL_TIMEOUT_MS,
+  type EvalRunnerSurface,
+  type EvalRunResult,
+  type EvalScenarioListing,
+  type EvalSuiteRun,
+} from "./evalRunner.js";
+export {
   createExternalMcpRegistry,
   externalMcpAuditArgKeys,
   externalMcpEnvVars,

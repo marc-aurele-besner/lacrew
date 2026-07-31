@@ -36,6 +36,7 @@ import { connectorPresets } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
+import type { EvalRunnerSurface } from "./evalRunner.js";
 import {
   validateExternalMcpRule,
   type ExternalMcpRegistry,
@@ -70,6 +71,8 @@ export interface OrchestratorAppOptions {
   connectorModes?: ConnectorModesSurface;
   /** Attached third-party MCP servers (F2.30); absent when none is configured. */
   externalMcp?: ExternalMcpRegistry;
+  /** Eval suite runner (F2.29); absent in embedders that wired none. */
+  evals?: EvalRunnerSurface;
   /** Pending and resolved ask-mode confirmations (F2.24). */
   connectorAsks?: ConnectorAsksSurface;
   /** Open and resolved blocking human gates (F2.27). */
@@ -146,6 +149,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     connectors,
     connectorModes,
     externalMcp,
+    evals,
     connectorAsks,
     humanGates,
     webhooks,
@@ -726,6 +730,69 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   lifecycleRoute("/flows/runs/pause", (runId, reason) => flows.pause(runId, reason));
   lifecycleRoute("/flows/runs/resume", (runId) => flows.resume(runId));
   lifecycleRoute("/flows/runs/cancel", (runId, reason) => flows.cancel(runId, reason));
+
+  /* ——— eval suite (F2.29) ——— */
+
+  /**
+   * The scenarios this build ships, so a surface can offer them by name without
+   * running anything. Filterable by the flow or blueprint they exercise, which
+   * is how a crew page asks "what is there for *this* desk".
+   */
+  app.get("/flows/eval", async (c) => {
+    if (!evals) return jsonBig(c, { error: "evals_unavailable" }, 503);
+    const flow = c.req.query("flow");
+    const blueprint = c.req.query("blueprint");
+    try {
+      const scenarios = await evals.list();
+      return jsonBig(c, {
+        scenarios: scenarios.filter(
+          (s) => (!flow || s.flow === flow) && (!blueprint || s.blueprint === blueprint),
+        ),
+        running: evals.busy(),
+      });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "eval_list_failed") }, 500);
+    }
+  });
+
+  /**
+   * Run scenarios and report what they asserted.
+   *
+   * Runs in a child process (`evalRunner.ts`) so the harness's network block
+   * cannot reach the calls this orchestrator is making for real crews. One run
+   * at a time: a second is refused with 409 rather than queued, because the
+   * caller is waiting for an answer about the state of things now.
+   */
+  app.post("/flows/eval", async (c) => {
+    if (!evals) return jsonBig(c, { error: "evals_unavailable" }, 503);
+    const body = await bodyOf<{ ids?: string[]; flow?: string; blueprint?: string }>(c);
+    try {
+      const result = await evals.run({
+        ...(Array.isArray(body.ids) ? { ids: body.ids.map(String) } : {}),
+        ...(body.flow ? { flow: String(body.flow) } : {}),
+        ...(body.blueprint ? { blueprint: String(body.blueprint) } : {}),
+      });
+      runtime.recordAudit({
+        type: "FlowEvalRun",
+        at: new Date().toISOString(),
+        payload: {
+          ...(body.flow ? { flow: body.flow } : {}),
+          ...(body.blueprint ? { blueprint: body.blueprint } : {}),
+          matched: result.matched,
+          passed: result.passed,
+          failed: result.failed,
+          ms: result.ms,
+        },
+      });
+      return jsonBig(c, result);
+    } catch (err) {
+      const message = msgOf(err, "eval_failed");
+      // A run already in flight is not a bad request and not a fault: the same
+      // call succeeds once it finishes.
+      const status = message === "eval_already_running" ? 409 : message === "eval_timeout" ? 504 : 500;
+      return jsonBig(c, { error: message }, status);
+    }
+  });
 
   app.get("/flows/templates", (c) => jsonBig(c, { templates: flows.templates() }));
 
