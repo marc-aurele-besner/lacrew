@@ -34,6 +34,17 @@ export {
   type ConnectorWriteMode,
 } from "./connectorPolicy.js";
 export {
+  PlanRequiredError,
+  createPlanRequirements,
+  isPlanRequired,
+  planRequiredDetail,
+  planRequiredFromEnv,
+  type PlanRequiredCheckInput,
+  type PlanRequiredOutcome,
+  type PlanRequiredStore,
+  type PlanRequirementsSurface,
+} from "./planRequired.js";
+export {
   createEvalRunner,
   evalTimeoutMs,
   resolveEvalRunner,

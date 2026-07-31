@@ -29,6 +29,7 @@ import type { ConnectorAskRecord, ConnectorAsksSurface } from "./connectorAsks.j
 import type { HumanGateRecord, HumanGatesSurface } from "./humanGates.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ExternalMcpRegistry } from "./externalMcp.js";
+import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
 import {
   createFlowStoreFromEnv,
   type FlowRunState,
@@ -167,6 +168,14 @@ export function createFlowsSurface(opts: {
    * than passing: a gate nobody can answer must never read as a yes.
    */
   gates?: HumanGatesSurface;
+  /**
+   * Plan-required mode (F2.31). Given one, every side-effecting tool call is
+   * checked against it *before* dispatch. Absent, crews behave as they did
+   * before the mode existed — which is also what an unreadable rule set means:
+   * this control guards legibility, not authority, and everything it sits in
+   * front of is still bounded by the policy stack.
+   */
+  planRequired?: PlanRequirementsSurface;
 }): FlowsSurface {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
@@ -186,6 +195,50 @@ export function createFlowsSurface(opts: {
   };
 
   /**
+   * How the operator's own surfaces are classified for plan-required (F2.31).
+   *
+   * Only the registry holding a route or an external tool knows whether it
+   * reads or writes; an unknown name stays unclassified and is treated as a
+   * write by the checker, which is the cautious direction.
+   */
+  const effectOf = (tool: string): "read" | "write" | undefined =>
+    opts.connectors?.effectOf(tool) ?? opts.externalMcp?.effectOf(tool);
+
+  /**
+   * Refuse a side effect the principal has not planned (F2.31).
+   *
+   * Asked before anything is built, so a refusal means no request was formed,
+   * no policy was consulted and nothing left the process. A checker that fails
+   * for its *own* reasons never stops the run: the requirement is a supervision
+   * control, and everything behind it is still bounded by the policy stack.
+   */
+  const requirePlan = async (
+    tool: string,
+    principal: `0x${string}`,
+    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+  ): Promise<void> => {
+    if (!opts.planRequired) return;
+    try {
+      await opts.planRequired.check({
+        tool,
+        principal,
+        managers: run.managers,
+        runId: run.runId,
+        runStartedAt: run.startedAt,
+        flowId: run.flowId,
+        ...(run.upstream?.length ? { upstream: run.upstream } : {}),
+        effectOf,
+      });
+    } catch (err) {
+      if (isPlanRequired(err)) throw err;
+      console.error(
+        `[@lacrew/orchestrator] plan-required check failed for ${tool}; the call is proceeding:`,
+        err,
+      );
+    }
+  };
+
+  /**
    * A backend bound to one run's identity. Gate defaults, the policy ceiling,
    * and delegation all follow the principal rather than the process-wide worker.
    */
@@ -195,7 +248,7 @@ export function createFlowsSurface(opts: {
     sessionLimits: ReturnType<typeof scopeSessionLimits>,
     chain: string[],
     /** Identifies the run to an ask-mode write, so it can be resumed. */
-    run: { flowId: string; runId: string; managers: string[] },
+    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
     const bound = createRuntimeMcpBackend(opts.runtime, {
@@ -221,6 +274,10 @@ export function createFlowsSurface(opts: {
           },
         }),
       callTool: async (name, args) => {
+        // Before every dispatch below, so "blocked" means nothing was built and
+        // nothing went out. Reads and the conversation tools classify as no
+        // effect and pass straight through.
+        await requirePlan(name, principal, run);
         if (name === "lacrew_invoke_agent") return delegate(args, chain, principal, run);
         if (name === "lacrew_human_gate") return humanGate(args, principal, run);
         // Connectors are checked before the MCP dispatch so a `lacrew_*` name
@@ -291,7 +348,7 @@ export function createFlowsSurface(opts: {
     args: Record<string, unknown>,
     chain: string[],
     caller: `0x${string}`,
-    run: { flowId: string; runId: string; managers: string[] },
+    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
   ): Promise<unknown> => {
     const agent = String(args.agent ?? "") as `0x${string}`;
     const flowId = args.flowId ? String(args.flowId) : undefined;
@@ -309,6 +366,10 @@ export function createFlowsSurface(opts: {
           id: flowId,
           input: args.prompt ? String(args.prompt) : undefined,
           as: agent,
+          // Who handed the work down, for plan-required (F2.31). The delegate
+          // is still the seat that must have planned — this only matters where
+          // a rule says a manager's plan covers its workers.
+          upstream: [caller, ...(run.upstream ?? [])],
         },
         chain,
       );
@@ -408,6 +469,8 @@ export function createFlowsSurface(opts: {
       as?: `0x${string}`;
       /** Continue a suspended run rather than starting at the entry step. */
       resume?: FlowResumeState;
+      /** Seats that delegated this run, nearest-first (F2.31). */
+      upstream?: string[];
     },
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
     chain: string[] = [],
@@ -445,8 +508,10 @@ export function createFlowsSurface(opts: {
       backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id], {
         flowId: def.id,
         runId,
+        startedAt,
         // Nearest-first, which is the order crew mode rules are resolved in.
         managers: [...ancestorsOf(nodes, principal)],
+        ...(input.upstream?.length ? { upstream: input.upstream } : {}),
       }),
       {
         input: input.input,

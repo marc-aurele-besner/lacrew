@@ -217,6 +217,13 @@ export type ExternalMcpRegistry = {
   toolNames(subject?: ExternalMcpCallContext): string[];
   /** Whether `name` names a tool on a registered server (allowlisted or not). */
   handles(name: string): boolean;
+  /**
+   * Whether a tool reads or writes, by tool name; undefined when no registered
+   * server holds it. Read by plan-required mode (F2.31), which gates writes and
+   * must never gate a read. Classified at workspace scope, like the mode it
+   * carries: a per-seat reclassification would be a way around the requirement.
+   */
+  effectOf(name: string): "read" | "write" | undefined;
   call(
     name: string,
     args: Record<string, unknown>,
@@ -673,6 +680,12 @@ export function createExternalMcpRegistry(
     handles: (name) => {
       const parsed = parseExternalToolName(name);
       return parsed !== null && byId.has(parsed.server);
+    },
+
+    effectOf: (name) => {
+      const parsed = parseExternalToolName(name);
+      if (!parsed || !byId.has(parsed.server)) return undefined;
+      return resolveExternalTool(parsed.server, parsed.tool, [...records.values()]).effect;
     },
 
     toolNames: (subject = {}) =>

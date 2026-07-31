@@ -111,6 +111,31 @@ export type ProtocolEventType =
    */
   | "ConnectorAskUnresolved"
   /**
+   * A side effect was refused because the agent had not said what it was about
+   * to do (F2.31).
+   *
+   * The row an operator reads to find work a crew *wanted* to do and did not —
+   * which is the only trace such an attempt leaves, since nothing was built, no
+   * policy was consulted and nothing left the process. It carries the tool, the
+   * principal, the mode that refused it and whether a plan was missing or
+   * merely stale; never the thread's contents, because a plan body names
+   * counterparties, repositories and amounts.
+   *
+   * Not a policy verdict and not a denial of authority: the crew was admitted
+   * to take this action and remains so. What it lacked was a statement on the
+   * record, and posting one lets it proceed — into the same policy stack as
+   * before.
+   */
+  | "PlanRequiredBlocked"
+  /**
+   * An operator changed a scope's plan-required mode (F2.31).
+   *
+   * Turning the mode *down* is the interesting direction: it is the moment a
+   * crew stops having to say what it is about to do, and it should be as
+   * attributable afterwards as raising a spend cap is.
+   */
+  | "PlanRequiredChanged"
+  /**
    * A blocking human gate opened: a `human` step posted its question and parked
    * the run (F2.27).
    *

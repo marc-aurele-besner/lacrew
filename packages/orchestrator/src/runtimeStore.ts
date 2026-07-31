@@ -9,6 +9,12 @@ import type { AgentControlRecord } from "./agentControls.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
 import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
+import type { PlanRequiredStore } from "./planRequired.js";
+import {
+  planRequiredScopeKey,
+  type PlanRequiredMode,
+  type PlanRequiredRecord,
+} from "@lacrew/flows";
 import {
   externalMcpScopeKey,
   type ExternalMcpScope,
@@ -21,9 +27,11 @@ import {
   createDb,
   deleteConnectorMode,
   deleteExternalMcpTool,
+  deletePlanRequirement,
   insertMessageRow,
   listConnectorModes,
   listExternalMcpTools,
+  listPlanRequirements,
   recentConnectorAsks,
   recentHumanGates,
   recentMessageRows,
@@ -38,6 +46,7 @@ import {
   upsertConnectorMode,
   upsertExternalMcpTool,
   upsertHumanGate,
+  upsertPlanRequirement,
   upsertSessionRow,
   type AgentControlRow,
   type ConnectorAskRow,
@@ -55,7 +64,8 @@ export interface RuntimeStore
   extends ConnectorModeStore,
     ConnectorAskStore,
     HumanGateStore,
-    ExternalMcpStore {
+    ExternalMcpStore,
+    PlanRequiredStore {
   readonly name: string;
   /** Upsert a session by keyId; must never throw into the caller's flow. */
   saveSession(record: SessionRecord): Promise<void>;
@@ -105,6 +115,7 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const connectorAsks = new Map<string, ConnectorAskRecord>();
   const humanGates = new Map<string, HumanGateRecord>();
   const externalMcpTools = new Map<string, ExternalMcpToolRecord>();
+  const planRequirements = new Map<string, PlanRequiredRecord>();
 
   return {
     name: "memory",
@@ -164,6 +175,15 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     },
     removeExternalMcpTool: async (scopeKey, server, tool) => {
       externalMcpTools.delete(`${scopeKey}|${server.trim().toLowerCase()}|${tool}`);
+    },
+    // One row per configured scope, so unbounded like the allowlist above: a
+    // trimmed row is a crew that silently stops being asked to plan.
+    loadPlanRequirements: async () => [...planRequirements.values()],
+    savePlanRequirement: async (record) => {
+      planRequirements.set(planRequiredScopeKey(record.scope), record);
+    },
+    removePlanRequirement: async (scopeKey) => {
+      planRequirements.delete(scopeKey);
     },
     loadConnectorAsks: async () => [...connectorAsks.values()],
     saveConnectorAsk: async (record) => {
@@ -565,6 +585,57 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await deleteExternalMcpTool(db(), scopeKey, server, tool);
       } catch (err) {
         warn("external mcp tool delete", err);
+      }
+    },
+    loadPlanRequirements: async () => {
+      try {
+        const rows = await listPlanRequirements(db());
+        return rows.flatMap((row) => {
+          const scope = modeScopeFromRow(row.scope);
+          if (!scope) {
+            warn("plan requirement load", new Error(`unreadable scope: ${JSON.stringify(row.scope)}`));
+            return [];
+          }
+          return [
+            {
+              scope,
+              mode: row.mode as PlanRequiredMode,
+              windowMs: row.windowMs,
+              minPlanChars: row.minPlanChars,
+              acceptUpstreamPlan: row.acceptUpstreamPlan,
+              at: row.updatedAt,
+            } satisfies PlanRequiredRecord,
+          ];
+        });
+      } catch (err) {
+        // Rethrown, like the rules above. Unlike them the caller keeps working
+        // — plan-required fails open, see planRequired.ts — but it can only say
+        // "the requirement is unreadable" if it is told, and a silent empty list
+        // would read as "no crew was ever asked to plan".
+        warn("plan requirements load", err);
+        throw err;
+      }
+    },
+    savePlanRequirement: async (record) => {
+      try {
+        await upsertPlanRequirement(db(), {
+          scopeKey: planRequiredScopeKey(record.scope),
+          scope: record.scope as unknown as Record<string, unknown>,
+          mode: record.mode,
+          windowMs: record.windowMs,
+          minPlanChars: record.minPlanChars,
+          acceptUpstreamPlan: record.acceptUpstreamPlan,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("plan requirement save", err);
+      }
+    },
+    removePlanRequirement: async (scopeKey) => {
+      try {
+        await deletePlanRequirement(db(), scopeKey);
+      } catch (err) {
+        warn("plan requirement delete", err);
       }
     },
     loadConnectorAsks: async () => {
