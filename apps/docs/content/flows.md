@@ -316,6 +316,12 @@ matching minute by the orchestrator's provider-agnostic scheduler), or
 { "trigger": "cron", "schedule": "0 9 * * 1-5" }
 ```
 
+A flow can also be run by a **crew heartbeat** without declaring anything: a
+heartbeat works through a checklist an operator wrote, so the flow's own trigger
+is irrelevant to it and a definition cannot opt into being on one. Those runs are
+tagged `trigger: "heartbeat"` — see [Crew heartbeat](./heartbeat.md) for when to
+reach for one instead of a per-flow cron.
+
 ## Webhook triggers
 
 A `webhook` flow is started by a signed HTTP delivery, so a crew can react to a
