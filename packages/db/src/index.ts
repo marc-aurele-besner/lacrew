@@ -95,6 +95,12 @@ export {
   type ExternalMcpToolRow,
 } from "./mcp.js";
 export {
+  upsertPlanRequirement,
+  deletePlanRequirement,
+  listPlanRequirements,
+  type PlanRequirementRow,
+} from "./planRequired.js";
+export {
   upsertSessionRow,
   markSessionRevokedRow,
   recentSessionRows,
