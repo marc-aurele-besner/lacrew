@@ -633,6 +633,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         const message = msgOf(err, "external_mcp_call_failed");
         const refused =
           message.startsWith("tool_not_allowlisted") || message.startsWith("mcp_mode_denied");
+        // An ask-mode write did not fail — it asked. Reported as 202 with the
+        // question's id, because a 5xx here reads as "the server broke" for the
+        // one outcome the operator configured on purpose.
+        if (message.startsWith("flow_waiting:connector_ask")) {
+          return jsonBig(
+            c,
+            {
+              status: "waiting",
+              reason: "connector_ask",
+              askId: message.split(":").at(-1),
+              detail: "a human was asked to confirm this write; nothing was called",
+            },
+            202,
+          );
+        }
         return jsonBig(c, { error: message }, refused ? 403 : 502);
       }
     }

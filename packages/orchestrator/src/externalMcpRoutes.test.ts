@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { flow } from "@lacrew/flows";
+import { flow, FlowWaitingError } from "@lacrew/flows";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import { createExternalMcpRegistry, type ExternalMcpServer } from "./externalMcp.js";
@@ -270,6 +270,68 @@ describe("external MCP routes", () => {
     assert.equal(change.payload.tool, "create_issue");
     assert.equal(change.payload.action, "allowed");
     assert.equal(change.payload.mode, "ask");
+  });
+
+  it("reports an ask-mode write as waiting, not as a server failure", async () => {
+    // A registry whose ask surface always suspends, which is what the real one
+    // does the first time a write in `ask` mode comes through.
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
+    const model = new MemoryModelProvider();
+    const externalMcp = createExternalMcpRegistry({
+      servers: [SERVER],
+      env: { GH_MCP_TOKEN: "s3cret-token" },
+      clientFor: () => ({
+        serverId: "gh",
+        transport: "http",
+        listTools: async () => [{ name: "create_issue" }],
+        callTool: async () => {
+          throw new Error("the call should never have gone out");
+        },
+        close: async () => {},
+      }),
+      asks: {
+        gate: async () => {
+          throw new FlowWaitingError({
+            reason: "connector_ask",
+            token: "ask_abc123",
+            detail: "waiting on a human",
+          });
+        },
+      },
+    });
+    await externalMcp.refresh();
+    await externalMcp.setTool({
+      scope: { level: "workspace" },
+      server: "gh",
+      tool: "create_issue",
+      enabled: true,
+      effect: "write",
+      mode: "ask",
+    });
+    const app = createOrchestratorApp({
+      runtime,
+      queue: new InMemoryQueue(),
+      model,
+      flows: createFlowsSurface({ runtime, model, store: createMemoryFlowStore() }),
+      externalMcp,
+      mcpUseMock: true,
+      isDbReady: () => false,
+      isDbConfigured: () => false,
+    });
+
+    const res = await app.request("/mcp/call", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "mcp__gh__create_issue", arguments: { title: "x" } }),
+    });
+    // 202, not 5xx: the write was held for a human, which is the outcome the
+    // operator configured — reporting it as a server fault teaches them to
+    // ignore the one status that means "somebody has to answer".
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { status: string; reason: string; askId: string };
+    assert.equal(body.status, "waiting");
+    assert.equal(body.reason, "connector_ask");
+    assert.equal(body.askId, "ask_abc123");
   });
 
   it("pings a server for a setup drawer, and 404s an unknown one", async () => {
