@@ -143,6 +143,42 @@ export type ProtocolEventType =
    */
   | "HumanGateUnresolved"
   /**
+   * A crew reached outside LaCrew through an **external** MCP server (F2.30).
+   *
+   * Distinct from `ToolCalled`, which is an operator-written connector route:
+   * this one names third-party code the workspace attached, so "which server,
+   * which tool, and did it actually go out" is the question the row answers. A
+   * refusal is recorded too (`called: false` with the reason) — a tool that was
+   * never allowlisted, a write refused by its mode, an ask with nowhere to go —
+   * because an attempt on a tool nobody admitted is exactly what an operator
+   * wants to see, and it leaves no other trace.
+   *
+   * Carries no arguments and no results by default. Tool arguments routinely
+   * name a customer or a private repository, and a result is unbounded
+   * third-party text; `LACREW_MCP_AUDIT_ARGS=1` adds argument *keys* only.
+   */
+  | "ExternalMcpCalled"
+  /**
+   * An external MCP server's tool list was re-read (F2.30), with what changed.
+   *
+   * The row exists for the tools that appeared: a server growing a tool between
+   * refreshes is either a release or a supply-chain compromise, and from here
+   * the two look identical — so the new names are recorded, they are blocked
+   * until a person allows them, and the record is what makes "when did that
+   * appear" answerable afterwards. A failed refresh is recorded too, because a
+   * stale allowlist read as a confirmed one is its own hazard.
+   */
+  | "ExternalMcpDiscovered"
+  /**
+   * An operator allowed, disabled, or re-moded an external MCP tool (F2.30).
+   *
+   * The moment authority actually changes in this feature. Everything else is
+   * default-deny; this is a person naming a third party's tool and admitting it
+   * for a workspace, a crew, or a seat — which is precisely what should be
+   * attributable later.
+   */
+  | "ExternalMcpToolPolicyChanged"
+  /**
    * A crew's inference cost budget was created, edited, enabled, disabled or
    * removed (F2.28).
    *

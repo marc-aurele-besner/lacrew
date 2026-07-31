@@ -9,13 +9,21 @@ import type { AgentControlRecord } from "./agentControls.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
 import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
+import {
+  externalMcpScopeKey,
+  type ExternalMcpScope,
+  type ExternalMcpStore,
+  type ExternalMcpToolRecord,
+} from "./externalMcp.js";
 import type { Message } from "./conversation.js";
 import {
   allAgentControlRows,
   createDb,
   deleteConnectorMode,
+  deleteExternalMcpTool,
   insertMessageRow,
   listConnectorModes,
+  listExternalMcpTools,
   recentConnectorAsks,
   recentHumanGates,
   recentMessageRows,
@@ -28,6 +36,7 @@ import {
   upsertAgentControlRow,
   upsertConnectorAsk,
   upsertConnectorMode,
+  upsertExternalMcpTool,
   upsertHumanGate,
   upsertSessionRow,
   type AgentControlRow,
@@ -42,7 +51,11 @@ export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
 
 
-export interface RuntimeStore extends ConnectorModeStore, ConnectorAskStore, HumanGateStore {
+export interface RuntimeStore
+  extends ConnectorModeStore,
+    ConnectorAskStore,
+    HumanGateStore,
+    ExternalMcpStore {
   readonly name: string;
   /** Upsert a session by keyId; must never throw into the caller's flow. */
   saveSession(record: SessionRecord): Promise<void>;
@@ -91,6 +104,7 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const connectorModes = new Map<string, ConnectorModeRecord>();
   const connectorAsks = new Map<string, ConnectorAskRecord>();
   const humanGates = new Map<string, HumanGateRecord>();
+  const externalMcpTools = new Map<string, ExternalMcpToolRecord>();
 
   return {
     name: "memory",
@@ -142,6 +156,15 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     removeConnectorMode: async (scopeKey, route) => {
       connectorModes.delete(`${scopeKey}|${route}`);
     },
+    // Unbounded, like agent controls: there is one row per admitted tool, and
+    // trimming would silently un-admit one — or drop a `*` deny, which is worse.
+    loadExternalMcpTools: async () => [...externalMcpTools.values()],
+    saveExternalMcpTool: async (record) => {
+      externalMcpTools.set(mcpToolKey(record.scope, record.server, record.tool), record);
+    },
+    removeExternalMcpTool: async (scopeKey, server, tool) => {
+      externalMcpTools.delete(`${scopeKey}|${server.trim().toLowerCase()}|${tool}`);
+    },
     loadConnectorAsks: async () => [...connectorAsks.values()],
     saveConnectorAsk: async (record) => {
       connectorAsks.set(record.id, record);
@@ -173,6 +196,11 @@ function scopeKeyOf(scope: ConnectorModeScope): string {
 
 function modeKey(scope: ConnectorModeScope, route: string): string {
   return `${scopeKeyOf(scope)}|${route}`;
+}
+
+/** Same identity the Postgres unique constraint uses (scope + server + tool). */
+function mcpToolKey(scope: ExternalMcpScope, server: string, tool: string): string {
+  return `${externalMcpScopeKey(scope)}|${server.trim().toLowerCase()}|${tool}`;
 }
 
 function modeScopeFromRow(raw: unknown): ConnectorModeScope | null {
@@ -477,6 +505,66 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await deleteConnectorMode(db(), scopeKey, route);
       } catch (err) {
         warn("connector mode delete", err);
+      }
+    },
+    loadExternalMcpTools: async () => {
+      try {
+        const rows = await listExternalMcpTools(db());
+        return rows.flatMap((row) => {
+          const scope = modeScopeFromRow(row.scope);
+          if (!scope) {
+            warn(
+              "external mcp tool load",
+              new Error(`unreadable scope: ${JSON.stringify(row.scope)}`),
+            );
+            return [];
+          }
+          return [
+            {
+              scope,
+              server: row.server,
+              tool: row.tool,
+              enabled: row.enabled,
+              ...(row.effect === "read" || row.effect === "write" ? { effect: row.effect } : {}),
+              ...(row.mode ? { mode: row.mode as ExternalMcpToolRecord["mode"] } : {}),
+              ...(row.description ? { description: row.description } : {}),
+              ...(row.discoveredAt ? { discoveredAt: row.discoveredAt } : {}),
+              at: row.updatedAt,
+            } satisfies ExternalMcpToolRecord,
+          ];
+        });
+      } catch (err) {
+        // Rethrown, like connector modes: an empty allowlist reads as "no tool
+        // was ever admitted", which is the safe direction for *calls* — but the
+        // caller must be able to say the list is unreadable rather than serve an
+        // operator a tools page claiming they enabled nothing.
+        warn("external mcp tools load", err);
+        throw err;
+      }
+    },
+    saveExternalMcpTool: async (record) => {
+      try {
+        await upsertExternalMcpTool(db(), {
+          scopeKey: externalMcpScopeKey(record.scope),
+          scope: record.scope as unknown as Record<string, unknown>,
+          server: record.server,
+          tool: record.tool,
+          enabled: record.enabled,
+          effect: record.effect ?? null,
+          mode: record.mode ?? null,
+          description: record.description ?? null,
+          discoveredAt: record.discoveredAt ?? null,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("external mcp tool save", err);
+      }
+    },
+    removeExternalMcpTool: async (scopeKey, server, tool) => {
+      try {
+        await deleteExternalMcpTool(db(), scopeKey, server, tool);
+      } catch (err) {
+        warn("external mcp tool delete", err);
       }
     },
     loadConnectorAsks: async () => {

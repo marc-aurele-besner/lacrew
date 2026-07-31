@@ -877,6 +877,22 @@ export function createMockFlowBackend(): FlowBackend {
               mocked: true,
             };
           }
+          // An external MCP tool (`mcp__<server>__<tool>`, F2.30) is the
+          // operator's too, and offline there is no server to ask. Same answer
+          // for the same reason: report that nothing was called.
+          if (/^mcp__[a-z][a-z0-9-]*__.+$/.test(name)) {
+            const rest = name.slice(5);
+            const split = rest.indexOf("__");
+            return {
+              server: rest.slice(0, split),
+              tool: rest.slice(split + 2),
+              untrusted: true,
+              content: null,
+              isError: true,
+              note: "no external MCP server attached — nothing was called",
+              mocked: true,
+            };
+          }
           throw new Error(`Unknown mock tool: ${name}`);
       }
     },

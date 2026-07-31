@@ -89,6 +89,12 @@ export {
   type ConnectorAskRow,
 } from "./connectors.js";
 export {
+  upsertExternalMcpTool,
+  deleteExternalMcpTool,
+  listExternalMcpTools,
+  type ExternalMcpToolRow,
+} from "./mcp.js";
+export {
   upsertSessionRow,
   markSessionRevokedRow,
   recentSessionRows,

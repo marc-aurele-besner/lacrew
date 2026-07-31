@@ -28,6 +28,7 @@ import type { OrgNode } from "@lacrew/core";
 import type { ConnectorAskRecord, ConnectorAsksSurface } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGatesSurface } from "./humanGates.js";
 import type { ConnectorRegistry } from "./connectors.js";
+import type { ExternalMcpRegistry } from "./externalMcp.js";
 import {
   createFlowStoreFromEnv,
   type FlowRunState,
@@ -149,6 +150,12 @@ export function createFlowsSurface(opts: {
    */
   connectors?: ConnectorRegistry;
   /**
+   * Attached third-party MCP servers (`mcp__<server>__<tool>` tool names,
+   * F2.30). Absent, a flow naming one gets "unknown tool" — never a silent
+   * no-op, and never a call: the allowlist lives in the registry.
+   */
+  externalMcp?: ExternalMcpRegistry;
+  /**
    * Ask-mode confirmations (F2.24). Given one, this surface registers itself as
    * the thing that resumes a suspended run when the answer lands.
    */
@@ -220,6 +227,17 @@ export function createFlowsSurface(opts: {
         // can never be shadowed by a registered route.
         if (!name.startsWith("lacrew_") && opts.connectors?.handles(name)) {
           return opts.connectors.call(name, args, {
+            principal,
+            managers: run.managers,
+            flowId: run.flowId,
+            runId: run.runId,
+          });
+        }
+        // External MCP tools carry their own `mcp__<server>__<tool>` namespace,
+        // so they can neither shadow a `lacrew_*` tool nor a connector route.
+        // The registry decides whether this seat may call it at all.
+        if (opts.externalMcp?.handles(name)) {
+          return opts.externalMcp.call(name, args, {
             principal,
             managers: run.managers,
             flowId: run.flowId,
