@@ -218,6 +218,30 @@ describe("crew P&L", () => {
     assert.ok(report.notes.some((n) => n.includes("without naming a seat")));
   });
 
+  it("counts the manager's own calls, which the runtime charges to the crew above", async () => {
+    const h = harness();
+    // A manager reports to the human root, so its own completions are metered
+    // under `crew:<root>/agent:<manager>` — outside this crew's own key.
+    await h.budgets.record(
+      { crewId: MOCK_ROOT.toLowerCase(), agentId: MOCK_MANAGER.toLowerCase() },
+      {
+        model: "claude-sonnet-5",
+        inputTokens: 500,
+        outputTokens: 100,
+        usdMicros: 2_000,
+        priceSource: "provider",
+        tokensEstimated: false,
+      },
+    );
+
+    const report = await h.pnl.report({ crewId: MOCK_MANAGER, from: FROM, to: TO });
+    assert.equal(report.totals.inference.usdMicros, 2_000);
+    const manager = report.seats.find((s) => s.agentId === MOCK_MANAGER.toLowerCase())!;
+    assert.equal(manager.inference.usdMicros, 2_000);
+    // Nothing is double-counted, so the seat rows still reconcile.
+    assert.equal(report.unattributed.inference.calls, 0);
+  });
+
   it("says the window is partial when only the in-process ring can answer", async () => {
     const h = harness();
     seedTrail(h.runtime);

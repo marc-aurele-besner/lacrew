@@ -30,9 +30,10 @@ import {
   type PnlUsageRow,
 } from "@lacrew/flows";
 import type { OrgNode } from "@lacrew/core";
-import { subtreeOf } from "./flowScope.js";
+import { ancestorsOf, subtreeOf } from "./flowScope.js";
 import {
   UNATTRIBUTED_CREW_ID,
+  crewIdForSeat,
   type InferenceBudgetsSurface,
 } from "./inferenceBudgets.js";
 
@@ -104,13 +105,30 @@ export function createPnl(opts: {
       const subtree = subtreeOf(nodes, crewId);
       const seats = nodes
         .filter((n) => subtree.has(n.account.toLowerCase()))
-        .map((n) => ({
-          account: n.account.toLowerCase(),
-          ...(n.label ? { label: n.label } : {}),
-        }));
+        .map((n) => {
+          const account = n.account.toLowerCase();
+          return {
+            account,
+            ...(n.label ? { label: n.label } : {}),
+            // Where this seat's model calls are actually metered. Usually this
+            // crew, but a manager's own calls are charged to the crew above it
+            // and a sub-manager's team to the sub-manager — so the key is read
+            // from the chart rather than assumed, or a subtree report would be
+            // missing the seats it can see.
+            usageScopeKey: budgetScopeKey({
+              crewId: crewIdForSeat(account, [...ancestorsOf(nodes, account)]),
+              agentId: account,
+            }),
+          };
+        });
       // An empty or unreadable chart still reports the crew itself. Dropping to
       // "no seats" would render as a desk that did nothing.
-      if (seats.length === 0) seats.push({ account: crewId });
+      if (seats.length === 0) {
+        seats.push({
+          account: crewId,
+          usageScopeKey: budgetScopeKey({ crewId, agentId: crewId }),
+        });
+      }
       if (agentId && !seats.some((s) => s.account === agentId)) {
         throw new Error("agent_not_in_crew");
       }
@@ -149,7 +167,7 @@ export function createPnl(opts: {
       if (opts.budgets) {
         const scopeKeys = [
           budgetScopeKey({ crewId }),
-          ...seats.map((s) => budgetScopeKey({ crewId, agentId: s.account })),
+          ...seats.map((s) => s.usageScopeKey),
         ];
         try {
           const metered = await opts.budgets.usageBetween({

@@ -469,8 +469,14 @@ export type PnlBuildInput = {
   scope: { crewId: string; agentId?: string };
   period: PnlPeriod;
   asOf: string;
-  /** The crew's own account plus everything reporting to it, in tree order. */
-  seats: Array<{ account: string; label?: string }>;
+  /**
+   * The crew's own account plus everything reporting to it, in tree order.
+   *
+   * `usageScopeKey` is the metering scope the seat's calls are charged under
+   * when it is not this crew's — a sub-manager's own calls sit under the crew
+   * above it. Omitted, this crew's key is assumed.
+   */
+  seats: Array<{ account: string; label?: string; usageScopeKey?: string }>;
   events: PnlAuditEvent[];
   usage: PnlUsageRow[];
   sources: PnlSources;
@@ -870,6 +876,19 @@ function usageForScope(rows: PnlUsageRow[], scopeKey: string): PnlUsageRow[] {
   return rows.filter((r) => norm(r.scopeKey) === scopeKey);
 }
 
+/**
+ * The scope key a seat's calls are actually charged under.
+ *
+ * Usually the crew being reported on, but not always: the runtime charges a
+ * call to the seat's *nearest manager*, so a sub-manager's own calls sit under
+ * the crew above it while the sub-manager still reports inside this subtree.
+ * The caller (which holds the org chart) may say so per seat; without that, the
+ * reported crew is assumed.
+ */
+function seatUsageKey(seat: { account: string; usageScopeKey?: string }, crewKey: string): string {
+  return norm(seat.usageScopeKey) || `${crewKey}/agent:${seat.account}`;
+}
+
 export function buildPnlReport(input: PnlBuildInput): PnlReport {
   const rowLimit = input.rowLimit ?? DEFAULT_ROW_LIMIT;
   const primaryAsset = input.primaryAsset ?? "USDC";
@@ -903,9 +922,23 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
     ? seatEvents(inRange, agentScope)
     : crewEvents(inRange, crewId, seatSet);
   const crewUsageKey = `crew:${crewId}`;
-  const scopedUsage = agentScope
-    ? usageForScope(usageInRange, `${crewUsageKey}/agent:${agentScope}`)
-    : usageForScope(usageInRange, crewUsageKey);
+  const seatKeys = new Map(
+    seatAccounts.map((seat) => [seat.account, seatUsageKey(seat, crewUsageKey)]),
+  );
+  // The crew's own key, plus the seats charged somewhere else. A seat under
+  // this crew's key is already inside that key's rows, so adding it again
+  // would count every attributed call twice; a seat charged to a sub-crew (or
+  // to the crew above, as a manager's own calls are) is not, and would
+  // otherwise be missing from a report on the subtree it sits in.
+  const crewUsage = agentScope
+    ? usageForScope(usageInRange, seatKeys.get(agentScope) ?? `${crewUsageKey}/agent:${agentScope}`)
+    : [
+        ...usageForScope(usageInRange, crewUsageKey),
+        ...seatAccounts
+          .filter((seat) => !seatKeys.get(seat.account)!.startsWith(`${crewUsageKey}/`))
+          .flatMap((seat) => usageForScope(usageInRange, seatKeys.get(seat.account)!)),
+      ];
+  const scopedUsage = crewUsage;
 
   const totals = {
     onchain: foldOnchain(scopedEvents, { primaryAsset, rowLimit }),
@@ -924,7 +957,7 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
           rowLimit,
         }),
         inference: foldInference(
-          usageForScope(usageInRange, `${crewUsageKey}/agent:${seat.account}`),
+          usageForScope(usageInRange, seatKeys.get(seat.account)!),
           rowLimit,
         ),
         connectors: foldConnectors(
