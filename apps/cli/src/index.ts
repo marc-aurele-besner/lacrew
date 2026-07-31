@@ -229,7 +229,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "crews") {
-    cmdCrews(rest);
+    await cmdCrews(rest);
     return;
   }
   if (cmd === "connectors") {
@@ -748,10 +748,12 @@ Commands:
   gov veto <id>             Human-root veto (high tier, --rpc)
   gov execute <id>          Execute after quorum/timelock (--rpc)
   flows <sub>               Agent logic pipelines — templates, list, save,
-                            run (--local offline, --as <agent>), runs, code
+                            run (--local offline, --as <agent>), runs, code,
+                            eval (offline regression suite)
                             (see: lacrew flows help)
   crews <sub>               Vertical crew blueprints — list, show <id>,
-                            plan <id> (the calls that stand a crew up)
+                            plan <id> (the calls that stand a crew up),
+                            eval <id> (the scenarios that hold it to them)
   connectors <sub>          Connectors — list, show <id>, config <id>
                             (JSON for LACREW_CONNECTORS); write policy —
                             modes, mode <route> <auto|ask|deny>, asks, answer

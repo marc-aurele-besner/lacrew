@@ -70,6 +70,28 @@ export {
   type CrewSampleRun,
 } from "./crewSamples.js";
 export {
+  EVAL_MODEL_STUB,
+  evalAddress,
+  evalCoverage,
+  evalCrewBindings,
+  formatEvalReport,
+  runFlowEval,
+  runFlowEvals,
+  type EvalGateAnswer,
+  type EvalModelReply,
+  type EvalPolicyStub,
+  type EvalToolMock,
+  type FlowEvalCall,
+  type FlowEvalCoverage,
+  type FlowEvalExpect,
+  type FlowEvalFailure,
+  type FlowEvalMocks,
+  type FlowEvalResult,
+  type FlowEvalScenario,
+  type FlowEvalSuiteResult,
+} from "./evals.js";
+export { firstPartyEvals } from "./evalSuite.js";
+export {
   createFlowsClient,
   type FlowsClient,
   type FlowsClientOptions,

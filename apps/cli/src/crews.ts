@@ -11,6 +11,7 @@
 
 import { writeFileSync } from "node:fs";
 import { getConnectorPreset } from "@lacrew/orchestrator";
+import { cmdEval } from "./evals.js";
 import {
   crewBlueprints,
   crewFlowOwner,
@@ -232,7 +233,7 @@ function printPlan(bp: CrewBlueprint, bindings: CrewBindings): void {
   }
 }
 
-export function cmdCrews(args: string[]): void {
+export async function cmdCrews(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   const id = rest.find((a) => !a.startsWith("-"));
 
@@ -324,14 +325,26 @@ export function cmdCrews(args: string[]): void {
       return;
     }
 
+    /*
+      The crew's guarantees, checked (F2.29). A blueprint's summary claims the
+      desk cannot trade or that merging needs an admitted authority; `eval` runs
+      the scenarios that hold it to that, offline and against fakes.
+    */
+    case "eval": {
+      await cmdEval(rest, "crews");
+      return;
+    }
+
     default:
-      console.log(`Usage: lacrew crews <list|show|sample|plan>
+      console.log(`Usage: lacrew crews <list|show|sample|plan|eval>
 
   list                       First-party crew blueprints
   show <id> [--json]         Org chart, budgets, ladder, guardrails, flows
   sample <id> [--json]       The certified first run and its input
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
+  eval [id…] [--list]        Run the crew's eval scenarios offline; a failure
+        [--json]             names the scenario, the assertion, and the diff
 `);
   }
 }

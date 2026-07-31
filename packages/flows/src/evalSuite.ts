@@ -1,0 +1,283 @@
+/**
+ * The first-party eval suite (F2.29).
+ *
+ * Each scenario pins one enforcement thesis a blueprint makes in prose, at the
+ * only place it is actually true: the port a run takes and the route it calls.
+ * They are written to fail loudly when a template, an interpolator, or a
+ * connector route is edited in a way that lets a funded desk do something it
+ * says it cannot — which is the regression no unit test over a definition can
+ * see, because the definition still validates.
+ *
+ * Every scenario names the seat it runs as. That is not decoration: a run fired
+ * as the wrong principal gets the wrong policy stack, and the harness refuses a
+ * scenario whose seat does not own the flow.
+ */
+
+import type { FlowEvalScenario } from "./evals.js";
+
+/** A dependency-bump pull request, as the GitHub connector would return one. */
+const botPullRequest = {
+  ok: true,
+  status: 200,
+  body: {
+    number: 94,
+    title: "chore(deps): bump viem from 2.31.6 to 2.31.7",
+    user: { login: "renovate[bot]", type: "Bot" },
+    labels: [{ name: "dependencies" }],
+    mergeable: true,
+    mergeable_state: "clean",
+    changed_files: 2,
+  },
+};
+
+/** One in-range LP position, as the Uniswap subgraph would return it. */
+const lpPositions = {
+  ok: true,
+  status: 200,
+  body: {
+    data: {
+      positions: [
+        {
+          id: "882431",
+          liquidity: "1284000000000000000",
+          tickLower: -201540,
+          tickUpper: -196080,
+          depositedToken0: "4.21",
+          depositedToken1: "12840.5",
+          collectedFeesToken0: "0.06",
+          collectedFeesToken1: "184.2",
+          pool: {
+            id: "0x1f98",
+            feeTier: "500",
+            tick: -199210,
+            totalValueLockedUSD: "8412000",
+          },
+        },
+      ],
+    },
+  },
+};
+
+const scenarios: FlowEvalScenario[] = [
+  /* --------------------------------------------------------------- *
+   * GitHub experts — the golden path, and the one that must stay red
+   * for the connector.
+   * --------------------------------------------------------------- */
+  {
+    id: "github-experts/merge-refused",
+    describe:
+      "A mergeable bot PR on a crew whose merge authority is not admitted: policy answers DENY, the run writes the refusal note, and the merge route is never called.",
+    flow: "bot-pr-triage",
+    blueprint: "github-experts",
+    asAgent: "reviewer",
+    input: { owner: "marc-aurele-besner", repo: "lacrew", number: 94 },
+    mocks: {
+      tools: { "github.get_pull_request": { result: botPullRequest } },
+      model: [{ when: "MERGE (safe, CI green", reply: "MERGE" }],
+      // The blueprint admits `merge-authority` by design; a *fresh* crew has
+      // not, which is exactly the state a first run lands in.
+      policy: { targets: { "merge-authority": "DENY" } },
+    },
+    expect: {
+      status: "completed",
+      ran: [
+        "pr",
+        "classify",
+        "route",
+        "merge-check",
+        "may-merge",
+        "merge-blocked",
+      ],
+      notRan: ["merge", "merge-note"],
+      port: { "may-merge": "merge-blocked" },
+      called: { "github.get_pull_request": 1, lacrew_check_policy: 1 },
+      notCalled: ["github.merge_pull_request"],
+    },
+  },
+  {
+    id: "github-experts/merge-admitted",
+    describe:
+      "The same PR once the merge-authority address is admitted: the run merges, exactly once, and records it.",
+    flow: "bot-pr-triage",
+    blueprint: "github-experts",
+    asAgent: "reviewer",
+    input: { owner: "marc-aurele-besner", repo: "lacrew", number: 94 },
+    mocks: {
+      tools: {
+        "github.get_pull_request": { result: botPullRequest },
+        "github.merge_pull_request": {
+          result: {
+            ok: true,
+            status: 200,
+            body: { merged: true, sha: "0f1e2d3" },
+          },
+        },
+      },
+      model: [{ when: "MERGE (safe, CI green", reply: "MERGE" }],
+      policy: { targets: { "merge-authority": "ALLOW" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["merge-check", "may-merge", "merge", "merge-note"],
+      notRan: ["merge-blocked"],
+      port: { "may-merge": "merge" },
+      // Once. A retry edge or a second write would be a double merge.
+      called: { "github.merge_pull_request": 1 },
+    },
+  },
+  {
+    id: "github-experts/reject-never-writes",
+    describe:
+      "A PR the classifier refuses never asks about merge authority and never touches the write route.",
+    flow: "bot-pr-triage",
+    blueprint: "github-experts",
+    asAgent: "reviewer",
+    input: { owner: "marc-aurele-besner", repo: "lacrew", number: 94 },
+    mocks: {
+      tools: { "github.get_pull_request": { result: botPullRequest } },
+      model: [{ when: "MERGE (safe, CI green", reply: "REJECT" }],
+    },
+    expect: {
+      status: "completed",
+      ran: ["pr", "classify", "route", "reject-note"],
+      notRan: ["merge-check", "merge"],
+      notCalled: [
+        "github.merge_pull_request",
+        "lacrew_check_policy",
+        "lacrew_propose_intent",
+      ],
+    },
+  },
+
+  /* --------------------------------------------------------------- *
+   * LP advisor — a crew whose whole claim is that it cannot trade.
+   * --------------------------------------------------------------- */
+  {
+    id: "lp-advisor/advice-never-executes",
+    describe:
+      "The advisory desk computes a rebalance, asks policy about the router, is refused as designed, and hands a memo to the owner. No intent is ever proposed.",
+    flow: "lp-range-review",
+    blueprint: "lp-advisor",
+    asAgent: "position-mapper",
+    input: {
+      owner: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+      subgraph_id: "5zvR82",
+    },
+    mocks: {
+      tools: { "uniswap.query": { result: lpPositions } },
+      model: [{ when: "REBALANCE, HOLD, or EXIT", reply: "REBALANCE" }],
+    },
+    expect: {
+      status: "completed",
+      ran: [
+        "positions",
+        "assess",
+        "route",
+        "rebalance-plan",
+        "execution-check",
+        "may-execute",
+        "handoff",
+      ],
+      notRan: ["drift-alert"],
+      port: { "may-execute": "handoff" },
+      called: { "uniswap.query": 1 },
+      // The assertion the blueprint's summary is making: advice, not a trade.
+      notCalled: [
+        "lacrew_propose_intent",
+        "lacrew_set_budget",
+        "lacrew_org_action",
+      ],
+    },
+  },
+  {
+    id: "lp-advisor/router-admitted-is-drift",
+    describe:
+      "Somebody admitted a venue to an advisory crew. The flow does not take it as permission — it routes to the drift alert and still proposes nothing.",
+    flow: "lp-range-review",
+    blueprint: "lp-advisor",
+    asAgent: "position-mapper",
+    input: {
+      owner: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+      subgraph_id: "5zvR82",
+    },
+    mocks: {
+      tools: { "uniswap.query": { result: lpPositions } },
+      model: [{ when: "REBALANCE, HOLD, or EXIT", reply: "REBALANCE" }],
+      policy: {
+        targets: { "dex-router": "ALLOW" },
+        // Declared, because the blueprint deliberately refuses this target and
+        // an unacknowledged ALLOW over it is how an eval would be faked green.
+        admitsUnadmitted: ["dex-router"],
+      },
+    },
+    expect: {
+      status: "completed",
+      ran: ["execution-check", "may-execute", "drift-alert"],
+      notRan: ["handoff"],
+      port: { "may-execute": "drift-alert" },
+      notCalled: ["lacrew_propose_intent"],
+    },
+  },
+
+  /* --------------------------------------------------------------- *
+   * Content studio — publishing is refused by construction.
+   * --------------------------------------------------------------- */
+  {
+    id: "content-studio/publish-denied-ends-in-signoff",
+    describe:
+      "The weekly pipeline drafts, packages images under an allowed budget, asks policy about the publishing endpoint, is refused, and assembles the human sign-off package. Nothing is published and no connector is touched.",
+    flow: "content-weekly-brief",
+    blueprint: "content-studio",
+    asAgent: "editor-manager",
+    input:
+      "Account: LaCrew org blog. Voice: plain, technical, no hype. Themes: agent treasuries.",
+    expect: {
+      status: "completed",
+      ran: [
+        "ideate",
+        "image-budget",
+        "image-pack",
+        "publish-check",
+        "publish-allowed",
+        "signoff",
+      ],
+      notRan: ["publish", "published"],
+      port: { "publish-allowed": "signoff" },
+      // The image budget is an admitted service; publication is not.
+      verdict: { "image-budget": "ALLOW" },
+      // The whole flow is off-chain work with an onchain budget: no route,
+      // no HTTP, nothing published.
+      noConnectorCalls: true,
+    },
+  },
+
+  /* --------------------------------------------------------------- *
+   * DeFi desk — the escalation loop, as a pipeline.
+   * --------------------------------------------------------------- */
+  {
+    id: "defi-desk/oversized-trade-escalates",
+    describe:
+      "A trade above the executor's clip size escalates to the risk manager onchain: the run writes the memo they will read and never files a receipt for a trade that did not happen.",
+    flow: "desk-execute-trade",
+    blueprint: "defi-desk",
+    asAgent: "executor",
+    input:
+      "Route: USDC→WETH on the admitted router, 200 USDC, 0.3% max slippage, 60s deadline. Simulation: +0.42% net of gas.",
+    mocks: {
+      model: [{ when: "SEND or FIX", reply: "SEND" }],
+      policy: { targets: { "dex-router": "ESCALATE" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["preflight", "ready", "trade", "risk-memo"],
+      notRan: ["receipt", "stand-down"],
+      verdict: { trade: "ESCALATE" },
+      port: { trade: "risk-memo" },
+      called: { lacrew_propose_intent: 1 },
+      auditIncludes: ["escalated up the reporting line"],
+    },
+  },
+];
+
+/** Every first-party scenario, in declaration order. */
+export const firstPartyEvals: readonly FlowEvalScenario[] = scenarios;
