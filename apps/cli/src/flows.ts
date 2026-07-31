@@ -5,6 +5,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { cmdEval } from "./evals.js";
 import {
   createFlowsClient,
   createMockFlowBackend,
@@ -329,6 +330,17 @@ export async function cmdFlows(args: string[]): Promise<void> {
       return;
     }
 
+    /**
+     * The regression harness (F2.29). Offline and deterministic: a scenario
+     * runs the real definition against fakes and asserts the ports it took and
+     * the routes it called, so an edit that lets a merge escape policy fails
+     * here rather than in somebody's repo.
+     */
+    case "eval": {
+      await cmdEval(rest, "flows");
+      return;
+    }
+
     case "code": {
       const ref = rest.find((a) => !a.startsWith("-"));
       const def = ref ? loadLocalDefinition(ref) : undefined;
@@ -363,6 +375,11 @@ Commands:
   flows cancel <runId> [--reason …]    End a run for good (never resumable)
   flows triggers <sub>                 Webhook triggers (F2.22) — see
                                        lacrew flows triggers for the subcommands
+  flows eval [ref…] [--list] [--json]  Run the deterministic eval suite (F2.29)
+                                       offline: scenarios assert the ports a
+                                       flow takes and the routes it calls.
+                                       A ref is a scenario, flow, or blueprint
+                                       id; non-zero exit on any failure
   flows code <templateId|file.json>    Print the code-first @lacrew/flows snippet
 
 Env:
