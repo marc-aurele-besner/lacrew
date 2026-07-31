@@ -5,6 +5,7 @@
  */
 
 import {
+  auditEventsBetween,
   countAuditEventsByType,
   createDb,
   getDatabaseUrl,
@@ -27,6 +28,20 @@ export interface AuditStore {
    * because a partial count served as a total is a billing lie.
    */
   countByTypeSince(sinceIso: string): Promise<Record<string, number> | null>;
+  /**
+   * Every event in `[fromIso, toIso)`, newest first — what a period report
+   * (F2.33) folds its onchain and connector lines from.
+   *
+   * Null when this store cannot answer the window at all (memory store, or a
+   * read failure); the caller then falls back to its bounded ring and says the
+   * figures are partial. `complete: false` on a returned window means the row
+   * cap was hit, so the answer is a prefix rather than the period.
+   */
+  between(
+    fromIso: string,
+    toIso: string,
+    limit: number,
+  ): Promise<{ events: ProtocolEvent[]; complete: boolean } | null>;
   close(): Promise<void>;
 }
 
@@ -37,6 +52,7 @@ export function createMemoryAuditStore(): AuditStore {
     append: async () => {},
     recent: async () => [],
     countByTypeSince: async () => null,
+    between: async () => null,
     close: async () => {},
   };
 }
@@ -74,6 +90,27 @@ export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
         return Object.fromEntries(rows.map((row) => [row.type, row.count]));
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit count failed:", err);
+        return null;
+      }
+    },
+    between: async (fromIso, toIso, limit) => {
+      try {
+        const rows = await auditEventsBetween(db(), fromIso, toIso, limit);
+        return {
+          events: rows.map((row) => ({
+            type: row.type as ProtocolEvent["type"],
+            at: row.at,
+            ...(row.orgId ? { orgId: row.orgId } : {}),
+            payload: row.payload,
+          })),
+          // A window that filled the cap was cut short, and a cut window is a
+          // prefix of the period rather than the period.
+          complete: rows.length < limit,
+        };
+      } catch (err) {
+        // Null, not []: an unreadable trail is not a quiet period, and the
+        // caller has to be able to tell the reader which one it is.
+        console.error("[@lacrew/orchestrator] audit range read failed:", err);
         return null;
       }
     },

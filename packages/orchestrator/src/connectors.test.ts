@@ -243,6 +243,36 @@ test("every call is audited, with no response body and no credential", async () 
   const serialized = JSON.stringify(events[0]);
   assert.ok(!serialized.includes("ghp_secret"), "the credential must never be recorded");
   assert.ok(!serialized.includes("secret draft copy"), "the response body must never be recorded");
+  // Nothing to attribute when nobody called it: a caller-less row must not
+  // invent a crew, which a period report would then bill.
+  assert.equal(payload.agentId, undefined);
+  assert.equal(payload.crewId, undefined);
+});
+
+test("an audited call names the seat and the crew it is charged to", async () => {
+  const events: ProtocolEvent[] = [];
+  const { impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    onEvent: (e) => events.push(e),
+  });
+
+  const seat = "0x3333333333333333333333333333333333333333";
+  const manager = "0x2222222222222222222222222222222222222222";
+  await registry.call(
+    "github.get_pull_request",
+    { owner: "a", repo: "b", number: 2 },
+    // `managers` arrives nearest-first, as the flows surface passes it.
+    { principal: seat, managers: [manager] },
+  );
+
+  const payload = events[0]!.payload as Record<string, unknown>;
+  assert.equal(payload.agentId, seat);
+  // The crew is the seat's nearest manager — the same reading write policy and
+  // inference budgets use, so one call is billed to one desk everywhere.
+  assert.equal(payload.crewId, manager);
 });
 
 test("a non-2xx response is reported, not thrown away", async () => {

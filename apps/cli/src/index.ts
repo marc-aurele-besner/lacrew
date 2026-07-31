@@ -27,6 +27,7 @@ import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
+import { cmdPnl } from "./pnl.js";
 import { cmdPlanRequired } from "./planRequired.js";
 import { cmdDualControl } from "./dualControl.js";
 import { loadEnvFile } from "./env.js";
@@ -253,6 +254,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "budget") {
     await cmdBudget(rest);
+    return;
+  }
+  if (cmd === "pnl") {
+    await cmdPnl(rest);
     return;
   }
   if (cmd === "plan-required") {
@@ -783,6 +788,9 @@ Commands:
   budget <sub>              A crew's inference cost budget — list, show,
                             set --crew <id> --usd 200 --hard, on/off, usage
                             (not an onchain budget; see: lacrew budget help)
+  pnl --crew <id>           What a crew cost over a period — onchain spend,
+                            model cost and connector usage on one report,
+                            --csv for accountants (see: lacrew pnl help)
   plan-required <sub>       No plan, no side effect — list, set --workspace
                             --mode side_effects, clear (a plan approves nothing;
                             see: lacrew plan-required help)

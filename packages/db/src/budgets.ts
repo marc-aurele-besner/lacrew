@@ -1,6 +1,6 @@
 /** Query helpers for inference budgets (keeps Drizzle inside @lacrew/db). */
 
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import {
   inferenceBudgets,
   inferenceUsage,
@@ -256,6 +256,51 @@ export async function recentInferenceUsageEvents(
   ];
   const base = handle.db.select().from(inferenceUsageEvents);
   const rows = await (filters.length ? base.where(and(...filters)) : base)
+    .orderBy(desc(inferenceUsageEvents.at))
+    .limit(limit);
+  return rows.map((row) => ({
+    scopeKey: row.scopeKey,
+    periodKey: row.periodKey,
+    model: row.model,
+    provider: row.provider,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    usdMicros: row.usdMicros,
+    priceSource: row.priceSource,
+    tokensEstimated: row.tokensEstimated,
+    runId: row.runId,
+    flowId: row.flowId,
+    at: row.at.toISOString(),
+  }));
+}
+
+/**
+ * Metered calls in `[fromIso, toIso)` for a set of scope keys — the inference
+ * half of a period report (F2.33).
+ *
+ * Scope keys are passed explicitly rather than matched by prefix: `crew:<id>`
+ * and `crew:<id>/agent:<0x…>` both hold a row for the same seat call, so a
+ * prefix read would count every attributed call twice. The caller names the
+ * keys it intends to fold, and folds each one separately.
+ */
+export async function inferenceUsageEventsBetween(
+  handle: DbHandle,
+  scopeKeys: readonly string[],
+  fromIso: string,
+  toIso: string,
+  limit: number,
+): Promise<InferenceUsageEventRow[]> {
+  if (scopeKeys.length === 0) return [];
+  const rows = await handle.db
+    .select()
+    .from(inferenceUsageEvents)
+    .where(
+      and(
+        inArray(inferenceUsageEvents.scopeKey, [...scopeKeys]),
+        gte(inferenceUsageEvents.at, new Date(fromIso)),
+        lt(inferenceUsageEvents.at, new Date(toIso)),
+      ),
+    )
     .orderBy(desc(inferenceUsageEvents.at))
     .limit(limit);
   return rows.map((row) => ({

@@ -43,6 +43,7 @@ import {
   type ConnectorWriteMode,
 } from "./connectorPolicy.js";
 import { resolveConnectorConfig, type ConnectorConfigEntry } from "./connectorPresets.js";
+import { crewIdForSeat } from "./inferenceBudgets.js";
 import {
   createGithubAppTokenSource,
   type GithubAppAuth,
@@ -593,6 +594,13 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
       // The payload records what was called and how it went. Never the response
       // body — a PR diff or a draft post has no business in an audit row — and
       // never the credential.
+      //
+      // The seat and its crew are on the row because a connector call is a cost
+      // and a side effect belonging to a desk (F2.33): without them, a period
+      // report can count calls but cannot say whose they were. Addresses only —
+      // the same identifiers every other row on this trail already carries.
+      const seat = ctx.principal?.trim().toLowerCase();
+      const crew = crewIdForSeat(seat ?? "", [...(ctx.managers ?? [])]);
       opts.onEvent?.({
         type: "ToolCalled",
         at: new Date().toISOString(),
@@ -601,6 +609,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           route: route.name,
           method: route.method,
           effect: route.effect,
+          ...(seat ? { agentId: seat, crewId: crew } : {}),
           status,
           ok: result.ok,
           ms: result.ms,
