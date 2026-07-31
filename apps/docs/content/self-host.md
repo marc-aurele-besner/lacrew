@@ -383,6 +383,26 @@ territory — the hosted plane admits HTTP MCP first. Its child gets only the en
 vars you name in `env`, never this process's environment. Put egress controls
 around the worker: an attached server is a host your orchestrator now talks to.
 
+## Plan-required mode
+
+Off by default. Turn it on and a side effect refuses unless the acting agent has
+already posted a `plan` in its thread saying what it is about to do — legible
+first, autonomous second. It approves nothing: spends still meet the policy stack
+and still escalate. See [Plan-required mode](./plan-required.md).
+
+```bash
+export LACREW_PLAN_REQUIRED=spends_only          # or side_effects
+export LACREW_PLAN_REQUIRED_WINDOW_MIN=30        # how long a plan stays current
+
+lacrew plan-required list                        # what is in force
+lacrew plan-required set --crew 0xDESK --mode side_effects
+```
+
+Rules are stored in Postgres when `DATABASE_URL` is set. Unlike the allowlists
+above, this one **fails open**: an unreadable rule set leaves crews working as
+before, bounded by every onchain and connector control, and the orchestrator says
+so loudly at boot.
+
 ## Skill packs
 
 A pack is the procedure half of a vertical: named skills, each with a trigger,
