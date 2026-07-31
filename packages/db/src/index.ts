@@ -65,6 +65,21 @@ export {
   type CrewHeartbeatTickRow,
 } from "./heartbeat.js";
 export {
+  upsertInferenceBudget,
+  deleteInferenceBudget,
+  listInferenceBudgets,
+  getInferenceBudget,
+  addInferenceUsage,
+  getInferenceUsage,
+  claimInferenceAlert,
+  insertInferenceUsageEvent,
+  recentInferenceUsageEvents,
+  pruneInferenceUsageEvents,
+  type InferenceBudgetRow,
+  type InferenceUsageRow,
+  type InferenceUsageEventRow,
+} from "./budgets.js";
+export {
   upsertConnectorMode,
   deleteConnectorMode,
   listConnectorModes,

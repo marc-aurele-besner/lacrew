@@ -98,6 +98,16 @@ export function createHeartbeatSurface(opts: {
   runtime: CrewRuntime;
   flows: FlowsSurface;
   store?: HeartbeatStore;
+  /**
+   * Whether a hard inference budget (F2.28) has stopped this seat's crew.
+   *
+   * A heartbeat is the most frequent thing a crew does and the least likely to
+   * be the thing a person is waiting on, so it is the first spend to stop when
+   * the money runs out. Without this the timer keeps firing into a guard that
+   * refuses every call, and the crew thread fills with failures nobody can act
+   * on. Absent, heartbeats run as they always did.
+   */
+  budgetBlock?: (principal: string) => Promise<{ scopeKey: string; dimension: string } | null>;
 }): HeartbeatSurface {
   const store = opts.store ?? createHeartbeatStoreFromEnv();
   const configs = new Map<string, CrewHeartbeat>();
@@ -298,6 +308,29 @@ export function createHeartbeatSurface(opts: {
     return "ok";
   };
 
+  /**
+   * Whether a hard cost budget is holding this crew's timer.
+   *
+   * A budget that cannot be read does **not** hold the heartbeat: unlike a
+   * model call, a tick spends nothing by starting, and each call it goes on to
+   * make is guarded on its own. Stopping a crew's standing supervision because
+   * a lookup failed would be the more expensive mistake.
+   */
+  const budgetBlockFor = async (
+    config: CrewHeartbeat,
+  ): Promise<{ scopeKey: string; dimension: string } | null> => {
+    if (!opts.budgetBlock) return null;
+    try {
+      return await opts.budgetBlock(principalOf(config));
+    } catch (err) {
+      console.error(
+        `[@lacrew/orchestrator] heartbeat "${config.crewId}" budget check failed:`,
+        err,
+      );
+      return null;
+    }
+  };
+
   /** True when another tick for this crew is still running somewhere. */
   const busy = async (crewId: string): Promise<boolean> => {
     if (inFlight.has(crewId)) return true;
@@ -429,6 +462,18 @@ export function createHeartbeatSurface(opts: {
         const due = heartbeatDue(config, now);
         if (!due.due) continue;
         if (await busy(config.crewId)) continue;
+        // Before the claim, so a stopped heartbeat leaves no tick row at all:
+        // a ledger full of skipped windows says the same thing as a gap, at the
+        // cost of hiding the ticks that did run. The alert that announced the
+        // breach is the record, and it fired once.
+        const blocked = await budgetBlockFor(config);
+        if (blocked) {
+          console.log(
+            `[@lacrew/orchestrator] heartbeat "${config.crewId}" held: ` +
+              `${blocked.scopeKey} is over its ${blocked.dimension} inference budget`,
+          );
+          continue;
+        }
         const windowKey = heartbeatWindowKey(config, now);
         let claimed = false;
         try {
@@ -456,6 +501,15 @@ export function createHeartbeatSurface(opts: {
       const config = configs.get(key) ?? (await store.get(key));
       if (!config) throw new Error("heartbeat_not_found");
       if (config.checklist.length === 0) throw new Error("heartbeat_checklist_empty");
+      // Refused up front rather than left to fail item by item. Every model
+      // call in the tick would be refused anyway; saying so once is a reason
+      // the operator can act on, where a list of identical failures is not.
+      const held = await budgetBlockFor(config);
+      if (held) {
+        throw new Error(
+          `inference_budget_exceeded: ${held.scopeKey} is over its ${held.dimension} budget`,
+        );
+      }
       if (await busy(key)) throw new Error("heartbeat_already_running");
       // Prefixed so a pressed run can never take the window a scheduled tick
       // would have used — an operator checking their config must not suppress

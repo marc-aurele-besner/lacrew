@@ -34,6 +34,7 @@ import {
   type FlowStore,
 } from "./flowStore.js";
 import { ancestorsOf, ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
+import { crewIdForSeat } from "./inferenceBudgets.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import type { ModelProvider } from "./model/index.js";
 import type { CrewRuntime } from "./runtime.js";
@@ -198,9 +199,22 @@ export function createFlowsSurface(opts: {
       scopes: sessionLimits.scopes,
     });
     return {
-      complete: (input) => opts.model.complete(input),
+      // Every completion says who it is for, so a cost budget (F2.28) can
+      // charge it. Advisory context, never authority: `meta` cannot widen a
+      // scope, and an unattributed call is still metered — under `unattributed`
+      // — rather than escaping the count.
+      complete: (input) =>
+        opts.model.complete({
+          ...input,
+          meta: {
+            crewId: crewIdForSeat(principal, run.managers),
+            agentId: principal,
+            flowId: run.flowId,
+            runId: run.runId,
+          },
+        }),
       callTool: async (name, args) => {
-        if (name === "lacrew_invoke_agent") return delegate(args, chain);
+        if (name === "lacrew_invoke_agent") return delegate(args, chain, principal, run);
         if (name === "lacrew_human_gate") return humanGate(args, principal, run);
         // Connectors are checked before the MCP dispatch so a `lacrew_*` name
         // can never be shadowed by a registered route.
@@ -258,6 +272,8 @@ export function createFlowsSurface(opts: {
   const delegate = async (
     args: Record<string, unknown>,
     chain: string[],
+    caller: `0x${string}`,
+    run: { flowId: string; runId: string; managers: string[] },
   ): Promise<unknown> => {
     const agent = String(args.agent ?? "") as `0x${string}`;
     const flowId = args.flowId ? String(args.flowId) : undefined;
@@ -308,6 +324,16 @@ export function createFlowsSurface(opts: {
     const completion = await opts.model.complete({
       system: opts.runtime.systemPromptFor(agent),
       prompt: String(args.prompt ?? ""),
+      // Charged to the *delegating* crew, and to the delegate as the seat. The
+      // prompt was issued by this run, so the desk that started it pays for it
+      // — a crew must not be able to shift its inference bill by routing work
+      // through a seat on another crew's budget.
+      meta: {
+        crewId: crewIdForSeat(caller, run.managers),
+        agentId: agent,
+        flowId: run.flowId,
+        runId: run.runId,
+      },
     });
     return { agent, text: completion.text, model: completion.model };
   };

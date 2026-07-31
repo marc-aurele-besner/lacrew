@@ -214,6 +214,9 @@ export {
 } from "./queue/index.js";
 export {
   createModelProviderFromEnv,
+  modelPricesFromEnv,
+  subjectOfInput,
+  withInferenceBudget,
   MODEL_PROVIDER_IDS,
   MemoryModelProvider,
   AnthropicModelProvider,
@@ -224,6 +227,24 @@ export {
   type ModelCompleteInput,
   type ModelCompleteResult,
 } from "./model/index.js";
+export {
+  UNATTRIBUTED_CREW_ID,
+  budgetBounds,
+  createInferenceBudgets,
+  crewIdForSeat,
+  type BudgetSubject,
+  type InferenceBudgetBlock,
+  type InferenceBudgetView,
+  type InferenceBudgetsSurface,
+} from "./inferenceBudgets.js";
+export {
+  createInferenceBudgetStoreFromEnv,
+  createMemoryInferenceBudgetStore,
+  createPgInferenceBudgetStore,
+  type InferenceBudgetStore,
+  type InferenceUsageDelta,
+  type InferenceUsageEvent,
+} from "./inferenceBudgetStore.js";
 export {
   createSkillPacksSurface,
   readSkillPack,

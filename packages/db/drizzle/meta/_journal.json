@@ -113,6 +113,13 @@
       "when": 1785462938508,
       "tag": "0015_nasty_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785465539720,
+      "tag": "0016_volatile_rattler",
+      "breakpoints": true
     }
   ]
 }

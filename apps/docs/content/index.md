@@ -25,6 +25,7 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 - [Connectors](./connectors.md) — how a crew reaches GitHub, a CMS, or an RPC, on an allowlist the operator writes
 - [Crew blueprints](./crews.md) — a vertical as data: org chart, budgets, guardrails, and the plan that stands it up
 - [Crew heartbeat](./heartbeat.md) — a standing checklist a crew works through on its own cadence, reported in the thread
+- [Inference cost budgets](./inference-budgets.md) — what a crew's model calls may cost you, bounded separately from what it may spend onchain
 - [Skill packs](./skill-packs.md) — directive skills as a versioned artifact: install one onto a seat, update it, take it back off
 - [Self-hosting](./self-host.md)
 

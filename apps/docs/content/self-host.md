@@ -298,6 +298,25 @@ curl -s -X POST http://127.0.0.1:8788/model/complete \
 curl -s http://127.0.0.1:8788/health | jq .model
 ````
 
+## Inference cost budgets
+
+What those model calls may cost you is bounded separately from what a crew may
+spend onchain — the policy stack sees no tokens, and a heartbeat on a frontier
+model can outspend the desk while every onchain number reads healthy.
+
+```bash
+lacrew budget set --crew trading --usd 200 --hard --enable
+lacrew budget usage --crew trading      # the calls behind the number
+curl -s http://127.0.0.1:8788/health | jq .budgets
+```
+
+`LACREW_MODEL_PRICES` overrides the built-in price table with your negotiated
+rates, as `{"<model-prefix>":{"inputPerMTok":n,"outputPerMTok":n}}`. Unset, the
+shipped list prices are used and anything unmatched is counted as **unpriced**
+rather than free. Counters live in Postgres when `DATABASE_URL` is set — without
+it they are per-process and do not survive a restart, which is fine for one node
+and not for a fleet. See [Inference cost budgets](./inference-budgets.md).
+
 ## MCP tools
 
 ```bash

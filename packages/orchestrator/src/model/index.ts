@@ -9,6 +9,7 @@ export { MemoryModelProvider } from "./memory.js";
 export { AnthropicModelProvider } from "./anthropic.js";
 export { OpenAIModelProvider } from "./openai.js";
 export { OpenRouterModelProvider } from "./openrouter.js";
+export { withInferenceBudget, modelPricesFromEnv, subjectOfInput } from "./budgeted.js";
 
 /** Provider ids accepted by `LACREW_MODEL_PROVIDER`. */
 export const MODEL_PROVIDER_IDS = ["memory", "anthropic", "openai", "openrouter"] as const;
