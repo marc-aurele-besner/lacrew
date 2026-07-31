@@ -27,6 +27,7 @@ import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
+import { cmdPlanRequired } from "./planRequired.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
@@ -251,6 +252,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "budget") {
     await cmdBudget(rest);
+    return;
+  }
+  if (cmd === "plan-required") {
+    await cmdPlanRequired(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -773,6 +778,9 @@ Commands:
   budget <sub>              A crew's inference cost budget — list, show,
                             set --crew <id> --usd 200 --hard, on/off, usage
                             (not an onchain budget; see: lacrew budget help)
+  plan-required <sub>       No plan, no side effect — list, set --workspace
+                            --mode side_effects, clear (a plan approves nothing;
+                            see: lacrew plan-required help)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint
