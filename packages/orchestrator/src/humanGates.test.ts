@@ -13,13 +13,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { flow } from "@lacrew/flows";
 import { createLacrewClient } from "@lacrew/sdk/testing";
-import { scopeOfThread } from "./conversation.js";
+import { scopeOfThread, type Message } from "./conversation.js";
 import { createFlowsSurface } from "./flows.js";
 import { createMemoryFlowStore } from "./flowStore.js";
 import {
   createHumanGates,
   humanGateTtlMs,
   readGateAnswer,
+  type HumanGateRecord,
 } from "./humanGates.js";
 import { createConnectorRegistry, type Connector } from "./connectors.js";
 import { MemoryModelProvider } from "./model/index.js";
@@ -338,6 +339,82 @@ describe("blocking human gates, end to end", () => {
     const run = await surface.run({ id: "shortlist" });
     assert.equal(run.status, "error");
     assert.match(String(run.steps.at(-1)?.error), /human_gate_unavailable/);
+  });
+
+  it("survives a restart: the gate hydrates, and one answer resumes once", async () => {
+    // What a redeploy looks like from the gate's side: the process that opened
+    // the question is gone, and the record is all the next one has.
+    const rows = new Map<string, HumanGateRecord>();
+    const store = {
+      loadHumanGates: async () => [...rows.values()],
+      saveHumanGate: async (record: HumanGateRecord) => {
+        // Snapshot, not the live object: the real store round-trips through
+        // Postgres, and sharing the object would hide a lost field.
+        rows.set(record.id, structuredClone(record));
+      },
+    };
+    const posted: Message[] = [];
+    const build = () =>
+      createHumanGates({
+        store,
+        postQuestion: ({ threadId, author, body, options }) => {
+          const message: Message = {
+            id: `msg_${posted.length + 1}`,
+            threadId,
+            at: "2026-01-01T12:00:00.000Z",
+            author,
+            authorKind: "agent",
+            kind: "question",
+            body,
+            options,
+          };
+          posted.push(message);
+          return message;
+        },
+      });
+
+    const request = {
+      stepId: "signoff",
+      prompt: "Publish?",
+      options: [{ id: "yes", label: "Publish" }],
+      principal: "0xWORKER",
+      flowId: "shortlist",
+      runId: "run-1",
+    };
+
+    const before = build();
+    await assert.rejects(() => before.gate(request), /flow_waiting:human_gate/);
+    const opened = before.list()[0]!;
+    await before.attachResume(opened.id, { stepId: "signoff", outputs: {}, steps: [] });
+
+    // The restart.
+    const after = build();
+    const resumed: string[] = [];
+    after.setResumer(async (gate) => {
+      resumed.push(gate.id);
+    });
+    assert.equal(await after.hydrate(), 1, "the open question came back");
+
+    after.observe({
+      id: "msg_answer",
+      threadId: opened.threadId,
+      at: "2026-01-01T12:30:00.000Z",
+      author: "human:ops",
+      authorKind: "human",
+      kind: "answer",
+      body: "yes",
+      replyTo: opened.questionId,
+    });
+    await after.drain();
+    assert.deepEqual(resumed, [opened.id], "the answer resumed the run exactly once");
+
+    const resolution = await after.gate(request);
+    assert.deepEqual(resolution.outcome, "answered");
+    assert.equal(resolution.optionId, "yes");
+    assert.equal(resolution.answeredBy, "human:ops");
+    // And the same yes cannot release the step a second time.
+    await assert.rejects(() => after.gate(request), /human_gate_spent:signoff/);
+    assert.equal(posted.length, 1, "one question, across both processes");
   });
 
   it("answers match an offered option exactly, by id or by label", () => {
