@@ -13,10 +13,13 @@ import {
   runFlow,
   validateFlow,
   type FlowBackend,
+  type FlowCheckpointSink,
+  type FlowControl,
   type FlowDefinition,
   type FlowResumeState,
   type FlowRunResult,
   type FlowRunTrigger,
+  type FlowCheckpoint,
   type FlowTemplate,
   type FlowTrigger,
 } from "@lacrew/flows";
@@ -24,7 +27,11 @@ import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { OrgNode } from "@lacrew/core";
 import type { ConnectorAskRecord, ConnectorAsksSurface } from "./connectorAsks.js";
 import type { ConnectorRegistry } from "./connectors.js";
-import { createFlowStoreFromEnv, type FlowStore } from "./flowStore.js";
+import {
+  createFlowStoreFromEnv,
+  type FlowRunState,
+  type FlowStore,
+} from "./flowStore.js";
 import { ancestorsOf, ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import type { ModelProvider } from "./model/index.js";
@@ -83,6 +90,28 @@ export type FlowsSurface = {
    * unanswered ask expires — the resumed step then refuses instead of calling.
    */
   resumeAsk(ask: ConnectorAskRecord): Promise<FlowRunResult | null>;
+  /**
+   * Ask a run to stop at its next step boundary (F2.26). A request rather than
+   * a mutation: the run may be moving in another replica, and the only safe
+   * place to honour it is between two steps.
+   */
+  pause(runId: string, detail?: string): Promise<FlowRunState>;
+  /** Continue a paused run from its last checkpoint, as its original principal. */
+  resume(runId: string): Promise<FlowRunResult>;
+  /** End a run for good. Terminal — a cancelled run never resumes. */
+  cancel(runId: string, reason?: string): Promise<FlowRunState>;
+  /** Where a run is, as opposed to what it produced. */
+  runState(runId: string): Promise<FlowRunState | null>;
+  /** Runs parked or in flight, oldest first — the stalled-run list. */
+  openRuns(): Promise<FlowRunState[]>;
+  /** The checkpoint trail of one run, oldest → newest. */
+  checkpoints(runId: string): Promise<FlowCheckpoint[]>;
+  /**
+   * Boot recovery: pick up runs whose process died mid-flight, and fail closed
+   * on the ones that were mid-write. Paused runs are left alone — they are
+   * waiting on something, not stalled.
+   */
+  hydrateRuns(): Promise<{ resumed: number; failed: number; paused: number }>;
   /** Run every saved flow with the given trigger (queue epoch hook). */
   runTriggered(trigger: FlowTrigger): Promise<FlowRunResult[]>;
   /** Run cron-triggered flows whose schedule matches `now` (once per minute). */
@@ -237,15 +266,45 @@ export function createFlowsSurface(opts: {
     return { agent, text: completion.text, model: completion.model };
   };
 
-  const pushRun = (result: FlowRunResult): void => {
+  const pushRun = async (result: FlowRunResult): Promise<void> => {
     // A resumed run carries the id it suspended under, so it replaces its own
     // waiting entry rather than appearing twice — once stalled, once finished.
     const existing = runRing.findIndex((r) => r.runId === result.runId);
     if (existing >= 0) runRing.splice(existing, 1);
     runRing.push(result);
     if (runRing.length > RUN_RING_MAX) runRing.splice(0, runRing.length - RUN_RING_MAX);
-    // Fire-and-forget; the store swallows its own errors.
-    void store.appendRun(result);
+    // Awaited, not fire-and-forget: this write also settles the run's lifecycle
+    // row, and a boot that raced it would find a finished run still marked in
+    // flight and offer to redo it. The store swallows its own errors.
+    await store.appendRun(result);
+  };
+
+  /**
+   * Durability, bound to the store. `record` and the attempt writes are the two
+   * calls allowed to fail a run: everything else this surface persists is
+   * history, and losing history is not the same as losing the ability to say
+   * whether a payment went out.
+   */
+  const checkpointSink: FlowCheckpointSink = {
+    record: (checkpoint) => store.checkpoint(checkpoint),
+    begin: (attempt) => store.setAttempt(attempt.runId, attempt),
+    settle: (attempt) => store.setAttempt(attempt.runId, null),
+  };
+
+  /**
+   * Between every two steps, whether an operator asked this run to stop.
+   *
+   * The request is cleared as it is read: the run is about to act on it, and
+   * leaving it set would re-pause the run the moment somebody resumed it. A
+   * process that dies in that gap loses the request, and the run is picked back
+   * up on the next boot — which is the same outcome as never having asked.
+   */
+  const controlFor = async ({ runId }: { runId: string }): Promise<FlowControl> => {
+    const state = await store.runState(runId);
+    const request = state?.request;
+    if (request !== "pause" && request !== "cancel") return "continue";
+    await store.request(runId, null);
+    return request;
   };
 
   const runOne = async (
@@ -281,6 +340,16 @@ export function createFlowsSurface(opts: {
 
     const runId =
       input.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // A resumed run keeps the start it suspended under: the wait is part of how
+    // long the run took, and a fresh stamp would report an hour's pause as new.
+    const startedAt = input.resume?.startedAt ?? new Date().toISOString();
+    await store.startRun({
+      runId,
+      flowId: def.id,
+      principal,
+      trigger: input.trigger ?? "manual",
+      startedAt,
+    });
     const result = await runFlow(
       def,
       backendFor(principal, ceilingAgent(def), scopeSessionLimits(def), [...chain, def.id], {
@@ -295,10 +364,12 @@ export function createFlowsSurface(opts: {
         runId,
         principal: { agent: principal },
         mocked,
+        checkpoints: checkpointSink,
+        control: controlFor,
         ...(input.resume ? { resume: input.resume } : {}),
       },
     );
-    pushRun(result);
+    await pushRun(result);
     // The suspended run is attached to the thing holding it up, so whichever
     // replica handles the answer can continue it. Without this the run is a
     // trace nobody can pick back up.
@@ -341,6 +412,126 @@ export function createFlowsSurface(opts: {
   opts.asks?.setResumer(async (ask) => {
     await resumeAsk(ask);
   });
+
+  /** Statuses a run cannot come back from. `waiting` is the one that can. */
+  const TERMINAL = new Set(["completed", "error", "max_steps", "cancelled"]);
+
+  const requireState = async (runId: string): Promise<FlowRunState> => {
+    const state = await store.runState(runId);
+    if (!state) throw new Error("run_not_found");
+    return state;
+  };
+
+  /**
+   * A run result assembled from durable state rather than from an execution.
+   *
+   * Cancelling a parked run and failing a crashed one both end runs that no
+   * process is holding, and both still owe the trail a record: the steps that
+   * did happen, plus one line saying how it ended.
+   */
+  const resultFrom = (
+    state: FlowRunState,
+    status: FlowRunResult["status"],
+    lastStep?: FlowRunResult["steps"][number],
+  ): FlowRunResult => {
+    const def = flows.get(state.flowId);
+    const steps = [...(state.state?.steps ?? []), ...(lastStep ? [lastStep] : [])];
+    return {
+      runId: state.runId,
+      flowId: state.flowId,
+      ...(def?.name ? { flowName: def.name } : {}),
+      status,
+      trigger: (state.trigger ?? "manual") as FlowRunTrigger,
+      ...(state.principal ? { principal: { agent: state.principal } } : {}),
+      startedAt: state.startedAt,
+      finishedAt: new Date().toISOString(),
+      ...(state.state?.input === undefined ? {} : { input: state.state.input }),
+      steps,
+      mocked,
+    };
+  };
+
+  const pause = async (runId: string, detail?: string): Promise<FlowRunState> => {
+    const state = await requireState(runId);
+    if (TERMINAL.has(state.status)) throw new Error(`run_not_pausable:${state.status}`);
+    // Already parked: asking again is not an error, and re-requesting would
+    // pause the run again the instant somebody resumed it.
+    if (state.status === "waiting") return state;
+    await store.request(runId, "pause");
+    opts.runtime.recordAudit({
+      type: "FlowRunLifecycle",
+      at: new Date().toISOString(),
+      payload: {
+        action: "pause",
+        runId,
+        flowId: state.flowId,
+        requested: true,
+        ...(detail ? { detail } : {}),
+      },
+    });
+    return { ...state, request: "pause" };
+  };
+
+  const cancel = async (runId: string, reason?: string): Promise<FlowRunState> => {
+    const state = await requireState(runId);
+    if (state.status === "cancelled") return state;
+    if (TERMINAL.has(state.status)) throw new Error(`run_not_cancellable:${state.status}`);
+    if (state.status === "waiting") {
+      // Nothing is holding a parked run, so the cancel lands now rather than
+      // waiting for a worker that is never coming back to it.
+      await pushRun(
+        resultFrom(state, "cancelled", {
+          stepId: state.cursor ?? state.pause?.stepId ?? "cancel",
+          kind: "branch",
+          status: "error",
+          error: `cancelled${reason ? `: ${reason}` : ""}`,
+          next: null,
+          ms: 0,
+        }),
+      );
+      opts.runtime.recordAudit({
+        type: "FlowRunLifecycle",
+        at: new Date().toISOString(),
+        payload: { action: "cancel", runId, flowId: state.flowId, ...(reason ? { reason } : {}) },
+      });
+      return (await store.runState(runId)) ?? { ...state, status: "cancelled" };
+    }
+    await store.request(runId, "cancel");
+    opts.runtime.recordAudit({
+      type: "FlowRunLifecycle",
+      at: new Date().toISOString(),
+      payload: {
+        action: "cancel",
+        runId,
+        flowId: state.flowId,
+        requested: true,
+        ...(reason ? { reason } : {}),
+      },
+    });
+    return { ...state, request: "cancel" };
+  };
+
+  const resume = async (runId: string): Promise<FlowRunResult> => {
+    const state = await requireState(runId);
+    if (state.status === "cancelled") throw new Error("run_cancelled");
+    if (state.status !== "waiting") throw new Error(`run_not_resumable:${state.status}`);
+    if (!state.state) throw new Error("run_has_no_checkpoint");
+    const principal = state.principal as `0x${string}` | undefined;
+    // Same principal as the original run, or nothing: a resume that reached for
+    // a different (or a paused) identity would launder authority through a
+    // pause, which is the one thing durable state must never buy.
+    if (principal && opts.runtime.isAgentPaused(principal)) {
+      throw new Error(`run_principal_paused:${principal}`);
+    }
+    await store.request(runId, null);
+    return runOne({
+      id: state.flowId,
+      runId,
+      ...(principal ? { as: principal } : {}),
+      ...(state.trigger ? { trigger: state.trigger as FlowRunTrigger } : {}),
+      resume: state.state,
+    });
+  };
 
   const surface: FlowsSurface = {
     list: async (as) => {
@@ -385,6 +576,12 @@ export function createFlowsSurface(opts: {
     },
     run: runOne,
     resumeAsk,
+    pause,
+    resume,
+    cancel,
+    runState: (runId) => store.runState(runId),
+    openRuns: () => store.listRunStates(["running", "waiting"]),
+    checkpoints: (runId) => store.checkpointsOf(runId),
     runs: () => [...runRing].reverse(),
     templates: () => flowTemplates,
     runCronDue: async (now = new Date()) => {
@@ -432,6 +629,92 @@ export function createFlowsSurface(opts: {
       // recentRuns is newest → oldest; the ring wants oldest first.
       for (const run of [...persisted].reverse()) runRing.push(run);
       return { flows: flows.size, runs: runRing.length };
+    },
+    hydrateRuns: async () => {
+      let resumed = 0;
+      let failed = 0;
+      let paused = 0;
+      for (const state of await store.listRunStates(["running", "waiting"])) {
+        // A parked run is not stalled work: something is expected to release
+        // it (an ask answer, an operator, a webhook), and picking it up here
+        // would run the very step it was told to stop before.
+        if (state.status === "waiting") {
+          paused++;
+          continue;
+        }
+        // The run finished but its lifecycle row never caught up — a crash
+        // between the trace write and the state write. Reconcile to what the
+        // trace says rather than redoing work that plainly completed.
+        const finished = await store.getRun(state.runId);
+        if (finished && finished.status !== "waiting") {
+          await pushRun(finished);
+          continue;
+        }
+        const attempt = state.attempt;
+        if (attempt && !attempt.idempotent) {
+          // The default the PRD asks for: a write whose result nobody recorded
+          // is not retried. Redoing it could pay twice; skipping it could skip
+          // a payment. Only a human knows which happened, so the run fails
+          // loudly with the attempt key to reconcile against.
+          await pushRun(
+            resultFrom(state, "error", {
+              stepId: attempt.stepId,
+              kind: attempt.kind,
+              status: "error",
+              error:
+                `incomplete_write_attempt:${attempt.stepId} (${attempt.key}) — the process ` +
+                "stopped after this step started and before it finished. It is not retried: " +
+                "mark the step idempotent if repeating it is safe, else reconcile by hand.",
+              next: null,
+              ms: 0,
+            }),
+          );
+          console.error(
+            `[@lacrew/orchestrator] flow run ${state.runId} failed closed on an incomplete ` +
+              `write at step "${attempt.stepId}" (${attempt.key})`,
+          );
+          failed++;
+          continue;
+        }
+        if (!state.state) {
+          // In flight with no checkpoint: the process died inside the first
+          // step. Nothing says what ran, so it is not guessed at.
+          await pushRun(
+            resultFrom(state, "error", {
+              stepId: state.cursor ?? "start",
+              kind: "branch",
+              status: "error",
+              error: "no_checkpoint — the run stopped before its first step was recorded",
+              next: null,
+              ms: 0,
+            }),
+          );
+          failed++;
+          continue;
+        }
+        try {
+          const principal = state.principal as `0x${string}` | undefined;
+          const result = await runOne({
+            id: state.flowId,
+            runId: state.runId,
+            // Read through: the replica recovering a run is rarely the one
+            // that saved the flow.
+            refresh: true,
+            ...(principal ? { as: principal } : {}),
+            ...(state.trigger ? { trigger: state.trigger as FlowRunTrigger } : {}),
+            resume: state.state,
+          });
+          if (result.status === "error") failed++;
+          else resumed++;
+        } catch (err) {
+          console.error(
+            `[@lacrew/orchestrator] resuming flow run ${state.runId} failed:`,
+            err,
+          );
+          failed++;
+        }
+      }
+      return { resumed, failed, paused };
     },
     storeName: store.name,
   };

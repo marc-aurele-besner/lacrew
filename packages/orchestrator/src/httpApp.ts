@@ -420,6 +420,49 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.get("/flows/runs", (c) => jsonBig(c, { runs: flows.runs(), mode: runtime.mode }));
 
+  /**
+   * Runs that have not finished: parked on a human or an event, or in flight.
+   * The stalled-run list an operator scans — a run waiting three days on a
+   * confirmation nobody saw is invisible in the run ring once it scrolls off.
+   */
+  app.get("/flows/runs/open", async (c) =>
+    jsonBig(c, { runs: await flows.openRuns(), mode: runtime.mode }),
+  );
+
+  /** Where one run is, plus the checkpoint trail that got it there. */
+  app.get("/flows/runs/state", async (c) => {
+    const runId = c.req.query("runId");
+    if (!runId) return jsonBig(c, { error: "runId_required" }, 400);
+    const state = await flows.runState(runId);
+    if (!state) return jsonBig(c, { error: "run_not_found" }, 404);
+    return jsonBig(c, { state, checkpoints: await flows.checkpoints(runId) });
+  });
+
+  /**
+   * Pause / resume / cancel (F2.26). The status codes matter to a caller: 404
+   * is a run nobody has heard of, 409 is a run whose own state refuses the
+   * change — a cancelled run asked to resume, a finished run asked to pause.
+   */
+  const lifecycleRoute = (
+    path: string,
+    act: (runId: string, detail?: string) => Promise<unknown>,
+  ): void => {
+    app.post(path, async (c) => {
+      const body = await bodyOf<{ runId?: string; reason?: string }>(c);
+      if (!body.runId) return jsonBig(c, { error: "runId_required" }, 400);
+      try {
+        return jsonBig(c, await act(body.runId, body.reason));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "flow_run_lifecycle_failed";
+        const status = msg === "run_not_found" ? 404 : 409;
+        return jsonBig(c, { error: msg }, status);
+      }
+    });
+  };
+  lifecycleRoute("/flows/runs/pause", (runId, reason) => flows.pause(runId, reason));
+  lifecycleRoute("/flows/runs/resume", (runId) => flows.resume(runId));
+  lifecycleRoute("/flows/runs/cancel", (runId, reason) => flows.cancel(runId, reason));
+
   app.get("/flows/templates", (c) => jsonBig(c, { templates: flows.templates() }));
 
   /**
@@ -731,8 +774,28 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.post("/agents/pause", async (c) => {
     const body = await bodyOf<{ agent?: string; reason?: string }>(c);
     if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
-    const result = await runtime.pauseAgent(body.agent as `0x${string}`, body.reason);
-    return jsonBig(c, { ...result, mode: runtime.mode });
+    const agent = body.agent as `0x${string}`;
+    const result = await runtime.pauseAgent(agent, body.reason);
+    // A run parked on a human is authority waiting to be spent, and pausing an
+    // agent is an operator saying it should spend none. Leaving its paused runs
+    // resumable would make the pause a delay rather than a stop, so they are
+    // cancelled here with the reason attached (F2.26).
+    const wanted = agent.toLowerCase();
+    const cancelled: string[] = [];
+    for (const state of await flows.openRuns()) {
+      if (state.status !== "waiting") continue;
+      if ((state.principal ?? "").toLowerCase() !== wanted) continue;
+      try {
+        await flows.cancel(state.runId, `principal paused${body.reason ? `: ${body.reason}` : ""}`);
+        cancelled.push(state.runId);
+      } catch (err) {
+        console.error(
+          `[@lacrew/orchestrator] could not cancel run ${state.runId} for paused agent ${agent}:`,
+          err,
+        );
+      }
+    }
+    return jsonBig(c, { ...result, cancelledRuns: cancelled, mode: runtime.mode });
   });
 
   app.post("/agents/resume", async (c) => {

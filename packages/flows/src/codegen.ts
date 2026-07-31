@@ -98,6 +98,14 @@ function stepCall(step: FlowStep): string {
         ["data", step.data],
         ["next", step.next],
       ])})`;
+    case "wait":
+      return `.wait(${str(step.id)}, ${optsLiteral([
+        ["label", step.label],
+        ["reason", step.reason],
+        ["token", step.token],
+        ["detail", step.detail],
+        ["next", step.next],
+      ])})`;
   }
 }
 

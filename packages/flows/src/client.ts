@@ -46,6 +46,29 @@ export type FlowTriggerCreate = {
   secret?: string;
 };
 
+/**
+ * Where a run is, as the orchestrator puts it on the wire (F2.26).
+ *
+ * `waiting` is the paused state — parked and resumable — and `cancelled` is
+ * terminal. Declared structurally for the same reason the trigger shapes are.
+ */
+export type FlowRunStateRecord = {
+  runId: string;
+  flowId: string;
+  status: "running" | "waiting" | "completed" | "error" | "max_steps" | "cancelled";
+  /** An operator's pause / cancel, honoured at the run's next step boundary. */
+  request?: "pause" | "cancel" | null;
+  principal?: string | null;
+  trigger?: string | null;
+  /** Step a resume enters. */
+  cursor?: string | null;
+  pause?: { stepId: string; reason: string; token?: string; detail?: string } | null;
+  /** Set while a side-effecting step is in flight; a crash leaves it set. */
+  attempt?: { stepId: string; key: string; idempotent: boolean } | null;
+  startedAt: string;
+  updatedAt: string;
+};
+
 export type FlowsClientOptions = {
   /** Orchestrator base URL, e.g. http://127.0.0.1:8788 */
   baseUrl: string;
@@ -67,6 +90,14 @@ export type FlowsClient = {
     opts?: { input?: string; as?: string },
   ): Promise<FlowRunResult>;
   runs(): Promise<FlowRunResult[]>;
+  /** Runs that have not finished: parked on something, or in flight. */
+  openRuns(): Promise<FlowRunStateRecord[]>;
+  /** Ask a run to stop at its next step boundary. */
+  pauseRun(runId: string, reason?: string): Promise<FlowRunStateRecord>;
+  /** Continue a paused run from its last checkpoint, as its original principal. */
+  resumeRun(runId: string): Promise<FlowRunResult>;
+  /** End a run for good; it can never be resumed afterwards. */
+  cancelRun(runId: string, reason?: string): Promise<FlowRunStateRecord>;
   templates(): Promise<FlowTemplate[]>;
   /** Registered webhook triggers. Never carries a secret. */
   listTriggers(): Promise<FlowTriggerRecord[]>;
@@ -136,6 +167,23 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
         body: JSON.stringify({ flow: def, input: runOpts?.input, as: runOpts?.as }),
       }),
     runs: async () => (await call<{ runs: FlowRunResult[] }>("/flows/runs")).runs,
+    openRuns: async () =>
+      (await call<{ runs: FlowRunStateRecord[] }>("/flows/runs/open")).runs,
+    pauseRun: (runId, reason) =>
+      call<FlowRunStateRecord>("/flows/runs/pause", {
+        method: "POST",
+        body: JSON.stringify(reason ? { runId, reason } : { runId }),
+      }),
+    resumeRun: (runId) =>
+      call<FlowRunResult>("/flows/runs/resume", {
+        method: "POST",
+        body: JSON.stringify({ runId }),
+      }),
+    cancelRun: (runId, reason) =>
+      call<FlowRunStateRecord>("/flows/runs/cancel", {
+        method: "POST",
+        body: JSON.stringify(reason ? { runId, reason } : { runId }),
+      }),
     templates: async () =>
       (await call<{ templates: FlowTemplate[] }>("/flows/templates")).templates,
     listTriggers: async () =>

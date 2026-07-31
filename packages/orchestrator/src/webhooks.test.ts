@@ -668,6 +668,7 @@ describe("webhook triggers", () => {
 
     const saved = new Map<string, FlowDefinition>();
     const sharedStore: FlowStore = {
+      ...createMemoryFlowStore(),
       name: "shared",
       save: async (def) => {
         saved.set(def.id, def);

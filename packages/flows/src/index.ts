@@ -9,12 +9,14 @@ export {
   ORG_ACTIONS,
   BUDGET_ACTIONS,
   GOVERNANCE_ACTIONS,
+  WAIT_REASONS,
   type FlowValidationResult,
 } from "./validate.js";
 export {
   runFlow,
   interpolate,
   createMockFlowBackend,
+  stepHasSideEffects,
   FlowWaitingError,
   isFlowWaiting,
   type RunFlowOptions,
@@ -70,6 +72,7 @@ export {
   createFlowsClient,
   type FlowsClient,
   type FlowsClientOptions,
+  type FlowRunStateRecord,
   type FlowTriggerCreate,
   type FlowTriggerDelivery,
   type FlowTriggerRecord,

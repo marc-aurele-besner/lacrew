@@ -9,6 +9,7 @@ import type {
   GovernanceStep,
   OrgStep,
   SwitchStep,
+  WaitStep,
 } from "./types.js";
 
 export type FlowValidationResult = { ok: boolean; errors: string[] };
@@ -23,7 +24,11 @@ export const STEP_KINDS = [
   "org",
   "budget",
   "governance",
+  "wait",
 ] as const;
+
+/** Pause codes a `wait` step may declare; the run records one of these. */
+export const WAIT_REASONS = ["awaiting_human", "awaiting_webhook", "operator"] as const;
 
 export const SCOPE_LEVELS = ["org", "team", "agent"] as const;
 
@@ -77,6 +82,7 @@ export function stepEdges(step: FlowStep): Array<string | null | undefined> {
     case "tool":
     case "agent":
     case "governance":
+    case "wait":
       return [step.next];
     case "gate":
     case "org":
@@ -233,6 +239,17 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
       } else if (bg.action !== "run-epoch") {
         requireAddress(errors, bg.node, `budget step "${step.id}" node`);
         if (!bg.amount?.trim()) errors.push(`budget step "${step.id}" needs an amount`);
+      }
+    }
+    if (step.kind === "wait") {
+      const wt = step as WaitStep;
+      if (
+        wt.reason !== undefined &&
+        !WAIT_REASONS.includes(wt.reason as (typeof WAIT_REASONS)[number])
+      ) {
+        errors.push(
+          `wait step "${step.id}" has unknown reason "${wt.reason}" (${WAIT_REASONS.join(" | ")})`,
+        );
       }
     }
     if (step.kind === "governance") {
