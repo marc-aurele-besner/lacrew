@@ -59,3 +59,24 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm test
+
+  # Flow & blueprint regression scenarios (PRD F2.29). Deliberately not path
+  # filtered: a skipped job never reports, so a required check that only runs on
+  # some paths is a check that silently passes on the rest. The suite is offline
+  # and takes seconds, so running it everywhere is cheaper than getting the
+  # filter wrong — an edit to a connector preset, an interpolator, or the engine
+  # can all let a merge escape policy.
+  evals:
+    name: Evals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      # No network: the harness blocks fetch for the duration of every run, so
+      # a scenario that reaches api.github.com fails with the URL it tried.
+      - run: pnpm --filter @lacrew/flows eval
