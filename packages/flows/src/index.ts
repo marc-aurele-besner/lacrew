@@ -74,7 +74,33 @@ export {
   type FlowTriggerDelivery,
   type FlowTriggerRecord,
 } from "./client.js";
-export { cronMatches, isValidCron, parseCron } from "./cron.js";
+export {
+  cronMatches,
+  cronMatchesInZone,
+  cronMinuteGap,
+  isValidCron,
+  isValidTimeZone,
+  parseCron,
+  zonedParts,
+  type ZonedParts,
+} from "./cron.js";
+export {
+  HEARTBEAT_MAX_ITEMS,
+  HEARTBEAT_MIN_INTERVAL_MINUTES,
+  HEARTBEAT_PRESETS,
+  heartbeatDue,
+  heartbeatWindowKey,
+  inQuietHours,
+  minuteOfDay,
+  normalizeHeartbeat,
+  validateHeartbeat,
+  type CrewHeartbeat,
+  type HeartbeatDue,
+  type HeartbeatItem,
+  type HeartbeatItemKind,
+  type HeartbeatValidation,
+  type QuietHours,
+} from "./heartbeat.js";
 export {
   DEFAULT_SKILL_PACK_LABEL,
   SKILL_PACK_LIMITS,

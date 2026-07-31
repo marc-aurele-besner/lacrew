@@ -101,6 +101,27 @@ export type ProtocolEventType =
    * otherwise mistake for one.
    */
   | "ConnectorAskUnresolved"
+  /**
+   * A crew's standing checklist was created, edited, enabled, disabled or
+   * removed (F2.21).
+   *
+   * A heartbeat is standing authority to start funded work on a timer, so who
+   * put a flow on the list — and who turned the list on — belongs in the trail.
+   * The payload carries the cadence, the principal and the item count, never
+   * the checklist bodies: what each item is remains readable from the config
+   * itself, and the trail is a bounded ring.
+   */
+  | "CrewHeartbeatChanged"
+  /**
+   * One heartbeat tick finished (F2.21).
+   *
+   * Distinct from the `FlowRun` rows its items produced, and deliberately so:
+   * those say a flow ran, this says the crew's standing list was worked
+   * through, by whom, and how much of it needed a human. It is also the row
+   * that makes an *absent* heartbeat visible — a crew whose last tick is three
+   * days old is not a quiet crew, it is a stopped one.
+   */
+  | "CrewHeartbeat"
   | "MarketplacePurchase"
   | "MarketplaceListed"
   | "MarketplaceWithdrawn"

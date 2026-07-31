@@ -71,3 +71,104 @@ export function cronMatches(expr: string, date: Date): boolean {
     dow!.has(date.getUTCDay())
   );
 }
+
+/** Wall-clock fields of an instant in one IANA zone. */
+export type ZonedParts = {
+  minute: number;
+  hour: number;
+  day: number;
+  month: number;
+  /** 0 = Sunday, matching cron's day-of-week field. */
+  weekday: number;
+};
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** True when the runtime recognises this IANA zone name. */
+export function isValidTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wall-clock fields for `date` as read in `timeZone`.
+ *
+ * Via `Intl` rather than an offset table, so daylight saving is the platform's
+ * problem rather than ours. A schedule an operator wrote as "09:00" means
+ * 09:00 where they are, on both sides of a clock change — an implementation
+ * that stored a fixed offset would drift by an hour twice a year and look like
+ * a scheduler bug rather than the timezone bug it is.
+ */
+export function zonedParts(date: Date, timeZone = "UTC"): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    weekday: "short",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+  }).formatToParts(date);
+  const read = (type: string): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  // "24" is what hour12:false reports for midnight in some ICU versions; cron
+  // has no hour 24, and reading it as one would make an `0 0 * * *` heartbeat
+  // silently never fire.
+  const hour = Number(read("hour")) % 24;
+  return {
+    minute: Number(read("minute")),
+    hour,
+    day: Number(read("day")),
+    month: Number(read("month")),
+    weekday: Math.max(0, WEEKDAYS.indexOf(read("weekday"))),
+  };
+}
+
+/**
+ * Whether the expression matches `date` as read in `timeZone` (minute
+ * resolution). `cronMatches` is this with the zone fixed to UTC — flow
+ * schedules are declared in UTC, and only surfaces that let an operator pick a
+ * zone (crew heartbeats) need this one.
+ */
+export function cronMatchesInZone(expr: string, date: Date, timeZone = "UTC"): boolean {
+  const sets = parseCron(expr);
+  if (!sets) return false;
+  const [minute, hour, dom, month, dow] = sets;
+  const at = zonedParts(date, timeZone);
+  return (
+    minute!.has(at.minute) &&
+    hour!.has(at.hour) &&
+    dom!.has(at.day) &&
+    month!.has(at.month) &&
+    dow!.has(at.weekday)
+  );
+}
+
+/**
+ * Smallest gap in minutes the expression's minute field can produce, or null
+ * when it does not parse.
+ *
+ * Only the minute field is read, and that is exact for the purpose: every
+ * other field can make a schedule sparser, never denser. A caller enforcing a
+ * cadence floor gets an answer it can rely on rather than a general period
+ * analysis that would have to be approximate.
+ */
+export function cronMinuteGap(expr: string): number | null {
+  const sets = parseCron(expr);
+  if (!sets) return null;
+  const minutes = [...sets[0]!].sort((a, b) => a - b);
+  if (minutes.length === 0) return null;
+  // A single firing minute repeats once an hour — but only if every coarser
+  // field admits consecutive hours, which is the densest case and the one a
+  // floor has to be checked against.
+  if (minutes.length === 1) return 60;
+  let gap = 60 - minutes[minutes.length - 1]! + minutes[0]!;
+  for (let i = 1; i < minutes.length; i += 1) {
+    gap = Math.min(gap, minutes[i]! - minutes[i - 1]!);
+  }
+  return gap;
+}
