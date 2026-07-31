@@ -22,7 +22,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/index.test.ts src/suspend.test.ts src/humanGate.test.ts src/checkpoints.test.ts src/cron.test.ts src/heartbeat.test.ts src/crews.test.ts src/crewDirectives.test.ts src/crewSamples.test.ts src/skillPacks.test.ts src/inferenceBudget.test.ts src/evals.test.ts src/evalRun.test.ts",
+    "test": "node --import tsx --test src/index.test.ts src/suspend.test.ts src/humanGate.test.ts src/checkpoints.test.ts src/cron.test.ts src/heartbeat.test.ts src/crews.test.ts src/crewDirectives.test.ts src/crewSamples.test.ts src/skillPacks.test.ts src/inferenceBudget.test.ts src/planRequired.test.ts src/evals.test.ts src/evalRun.test.ts",
     "eval": "node --import tsx src/evalMain.ts"
   },
   "devDependencies": {
