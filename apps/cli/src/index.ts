@@ -25,6 +25,7 @@ import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
+import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
@@ -238,6 +239,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "skills") {
     await cmdSkills(rest);
+    return;
+  }
+  if (cmd === "mcp") {
+    await cmdMcp(rest);
     return;
   }
   if (cmd === "heartbeat") {
@@ -759,6 +764,9 @@ Commands:
                             modes, mode <route> <auto|ask|deny>, asks, answer
   skills <sub>              Installable directive skills — list, show <id>,
                             install <id> --agent 0x…, installed, remove, export
+  mcp <sub>                 Attached MCP servers — servers, refresh, ping,
+                            allow/deny/clear <server>.<tool> (every tool is
+                            blocked until allowed; see: lacrew mcp help)
   heartbeat <sub>           A crew's standing checklist — presets, list, show,
                             set --crew <id> --schedule '<cron>' --flow a,b,
                             on/off, run, ticks (see: lacrew heartbeat help)
