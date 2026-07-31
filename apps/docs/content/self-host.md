@@ -360,6 +360,29 @@ export GITHUB_APP_INSTALLATION_ID=48213991
 `GET /connectors` reports what is registered, which env vars each connector
 reads and whether they are set — never a value.
 
+## External MCP servers
+
+`LACREW_MCP_SERVERS` attaches third-party MCP servers — the ones you already run
+for GitHub, a browser, a database. Attaching one admits nothing: every tool
+starts blocked, including tools that appear on the server later, and an operator
+allows them one at a time. See [External MCP servers](./external-mcp.md).
+
+```bash
+export LACREW_MCP_SERVERS='[{"id":"gh","transport":"http",
+  "url":"https://mcp.example.com/rpc",
+  "auth":{"kind":"bearer","tokenEnv":"GH_MCP_TOKEN"}}]'
+export GH_MCP_TOKEN=…
+
+lacrew mcp refresh                                # discovers, and blocks
+lacrew mcp allow gh.search_issues --effect read   # admit one tool by name
+lacrew mcp servers                                # what is allowed, and what is not
+```
+
+A **stdio** server is a subprocess of this orchestrator, so it is self-host
+territory — the hosted plane admits HTTP MCP first. Its child gets only the env
+vars you name in `env`, never this process's environment. Put egress controls
+around the worker: an attached server is a host your orchestrator now talks to.
+
 ## Skill packs
 
 A pack is the procedure half of a vertical: named skills, each with a trigger,

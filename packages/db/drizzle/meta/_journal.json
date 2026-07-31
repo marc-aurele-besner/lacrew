@@ -120,6 +120,13 @@
       "when": 1785465539720,
       "tag": "0016_volatile_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785486741816,
+      "tag": "0017_fair_earthquake",
+      "breakpoints": true
     }
   ]
 }

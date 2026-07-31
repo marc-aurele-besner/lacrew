@@ -218,6 +218,18 @@ An invalid connector is rejected at registration, and the orchestrator refuses
 to boot with one — a silently dropped connector reads to a flow author as "the
 tool does not exist yet".
 
+## Connector or MCP server?
+
+A connector is HTTP routes you wrote down, and it is the only one of the two
+that can bind a write to a `policyTarget` — reach for it when the action is one
+the policy stack should answer for.
+
+When the surface already speaks MCP, attach it instead of transcribing it:
+[External MCP servers](./external-mcp.md) composes somebody else's server behind
+the same `auto` / `ask` / `deny` vocabulary, with every tool blocked until an
+operator allows it by name. Both are registered per workspace, both are audited,
+and neither can widen what the chain admits.
+
 ## Writes ask the policy stack
 
 A route with `effect: "write"` may carry a `policyTarget`: an address standing
