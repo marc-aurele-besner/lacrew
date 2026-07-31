@@ -7,6 +7,7 @@
 
 import type { AgentControlRecord } from "./agentControls.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
+import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
 import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
 import type { Message } from "./conversation.js";
 import {
@@ -16,6 +17,7 @@ import {
   insertMessageRow,
   listConnectorModes,
   recentConnectorAsks,
+  recentHumanGates,
   recentMessageRows,
   getDatabaseUrl,
   insertIntentRow,
@@ -26,10 +28,12 @@ import {
   upsertAgentControlRow,
   upsertConnectorAsk,
   upsertConnectorMode,
+  upsertHumanGate,
   upsertSessionRow,
   type AgentControlRow,
   type ConnectorAskRow,
   type DbHandle,
+  type HumanGateRow,
   type IntentRow,
   type SessionRow,
 } from "@lacrew/db";
@@ -38,7 +42,7 @@ export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
 
 
-export interface RuntimeStore extends ConnectorModeStore, ConnectorAskStore {
+export interface RuntimeStore extends ConnectorModeStore, ConnectorAskStore, HumanGateStore {
   readonly name: string;
   /** Upsert a session by keyId; must never throw into the caller's flow. */
   saveSession(record: SessionRecord): Promise<void>;
@@ -86,6 +90,7 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const messages: Message[] = [];
   const connectorModes = new Map<string, ConnectorModeRecord>();
   const connectorAsks = new Map<string, ConnectorAskRecord>();
+  const humanGates = new Map<string, HumanGateRecord>();
 
   return {
     name: "memory",
@@ -145,6 +150,14 @@ export function createMemoryRuntimeStore(): RuntimeStore {
         // enough to fall off has long since expired.
         const oldest = connectorAsks.keys().next().value;
         if (oldest) connectorAsks.delete(oldest);
+      }
+    },
+    loadHumanGates: async () => [...humanGates.values()],
+    saveHumanGate: async (record) => {
+      humanGates.set(record.id, record);
+      if (humanGates.size > ASK_RING_MAX) {
+        const oldest = humanGates.keys().next().value;
+        if (oldest) humanGates.delete(oldest);
       }
     },
     close: async () => {},
@@ -213,6 +226,53 @@ function askFromRow(row: ConnectorAskRow): ConnectorAskRecord {
     status: row.status as ConnectorAskRecord["status"],
     ...(row.outcome ? { outcome: row.outcome as ConnectorAskRecord["outcome"] } : {}),
     ...(row.resume ? { resume: row.resume as unknown as ConnectorAskRecord["resume"] } : {}),
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
+  };
+}
+
+/** Same shape both ways; the resume state rides as opaque JSON. */
+function gateToRow(record: HumanGateRecord): HumanGateRow {
+  return {
+    id: record.id,
+    flowId: record.flowId ?? null,
+    runId: record.runId ?? null,
+    stepId: record.stepId,
+    prompt: record.prompt,
+    options: record.options as unknown as Array<Record<string, unknown>>,
+    assignee: record.assignee ?? null,
+    principal: record.principal,
+    threadId: record.threadId,
+    questionId: record.questionId,
+    status: record.status,
+    outcome: record.outcome ?? null,
+    optionId: record.optionId ?? null,
+    answeredBy: record.answeredBy ?? null,
+    resume: (record.resume as unknown as Record<string, unknown> | undefined) ?? null,
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    resolvedAt: record.resolvedAt ?? null,
+  };
+}
+
+function gateFromRow(row: HumanGateRow): HumanGateRecord {
+  return {
+    id: row.id,
+    ...(row.flowId ? { flowId: row.flowId } : {}),
+    ...(row.runId ? { runId: row.runId } : {}),
+    stepId: row.stepId,
+    prompt: row.prompt,
+    options: (row.options ?? []) as unknown as HumanGateRecord["options"],
+    ...(row.assignee ? { assignee: row.assignee } : {}),
+    principal: row.principal,
+    threadId: row.threadId,
+    questionId: row.questionId,
+    status: row.status as HumanGateRecord["status"],
+    ...(row.outcome ? { outcome: row.outcome as HumanGateRecord["outcome"] } : {}),
+    ...(row.optionId ? { optionId: row.optionId } : {}),
+    ...(row.answeredBy ? { answeredBy: row.answeredBy } : {}),
+    ...(row.resume ? { resume: row.resume as unknown as HumanGateRecord["resume"] } : {}),
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     ...(row.resolvedAt ? { resolvedAt: row.resolvedAt } : {}),
@@ -435,6 +495,24 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await upsertConnectorAsk(db(), askToRow(record));
       } catch (err) {
         warn("connector ask save", err);
+      }
+    },
+    loadHumanGates: async () => {
+      try {
+        return (await recentHumanGates(db(), ASK_RING_MAX)).map(gateFromRow);
+      } catch (err) {
+        // Rethrown: with no gates loaded, a decision someone already made looks
+        // like a question that was never asked, and the parked run would be
+        // asked again — after the person who answered has gone home.
+        warn("human gates load", err);
+        throw err;
+      }
+    },
+    saveHumanGate: async (record) => {
+      try {
+        await upsertHumanGate(db(), gateToRow(record));
+      } catch (err) {
+        warn("human gate save", err);
       }
     },
     close: async () => {

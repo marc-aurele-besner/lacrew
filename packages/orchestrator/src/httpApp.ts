@@ -30,6 +30,7 @@ import { connectorPresets } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
+import type { HumanGatesSurface } from "./humanGates.js";
 import {
   CONNECTOR_WRITE_MODES,
   isConnectorWriteMode,
@@ -58,6 +59,8 @@ export interface OrchestratorAppOptions {
   connectorModes?: ConnectorModesSurface;
   /** Pending and resolved ask-mode confirmations (F2.24). */
   connectorAsks?: ConnectorAsksSurface;
+  /** Open and resolved blocking human gates (F2.27). */
+  humanGates?: HumanGatesSurface;
   /** Absent when the embedder wired no queue-backed webhook surface. */
   webhooks?: WebhookSurface;
   /** Crew heartbeats (F2.21); absent in embedders that wired none. */
@@ -128,6 +131,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     connectors,
     connectorModes,
     connectorAsks,
+    humanGates,
     webhooks,
     heartbeats,
     mcpUseMock,
@@ -366,6 +370,28 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // an ask directly would be a second, unauthenticated-by-conversation way
       // to release a write.
       answerVia: "POST /messages with kind=answer, replyTo=<questionId>, body=yes|no",
+    });
+  });
+
+  /**
+   * Blocking human gates (F2.27). `?status=pending` is the queue of runs that
+   * are actually stopped, which is the distinction a Questions rail needs: an
+   * informational ask can wait, a gate is holding a pipeline.
+   */
+  app.get("/flows/gates", (c) => {
+    if (!humanGates) return jsonBig(c, { error: "human_gates_unavailable" }, 503);
+    const status = c.req.query("status");
+    const runId = c.req.query("runId");
+    let all = humanGates.list();
+    if (status) all = all.filter((g) => g.status === status);
+    if (runId) all = all.filter((g) => g.runId === runId);
+    return jsonBig(c, {
+      gates: all,
+      // Answering happens through the thread, not here: a route that resolved a
+      // gate directly would be a second way to release a paused pipeline, and
+      // one that never sees whether the answer came from a human seat.
+      answerVia:
+        "POST /messages with kind=answer, replyTo=<questionId>, body=<option id>, as a human seat",
     });
   });
 

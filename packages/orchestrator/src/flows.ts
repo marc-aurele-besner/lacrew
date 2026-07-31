@@ -26,6 +26,7 @@ import {
 import { runMcpTool, type McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { OrgNode } from "@lacrew/core";
 import type { ConnectorAskRecord, ConnectorAsksSurface } from "./connectorAsks.js";
+import type { HumanGateRecord, HumanGatesSurface } from "./humanGates.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import {
   createFlowStoreFromEnv,
@@ -91,6 +92,12 @@ export type FlowsSurface = {
    */
   resumeAsk(ask: ConnectorAskRecord): Promise<FlowRunResult | null>;
   /**
+   * Continue a run parked on a blocking human gate (F2.27), from the state
+   * stored on the gate. Called when a person answers, and when an unanswered
+   * gate times out — the resumed step then takes the timeout port, or stops.
+   */
+  resumeGate(gate: HumanGateRecord): Promise<FlowRunResult | null>;
+  /**
    * Ask a run to stop at its next step boundary (F2.26). A request rather than
    * a mutation: the run may be moving in another replica, and the only safe
    * place to honour it is between two steps.
@@ -145,6 +152,13 @@ export function createFlowsSurface(opts: {
    * the thing that resumes a suspended run when the answer lands.
    */
   asks?: ConnectorAsksSurface;
+  /**
+   * Blocking human gates (F2.27). Given one, a `human` step asks it whether the
+   * run may continue, and this surface registers itself as the thing that
+   * resumes the run once someone answers. Absent, a `human` step fails rather
+   * than passing: a gate nobody can answer must never read as a yes.
+   */
+  gates?: HumanGatesSurface;
 }): FlowsSurface {
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
@@ -187,6 +201,7 @@ export function createFlowsSurface(opts: {
       complete: (input) => opts.model.complete(input),
       callTool: async (name, args) => {
         if (name === "lacrew_invoke_agent") return delegate(args, chain);
+        if (name === "lacrew_human_gate") return humanGate(args, principal, run);
         // Connectors are checked before the MCP dispatch so a `lacrew_*` name
         // can never be shadowed by a registered route.
         if (!name.startsWith("lacrew_") && opts.connectors?.handles(name)) {
@@ -202,6 +217,36 @@ export function createFlowsSurface(opts: {
         });
       },
     };
+  };
+
+  /**
+   * Ask the gate surface whether a `human` step may continue.
+   *
+   * With no surface wired there is nobody to ask, and the step fails: a gate is
+   * the thing standing between a pipeline and a side effect, so "no human
+   * surface" has to stop the run, never release it.
+   */
+  const humanGate = async (
+    args: Record<string, unknown>,
+    principal: `0x${string}`,
+    run: { flowId: string; runId: string },
+  ): Promise<unknown> => {
+    if (!opts.gates) throw new Error("human_gate_unavailable");
+    const declared = Array.isArray(args.options) ? args.options : [];
+    return opts.gates.gate({
+      stepId: String(args.stepId ?? ""),
+      prompt: String(args.prompt ?? ""),
+      options: declared.map((o) => {
+        const option = (o ?? {}) as { id?: unknown; label?: unknown };
+        const id = String(option.id ?? "");
+        return { id, label: String(option.label ?? id) };
+      }),
+      ...(args.assignee ? { assignee: String(args.assignee) } : {}),
+      ...(typeof args.timeoutMs === "number" ? { timeoutMs: args.timeoutMs } : {}),
+      principal,
+      flowId: run.flowId,
+      runId: run.runId,
+    });
   };
 
   /**
@@ -240,7 +285,8 @@ export function createFlowsSurface(opts: {
         // so, rather than reporting a run that quietly did half its work.
         throw new Error(
           `flow_delegate_waiting (${flowId}): ${result.waiting?.detail ?? result.waiting?.reason ?? "waiting"}` +
-            " — an ask-mode connector write cannot be confirmed inside a delegated flow",
+            " — a delegated flow cannot park: neither an ask-mode write nor a human gate" +
+            " can be answered inside one",
         );
       }
       if (result.status === "error") {
@@ -374,7 +420,10 @@ export function createFlowsSurface(opts: {
     // replica handles the answer can continue it. Without this the run is a
     // trace nobody can pick back up.
     if (result.status === "waiting" && result.resume && result.waiting?.token) {
+      // Both surfaces are asked; each ignores a token it does not own, which
+      // keeps the run from having to know what parked it.
       await opts.asks?.attachResume(result.waiting.token, result.resume);
+      await opts.gates?.attachResume(result.waiting.token, result.resume);
     }
     opts.runtime.recordAudit({
       type: "FlowRun",
@@ -411,6 +460,24 @@ export function createFlowsSurface(opts: {
   };
   opts.asks?.setResumer(async (ask) => {
     await resumeAsk(ask);
+  });
+
+  const resumeGate = async (gate: HumanGateRecord): Promise<FlowRunResult | null> => {
+    if (!gate.resume || !gate.flowId) return null;
+    try {
+      return await runOne({
+        id: gate.flowId,
+        ...(gate.runId ? { runId: gate.runId } : {}),
+        as: gate.principal ? (gate.principal as `0x${string}`) : undefined,
+        resume: gate.resume,
+      });
+    } catch (err) {
+      console.error(`[@lacrew/orchestrator] resuming flow "${gate.flowId}" failed:`, err);
+      return null;
+    }
+  };
+  opts.gates?.setResumer(async (gate) => {
+    await resumeGate(gate);
   });
 
   /** Statuses a run cannot come back from. `waiting` is the one that can. */
@@ -476,6 +543,10 @@ export function createFlowsSurface(opts: {
     const state = await requireState(runId);
     if (state.status === "cancelled") return state;
     if (TERMINAL.has(state.status)) throw new Error(`run_not_cancellable:${state.status}`);
+    // Close the questions this run is holding open first. A gate outliving its
+    // run is one a person can still answer, and answering it would resume a run
+    // the operator ended (F2.27).
+    await opts.gates?.cancelRun(runId, reason);
     if (state.status === "waiting") {
       // Nothing is holding a parked run, so the cancel lands now rather than
       // waiting for a worker that is never coming back to it.
@@ -576,6 +647,7 @@ export function createFlowsSurface(opts: {
     },
     run: runOne,
     resumeAsk,
+    resumeGate,
     pause,
     resume,
     cancel,

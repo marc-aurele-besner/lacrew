@@ -48,6 +48,20 @@ export {
   type ConnectorAsksSurface,
 } from "./connectorAsks.js";
 export {
+  DEFAULT_HUMAN_GATE_TTL_MS,
+  MIN_HUMAN_GATE_TTL_MS,
+  createHumanGates,
+  humanGateTtlMs,
+  readGateAnswer,
+  type HumanGateOptionView,
+  type HumanGateRecord,
+  type HumanGateRequest,
+  type HumanGateStatus,
+  type HumanGateStore,
+  type HumanGateView,
+  type HumanGatesSurface,
+} from "./humanGates.js";
+export {
   buildConnectorPreset,
   connectorPresets,
   getConnectorPreset,
