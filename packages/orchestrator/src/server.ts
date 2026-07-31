@@ -24,14 +24,22 @@ import { connectorAskTtlMs, createConnectorAsks } from "./connectorAsks.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
-import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
+import {
+  createModelProviderFromEnv,
+  withInferenceBudget,
+  type ModelProvider,
+} from "./model/index.js";
+import { createInferenceBudgets, crewIdForSeat } from "./inferenceBudgets.js";
+import { ancestorsOf } from "./flowScope.js";
+import type { OrgNode } from "@lacrew/core";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 
 const port = Number(process.env.PORT ?? 8788);
 const queue: QueueProvider = createQueueFromEnv();
-const model: ModelProvider = createModelProviderFromEnv();
+/** The vendor client. Wrapped by the cost guard below before anything uses it. */
+const rawModel: ModelProvider = createModelProviderFromEnv();
 /** MCP HTTP binds to the live runtime; LACREW_MCP_MOCK=1 forces a detached SDK mock. */
 const mcpUseMock = process.env.LACREW_MCP_MOCK === "1";
 const authToken = getOrchToken();
@@ -137,6 +145,40 @@ async function main(): Promise<void> {
       `[@lacrew/orchestrator] ${connectorDefs.length} connector(s): ${connectors!.toolNames().join(", ")}`,
     );
   }
+  // Inference cost budgets (F2.28). Built before the flows surface, because
+  // every model call this process makes goes through the guard below — a flows
+  // surface holding the unguarded client would be an unmetered path to the
+  // provider, and the whole point is that there is exactly one.
+  const budgets = createInferenceBudgets({
+    postNote: ({ crewId, body }) =>
+      void runtime.postMessage({
+        scope: { kind: "crew", id: crewId },
+        author: runtime.defaultAgent,
+        authorKind: "agent",
+        kind: "note",
+        body,
+      }),
+    onEvent: (event) => runtime.recordAudit(event),
+  });
+  const model = withInferenceBudget(rawModel, budgets);
+
+  /**
+   * The crew a seat belongs to, for budget attribution: its nearest manager in
+   * the org tree, or itself when it has none. Read per call rather than cached,
+   * on the same reasoning the flows surface reads it per run — a reparent that
+   * moved a seat to another desk has to move its bill with it.
+   */
+  const budgetSubjectFor = async (principal: string): Promise<string> => {
+    let nodes: OrgNode[] = [];
+    try {
+      nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+    } catch {
+      // No reachable registry: the seat is its own crew, which is what an
+      // unresolvable tree already means everywhere else in this process.
+    }
+    return crewIdForSeat(principal, [...ancestorsOf(nodes, principal)]);
+  };
+
   const flows = createFlowsSurface({
     runtime,
     model,
@@ -159,7 +201,12 @@ async function main(): Promise<void> {
   // Crew heartbeats (F2.21). Built after flows: a checklist names flow ids, and
   // validating one against a surface that has not hydrated yet would refuse
   // every item on a config that is perfectly good.
-  const heartbeats = createHeartbeatSurface({ runtime, flows });
+  const heartbeats = createHeartbeatSurface({
+    runtime,
+    flows,
+    budgetBlock: async (principal) =>
+      budgets.heartbeatBlock(await budgetSubjectFor(principal)),
+  });
 
   const app = createOrchestratorApp({
     runtime,
@@ -173,6 +220,7 @@ async function main(): Promise<void> {
     humanGates,
     webhooks,
     heartbeats,
+    budgets,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,
@@ -307,6 +355,22 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     console.error("[@lacrew/orchestrator] crew heartbeat hydration failed:", err);
+  }
+  // Cost budgets (F2.28). Loud on failure: with none loaded, every crew's model
+  // spend is unbounded on this replica while an operator's settings page still
+  // shows the limits they set — the one failure mode this feature exists to
+  // prevent. Budgets are read through on every call, so this is a boot log and
+  // a prune, not the thing enforcement depends on.
+  try {
+    const configured = await budgets.hydrate();
+    await budgets.prune();
+    if (configured > 0) {
+      console.log(
+        `[@lacrew/orchestrator] ${configured} inference budget(s) configured (${budgets.storeName})`,
+      );
+    }
+  } catch (err) {
+    console.error("[@lacrew/orchestrator] inference budgets could not be read:", err);
   }
 
   await queue.start({

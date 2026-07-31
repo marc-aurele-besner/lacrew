@@ -43,7 +43,7 @@ export class OpenRouterModelProvider implements ModelProvider {
 
     const data = (await res.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
       model?: string;
     };
     const text = data.choices?.[0]?.message?.content ?? "";
@@ -54,6 +54,10 @@ export class OpenRouterModelProvider implements ModelProvider {
       usage: {
         promptTokens: data.usage?.prompt_tokens,
         completionTokens: data.usage?.completion_tokens,
+        // The router prices the call itself when it reports usage accounting.
+        // Passed through so a cost budget bills the routed model's real price
+        // rather than a local table's guess at whatever `openrouter/auto` picked.
+        ...(typeof data.usage?.cost === "number" ? { costUsd: data.usage.cost } : {}),
       },
     };
   }

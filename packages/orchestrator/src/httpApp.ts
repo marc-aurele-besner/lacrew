@@ -16,6 +16,12 @@ import {
 } from "@lacrew/flows";
 import type { HeartbeatSurface } from "./heartbeat.js";
 import {
+  INFERENCE_BUDGET_WARN_RATIO,
+  isInferenceBudgetExceeded,
+  type InferenceBudget,
+} from "@lacrew/flows";
+import type { InferenceBudgetsSurface } from "./inferenceBudgets.js";
+import {
   createSkillPacksSurface,
   readSkillPack,
   SkillPackRequirementsError,
@@ -65,6 +71,8 @@ export interface OrchestratorAppOptions {
   webhooks?: WebhookSurface;
   /** Crew heartbeats (F2.21); absent in embedders that wired none. */
   heartbeats?: HeartbeatSurface;
+  /** Inference & API cost budgets (F2.28); absent in embedders that wired none. */
+  budgets?: InferenceBudgetsSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -134,6 +142,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     humanGates,
     webhooks,
     heartbeats,
+    budgets,
     mcpUseMock,
     authToken,
   } = options;
@@ -217,6 +226,23 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
             store: heartbeats.storeName,
           }
         : { configured: 0, store: null },
+      // Counts, and how many of them actually bite. An `enabled` budget that is
+      // `soft` bounds nothing on its own, so reporting one number would let a
+      // deployment read as protected when nothing would ever be refused.
+      budgets: budgets
+        ? await (async () => {
+            const views = await budgets.list();
+            const on = views.filter((v) => v.budget.enabled);
+            return {
+              configured: views.length,
+              enabled: on.length,
+              hard: on.filter((v) => v.budget.policy === "hard").length,
+              warning: on.filter((v) => v.status.state === "warning").length,
+              exceeded: on.filter((v) => v.status.state === "exceeded").length,
+              store: budgets.storeName,
+            };
+          })()
+        : { configured: 0, store: null },
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
       governance: { autoExecute: autoExecuteEnabled() },
@@ -225,14 +251,44 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   );
 
   app.post("/model/complete", async (c) => {
-    const body = await bodyOf<{ system?: string; prompt?: string; model?: string }>(c);
+    const body = await bodyOf<{
+      system?: string;
+      prompt?: string;
+      model?: string;
+      /** Who to charge (F2.28). Unattributed calls are still metered. */
+      crewId?: string;
+      agentId?: string;
+    }>(c);
     if (!body.prompt?.trim()) return jsonBig(c, { error: "prompt_required" }, 400);
-    const result = await model.complete({
-      system: body.system,
-      prompt: body.prompt,
-      model: body.model,
-    });
-    return jsonBig(c, { ...result, provider: model.name });
+    try {
+      const result = await model.complete({
+        system: body.system,
+        prompt: body.prompt,
+        model: body.model,
+        meta: {
+          ...(body.crewId ? { crewId: body.crewId } : {}),
+          ...(body.agentId ? { agentId: body.agentId } : {}),
+        },
+      });
+      return jsonBig(c, { ...result, provider: model.name });
+    } catch (err) {
+      // 429, not 400: the request is well-formed and the same call succeeds
+      // once the cap is raised or the period rolls. The code is the stable one
+      // flows and MCP see, so a caller branches on one string everywhere.
+      if (isInferenceBudgetExceeded(err)) {
+        return jsonBig(
+          c,
+          {
+            error: err.code,
+            scopeKey: err.scopeKey,
+            dimension: err.dimension,
+            periodKey: err.periodKey,
+          },
+          429,
+        );
+      }
+      throw err;
+    }
   });
 
   app.get("/mcp/tools", (c) =>
@@ -693,6 +749,140 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       ticks: await heartbeats.ticks(
         Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 20,
         c.req.query("crewId") ?? undefined,
+      ),
+    });
+  });
+
+  /**
+   * Inference & API cost budgets (F2.28).
+   *
+   * Every route here reads or edits an *operational* limit on model spend. None
+   * of them moves funds, changes a policy stack, or touches an allowance — a
+   * crew that has burned its inference budget can still propose a spend, and
+   * that spend is judged exactly as before. Raising a cap is the one action
+   * that lets a stopped crew spend again, so it is audited.
+   */
+  app.get("/budgets", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    return jsonBig(c, {
+      budgets: await budgets.list(),
+      warnRatio: INFERENCE_BUDGET_WARN_RATIO,
+      store: budgets.storeName,
+    });
+  });
+
+  /**
+   * One budget with its live standing. `agentId` asks about that seat's own
+   * budget, not the crew budget it also sits under — the two are separate rows
+   * and conflating them would report a limit nobody set on that seat.
+   */
+  app.get("/budgets/one", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    const crewId = c.req.query("crewId");
+    if (!crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    const view = await budgets.get({
+      crewId,
+      ...(c.req.query("agentId") ? { agentId: c.req.query("agentId")! } : {}),
+    });
+    if (!view) return jsonBig(c, { error: "budget_not_found" }, 404);
+    return jsonBig(c, { budget: view });
+  });
+
+  app.post("/budgets", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    const body = await bodyOf<{ budget?: Partial<InferenceBudget> & { crewId?: string } }>(c);
+    const input = body.budget;
+    if (!input?.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    try {
+      const budget = await budgets.save({ ...input, crewId: input.crewId });
+      runtime.recordAudit({
+        type: "InferenceBudgetChanged",
+        at: budget.updatedAt,
+        payload: {
+          crewId: budget.crewId,
+          ...(budget.agentId ? { agentId: budget.agentId } : {}),
+          action: "saved",
+          period: budget.period,
+          policy: budget.policy,
+          // Numbers an operator typed. No prompt, no key, nothing from a call.
+          limits: budget.limits,
+          enabled: budget.enabled,
+        },
+      });
+      return jsonBig(c, { budget });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "invalid_inference_budget") }, 400);
+    }
+  });
+
+  app.post("/budgets/enabled", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    const body = await bodyOf<{ crewId?: string; agentId?: string; enabled?: boolean }>(c);
+    if (!body.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    if (typeof body.enabled !== "boolean") {
+      return jsonBig(c, { error: "enabled_must_be_boolean" }, 400);
+    }
+    try {
+      const budget = await budgets.setEnabled(
+        { crewId: body.crewId, ...(body.agentId ? { agentId: body.agentId } : {}) },
+        body.enabled,
+      );
+      runtime.recordAudit({
+        type: "InferenceBudgetChanged",
+        at: budget.updatedAt,
+        payload: {
+          crewId: budget.crewId,
+          ...(budget.agentId ? { agentId: budget.agentId } : {}),
+          action: body.enabled ? "enabled" : "disabled",
+          policy: budget.policy,
+          limits: budget.limits,
+        },
+      });
+      return jsonBig(c, { budget });
+    } catch (err) {
+      const msg = msgOf(err, "invalid_inference_budget");
+      return jsonBig(c, { error: msg }, msg.startsWith("unknown_inference_budget") ? 404 : 400);
+    }
+  });
+
+  app.post("/budgets/delete", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    const body = await bodyOf<{ crewId?: string; agentId?: string }>(c);
+    if (!body.crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    const subject = {
+      crewId: body.crewId,
+      ...(body.agentId ? { agentId: body.agentId } : {}),
+    };
+    const removed = await budgets.remove(subject);
+    if (removed) {
+      runtime.recordAudit({
+        type: "InferenceBudgetChanged",
+        at: new Date().toISOString(),
+        payload: { ...subject, action: "removed" },
+      });
+    }
+    return jsonBig(c, { removed });
+  });
+
+  /**
+   * The calls behind the number. Model id, tokens, estimated USD and the run
+   * that made each one — so "why is this crew at 90%?" is answerable without
+   * reading a provider's console.
+   */
+  app.get("/budgets/usage", async (c) => {
+    if (!budgets) return jsonBig(c, { error: "budgets_unavailable" }, 503);
+    const crewId = c.req.query("crewId");
+    if (!crewId?.trim()) return jsonBig(c, { error: "crewId_required" }, 400);
+    const subject = {
+      crewId,
+      ...(c.req.query("agentId") ? { agentId: c.req.query("agentId")! } : {}),
+    };
+    const limit = Number(c.req.query("limit") ?? 100);
+    return jsonBig(c, {
+      budget: await budgets.get(subject),
+      events: await budgets.events(
+        subject,
+        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 100,
       ),
     });
   });
