@@ -16,6 +16,7 @@ import { getOrchToken } from "./auth.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createFlowsSurface } from "./flows.js";
+import { createHeartbeatSurface } from "./heartbeat.js";
 import { createWebhookSurface, type WebhookJob } from "./webhooks.js";
 import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
 import { createConnectorModes } from "./connectorPolicy.js";
@@ -132,6 +133,11 @@ async function main(): Promise<void> {
     },
   });
 
+  // Crew heartbeats (F2.21). Built after flows: a checklist names flow ids, and
+  // validating one against a surface that has not hydrated yet would refuse
+  // every item on a config that is perfectly good.
+  const heartbeats = createHeartbeatSurface({ runtime, flows });
+
   const app = createOrchestratorApp({
     runtime,
     queue,
@@ -142,6 +148,7 @@ async function main(): Promise<void> {
     connectorModes,
     connectorAsks,
     webhooks,
+    heartbeats,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,
@@ -243,6 +250,20 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error("[@lacrew/orchestrator] webhook trigger hydration failed:", err);
   }
+  // After flows, for the reason webhooks are: a checklist points at definitions,
+  // and hydrating it first would make every restored heartbeat look like it
+  // names flows that do not exist.
+  try {
+    const beats = await heartbeats.hydrate();
+    if (beats > 0) {
+      const on = heartbeats.list().filter((h) => h.enabled).length;
+      console.log(
+        `[@lacrew/orchestrator] ${beats} crew heartbeat(s) restored, ${on} enabled (${heartbeats.storeName})`,
+      );
+    }
+  } catch (err) {
+    console.error("[@lacrew/orchestrator] crew heartbeat hydration failed:", err);
+  }
 
   await queue.start({
     onEpoch: async () => {
@@ -269,6 +290,20 @@ async function main(): Promise<void> {
         }
       } catch (err) {
         console.error("[@lacrew/orchestrator] connector ask sweep failed:", err);
+      }
+      // Crew heartbeats (F2.21) ride the same minute sweep, which is what makes
+      // a tick exactly-once across replicas: the queue hands this job to one
+      // worker, and the sweep claims each crew's window before doing any work.
+      try {
+        const ticks = await heartbeats.sweep();
+        if (ticks.length > 0) {
+          console.log(
+            `[@lacrew/orchestrator] ${ticks.length} crew heartbeat tick(s): ` +
+              ticks.map((t) => `${t.crewId}=${t.status}`).join(", "),
+          );
+        }
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] crew heartbeat sweep failed:", err);
       }
       // The governance auto-executor (F0.6) rides the same minute sweep: the
       // queue already dispatches it to exactly one replica per tick. Opt-in —

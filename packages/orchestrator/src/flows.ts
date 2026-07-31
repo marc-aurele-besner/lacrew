@@ -16,6 +16,7 @@ import {
   type FlowDefinition,
   type FlowResumeState,
   type FlowRunResult,
+  type FlowRunTrigger,
   type FlowTemplate,
   type FlowTrigger,
 } from "@lacrew/flows";
@@ -54,7 +55,7 @@ export type FlowsSurface = {
     id?: string;
     flow?: FlowDefinition;
     input?: string;
-    trigger?: FlowTrigger;
+    trigger?: FlowRunTrigger;
     /**
      * Caller-supplied run id. Lets a dispatcher name the run before the work
      * starts — a webhook answers its producer with a runId while the run is
@@ -252,7 +253,7 @@ export function createFlowsSurface(opts: {
       id?: string;
       flow?: FlowDefinition;
       input?: string;
-      trigger?: FlowTrigger;
+      trigger?: FlowRunTrigger;
       runId?: string;
       refresh?: boolean;
       as?: `0x${string}`;

@@ -4,6 +4,7 @@ import type {
   FlowPrincipal,
   FlowResumeState,
   FlowRunResult,
+  FlowRunTrigger,
   FlowStep,
   FlowStepTrace,
   Verdict,
@@ -180,7 +181,7 @@ export type RunFlowOptions = {
   input?: string;
   runId?: string;
   /** What fired the run; recorded on the result (default "manual"). */
-  trigger?: FlowDefinition["trigger"];
+  trigger?: FlowRunTrigger;
   /**
    * Identity the run executes as. Recorded on the result and supplied to the
    * backend as the `agent` default for policy-gated steps.

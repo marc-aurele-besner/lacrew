@@ -24,6 +24,7 @@ import { cmdConnectors } from "./connectors.js";
 import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { cmdSkills } from "./skills.js";
+import { cmdHeartbeat } from "./heartbeat.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
@@ -236,6 +237,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "skills") {
     await cmdSkills(rest);
+    return;
+  }
+  if (cmd === "heartbeat") {
+    await cmdHeartbeat(rest);
     return;
   }
   if (cmd === "scaffold") {
@@ -747,6 +752,9 @@ Commands:
                             modes, mode <route> <auto|ask|deny>, asks, answer
   skills <sub>              Installable directive skills — list, show <id>,
                             install <id> --agent 0x…, installed, remove, export
+  heartbeat <sub>           A crew's standing checklist — presets, list, show,
+                            set --crew <id> --schedule '<cron>' --flow a,b,
+                            on/off, run, ticks (see: lacrew heartbeat help)
 
 Env:
   ANVIL_RPC / RPC_URL       JSON-RPC endpoint

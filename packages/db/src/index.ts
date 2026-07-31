@@ -38,6 +38,18 @@ export {
   type WebhookDeliveryRow,
 } from "./webhooks.js";
 export {
+  upsertCrewHeartbeat,
+  deleteCrewHeartbeat,
+  listCrewHeartbeats,
+  getCrewHeartbeat,
+  claimCrewHeartbeatTick,
+  settleCrewHeartbeatTick,
+  recentCrewHeartbeatTicks,
+  pruneCrewHeartbeatTicks,
+  type CrewHeartbeatRow,
+  type CrewHeartbeatTickRow,
+} from "./heartbeat.js";
+export {
   upsertConnectorMode,
   deleteConnectorMode,
   listConnectorModes,

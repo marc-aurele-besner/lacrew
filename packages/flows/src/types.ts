@@ -258,6 +258,18 @@ export type FlowStepKind = FlowStep["kind"];
 
 export type FlowTrigger = "manual" | "epoch" | "cron" | "webhook";
 
+/**
+ * Why a run started — wider than what a definition may declare.
+ *
+ * A flow cannot declare `trigger: "heartbeat"`: a crew heartbeat (F2.21) runs
+ * whatever its checklist names, whatever that flow's own trigger says, and a
+ * declaration would suggest the flow had opted into something. The *run* still
+ * has to say so, or a swept heartbeat run is indistinguishable from a manual
+ * one in the trail — which is the one distinction an operator asking "did I do
+ * that, or did the crew?" is trying to make.
+ */
+export type FlowRunTrigger = FlowTrigger | "heartbeat";
+
 export type FlowDefinition = {
   id: string;
   name: string;
@@ -360,8 +372,8 @@ export type FlowRunResult = {
   flowId: string;
   flowName?: string;
   status: FlowRunStatus;
-  /** What fired the run ("manual" unless the epoch queue triggered it). */
-  trigger?: FlowTrigger;
+  /** What fired the run ("manual" unless something scheduled it). */
+  trigger?: FlowRunTrigger;
   /** Identity the run executed as; absent for detached mock runs. */
   principal?: FlowPrincipal;
   startedAt: string;
