@@ -21,6 +21,12 @@ import { createWebhookSurface, type WebhookJob } from "./webhooks.js";
 import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
 import { createConnectorModes } from "./connectorPolicy.js";
 import { connectorAskTtlMs, createConnectorAsks } from "./connectorAsks.js";
+import {
+  createExternalMcpRegistry,
+  externalMcpAuditArgKeys,
+  externalMcpRefreshMinutes,
+  loadExternalMcpServersFromEnv,
+} from "./externalMcp.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
@@ -145,6 +151,30 @@ async function main(): Promise<void> {
       `[@lacrew/orchestrator] ${connectorDefs.length} connector(s): ${connectors!.toolNames().join(", ")}`,
     );
   }
+  // Attached third-party MCP servers (F2.30). A bad config stops the boot for
+  // the same reason a bad connector does: an orchestrator whose crews silently
+  // cannot reach an attached server is worse than one that says why.
+  const mcpServerDefs = loadExternalMcpServersFromEnv(process.env, (path) =>
+    readFileSync(path, "utf8"),
+  );
+  const externalMcp =
+    mcpServerDefs.length > 0
+      ? createExternalMcpRegistry({
+          servers: mcpServerDefs,
+          store: runtime.store,
+          onEvent: (event) => runtime.recordAudit(event),
+          // Ask-mode writes ride the same confirmation path connectors use, so
+          // an operator answers one kind of question in one place.
+          asks: connectorAsks,
+          auditArgKeys: externalMcpAuditArgKeys(),
+        })
+      : undefined;
+  if (mcpServerDefs.length > 0) {
+    console.log(
+      `[@lacrew/orchestrator] ${mcpServerDefs.length} external MCP server(s): ` +
+        mcpServerDefs.map((s) => `${s.id} (${s.transport})`).join(", "),
+    );
+  }
   // Inference cost budgets (F2.28). Built before the flows surface, because
   // every model call this process makes goes through the guard below — a flows
   // surface holding the unguarded client would be an unmetered path to the
@@ -184,6 +214,7 @@ async function main(): Promise<void> {
     model,
     mcpBackend,
     connectors,
+    ...(externalMcp ? { externalMcp } : {}),
     asks: connectorAsks,
     gates: humanGates,
   });
@@ -216,6 +247,7 @@ async function main(): Promise<void> {
     mcpBackend,
     connectors,
     connectorModes,
+    ...(externalMcp ? { externalMcp } : {}),
     connectorAsks,
     humanGates,
     webhooks,
@@ -309,6 +341,53 @@ async function main(): Promise<void> {
         err,
       );
     }
+
+    // External MCP allowlist (F2.30). The rows *are* the allowlist, so an
+    // unreadable store fails closed — every external tool refuses — which is
+    // safe for calls and confusing for an operator whose tools page shows
+    // nothing they enabled. Hence the loud line rather than a silent zero.
+    if (externalMcp) {
+      try {
+        const allowed = await externalMcp.hydrate();
+        if (allowed > 0) {
+          console.log(
+            `[@lacrew/orchestrator] external MCP allowlist: ${allowed} tool record(s) restored`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          "[@lacrew/orchestrator] external MCP allowlist could not be read: every external tool " +
+            "is refused on this replica. Fix the store and restart.",
+          err,
+        );
+      }
+    }
+  }
+
+  // Discovery at boot, after hydration so a known tool is not re-recorded as
+  // new. Best effort: an unreachable server must not stop an orchestrator whose
+  // crews have plenty of other work, and nothing it would have returned could
+  // widen the allowlist anyway.
+  if (externalMcp) {
+    try {
+      const results = await externalMcp.refresh();
+      for (const result of results) {
+        if (!result.ok) {
+          console.error(
+            `[@lacrew/orchestrator] external MCP ${result.server} unreachable: ${result.error}`,
+          );
+          continue;
+        }
+        console.log(
+          `[@lacrew/orchestrator] external MCP ${result.server}: ` +
+            `${result.unchanged.length + result.added.length} tool(s)` +
+            (result.added.length > 0 ? `, ${result.added.length} new and blocked` : "") +
+            (result.removed.length > 0 ? `, ${result.removed.length} gone` : ""),
+        );
+      }
+    } catch (err) {
+      console.error("[@lacrew/orchestrator] external MCP discovery failed:", err);
+    }
   }
   const hydrated = await flows.hydrate();
   if (hydrated.flows > 0 || hydrated.runs > 0) {
@@ -373,6 +452,10 @@ async function main(): Promise<void> {
     console.error("[@lacrew/orchestrator] inference budgets could not be read:", err);
   }
 
+  const mcpRefreshMs = externalMcpRefreshMinutes() * 60_000;
+  /** Boot discovery counts as the first pass, so the sweep waits a full cadence. */
+  let lastMcpRefresh = Date.now();
+
   await queue.start({
     onEpoch: async () => {
       let result: unknown;
@@ -424,6 +507,24 @@ async function main(): Promise<void> {
       } catch (err) {
         console.error("[@lacrew/orchestrator] crew heartbeat sweep failed:", err);
       }
+      // External MCP discovery (F2.30) rides the same minute sweep, at its own
+      // cadence. It admits nothing — a tool that appeared since the last pass is
+      // recorded blocked — so this is about how quickly an operator learns a
+      // server grew a tool, not about what a crew may call.
+      if (externalMcp && mcpRefreshMs > 0 && Date.now() - lastMcpRefresh >= mcpRefreshMs) {
+        lastMcpRefresh = Date.now();
+        try {
+          const swept = await externalMcp.refresh();
+          const blocked = swept.flatMap((r) => r.added);
+          if (blocked.length > 0) {
+            console.log(
+              `[@lacrew/orchestrator] external MCP: ${blocked.length} new tool(s) blocked until allowed: ${blocked.join(", ")}`,
+            );
+          }
+        } catch (err) {
+          console.error("[@lacrew/orchestrator] external MCP refresh sweep failed:", err);
+        }
+      }
       // The governance auto-executor (F0.6) rides the same minute sweep: the
       // queue already dispatches it to exactly one replica per tick. Opt-in —
       // executing governance without a human press is a policy decision.
@@ -449,6 +550,9 @@ async function main(): Promise<void> {
 
   installShutdownHooks(server, async () => {
     await queue.stop();
+    // Stdio servers are child processes this orchestrator started; leaving them
+    // running after a redeploy is a slow leak of third-party binaries.
+    await externalMcp?.close();
   });
 
   await listenHttp(server, port, () => {

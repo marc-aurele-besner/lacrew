@@ -36,6 +36,11 @@ import { connectorPresets } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
+import {
+  validateExternalMcpRule,
+  type ExternalMcpRegistry,
+  type ExternalMcpToolRule,
+} from "./externalMcp.js";
 import type { HumanGatesSurface } from "./humanGates.js";
 import {
   CONNECTOR_WRITE_MODES,
@@ -63,6 +68,8 @@ export interface OrchestratorAppOptions {
   connectors?: ConnectorRegistry;
   /** Write-mode rules (F2.24); absent in embedders that wired none. */
   connectorModes?: ConnectorModesSurface;
+  /** Attached third-party MCP servers (F2.30); absent when none is configured. */
+  externalMcp?: ExternalMcpRegistry;
   /** Pending and resolved ask-mode confirmations (F2.24). */
   connectorAsks?: ConnectorAsksSurface;
   /** Open and resolved blocking human gates (F2.27). */
@@ -138,6 +145,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     mcpBackend,
     connectors,
     connectorModes,
+    externalMcp,
     connectorAsks,
     humanGates,
     webhooks,
@@ -291,9 +299,158 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
-  app.get("/mcp/tools", (c) =>
-    jsonBig(c, { tools: listLacrewMcpTools(), useMock: mcpUseMock, mode: runtime.mode }),
-  );
+  /**
+   * The tools an agent can actually call: the first-party `lacrew_*` set, plus
+   * whatever external MCP tools are allowlisted **for that seat** (`?as=`).
+   *
+   * Served together because that union is the honest answer to "what can this
+   * agent do", and a surface that listed only the first-party half would tell
+   * an operator their crew cannot reach GitHub while it merges pull requests.
+   */
+  app.get("/mcp/tools", async (c) => {
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
+    return jsonBig(c, {
+      tools: listLacrewMcpTools(),
+      external: externalMcp?.toolNames(subject) ?? [],
+      useMock: mcpUseMock,
+      mode: runtime.mode,
+    });
+  });
+
+  /* ——— external MCP servers (F2.30) ——— */
+
+  /**
+   * Attached servers, their tools, and what each one resolves to for a seat.
+   *
+   * `?as=` for the same reason `/connectors` takes it: the workspace's answer is
+   * the one nobody's flow runs under once a single seat overrides it. Every
+   * response is credential-free by construction — the auth block names env vars
+   * and says whether they are set, and nothing here can read a value.
+   */
+  app.get("/mcp/servers", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
+    return jsonBig(c, {
+      servers: externalMcp.describe(subject),
+      rules: externalMcp.rules(),
+      modes: CONNECTOR_WRITE_MODES,
+    });
+  });
+
+  /**
+   * Re-read tool lists. Newly seen tools are recorded **disabled**, so a
+   * refresh can never widen what a crew may call — it only makes the gap
+   * visible ("3 new tools blocked"). Omit `server` to sweep every one.
+   */
+  app.post("/mcp/servers/refresh", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: string }>(c);
+    try {
+      const results = await externalMcp.refresh(body.server?.trim() || undefined);
+      for (const result of results) {
+        if (!result.ok) continue;
+        runtime.recordAudit({
+          type: "ExternalMcpDiscovered",
+          at: new Date().toISOString(),
+          payload: {
+            server: result.server,
+            added: result.added.length,
+            removed: result.removed.length,
+            blocked: result.added,
+          },
+        });
+      }
+      return jsonBig(c, { results });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "mcp_refresh_failed") }, 400);
+    }
+  });
+
+  /** Reachability check for a setup drawer: does it answer, and with how many tools. */
+  app.post("/mcp/servers/ping", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: string }>(c);
+    if (!body.server?.trim()) return jsonBig(c, { error: "server_required" }, 400);
+    try {
+      return jsonBig(c, await externalMcp.ping(body.server.trim()));
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "unknown_mcp_server") }, 404);
+    }
+  });
+
+  /**
+   * Allow, disable, or re-mode one tool. `enabled` absent **clears** the record
+   * at that scope, which is not the same as disabling it: clearing drops an
+   * exception so the tool inherits again, while `enabled: false` pins the
+   * refusal at this scope.
+   *
+   * A wildcard (`tool: "*"`) is refused unless it narrows — a rule that admitted
+   * every tool a server publishes would undo the one property this feature is
+   * built on.
+   */
+  app.put("/mcp/servers/tools", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{
+      scope?: unknown;
+      server?: string;
+      tool?: string;
+      enabled?: boolean | null;
+      effect?: string;
+      mode?: string;
+    }>(c);
+    const scope = parseModeScope(body.scope) ?? { level: "workspace" as const };
+    const server = body.server?.trim() ?? "";
+    const tool = body.tool?.trim() ?? "";
+    if (!server || !tool) return jsonBig(c, { error: "server_and_tool_required" }, 400);
+
+    if (body.enabled === null || body.enabled === undefined) {
+      const cleared = await externalMcp.clearTool(scope, server, tool);
+      if (cleared) {
+        runtime.recordAudit({
+          type: "ExternalMcpToolPolicyChanged",
+          at: new Date().toISOString(),
+          payload: { scope, server, tool, action: "cleared" },
+        });
+      }
+      return jsonBig(c, { cleared, rules: externalMcp.rules() });
+    }
+
+    const rule: ExternalMcpToolRule = {
+      scope,
+      server,
+      tool,
+      enabled: body.enabled === true,
+      ...(body.effect === "read" || body.effect === "write" ? { effect: body.effect } : {}),
+      ...(body.mode ? { mode: body.mode as ExternalMcpToolRule["mode"] } : {}),
+    };
+    const invalid = validateExternalMcpRule(rule);
+    if (invalid.length > 0) return jsonBig(c, { error: invalid.join("; ") }, 400);
+    if (rule.mode && !isConnectorWriteMode(rule.mode)) {
+      return jsonBig(c, { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` }, 400);
+    }
+    try {
+      const record = await externalMcp.setTool(rule);
+      runtime.recordAudit({
+        type: "ExternalMcpToolPolicyChanged",
+        at: record.at,
+        payload: {
+          scope,
+          server,
+          tool,
+          enabled: record.enabled,
+          ...(record.effect ? { effect: record.effect } : {}),
+          ...(record.mode ? { mode: record.mode } : {}),
+          action: record.enabled ? "allowed" : "disabled",
+        },
+      });
+      return jsonBig(c, { rule: record, rules: externalMcp.rules() });
+    } catch (err) {
+      const message = msgOf(err, "invalid_mcp_tool_rule");
+      return jsonBig(c, { error: message }, message.startsWith("unknown_mcp_server") ? 404 : 400);
+    }
+  });
 
   /**
    * Wiring state for the external surfaces this orchestrator can reach.
@@ -452,8 +609,29 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   });
 
   app.post("/mcp/call", async (c) => {
-    const body = await bodyOf<{ name?: string; arguments?: Record<string, unknown> }>(c);
+    const body = await bodyOf<{
+      name?: string;
+      arguments?: Record<string, unknown>;
+      as?: string;
+    }>(c);
     if (!body.name?.trim()) return jsonBig(c, { error: "name_required" }, 400);
+    // An external tool goes through the allowlist like any other caller would:
+    // this route is how an operator tries one out, not a way around the policy.
+    // `as` resolves the seat's rules; without it the workspace's apply.
+    if (externalMcp?.handles(body.name)) {
+      const as = body.as?.trim();
+      try {
+        const result = await externalMcp.call(body.name, body.arguments ?? {}, {
+          ...(as ? { principal: as, managers: await managersOf(as) } : {}),
+        });
+        return jsonBig(c, { name: body.name, result, mode: runtime.mode });
+      } catch (err) {
+        const message = msgOf(err, "external_mcp_call_failed");
+        const refused =
+          message.startsWith("tool_not_allowlisted") || message.startsWith("mcp_mode_denied");
+        return jsonBig(c, { error: message }, refused ? 403 : 502);
+      }
+    }
     const result = await runMcpTool(body.name, body.arguments ?? {}, {
       backend: mcpBackend,
       useMock: mcpUseMock,
