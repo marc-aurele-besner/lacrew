@@ -10,6 +10,7 @@ export {
   BUDGET_ACTIONS,
   GOVERNANCE_ACTIONS,
   WAIT_REASONS,
+  MIN_HUMAN_GATE_TIMEOUT_MS,
   type FlowValidationResult,
 } from "./validate.js";
 export {
@@ -72,6 +73,7 @@ export {
   createFlowsClient,
   type FlowsClient,
   type FlowsClientOptions,
+  type FlowGateRecord,
   type FlowRunStateRecord,
   type FlowTriggerCreate,
   type FlowTriggerDelivery,

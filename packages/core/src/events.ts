@@ -111,6 +111,38 @@ export type ProtocolEventType =
    */
   | "ConnectorAskUnresolved"
   /**
+   * A blocking human gate opened: a `human` step posted its question and parked
+   * the run (F2.27).
+   *
+   * The trail carries the option ids, never the rendered prompt — a question
+   * can name a private repo or a counterparty, and this ring is not the place
+   * to publish one. What a reader needs is which choices were on offer, which
+   * run they are holding, and when the deadline falls.
+   */
+  | "HumanGateOpened"
+  /**
+   * A gate ended with a decision: `answered` (with the option and the human
+   * seat that picked it) or `cancelled` when the run it belonged to ended.
+   *
+   * A gate is control, not authority: the answer released a pipeline the
+   * principal was already allowed to run, and it approves no spend and changes
+   * no policy. Who released it is still the question asked afterwards.
+   */
+  | "HumanGateResolved"
+  /**
+   * Nobody answered before the deadline (F2.27). The run takes its declared
+   * timeout port, or stops — a gate that expired has decided nothing, and the
+   * trail says so rather than leaving a silent gap where a decision should be.
+   */
+  | "HumanGateTimedOut"
+  /**
+   * Someone replied to a gate without resolving it (F2.27): free text that
+   * matched no option, or an *agent* trying to answer a question meant for a
+   * human. The run is still parked. Recorded because a crew that keeps
+   * answering its own gate is something an operator should be able to see.
+   */
+  | "HumanGateUnresolved"
+  /**
    * A crew's standing checklist was created, edited, enabled, disabled or
    * removed (F2.21).
    *

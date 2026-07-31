@@ -7,6 +7,7 @@ import type {
   FlowStep,
   GateStep,
   GovernanceStep,
+  HumanGateStep,
   ModelStep,
   OrgStep,
   SwitchStep,
@@ -134,6 +135,15 @@ export class FlowBuilder {
   /** Vote, veto, execute, or raise a generic governance proposal. */
   governance(id: string, opts: StepOpts<GovernanceStep>): this {
     this.def.steps.push({ id, kind: "governance", ...opts });
+    return this;
+  }
+
+  /**
+   * Stop the run until a human picks one of the options; each option routes to
+   * its own port. A timeout with no `timeoutPort` stops the run.
+   */
+  human(id: string, opts: StepOpts<HumanGateStep>): this {
+    this.def.steps.push({ id, kind: "human", ...opts });
     return this;
   }
 

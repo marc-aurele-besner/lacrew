@@ -7,6 +7,7 @@ import type {
   FlowStep,
   GateStep,
   GovernanceStep,
+  HumanGateStep,
   OrgStep,
   SwitchStep,
   WaitStep,
@@ -24,8 +25,18 @@ export const STEP_KINDS = [
   "org",
   "budget",
   "governance",
+  "human",
   "wait",
 ] as const;
+
+/**
+ * Shortest gate a definition may declare (5 minutes).
+ *
+ * A deadline shorter than the time it takes someone to read the question fires
+ * on people rather than on neglect, and the run it fails looks like a bug in
+ * the flow instead of a decision nobody made.
+ */
+export const MIN_HUMAN_GATE_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Pause codes a `wait` step may declare; the run records one of these. */
 export const WAIT_REASONS = ["awaiting_human", "awaiting_webhook", "operator"] as const;
@@ -92,6 +103,11 @@ export function stepEdges(step: FlowStep): Array<string | null | undefined> {
       return [step.onTrue, step.onFalse];
     case "switch":
       return [...step.cases.map((c) => c.next), step.onDefault];
+    case "human":
+      // `?? null` on purpose: an option with no port stops the run. Leaving it
+      // undefined would make it fall through to the next declared step, which
+      // is how "no" would end up running the step "yes" was meant to release.
+      return [...(step.options ?? []).map((o) => o.port ?? null), step.timeoutPort ?? null];
     default:
       return [];
   }
@@ -239,6 +255,40 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
       } else if (bg.action !== "run-epoch") {
         requireAddress(errors, bg.node, `budget step "${step.id}" node`);
         if (!bg.amount?.trim()) errors.push(`budget step "${step.id}" needs an amount`);
+      }
+    }
+    if (step.kind === "human") {
+      const hg = step as HumanGateStep;
+      if (!hg.prompt?.trim()) {
+        errors.push(`human step "${step.id}" needs a prompt`);
+      }
+      if (!Array.isArray(hg.options) || hg.options.length === 0) {
+        errors.push(`human step "${step.id}" needs at least one option`);
+      } else {
+        const seen = new Set<string>();
+        hg.options.forEach((o, i) => {
+          const id = o?.id?.trim().toLowerCase() ?? "";
+          if (!id) {
+            errors.push(`human step "${step.id}" option ${i} needs an id`);
+            return;
+          }
+          // Answers are matched against these ids, so two options that differ
+          // only in case are two buttons one answer would satisfy.
+          if (seen.has(id)) errors.push(`human step "${step.id}" has duplicate option "${id}"`);
+          seen.add(id);
+          if (!/^[a-z0-9][a-z0-9_-]*$/.test(id)) {
+            errors.push(
+              `human step "${step.id}" option "${o.id}" must be a word (letters, digits, - and _)`,
+            );
+          }
+        });
+      }
+      if (hg.timeoutMs !== undefined) {
+        if (!Number.isInteger(hg.timeoutMs) || hg.timeoutMs < MIN_HUMAN_GATE_TIMEOUT_MS) {
+          errors.push(
+            `human step "${step.id}" timeoutMs must be an integer of at least ${MIN_HUMAN_GATE_TIMEOUT_MS} (5 minutes)`,
+          );
+        }
       }
     }
     if (step.kind === "wait") {
