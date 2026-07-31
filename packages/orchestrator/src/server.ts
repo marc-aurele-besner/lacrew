@@ -21,6 +21,7 @@ import { createWebhookSurface, type WebhookJob } from "./webhooks.js";
 import { createConnectorRegistry, loadConnectorsFromEnv } from "./connectors.js";
 import { createConnectorModes } from "./connectorPolicy.js";
 import { connectorAskTtlMs, createConnectorAsks } from "./connectorAsks.js";
+import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { scopeOfThread } from "./conversation.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
@@ -92,9 +93,30 @@ async function main(): Promise<void> {
     onEvent: (event) => runtime.recordAudit(event),
     ttlMs: connectorAskTtlMs(),
   });
-  // The answer that releases a suspended write is an ordinary message; nothing
-  // in the conversation knows that, and this is the only place it is read.
-  runtime.onMessage((message) => connectorAsks.observe(message));
+  // Blocking human gates (F2.27). Built beside asks and for the same reason:
+  // the questions outlive any one flow definition, and a gate whose record went
+  // missing is a paused run nobody can release.
+  const humanGates = createHumanGates({
+    store: runtime.store,
+    postQuestion: ({ threadId, author, body, options }) =>
+      runtime.postMessage({
+        scope: scopeOfThread(threadId) ?? { kind: "org" },
+        author,
+        authorKind: "agent",
+        kind: "question",
+        body,
+        options,
+      }),
+    onEvent: (event) => runtime.recordAudit(event),
+    ttlMs: humanGateTtlMs(),
+  });
+  // The answer that releases a suspended write — or a paused pipeline — is an
+  // ordinary message; nothing in the conversation knows that, and this is the
+  // only place it is read.
+  runtime.onMessage((message) => {
+    connectorAsks.observe(message);
+    humanGates.observe(message);
+  });
 
   const connectors =
     connectorDefs.length > 0
@@ -121,6 +143,7 @@ async function main(): Promise<void> {
     mcpBackend,
     connectors,
     asks: connectorAsks,
+    gates: humanGates,
   });
   // Webhook deliveries are accepted on the HTTP thread and run on a queue
   // worker, so the surface is handed the enqueue rather than the queue itself —
@@ -147,6 +170,7 @@ async function main(): Promise<void> {
     connectors,
     connectorModes,
     connectorAsks,
+    humanGates,
     webhooks,
     heartbeats,
     mcpUseMock,
@@ -223,6 +247,12 @@ async function main(): Promise<void> {
         console.log(
           `[@lacrew/orchestrator] connector write policy: ${modes} rule(s), ${asks} ask(s) restored`,
         );
+      }
+      // Loud on failure for the same reason: a gate this process cannot see is
+      // a decision somebody already made that the parked run will ask for again.
+      const gates = await humanGates.hydrate();
+      if (gates > 0) {
+        console.log(`[@lacrew/orchestrator] ${gates} human gate(s) restored`);
       }
     } catch (err) {
       console.error(
@@ -304,6 +334,17 @@ async function main(): Promise<void> {
         }
       } catch (err) {
         console.error("[@lacrew/orchestrator] connector ask sweep failed:", err);
+      }
+      // Blocking human gates nobody answered (F2.27). Same minute sweep, so
+      // exactly one replica times each gate out; the parked run then resumes
+      // into a step that takes the timeout port, or stops.
+      try {
+        const timedOut = await humanGates.sweep();
+        if (timedOut.length > 0) {
+          console.log(`[@lacrew/orchestrator] ${timedOut.length} human gate(s) timed out`);
+        }
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] human gate sweep failed:", err);
       }
       // Crew heartbeats (F2.21) ride the same minute sweep, which is what makes
       // a tick exactly-once across replicas: the queue hands this job to one

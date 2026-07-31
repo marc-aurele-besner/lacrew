@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/index.test.ts src/suspend.test.ts src/checkpoints.test.ts src/cron.test.ts src/heartbeat.test.ts src/crews.test.ts src/crewDirectives.test.ts src/crewSamples.test.ts src/skillPacks.test.ts"
+    "test": "node --import tsx --test src/index.test.ts src/suspend.test.ts src/humanGate.test.ts src/checkpoints.test.ts src/cron.test.ts src/heartbeat.test.ts src/crews.test.ts src/crewDirectives.test.ts src/crewSamples.test.ts src/skillPacks.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",

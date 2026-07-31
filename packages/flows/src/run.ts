@@ -50,6 +50,12 @@ export function stepHasSideEffects(step: FlowStep): boolean {
       return true;
     case "tool":
       return !READ_ONLY_TOOLS.has(step.tool);
+    case "human":
+      // Asking is not a side effect here: the backend keys a gate by the run
+      // and the step, so re-entering finds the question it already posted
+      // rather than posting a second one. An attempt record would instead fail
+      // an untouched run closed after a crash that never called anything.
+      return false;
     default:
       return false;
   }
@@ -573,6 +579,66 @@ export async function runFlow(
           trace.next = step.next === undefined ? fallThrough(def, step.id) : step.next;
           break;
         }
+        case "human": {
+          // The backend owns the question, the deadline and who may answer.
+          // It either resolves the gate or throws FlowWaitingError to park the
+          // run — this step never blocks the event loop waiting on a person.
+          const result = (await backend.callTool("lacrew_human_gate", {
+            stepId: step.id,
+            prompt: interpolate(step.prompt, ctx),
+            options: step.options.map((o) => ({ id: o.id, label: o.label ?? o.id })),
+            ...(step.label ? { label: step.label } : {}),
+            ...(step.assignee ? { assignee: interpolate(step.assignee, ctx) } : {}),
+            ...(step.timeoutMs === undefined ? {} : { timeoutMs: step.timeoutMs }),
+          })) as Record<string, unknown> | undefined;
+
+          const outcome = String(result?.outcome ?? "");
+          if (outcome === "timed_out") {
+            // Fail closed. A gate nobody answered has decided nothing, so with
+            // no timeout port declared the run stops here rather than falling
+            // into whatever step happened to come next.
+            if (step.timeoutPort === undefined || step.timeoutPort === null) {
+              throw new Error(`human_gate_timeout:${step.id}`);
+            }
+            outputs[step.id] = {
+              text: "timed_out",
+              json: JSON.stringify({ outcome, ...(result ?? {}) }),
+            };
+            trace.output = { outcome: "timed_out", gateId: result?.gateId };
+            trace.summary = "nobody answered — taking the timeout port";
+            trace.next = step.timeoutPort;
+            break;
+          }
+
+          const optionId = String(result?.optionId ?? "").trim().toLowerCase();
+          const chosen = step.options.find((o) => o.id.trim().toLowerCase() === optionId);
+          if (outcome !== "answered" || !chosen) {
+            // An answer this step never offered routes nowhere. Guessing at the
+            // nearest option would let a typo pick the branch that writes.
+            throw new Error(
+              `human_gate_unrecognized:${step.id}:${optionId || outcome || "empty"}`,
+            );
+          }
+          outputs[step.id] = {
+            text: chosen.id,
+            json: JSON.stringify({
+              outcome: "answered",
+              optionId: chosen.id,
+              ...(result?.answeredBy ? { answeredBy: result.answeredBy } : {}),
+            }),
+          };
+          trace.output = {
+            outcome: "answered",
+            optionId: chosen.id,
+            ...(result?.answeredBy ? { answeredBy: result.answeredBy } : {}),
+            ...(result?.gateId ? { gateId: result.gateId } : {}),
+          };
+          trace.summary = `"${chosen.label ?? chosen.id}" chosen${
+            result?.answeredBy ? ` by ${String(result.answeredBy)}` : ""
+          }`;
+          trace.next = chosen.port ?? null;
+          break;
+        }
         case "wait": {
           if (!releasing) {
             throw new FlowWaitingError({
@@ -778,6 +844,15 @@ export function createMockFlowBackend(): FlowBackend {
             mocked: true,
           };
         }
+        case "lacrew_human_gate":
+          // Nobody is here to answer. Parking the run is the honest response —
+          // a canned "yes" offline would make a blocking gate look like one
+          // that passes, which is the one thing it must never do.
+          throw new FlowWaitingError({
+            reason: "human_gate",
+            token: `mock-gate-${String(args.stepId ?? "step")}`,
+            detail: `waiting on a human at "${String(args.label ?? args.stepId ?? "gate")}" — no human surface is attached`,
+          });
         case "lacrew_governance":
           return {
             action: String(args.action ?? ""),

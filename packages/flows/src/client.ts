@@ -69,6 +69,34 @@ export type FlowRunStateRecord = {
   updatedAt: string;
 };
 
+/**
+ * A blocking human gate as the orchestrator serves it (F2.27).
+ *
+ * Read-only on purpose: answering happens in the conversation, so a client that
+ * could resolve a gate over this surface would be a second way to release a
+ * paused pipeline — one that never sees whether a human seat did the releasing.
+ */
+export type FlowGateRecord = {
+  id: string;
+  flowId?: string;
+  runId?: string;
+  stepId: string;
+  prompt: string;
+  options: Array<{ id: string; label: string }>;
+  assignee?: string;
+  principal: string;
+  threadId: string;
+  /** Conversation message a human answers to release the run. */
+  questionId: string;
+  status: "pending" | "answered" | "timed_out" | "cancelled" | "consumed";
+  outcome?: "answered" | "timed_out" | "cancelled";
+  optionId?: string;
+  answeredBy?: string;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt?: string;
+};
+
 export type FlowsClientOptions = {
   /** Orchestrator base URL, e.g. http://127.0.0.1:8788 */
   baseUrl: string;
@@ -92,6 +120,11 @@ export type FlowsClient = {
   runs(): Promise<FlowRunResult[]>;
   /** Runs that have not finished: parked on something, or in flight. */
   openRuns(): Promise<FlowRunStateRecord[]>;
+  /**
+   * Blocking human gates. `status` narrows the list; "pending" is the queue of
+   * runs actually stopped on a person.
+   */
+  gates(opts?: { status?: string; runId?: string }): Promise<FlowGateRecord[]>;
   /** Ask a run to stop at its next step boundary. */
   pauseRun(runId: string, reason?: string): Promise<FlowRunStateRecord>;
   /** Continue a paused run from its last checkpoint, as its original principal. */
@@ -169,6 +202,13 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
     runs: async () => (await call<{ runs: FlowRunResult[] }>("/flows/runs")).runs,
     openRuns: async () =>
       (await call<{ runs: FlowRunStateRecord[] }>("/flows/runs/open")).runs,
+    gates: async (gateOpts) => {
+      const params = new URLSearchParams();
+      if (gateOpts?.status) params.set("status", gateOpts.status);
+      if (gateOpts?.runId) params.set("runId", gateOpts.runId);
+      const qs = params.toString();
+      return (await call<{ gates: FlowGateRecord[] }>(`/flows/gates${qs ? `?${qs}` : ""}`)).gates;
+    },
     pauseRun: (runId, reason) =>
       call<FlowRunStateRecord>("/flows/runs/pause", {
         method: "POST",

@@ -275,6 +275,72 @@ export type WaitStep = FlowStepBase & {
   next?: string | null;
 };
 
+/** One choice a human gate offers. The answer must name one of these ids. */
+export type HumanGateOption = {
+  /** What an answer says, matched trimmed and case-insensitively. */
+  id: string;
+  /** What the person reads on the button; falls back to the id. */
+  label?: string;
+  /** Step this choice routes to; unset or null stops the run. */
+  port?: string | null;
+};
+
+/**
+ * Stop the run until a human decides (PRD F2.27).
+ *
+ * The difference from a `question` an agent posts and moves on from is that
+ * nothing downstream runs until someone picks: entering this step posts one
+ * question, parks the run on durable state, and the answer is what routes it.
+ * That is why high-risk *off-chain* work — publishing, merging, acting on a
+ * shortlist — belongs behind one: those side effects have no onchain verdict to
+ * hold them, so the only place to hold them is the pipeline.
+ *
+ * A gate is **not** an approval. It releases a step the running principal was
+ * already allowed to take; it cannot finalize an intent, raise a cap, or admit
+ * anything policy refused, and a spend downstream of it still meets the policy
+ * stack and the escalation path exactly as it would have. Reading this answer
+ * as authority would put a chat message where a signature belongs.
+ *
+ * Timeouts fail closed: with no `timeoutPort` the run stops rather than
+ * continuing down the happy path, because "nobody answered" is not a yes.
+ */
+export type HumanGateStep = FlowStepBase & {
+  kind: "human";
+  /** The question a person reads; interpolated. */
+  prompt: string;
+  /** The choices offered — at least one, ids unique within the step. */
+  options: HumanGateOption[];
+  /**
+   * Who the question is for: a human seat, a role, or an agent address whose
+   * thread it belongs in. Interpolated. Advisory — the backend resolves who may
+   * actually answer, since a step definition cannot be trusted to grant access.
+   */
+  assignee?: string;
+  /** How long to wait before the gate times out, in milliseconds. */
+  timeoutMs?: number;
+  /** Where a timeout routes; unset or null stops the run. */
+  timeoutPort?: string | null;
+};
+
+/**
+ * What a backend answers a `human` step with once the gate is no longer open.
+ *
+ * `answered` carries the option a person picked; `timed_out` says the deadline
+ * passed with nobody picking. Anything else — a cancelled gate, a spent one —
+ * is an error, not a resolution: a run must never read "could not decide" as a
+ * decision.
+ */
+export type HumanGateResolution = {
+  outcome: "answered" | "timed_out";
+  /** Set on "answered": the option id, which must be one the step offered. */
+  optionId?: string;
+  /** Human seat that answered, as the backend resolved it. Never self-reported. */
+  answeredBy?: string;
+  /** The gate record this resolves, for the trace. */
+  gateId?: string;
+  at?: string;
+};
+
 export type FlowStep =
   | ModelStep
   | ToolStep
@@ -285,6 +351,7 @@ export type FlowStep =
   | OrgStep
   | BudgetStep
   | GovernanceStep
+  | HumanGateStep
   | WaitStep;
 export type FlowStepKind = FlowStep["kind"];
 
@@ -367,13 +434,21 @@ export type FlowStepTrace = {
  * The vocabulary of pause codes this package produces.
  *
  * `connector_ask` is an ask-mode write waiting on a human (F2.24);
+ * `human_gate` is a `human` step holding the run until someone picks (F2.27);
  * `awaiting_human` and `awaiting_webhook` are declared by a `wait` step;
  * `operator` is a person pausing a run that was mid-flight. A backend may still
  * suspend with a reason of its own — `FlowWaiting.reason` stays a string, since
  * an integration knows things this package does not.
+ *
+ * `human_gate` is its own code rather than a flavour of `awaiting_human`
+ * because the two are answered differently: a gate has an open question with
+ * options and resumes itself when one is picked, while a `wait` is released by
+ * whoever is watching. A queue that showed them as one thing would tell an
+ * operator to go and do something about a run that is already being asked about.
  */
 export type FlowPauseReason =
   | "connector_ask"
+  | "human_gate"
   | "awaiting_human"
   | "awaiting_webhook"
   | "operator";
