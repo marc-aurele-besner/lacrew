@@ -45,6 +45,7 @@ import type { OrgNode } from "@lacrew/core";
 import { installShutdownHooks, listenHttp } from "./httpListen.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
+import { createRootAuthSurface, readRootAuthConfig } from "./rootAuth.js";
 
 const port = Number(process.env.PORT ?? 8788);
 const queue: QueueProvider = createQueueFromEnv();
@@ -309,6 +310,27 @@ async function main(): Promise<void> {
       budgets.heartbeatBlock(await budgetSubjectFor(principal)),
   });
 
+  // Root authorization for revoke/rotate (F0.7). A bad LACREW_ROOT_AUTH value
+  // stops boot: starting anyway would leave those routes ungated on a
+  // deployment whose operator plainly meant to gate them.
+  const rootChallengeTtl = Number(process.env.LACREW_ROOT_CHALLENGE_TTL_SEC ?? "");
+  const rootAuth = createRootAuthSurface({
+    config: readRootAuthConfig(),
+    humanRoot: () => runtime.humanRootAddress(),
+    chainId: () => runtime.chainId,
+    ...(Number.isFinite(rootChallengeTtl) && rootChallengeTtl > 0
+      ? { challengeTtlSec: rootChallengeTtl }
+      : {}),
+  });
+  if (rootAuth.required) {
+    const status = rootAuth.status();
+    console.log(
+      status.configError
+        ? `[@lacrew/orchestrator] root auth (${status.kind}) CANNOT verify: ${status.configError} — revoke/rotate will refuse`
+        : `[@lacrew/orchestrator] root auth: ${status.kind} — session revoke/rotate require a root proof`,
+    );
+  }
+
   const app = createOrchestratorApp({
     runtime,
     queue,
@@ -329,6 +351,7 @@ async function main(): Promise<void> {
     heartbeats,
     budgets,
     pnl,
+    rootAuth,
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,

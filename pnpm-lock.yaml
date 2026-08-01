@@ -242,6 +242,12 @@ importers:
       '@lacrew/core':
         specifier: workspace:*
         version: link:../../core
+      '@noble/curves':
+        specifier: ^1.9.1
+        version: 1.9.1
+      '@noble/hashes':
+        specifier: ^1.8.0
+        version: 1.8.0
       '@safe-global/safe-modules-deployments':
         specifier: ^3.0.8
         version: 3.0.8
@@ -341,6 +347,9 @@ importers:
       '@lacrew/adapter-wallet-metamask':
         specifier: workspace:*
         version: link:../adapters/wallet-metamask
+      '@lacrew/adapter-wallet-safe':
+        specifier: workspace:*
+        version: link:../adapters/wallet-safe
       '@lacrew/core':
         specifier: workspace:*
         version: link:../core
@@ -363,6 +372,9 @@ importers:
         specifier: ^2.55.2
         version: 2.55.2(typescript@5.9.3)(zod@4.4.3)
     devDependencies:
+      '@noble/curves':
+        specifier: ^1.9.1
+        version: 1.9.1
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1

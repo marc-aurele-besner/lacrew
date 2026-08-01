@@ -363,6 +363,12 @@ export interface SessionKey {
   /** Sole allowed target (`0x0…0` / omit = any policy-allowed target). */
   allowedTarget?: `0x${string}`;
   /**
+   * Every target pinned to the key. `allowedTarget` is the first of these, kept
+   * so a naive consumer fails closed; a caller that must preserve the key's real
+   * reach — rotation, above all — reads this. Omitted when unpinned or unread.
+   */
+  allowedTargets?: `0x${string}`[];
+  /**
    * Daily allowed window in seconds since midnight UTC, `[start, end)`, enforced
    * by EscalationRouter. Omitted when the key has no window (any time).
    */

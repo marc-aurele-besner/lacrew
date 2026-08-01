@@ -1120,6 +1120,15 @@ export class OnchainLacrewClient {
           args: [id],
         })) as readonly [number, number, bigint, number];
         const maxProposals = rl[0];
+        // `allowedTarget` in the struct is only the first pinned target, so a
+        // multi-target key read through it alone looks narrower than it is —
+        // and a rotation built from that reading would make it so.
+        const pinned = (await this.publicClient.readContract({
+          address: addr,
+          abi: sessionRegistryAbi,
+          functionName: "allowedTargetsOf",
+          args: [id],
+        })) as readonly `0x${string}`[];
         out.push({
           agent: a,
           keyId: id.toString(),
@@ -1128,6 +1137,7 @@ export class OnchainLacrewClient {
           scopes: sessionScopesFromMask(scopeMask),
           maxValue: maxValue.toString(),
           allowedTarget,
+          ...(pinned.length > 0 ? { allowedTargets: [...pinned] } : {}),
           // A zero end means no window; otherwise report the daily [start, end).
           window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
           // A zero cap means no rate limit; otherwise report maxProposals / ratePeriod.
@@ -1401,6 +1411,12 @@ export class OnchainLacrewClient {
     /** Sole allowed target; defaults to zero (any policy-allowed target). */
     allowedTarget?: `0x${string}`;
     /**
+     * Full pinned target set. Takes precedence over `allowedTarget`; the point
+     * is rotation, where re-issuing a multi-target key from its first target
+     * alone would quietly shrink what the replacement can reach.
+     */
+    allowedTargets?: `0x${string}`[];
+    /**
      * Daily allowed window in seconds since midnight UTC, `[start, end)`. Carries
      * a flow's time-window scope onto the key so the chain refuses a propose
      * outside it. Omit for a key valid at any time.
@@ -1418,6 +1434,12 @@ export class OnchainLacrewClient {
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
     const allowedTarget =
       input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
+    const targets =
+      input.allowedTargets && input.allowedTargets.length > 0
+        ? input.allowedTargets
+        : allowedTarget === "0x0000000000000000000000000000000000000000"
+          ? []
+          : [allowedTarget];
     // A key with a window or rate limit uses issueScopedTimed (targets as an
     // array); a plain one keeps the simpler `issue` path. Each branch simulates
     // and writes on its own, so the two request shapes never meet in one union.
@@ -1434,13 +1456,30 @@ export class OnchainLacrewClient {
           BigInt(input.expiresAtSec),
           input.scopeMask,
           maxValue,
-          allowedTarget === "0x0000000000000000000000000000000000000000"
-            ? []
-            : [allowedTarget],
+          targets,
           input.window?.start ?? 0,
           input.window?.end ?? 0,
           input.rate?.maxProposals ?? 0,
           input.rate?.ratePeriod ?? 0,
+        ],
+        account: wallet.account!,
+      });
+      hash = await wallet.writeContract(request);
+      sessionId = result as bigint;
+    } else if (targets.length > 1) {
+      // More than one target has no `issue` form; `issueScoped` is the only way
+      // to pin them all, and dropping to the first would be a silent narrowing.
+      const { request, result } = await this.publicClient.simulateContract({
+        address: addr,
+        abi: sessionRegistryAbi,
+        functionName: "issueScoped",
+        args: [
+          input.agent,
+          input.key,
+          BigInt(input.expiresAtSec),
+          input.scopeMask,
+          maxValue,
+          targets,
         ],
         account: wallet.account!,
       });
@@ -1457,7 +1496,7 @@ export class OnchainLacrewClient {
           BigInt(input.expiresAtSec),
           input.scopeMask,
           maxValue,
-          allowedTarget,
+          targets[0] ?? allowedTarget,
         ],
         account: wallet.account!,
       });

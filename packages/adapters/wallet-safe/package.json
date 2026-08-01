@@ -14,13 +14,15 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts src/passkey.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/allowance.test.ts src/passkey.test.ts src/webauthn.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@lacrew/adapter-wallet-agentkit": "workspace:*",
     "@lacrew/core": "workspace:*",
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0",
     "@safe-global/safe-modules-deployments": "^3.0.8",
     "viem": "^2.21.0"
   },
