@@ -41,8 +41,28 @@ export function createRuntimeMcpBackend(
       });
       return { intentId, verdict, txHash };
     },
+    /*
+      An agent settling an intent that has climbed to the human root would be
+      the agent approving its own escalation — the tree's top step answered by
+      the thing it exists to hold. A tool call carries no root proof and never
+      can, so root-depth intents are refused here rather than attempted: on a
+      deployment that happens to hold the root key the chain would let it
+      through, and the receipt would name the root.
+    */
     resolveIntent: async (intentId, approved) => {
-      const { intent, escalated, txHash } = await runtime.resolve(intentId, approved);
+      const authority = await runtime.approvalAuthority(intentId);
+      if (!authority.found) throw new Error(`intent_not_pending: ${intentId}`);
+      if (authority.isRoot) {
+        throw new Error(
+          `root_approval_required: intent ${intentId} awaits the human root, who must approve it directly`,
+        );
+      }
+      const { intent, escalated, txHash } = await runtime.resolve(
+        intentId,
+        approved,
+        authority.awaitingApprover ?? undefined,
+        "approver",
+      );
       return {
         intent: { ...intent, value: intent.value.toString() },
         escalated,

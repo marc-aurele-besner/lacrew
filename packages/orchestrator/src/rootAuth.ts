@@ -1,16 +1,18 @@
 /**
- * Root authorization for session revoke and rotate (PRD F0.7 / F1.3).
+ * Root authorization for session revoke and rotate (PRD F0.7 / F1.3) and for
+ * approvals that have climbed to the human root (PRD F2.6).
  *
  * The orchestrator issues the challenge and verifies the proof itself. That
  * placement is the whole point: a control plane in front of it can decide *who
  * may ask*, but it cannot mint the root's consent, so "revocation runs from the
  * user's root key, never the cloud's" is a property of the code rather than a
- * promise about the deployment.
+ * promise about the deployment. The same holds for the moment money moves.
  *
  * Challenges are single-use, expiring, and bound to (action, subject). An
  * assertion collected to revoke key 7 is therefore not an assertion to revoke
  * key 8, nor to rotate key 7 into a fresh one — rotate re-issues authority and
- * revoke only removes it, and consent to one is not consent to the other.
+ * revoke only removes it, and consent to one is not consent to the other. An
+ * assertion collected to approve intent 3 is likewise not one to deny it.
  */
 
 import { randomBytes } from "node:crypto";

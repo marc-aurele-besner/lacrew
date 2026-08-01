@@ -310,9 +310,10 @@ async function main(): Promise<void> {
       budgets.heartbeatBlock(await budgetSubjectFor(principal)),
   });
 
-  // Root authorization for revoke/rotate (F0.7). A bad LACREW_ROOT_AUTH value
-  // stops boot: starting anyway would leave those routes ungated on a
-  // deployment whose operator plainly meant to gate them.
+  // Root authorization for revoke/rotate (F0.7) and root-depth approvals
+  // (F2.6). A bad LACREW_ROOT_AUTH value stops boot: starting anyway would
+  // leave those routes ungated on a deployment whose operator plainly meant to
+  // gate them.
   const rootChallengeTtl = Number(process.env.LACREW_ROOT_CHALLENGE_TTL_SEC ?? "");
   const rootAuth = createRootAuthSurface({
     config: readRootAuthConfig(),
@@ -326,8 +327,8 @@ async function main(): Promise<void> {
     const status = rootAuth.status();
     console.log(
       status.configError
-        ? `[@lacrew/orchestrator] root auth (${status.kind}) CANNOT verify: ${status.configError} — revoke/rotate will refuse`
-        : `[@lacrew/orchestrator] root auth: ${status.kind} — session revoke/rotate require a root proof`,
+        ? `[@lacrew/orchestrator] root auth (${status.kind}) CANNOT verify: ${status.configError} — revoke/rotate and root-depth approvals will refuse`
+        : `[@lacrew/orchestrator] root auth: ${status.kind} — session revoke/rotate and root-depth approvals require a root proof`,
     );
   }
 
