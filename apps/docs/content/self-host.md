@@ -267,9 +267,9 @@ curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
 
 Compromise blast radius is the session's remaining `maxValue` on whitelisted targets until expiry or root/issuer revoke. Root keys never leave the operator's wallet.
 
-### Root-anchored revoke and rotate
+### Root-anchored revoke, rotate, and root-depth approvals
 
-Out of the box those two routes are open to anyone who can reach the orchestrator. Set `LACREW_ROOT_AUTH` and they demand a fresh proof from the workspace root instead — the orchestrator mints the challenge and checks the answer itself, so nothing in front of it (a control plane, a reverse proxy, a stolen cookie) can stand in for the human.
+Out of the box those routes are open to anyone who can reach the orchestrator. Set `LACREW_ROOT_AUTH` and they demand a fresh proof from the workspace root instead — the orchestrator mints the challenge and checks the answer itself, so nothing in front of it (a control plane, a reverse proxy, a stolen cookie) can stand in for the human.
 
 Two kinds of root, matching the account kinds in F1.3:
 
@@ -293,7 +293,40 @@ curl -s http://127.0.0.1:8788/health | jq .rootAuth
 lacrew session status
 ```
 
-`required: false` means revoke is ungated here. A `configError` means a root was configured but cannot verify anything — revoke and rotate refuse until it is fixed, rather than quietly falling open.
+`required: false` means revoke is ungated here. A `configError` means a root was configured but cannot verify anything — the gated routes refuse until it is fixed, rather than quietly falling open.
+
+#### Approvals that reached the root
+
+`EscalationRouter.resolve` already reverts for any sender that is not the intent's `awaitingApprover`. What the orchestrator adds is the half the chain cannot see: when the waiter is the human root, holding the orchestrator's bearer token is not being the root. Without that check, any deployment whose keyring happens to include the root key — every Anvil fixture, and any self-host that put root in `PRIVATE_KEY` — would let a token spend the root's reserved authority, and the receipt would name the root as the approver.
+
+Ask whether one intent needs the root before you build a button for it, because the answer is per-intent:
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/root-auth/challenge \
+  -H 'content-type: application/json' \
+  -d '{"action":"intent:approve","subject":"12"}' | jq .
+```
+
+`required: false` comes back for a manager-depth intent, with the seat that _is_ waiting on it. Demanding the root's authenticator for a spend inside a manager's own bounds would make the reporting tree decorative — and a prompt that is not really required is one operators learn to click through.
+
+When it is required, send the proof with the decision:
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/intents/resolve \
+  -H 'content-type: application/json' \
+  -d '{"intentId":"12","approved":true,"challenge":"…","rootProof":{…}}' | jq .
+```
+
+The reply carries `approver` (the seat that signed, read off the chain) and `authorizedBy` (`root:passkey`, `root:wallet`, `approver`, or `unauthenticated` when no root is configured). `@lacrew/sdk` wraps the exchange:
+
+```ts
+import { approveIntent } from "@lacrew/sdk";
+
+await approveIntent({ intentId: "12", rootAccount });     // wallet root, signs locally
+await approveIntent({ intentId: "12", proof: assertion }); // passkey root, signed at the authenticator
+```
+
+Two things it will not do: resolve as the root without a proof, and resolve an intent the chain does not have pending — "we could not find it" must never fall through to "no proof needed".
 
 #### The recipe, on Anvil
 
@@ -325,7 +358,7 @@ curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
 
 Rules worth knowing before you build on it:
 
-- A challenge is **single-use, expiring (5 min), and bound to one action on one session**. A proof collected to revoke key 7 will not revoke key 8, and will not rotate key 7 — rotation re-issues authority, revocation only removes it.
+- A challenge is **single-use, expiring (5 min), and bound to one action on one subject**. A proof collected to revoke key 7 will not revoke key 8, and will not rotate key 7 — rotation re-issues authority, revocation only removes it. An assertion collected to approve intent 12 will not deny it, and will not settle intent 13.
 - A failed attempt burns the challenge too, so a bad proof cannot be ground against a live nonce.
 - **Rotation reads its bounds from the chain**, never from the request: the replacement carries the retired key's agent, scopes, `maxValue`, pinned targets, window, and rate limit. It can come back narrower (the deployment's own ceiling still applies); it cannot come back wider.
 - `{"containment": true}` on `/sessions/revoke` skips the proof. It is reserved for automated narrowing — a guardian lockdown, an agent pause — can only ever _take_ authority away, is refused outright by rotate, and is audited as `authorizedBy: "containment"` so the trail never reads as though a root signed.
