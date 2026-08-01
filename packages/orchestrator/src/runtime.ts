@@ -642,6 +642,12 @@ export class CrewRuntime {
     limits?: {
       maxValue?: bigint;
       allowedTarget?: `0x${string}`;
+      /**
+       * Full pinned target set, when the caller has one. Only rotation does:
+       * re-issuing a multi-target key from `allowedTarget` alone would drop
+       * every target but the first.
+       */
+      allowedTargets?: `0x${string}`[];
       /** What the key may do. Defaults to the full vocabulary. */
       scopes?: SessionScope[];
       /**
@@ -716,6 +722,9 @@ export class CrewRuntime {
         scopeMask: ephemeral.scopeMask,
         maxValue,
         allowedTarget,
+        ...(limits?.allowedTargets && limits.allowedTargets.length > 0
+          ? { allowedTargets: limits.allowedTargets }
+          : {}),
         window: limits?.window,
         rate: limits?.rate,
       });
@@ -735,7 +744,11 @@ export class CrewRuntime {
         scopes: ephemeral.scopes,
         maxValue: maxValue.toString(),
         allowedTarget,
+        ...(limits?.allowedTargets && limits.allowedTargets.length > 0
+          ? { allowedTargets: limits.allowedTargets }
+          : {}),
         window: limits?.window,
+        rate: limits?.rate,
         revoked: false,
         ...(delegation ? { delegation } : {}),
       };
@@ -1031,7 +1044,18 @@ export class CrewRuntime {
     }
   }
 
-  async revokeSessionById(sessionId: string): Promise<{ txHash?: `0x${string}` }> {
+  /**
+   * Retire a session key.
+   *
+   * `authorizedBy` is recorded rather than assumed: a revoke proved by the
+   * workspace root and one an automated containment sweep performed are both
+   * legitimate, but they are not the same claim, and an audit trail that called
+   * them both "revoked" would let the second read as the first.
+   */
+  async revokeSessionById(
+    sessionId: string,
+    authorizedBy?: string,
+  ): Promise<{ txHash?: `0x${string}` }> {
     if (!isOnchainClient(this.client)) {
       const held = this.findSessionEntry(sessionId);
       if (held) {
@@ -1041,7 +1065,7 @@ export class CrewRuntime {
       this.pushAudit({
         type: "SessionRevoked",
         at: new Date().toISOString(),
-        payload: { keyId: sessionId, mocked: true },
+        payload: { keyId: sessionId, mocked: true, ...(authorizedBy ? { authorizedBy } : {}) },
       });
       return {};
     }
@@ -1055,10 +1079,68 @@ export class CrewRuntime {
     this.pushAudit({
       type: "SessionRevoked",
       at: new Date().toISOString(),
-      payload: { keyId: sessionId, txHash },
+      payload: { keyId: sessionId, txHash, ...(authorizedBy ? { authorizedBy } : {}) },
     });
     await this.disableSessionDelegation(sessionId, held?.[1].session.delegation);
     return { txHash };
+  }
+
+  /**
+   * Retire a key and re-issue one in its place under the retired key's own
+   * bounds.
+   *
+   * Every bound comes from the prior session as the chain records it, never
+   * from the caller: a rotation that took its scopes from the request would be
+   * an issue endpoint wearing a rotation's name, and the one thing a rotation
+   * must not be able to do is hand back more authority than it took away.
+   * `boot` treats `maxValue` as a ceiling, so even the deployment's own default
+   * can only narrow the replacement further.
+   */
+  async rotateSessionById(
+    sessionId: string,
+    authorizedBy?: string,
+  ): Promise<{
+    revoked: { sessionId: string; txHash?: `0x${string}` };
+    session: SessionKey;
+    /** False when the prior key could not be read — the caller must not assume its scope carried. */
+    preserved: boolean;
+  }> {
+    const prior =
+      (await this.listSessions()).find((s) => s.keyId === sessionId) ??
+      this.findSessionEntry(sessionId)?.[1].session;
+    const revoked = await this.revokeSessionById(sessionId, authorizedBy);
+    const session = await this.boot(prior?.agent, {
+      ...(prior?.maxValue ? { maxValue: BigInt(prior.maxValue) } : {}),
+      ...(prior?.allowedTarget ? { allowedTarget: prior.allowedTarget } : {}),
+      ...(prior?.allowedTargets && prior.allowedTargets.length > 0
+        ? { allowedTargets: prior.allowedTargets }
+        : {}),
+      ...(prior?.scopes ? { scopes: prior.scopes } : {}),
+      // A rotation replaces one key; it is not the operator restating what this
+      // agent may do from now on, so the standing scope policy is left alone.
+      persistScopePolicy: false,
+      ...(prior?.window ? { window: prior.window } : {}),
+      ...(prior?.rate ? { rate: prior.rate } : {}),
+    });
+    this.pushAudit({
+      type: "SessionRotated",
+      at: new Date().toISOString(),
+      payload: {
+        from: sessionId,
+        to: session.keyId,
+        agent: session.agent,
+        preserved: Boolean(prior),
+        ...(authorizedBy ? { authorizedBy } : {}),
+      },
+    });
+    return { revoked: { sessionId, ...revoked }, session, preserved: Boolean(prior) };
+  }
+
+  /** The chain's `SessionRegistry.humanRoot`, or null when unreadable. */
+  async humanRootAddress(): Promise<`0x${string}` | null> {
+    if (!isOnchainClient(this.client)) return null;
+    const addr = this.client.addresses.humanRoot;
+    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : null;
   }
 
   /* ——— standing agent controls (PRD F1.7) ——— */

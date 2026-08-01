@@ -1,6 +1,14 @@
 export { CrewRuntime, createRuntimeFromEnv, type CrewRuntimeOptions, type RuntimeMode } from "./runtime.js";
 export { getOrchToken, isAuthorized } from "./auth.js";
 export { createOrchestratorApp, type OrchestratorAppOptions } from "./httpApp.js";
+export {
+  createRootAuthSurface,
+  readRootAuthConfig,
+  type RootAuthOptions,
+  type RootAuthOutcome,
+  type RootAuthStatus,
+  type RootAuthSurface,
+} from "./rootAuth.js";
 export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
   connectorEnvVars,

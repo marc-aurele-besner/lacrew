@@ -267,6 +267,69 @@ curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
 
 Compromise blast radius is the session's remaining `maxValue` on whitelisted targets until expiry or root/issuer revoke. Root keys never leave the operator's wallet.
 
+### Root-anchored revoke and rotate
+
+Out of the box those two routes are open to anyone who can reach the orchestrator. Set `LACREW_ROOT_AUTH` and they demand a fresh proof from the workspace root instead — the orchestrator mints the challenge and checks the answer itself, so nothing in front of it (a control plane, a reverse proxy, a stolen cookie) can stand in for the human.
+
+Two kinds of root, matching the account kinds in F1.3:
+
+```bash
+# A wallet root (injected EOA / hardware wallet)
+export LACREW_ROOT_AUTH=wallet
+export LACREW_ROOT_ADDRESS=0x…            # must be SessionRegistry.humanRoot
+
+# A passkey root (the Safe-with-passkey default)
+export LACREW_ROOT_AUTH=passkey
+export LACREW_ROOT_PASSKEY_ID=…           # base64url credential id
+export LACREW_ROOT_PASSKEY_PUBKEY=…       # base64url COSE public key from registration
+export LACREW_ROOT_PASSKEY_RPID=localhost
+export LACREW_ROOT_PASSKEY_ORIGIN=http://localhost:3000
+```
+
+Check what a deployment actually enforces before trusting it:
+
+```bash
+curl -s http://127.0.0.1:8788/health | jq .rootAuth
+lacrew session status
+```
+
+`required: false` means revoke is ungated here. A `configError` means a root was configured but cannot verify anything — revoke and rotate refuse until it is fixed, rather than quietly falling open.
+
+#### The recipe, on Anvil
+
+With a wallet root, the CLI runs the whole exchange:
+
+```bash
+export ROOT_PRIVATE_KEY=0x…              # the root wallet; signs the challenge locally
+lacrew session revoke 7                  # → challenge → personal_sign → onchain revoke
+lacrew session rotate 7                  # → same proof, then re-issue under key 7's bounds
+```
+
+With a passkey root there is no key this terminal can sign with, so collect the assertion where the authenticator is and hand it over:
+
+```bash
+lacrew session revoke 7 --root-proof '{"kind":"passkey","credentialId":"…","authenticatorData":"…","clientDataJSON":"…","signature":"…"}'
+```
+
+Under the hood that is two calls, if you would rather drive them yourself:
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/root-auth/challenge \
+  -H 'content-type: application/json' \
+  -d '{"action":"session:revoke","subject":"7"}' | jq .
+
+curl -s -X POST http://127.0.0.1:8788/sessions/revoke \
+  -H 'content-type: application/json' \
+  -d '{"sessionId":"7","challenge":"…","rootProof":{…}}' | jq .
+```
+
+Rules worth knowing before you build on it:
+
+- A challenge is **single-use, expiring (5 min), and bound to one action on one session**. A proof collected to revoke key 7 will not revoke key 8, and will not rotate key 7 — rotation re-issues authority, revocation only removes it.
+- A failed attempt burns the challenge too, so a bad proof cannot be ground against a live nonce.
+- **Rotation reads its bounds from the chain**, never from the request: the replacement carries the retired key's agent, scopes, `maxValue`, pinned targets, window, and rate limit. It can come back narrower (the deployment's own ceiling still applies); it cannot come back wider.
+- `{"containment": true}` on `/sessions/revoke` skips the proof. It is reserved for automated narrowing — a guardian lockdown, an agent pause — can only ever _take_ authority away, is refused outright by rotate, and is audited as `authorizedBy: "containment"` so the trail never reads as though a root signed.
+
 ### Dedicated issuer key
 
 `SessionRegistry.issue`/`revoke` accept root **or** a designated issuer. By default the orchestrator's `PRIVATE_KEY` signs issuance, but on a real chain that key should not be root. Set `LACREW_ISSUER_PRIVATE_KEY` to a dedicated key so the orchestrator can mint bounded, expiring session keys without holding root:

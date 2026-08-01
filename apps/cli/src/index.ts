@@ -25,6 +25,7 @@ import { cmdCrews } from "./crews.js";
 import { cmdFlows } from "./flows.js";
 import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
+import { cmdSession } from "./session.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
 import { cmdPnl } from "./pnl.js";
@@ -250,6 +251,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "heartbeat") {
     await cmdHeartbeat(rest);
+    return;
+  }
+  if (cmd === "session") {
+    await cmdSession(rest);
     return;
   }
   if (cmd === "budget") {
@@ -748,7 +753,10 @@ Commands:
   intents [--rpc]           List pending escalations
   audit [--rpc]             Print audit trail (indexer when INDEXER_PATH set)
   sessions [--rpc]          List session keys (onchain SessionRegistry when --rpc)
-  session-revoke <id> [--rpc]  Revoke a session (root/issuer key)
+  session-revoke <id> [--rpc]  Revoke a session with the local root/issuer key
+  session status            Whether a running orchestrator demands a root proof
+  session revoke <id>       Root-authorized revoke through an orchestrator
+  session rotate <id>       Root-authorized rotate, under the retired key's bounds
   session-issuer [--rpc]    Show the SessionRegistry issuer
   session-set-issuer <0x..> [--rpc]  Root authorises a dedicated issuer key
   epoch [--asset <sym>] [--rpc]  Run next payroll epoch (per asset with --asset)

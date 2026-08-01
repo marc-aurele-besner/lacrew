@@ -25,6 +25,7 @@ import {
 export * from "./safe.js";
 export * from "./allowance.js";
 export * from "./passkey.js";
+export * from "./webauthn.js";
 export * from "./execute.js";
 export { demoPolicyVerdict };
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };

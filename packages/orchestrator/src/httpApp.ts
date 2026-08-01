@@ -29,7 +29,15 @@ import {
   SkillPackRequirementsError,
   SkillPackTooLargeError,
 } from "./skillPacks.js";
-import { isSessionScope, SESSION_SCOPES, type OrgNode, type SessionScope } from "@lacrew/core";
+import {
+  isSessionScope,
+  SESSION_SCOPES,
+  type OrgNode,
+  type RootAuthAction,
+  type RootProof,
+  type SessionScope,
+} from "@lacrew/core";
+import type { RootAuthSurface } from "./rootAuth.js";
 import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
@@ -109,6 +117,12 @@ export interface OrchestratorAppOptions {
   budgets?: InferenceBudgetsSurface;
   /** Crew / seat P&L (F2.33); absent in embedders that wired none. */
   pnl?: PnlSurface;
+  /**
+   * Root authorization for session revoke/rotate (F0.7). Absent, or present
+   * with no configured root, leaves those routes ungated — reported on
+   * `/health` and `GET /root-auth` so nobody has to guess which it is.
+   */
+  rootAuth?: RootAuthSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -184,6 +198,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     heartbeats,
     budgets,
     pnl,
+    rootAuth,
     mcpUseMock,
     authToken,
   } = options;
@@ -245,6 +260,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       chain: { reachable: true, chainId: runtime.chainId },
       db: { configured: options.isDbConfigured(), ready: options.isDbReady() },
       queue: queue.status(),
+      // A deployment that believes revoke is root-anchored and is not needs to
+      // learn it from its own health check, not from an incident.
+      rootAuth: rootAuth?.status() ?? { required: false, kind: null, configError: null },
       model: { provider: model.name },
       mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
       flows: {
@@ -1560,11 +1578,106 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     });
   });
 
+  /* ——— root-authorized session lifecycle (F0.7 / F1.3) ——— */
+
+  /**
+   * Whether this orchestrator will demand a root proof, and of what kind. A
+   * caller has to be able to ask before it builds a revoke button: an operator
+   * told "sign with your passkey" by a deployment that has no passkey
+   * configured learns nothing except that the product is lying to them.
+   */
+  app.get("/root-auth", (c) =>
+    jsonBig(c, {
+      ...(rootAuth?.status() ?? {
+        required: false,
+        kind: null,
+        configError: null,
+        pendingChallenges: 0,
+        challengeTtlSec: 0,
+      }),
+      mode: runtime.mode,
+    }),
+  );
+
+  app.post("/root-auth/challenge", async (c) => {
+    const body = await bodyOf<{ action?: string; subject?: string }>(c);
+    const action = body.action as RootAuthAction | undefined;
+    if (action !== "session:revoke" && action !== "session:rotate") {
+      return jsonBig(c, { error: "action_must_be_session_revoke_or_session_rotate" }, 400);
+    }
+    if (!body.subject) return jsonBig(c, { error: "subject_required" }, 400);
+    if (!rootAuth?.required) {
+      // No challenge is minted for a root that does not exist. Handing back a
+      // nonce here would let a client render a signing prompt whose result
+      // nothing would ever check.
+      return jsonBig(c, { required: false, challenge: null, kind: null }, 200);
+    }
+    return jsonBig(c, {
+      required: true,
+      kind: rootAuth.kind,
+      ...rootAuth.issueChallenge(action, body.subject),
+    });
+  });
+
+  /**
+   * Retire a session key.
+   *
+   * Gated on a fresh root proof whenever a root is configured, because a key's
+   * revocation is the user's decision and not the control plane's.
+   *
+   * `containment: true` is the one exception, reserved for automated narrowing
+   * (a guardian lockdown, an agent pause). It can only ever take authority
+   * away, never issue any — rotate refuses it outright — and it is audited
+   * under its own name so the trail never reads as though a root signed.
+   */
   app.post("/sessions/revoke", async (c) => {
-    const body = await bodyOf<{ sessionId?: string }>(c);
+    const body = await bodyOf<{
+      sessionId?: string;
+      challenge?: string;
+      rootProof?: RootProof;
+      containment?: boolean;
+    }>(c);
     if (!body.sessionId) return jsonBig(c, { error: "sessionId_required" }, 400);
-    const result = await runtime.revokeSessionById(body.sessionId);
-    return jsonBig(c, { ...result, mode: runtime.mode });
+    let authorizedBy = "containment";
+    if (!body.containment) {
+      const proof = await (rootAuth?.verify({
+        action: "session:revoke",
+        subject: body.sessionId,
+        ...(body.challenge ? { challenge: body.challenge } : {}),
+        ...(body.rootProof ? { proof: body.rootProof } : {}),
+      }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+      if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
+      authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
+    }
+    const result = await runtime.revokeSessionById(body.sessionId, authorizedBy);
+    return jsonBig(c, { ...result, authorizedBy, mode: runtime.mode });
+  });
+
+  /**
+   * Retire a key and issue its replacement under the retired key's own bounds.
+   *
+   * Lives here rather than being composed by a caller out of revoke + boot: a
+   * caller composing it supplies the new key's scopes, and a rotation whose
+   * scopes are an argument is an issue endpoint. The bounds are read from the
+   * chain, so the replacement can only ever be equal or narrower.
+   */
+  app.post("/sessions/rotate", async (c) => {
+    const body = await bodyOf<{
+      sessionId?: string;
+      challenge?: string;
+      rootProof?: RootProof;
+    }>(c);
+    if (!body.sessionId) return jsonBig(c, { error: "sessionId_required" }, 400);
+    const proof = await (rootAuth?.verify({
+      action: "session:rotate",
+      subject: body.sessionId,
+      ...(body.challenge ? { challenge: body.challenge } : {}),
+      ...(body.rootProof ? { proof: body.rootProof } : {}),
+    }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+    if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
+    const authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
+    const result = await runtime.rotateSessionById(body.sessionId, authorizedBy);
+    return jsonBig(c, { ...result, authorizedBy, mode: runtime.mode });
   });
 
   /* ——— standing agent controls (F1.7) ——— */

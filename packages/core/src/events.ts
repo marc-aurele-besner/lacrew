@@ -15,6 +15,14 @@ export type ProtocolEventType =
   | "SessionIssued"
   | "SessionRevoked"
   /**
+   * One key retired and a replacement issued under the retired key's own
+   * bounds (F0.7). Kept distinct from the `SessionRevoked` + `SessionIssued`
+   * pair it sits beside: those two rows say a key died and a key was born,
+   * and only this one says the second inherited the first's authority rather
+   * than being handed fresh authority of its own.
+   */
+  | "SessionRotated"
+  /**
    * Account-level session delegations (F1.3). Issue/disable are orchestrator
    * actions with onchain receipts; the two *Failed kinds record that the
    * account-level path did NOT change — "no delegation" must never be
