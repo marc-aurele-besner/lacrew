@@ -1047,13 +1047,29 @@ export class OnchainLacrewClient {
     }
   }
 
+  /**
+   * Settle a pending intent as the seat the chain is waiting on.
+   *
+   * `EscalationRouter.resolve` reverts for any sender that is not the intent's
+   * `awaitingApprover`, so the signer is chosen rather than assumed: this
+   * client may hold a manager key, a root key, or both, and always signing with
+   * the resolver key made every approval a manager's — reverting where the
+   * waiter was the root, and silently passing as the root wherever the two
+   * happened to be the same key.
+   *
+   * When no held key is that seat, this refuses by name instead of broadcasting
+   * a transaction the chain will reject: an approver whose root is a passkey or
+   * a Safe signs elsewhere, and "we hold no key for this approver" is the
+   * answer they need, not a revert trace.
+   */
   async resolveIntent(
     intentId: string,
     approved: boolean,
-    _approver?: `0x${string}`,
+    approver?: `0x${string}`,
   ): Promise<OnchainResolveResult> {
-    const wallet = this.requireResolverWallet();
     const id = BigInt(intentId);
+    const waiting = approver ?? (await this.readIntent(id)).awaitingApprover;
+    const wallet = waiting ? this.walletFor(waiting) : this.requireResolverWallet();
     const hash = await wallet.writeContract({
       address: this.addresses.escalationRouter,
       abi: escalationRouterAbi,
@@ -2231,6 +2247,29 @@ export class OnchainLacrewClient {
       );
     }
     return this.resolverWalletClient;
+  }
+
+  /**
+   * The held key for one address, or a refusal naming who this client can sign
+   * as. Ordered resolver-first only for readability — the addresses decide.
+   */
+  private walletFor(address: `0x${string}`): WalletClient {
+    const wanted = address.toLowerCase();
+    for (const candidate of [this.resolverWalletClient, this.walletClient]) {
+      if (candidate?.account?.address.toLowerCase() === wanted) return candidate;
+    }
+    const held = [
+      ...new Set(
+        [this.resolverWalletClient, this.walletClient]
+          .map((w) => w?.account?.address)
+          .filter((a): a is `0x${string}` => Boolean(a)),
+      ),
+    ];
+    throw new Error(
+      `no_signer_for_approver: ${address} must sign this, and this client holds ${
+        held.length ? held.join(", ") : "no key"
+      }`,
+    );
   }
 
   private requireIssuerWallet(): WalletClient {
