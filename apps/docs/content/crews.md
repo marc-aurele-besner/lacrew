@@ -183,3 +183,93 @@ Verified on Anvil: `lacrew_check_policy` against an unadmitted endpoint returns
 `{"verdict":"DENY"}`, the branch takes the false edge, and the run completes on
 the sign-off step. "Never auto-publish" is a policy verdict, not a rule someone
 remembered.
+
+## The first run, on your own Anvil
+
+A blueprint install ends with seats, budgets and flows and no evidence any of it
+works. `crews checklist` closes that gap for a self-host: it probes a running
+orchestrator for the seven things a first supervised action needs, and exits
+non-zero while any of them is outstanding — so a script can gate on it.
+
+```bash
+ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
+```
+
+```
+GitHub experts crew — first run  5/7
+  probing http://127.0.0.1:8788 · thread crew:github-experts
+
+  ✓ Seats
+      1 of 6 seats have an account; the rest are still proposals.
+  ✓ Orchestrator
+      Running against a chain.
+  ▲ Model provider
+      No model key, so every completion returns a local stub. …
+  ✓ Connector
+      github is registered and credentialed.
+  ✓ Flows
+      All 3 of the blueprint's flows are installed.
+```
+
+Every line is derived from something the orchestrator already serves — its own
+health, the connectors it has registered, the flows saved against it, the runs
+recorded, the thread. Nothing is stored and nothing is marked done by hand, so
+the list cannot go stale when a credential is later unset.
+
+Four states, and `–` is the load-bearing one: "the orchestrator did not answer,
+so we cannot say whether the connector is wired" is a third answer, and it is
+neither a blocker nor a pass. `First run` and `Thread` never block the exit
+code — they are the outcome the checklist drives at, and refusing on "nothing
+has run yet" would refuse every first run there has ever been.
+
+### Naming the seats
+
+The chain stores addresses and reporting lines, not role ids, so a seat is
+found by matching the label against the blueprint's. That works until somebody
+renames the seat. `--bind` is where a self-host keeps the mapping — the same
+vocabulary `crews plan` takes:
+
+```bash
+lacrew crews checklist github-experts \
+  --bind reviewer=0x2b09… --bind fixer=0xFF31…
+```
+
+A bound seat resolves through its role id and survives any rename. A seat
+nothing matched is **named**, never bound to a plausible-looking wrong address:
+running a flow as the wrong principal gets the wrong policy stack, which is the
+difference between a spend that escalates to a manager and one that should never
+have been attempted. Two seats sharing a label bind neither, for the same
+reason. (The hosted control plane stores this mapping per crew at install time;
+a self-host's equivalent is the plan it installed from.)
+
+### The whole path, checked
+
+`pnpm golden-path` drives it end to end against a real chain, and is the answer
+to "does the product work" that a unit test cannot give:
+
+```bash
+pnpm golden-path
+```
+
+It starts Anvil, deploys the reference contracts, boots an orchestrator on its
+own port, and asserts that runtime is `onchain` before anything else runs — a
+green path against a mocked runtime is the exact failure the golden path exists
+to avoid. Then it hires two seats through real governance proposals, renames one
+and proves it still resolves, registers the `github` preset against a local
+stand-in for `api.github.com`, asks the deployed policy stack about the
+merge-authority address the crew has not admitted (`DENY`), installs
+`bot-pr-triage` bound to the addresses those hires minted, and runs the
+checklist.
+
+The stand-in host is the one fake, and it is the right one: the alternative is a
+real token, a network round trip, and a public write path in CI. Everything
+between the flow step and the socket — route resolution, path templating, the
+credential header — is the production path.
+
+A model key is optional. Without one, completions come back as the
+orchestrator's stub, a classifier reading stub text falls through to its default
+branch, and a run that "succeeded" would mean nothing — so the checklist blocks
+on the model and the script asserts *that*. Set `OPENROUTER_API_KEY` (or any
+provider key) and it drives the sample run itself, asserting the run was served
+by the runtime rather than the mock backend, that it reached the connector, and
+that it never merged.

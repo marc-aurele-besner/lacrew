@@ -60,6 +60,24 @@ export {
   type EnforcementLayer,
 } from "./crews.js";
 export {
+  resolveCrewSeats,
+  seatRoleMap,
+  type CrewSeatBinding,
+  type CrewSeatNode,
+  type CrewSeatResolution,
+} from "./crewSeats.js";
+export {
+  crewChecklist,
+  crewChecklistBlocker,
+  crewChecklistComplete,
+  crewChecklistProgress,
+  crewSampleRefusal,
+  type CrewCheck,
+  type CrewCheckId,
+  type CrewCheckState,
+  type CrewChecklistFacts,
+} from "./crewChecklist.js";
+export {
   crewSampleRun,
   crewSampleRuns,
   crewSampleNeeds,

@@ -516,6 +516,23 @@ export GITHUB_APP_INSTALLATION_ID=48213991
 `GET /connectors` reports what is registered, which env vars each connector
 reads and whether they are set — never a value.
 
+## Is the crew actually working?
+
+Every surface above answers a piece of the question. `crews checklist` asks all
+of it at once, against this orchestrator, and exits non-zero while anything
+stands in the way:
+
+```bash
+ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts \
+  --bind reviewer=0x… --bind fixer=0x…
+```
+
+`pnpm golden-path` goes further: it stands the whole stack up on Anvil, hires
+seats through real governance proposals, registers the `github` preset against a
+local stand-in host, and asserts the checklist clears — with the runtime
+asserted `onchain` first, so a green result cannot come from mock mode. Both are
+documented in [Crew blueprints](./crews.md#the-first-run-on-your-own-anvil).
+
 ## External MCP servers
 
 `LACREW_MCP_SERVERS` attaches third-party MCP servers — the ones you already run

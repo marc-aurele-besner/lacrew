@@ -14,6 +14,9 @@ import { getConnectorPreset } from "@lacrew/orchestrator";
 import { cmdEval } from "./evals.js";
 import {
   crewBlueprints,
+  crewChecklist,
+  crewChecklistBlocker,
+  crewChecklistProgress,
   crewFlowOwner,
   crewMonthlyGrantUsd,
   crewPlan,
@@ -22,9 +25,12 @@ import {
   formatUsdc,
   getCrewBlueprint,
   getFlowTemplate,
+  resolveCrewSeats,
   validateCrewBlueprint,
   type CrewBlueprint,
   type CrewBindings,
+  type CrewCheck,
+  type CrewChecklistFacts,
   type CrewRole,
 } from "@lacrew/flows";
 
@@ -233,6 +239,199 @@ function printPlan(bp: CrewBlueprint, bindings: CrewBindings): void {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * checklist — the golden path, probed against a running orchestrator.
+ * ------------------------------------------------------------------------- */
+
+function orchUrl(args: string[]): string {
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
+}
+
+/**
+ * One probe. Answers `null` on any failure rather than throwing, because a
+ * single unreadable surface must degrade one step to `unknown` instead of
+ * blanking the list — the difference between "we cannot say" and "it is broken"
+ * is the whole reason the checklist has four states.
+ */
+async function probe<T>(args: string[], path: string): Promise<T | null> {
+  const token = process.env.ORCH_TOKEN?.trim();
+  try {
+    const res = await fetch(`${orchUrl(args)}${path}`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+type HealthProbe = {
+  mode?: string;
+  mocked?: boolean;
+  chainId?: number;
+  model?: { provider?: string };
+};
+
+/**
+ * `/connectors` reports credential presence under `auth.ready` — presence only,
+ * never the value, since reading a token into a response is how a status
+ * surface becomes an exfiltration route.
+ */
+type ConnectorProbe = { connectors?: Array<{ id: string; auth?: { ready?: boolean } }> };
+type FlowsProbe = { flows?: Array<{ id: string }> };
+type RunsProbe = { runs?: unknown[] };
+type MessagesProbe = { messages?: unknown[] };
+type OrgProbe = { nodes?: Array<{ account?: string; kind?: string; label?: string }> };
+
+/**
+ * The thread the crew talks in.
+ *
+ * A self-host has no cloud crew record to take an id from, so the blueprint id
+ * is the default and `--thread` overrides it. Named in the output either way:
+ * "the crew has said nothing" is only useful next to which thread was read.
+ */
+function threadOf(bp: CrewBlueprint, args: string[]): string {
+  const given = flagValue(args, "--thread")?.trim();
+  return given || `crew:${bp.id}`;
+}
+
+/**
+ * Read everything the checklist derives from, in one pass.
+ *
+ * Seats come from the org chart the orchestrator serves, matched through
+ * `resolveCrewSeats` — so a seat renamed since it was hired is still counted
+ * when something recorded its role id, and reported as a miss rather than
+ * matched to a plausible wrong address when nothing did.
+ */
+async function probeFacts(
+  bp: CrewBlueprint,
+  args: string[],
+): Promise<{ facts: CrewChecklistFacts; seatsReadable: boolean; missingSeats: string[] }> {
+  const sample = crewSampleRun(bp.id);
+  const needs = sample ? crewSampleNeeds(sample) : undefined;
+  const [health, connectors, flows, runs, messages, org] = await Promise.all([
+    probe<HealthProbe>(args, "/health"),
+    probe<ConnectorProbe>(args, "/connectors"),
+    probe<FlowsProbe>(args, "/flows"),
+    probe<RunsProbe>(args, "/flows/runs"),
+    probe<MessagesProbe>(args, `/messages?limit=5&thread=${encodeURIComponent(threadOf(bp, args))}`),
+    probe<OrgProbe>(args, "/org"),
+  ]);
+
+  /*
+    A self-host has nowhere to persist "this account is the reviewer": the chain
+    stores no labels and the orchestrator stores no role ids, so the mapping
+    lives in whatever the operator installed the crew from. `--bind` is that
+    file, in the same vocabulary `crews plan --bind` already uses — and it makes
+    the checklist survive a rename here for the same reason the hosted control
+    plane's stored map does.
+  */
+  const bound = parseBindings(args).roles ?? {};
+  const roleOf = new Map(
+    Object.entries(bound).map(([role, account]) => [account.trim().toLowerCase(), role]),
+  );
+  const nodes = org?.nodes?.map((n) => {
+    const roleId = n.account ? roleOf.get(n.account.trim().toLowerCase()) : undefined;
+    return roleId ? { ...n, roleId } : n;
+  });
+  const seats = nodes ? resolveCrewSeats(bp, nodes) : null;
+  return {
+    seatsReadable: Boolean(seats),
+    missingSeats: seats?.missing ?? [],
+    facts: {
+      // An unreadable chart reports zero seats, which the seats step renders as
+      // the one blocker worth naming: nothing can run as a principal nobody can
+      // read. Inventing a count here would be worse.
+      seats: {
+        total: bp.roles.length,
+        withAccount: seats ? bp.roles.filter((r) => seats.roles[r.id]).length : 0,
+      },
+      runtime: health
+        ? health.mode !== "mock" && health.mocked !== true
+          ? { live: true }
+          : {
+              live: false,
+              detail:
+                "The orchestrator is running in mock mode, so a run returns fabricated data rather than reaching a chain.",
+            }
+        : null,
+      model: health ? { configured: Boolean(health.model?.provider && health.model.provider !== "memory") } : null,
+      connectors: connectors?.connectors
+        ? connectors.connectors.map((c) => ({ id: c.id, ready: c.auth?.ready === true }))
+        : null,
+      installedFlows: flows?.flows ? flows.flows.map((f) => f.id) : null,
+      blueprintFlows: bp.flows,
+      runs: runs?.runs ? runs.runs.length : null,
+      threadMessages: messages?.messages ? messages.messages.length : null,
+      sample: sample && needs ? { flow: sample.flow, needs } : null,
+    },
+  };
+}
+
+const MARK: Record<CrewCheck["state"], string> = {
+  done: "✓",
+  blocked: "▲",
+  optional: "·",
+  unknown: "–",
+};
+
+/**
+ * Probe a live orchestrator and say whether this crew can do its first run.
+ *
+ * Exits non-zero when something stands in the way, so a self-host script can
+ * gate on it. `run` and `thread` are deliberately not blockers: they are the
+ * outcome the checklist drives at, and refusing on "nothing has run yet" would
+ * refuse every first run there has ever been.
+ */
+async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> {
+  const { facts, seatsReadable, missingSeats } = await probeFacts(bp, args);
+  const steps = crewChecklist(facts);
+  const blocker = crewChecklistBlocker(steps);
+  const progress = crewChecklistProgress(steps);
+
+  if (hasFlag(args, "--json")) {
+    console.log(
+      JSON.stringify(
+        { blueprint: bp.id, orchestrator: orchUrl(args), steps, blocker: blocker?.id ?? null, progress },
+        null,
+        2,
+      ),
+    );
+    if (blocker) process.exitCode = 1;
+    return;
+  }
+
+  console.log(`${bp.name} — first run  ${progress.done}/${progress.total}`);
+  console.log(`  probing ${orchUrl(args)} · thread ${threadOf(bp, args)}\n`);
+  for (const step of steps) {
+    console.log(`  ${MARK[step.state]} ${step.title}`);
+    console.log(`      ${step.detail}`);
+  }
+  if (!seatsReadable) {
+    console.log("\n  The org chart could not be read, so no seat could be resolved.");
+  } else if (missingSeats.length > 0) {
+    console.log(
+      `\n  Seats nothing matched: ${missingSeats.join(", ")}. A seat renamed after it was hired ` +
+        `is found by its stored blueprint role id; without one, only the label can answer.`,
+    );
+  }
+  if (blocker) {
+    console.log(`\n  ${blocker.title} is what stands between this crew and its first run.`);
+    process.exitCode = 1;
+    return;
+  }
+  const sample = crewSampleRun(bp.id);
+  console.log(
+    sample
+      ? `\n  Nothing is in the way. Fire it:  lacrew crews sample ${bp.id} --json | xargs -0 -I{} lacrew flows run ${sample.flow} --input {}`
+      : "\n  Nothing is in the way. This blueprint ships no certified sample, so choose a flow and an input.",
+  );
+}
+
 export async function cmdCrews(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   const id = rest.find((a) => !a.startsWith("-"));
@@ -298,6 +497,27 @@ export async function cmdCrews(args: string[]): Promise<void> {
       return;
     }
 
+    /*
+      The same seven checks the hosted crew page renders, asked of a running
+      orchestrator instead of a control plane. One derivation behind both
+      (`crewChecklist` in `@lacrew/flows`) is what keeps a self-host and the
+      cloud from disagreeing about whether a crew is ready.
+    */
+    case "checklist": {
+      const bp = id ? getCrewBlueprint(id) : undefined;
+      if (!bp) {
+        console.error(
+          `Usage: lacrew crews checklist <id> [--url http://…] [--thread crew:…] [--bind <role>=0x…] [--json]  (${crewBlueprints
+            .map((b) => b.id)
+            .join(", ")})`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      await printChecklist(bp, rest);
+      return;
+    }
+
     case "plan": {
       const bp = id ? getCrewBlueprint(id) : undefined;
       if (!bp) {
@@ -336,15 +556,21 @@ export async function cmdCrews(args: string[]): Promise<void> {
     }
 
     default:
-      console.log(`Usage: lacrew crews <list|show|sample|plan|eval>
+      console.log(`Usage: lacrew crews <list|show|sample|checklist|plan|eval>
 
   list                       First-party crew blueprints
   show <id> [--json]         Org chart, budgets, ladder, guardrails, flows
   sample <id> [--json]       The certified first run and its input
+  checklist <id> [--json]    Probe a running orchestrator for what the first run
+        [--url] [--thread]   still needs. Exits non-zero while anything blocks.
+        [--bind <role>=0x…]  Name the account each seat landed on, so a renamed
+                             seat still resolves.
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
   eval [id…] [--list]        Run the crew's eval scenarios offline; a failure
         [--json]             names the scenario, the assertion, and the diff
+
+Env: ORCH_URL (or --url, default http://127.0.0.1:8788), ORCH_TOKEN
 `);
   }
 }
