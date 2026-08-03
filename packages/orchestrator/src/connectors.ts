@@ -106,6 +106,17 @@ export type ConnectorRoute = {
    * nothing teaches operators to click through confirmations.
    */
   mode?: ConnectorWriteMode;
+  /**
+   * Largest response body this route may return, in bytes. Overrides the
+   * connector's own limit, which overrides the registry default.
+   *
+   * Set it where the route's size is a property of the endpoint rather than of
+   * the deployment: a route that lists every pool on every chain is bulk by
+   * nature, and the honest options are a raised ceiling written down next to it
+   * or a refusal the operator can see coming. A description that mentions
+   * megabytes is documentation; this is the limit.
+   */
+  maxResponseBytes?: number;
 };
 
 export type Connector = {
@@ -124,6 +135,11 @@ export type Connector = {
   routes: ConnectorRoute[];
   /** Per-call timeout; defaults to 20s so a hung endpoint cannot hold a run open. */
   timeoutMs?: number;
+  /**
+   * Largest response body any route here may return, in bytes. Overrides the
+   * registry default; a route may narrow or widen it again.
+   */
+  maxResponseBytes?: number;
 };
 
 export type ConnectorCallResult = {
@@ -155,6 +171,13 @@ export type ConnectorRouteView = {
    * one number nobody's flow will run under.
    */
   effectiveMode: ConnectorModeResolution | null;
+  /**
+   * Bytes this route will accept back before refusing, already resolved
+   * through route → connector → registry default. Always a number: an operator
+   * asking "why did that step fail" needs the limit that actually applied, not
+   * the one place it happened to be written down.
+   */
+  maxResponseBytes: number;
 };
 
 /**
@@ -167,6 +190,8 @@ export type ConnectorView = {
   id: string;
   baseUrl: string;
   timeoutMs: number;
+  /** The limit routes here inherit when they declare none of their own. */
+  maxResponseBytes: number;
   auth: {
     kind: ConnectorAuth["kind"];
     envVars: string[];
@@ -248,9 +273,28 @@ export type ConnectorRegistryOptions = {
   asks?: Pick<ConnectorAsksSurface, "gate">;
   /** Injected for tests so token expiry is drivable; defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Default response ceiling for connectors that declare none, in bytes.
+   * Defaults to `DEFAULT_MAX_RESPONSE_BYTES`. This is the deployment-wide knob;
+   * a connector or a route narrows or widens it from there.
+   */
+  maxResponseBytes?: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+
+/**
+ * How much of a response a connector will read before refusing, when nothing
+ * narrower is declared.
+ *
+ * A flow step's body is stringified into `{{steps.<id>.json}}` and handed to
+ * whatever reads it next — usually a model prompt. Without a ceiling, one call
+ * to a bulk listing route is an eleven-megabyte prompt, billed and truncated
+ * somewhere downstream where the cause is invisible. One mebibyte is well past
+ * any single record a crew reasons about and well under the size where that
+ * happens.
+ */
+export const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 
 /** Env vars a connector reads for auth — what an operator must set. */
 export function connectorEnvVars(connector: Connector): string[] {
@@ -261,6 +305,60 @@ export function connectorEnvVars(connector: Connector): string[] {
     return [auth.appIdEnv, auth.privateKeyEnv, auth.installationIdEnv];
   }
   return [];
+}
+
+/**
+ * Read a response body, refusing rather than returning one over `limit` bytes.
+ *
+ * Refusing beats truncating. A truncated JSON body is invalid JSON, so it lands
+ * in `{{steps.<id>.json}}` as a string that looks like data and reasons like
+ * noise — a model asked to classify a pull request from half an object will
+ * answer something, and nothing downstream can tell that from an answer. A
+ * refusal is a step failure with a code an operator can act on.
+ *
+ * The counting is streamed, so an oversized body is dropped mid-flight instead
+ * of being buffered whole and measured afterwards — the eleven-megabyte
+ * allocation is the thing being prevented, not just its use.
+ */
+async function readBounded(res: Response, limit: number, tool: string): Promise<string> {
+  const tooLarge = (): Error => new Error(`connector_response_too_large:${tool}:${limit}`);
+
+  // Free when the server declares it: refuse before reading a byte. The header
+  // counts encoded bytes, so it only ever under-states a compressed body —
+  // over the limit here is over the limit decoded too.
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw tooLarge();
+
+  // No stream to read (a mocked response, a 204). `text()` is bounded by what
+  // is already in hand, so measuring after the fact is all that is left.
+  if (!res.body) {
+    const text = await res.text();
+    if (Buffer.byteLength(text) > limit) throw tooLarge();
+    return text;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) throw tooLarge();
+      chunks.push(value);
+    }
+  } finally {
+    // Tells the server we are done on the refusal path; a no-op once drained.
+    await reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** Undefined passes: the field is optional and inherits. A bad value does not. */
+function isPositiveInteger(value: number | undefined): boolean {
+  return value === undefined || (Number.isInteger(value) && value > 0);
 }
 
 function isLoopback(url: URL): boolean {
@@ -308,6 +406,9 @@ export function validateConnector(connector: Connector): string[] {
     }
   }
   if (!connector.routes?.length) errors.push(`connector "${connector.id}" has no routes`);
+  if (!isPositiveInteger(connector.maxResponseBytes)) {
+    errors.push(`connector "${connector.id}" maxResponseBytes must be a positive integer`);
+  }
 
   const authHeaderName =
     connector.auth?.kind === "bearer"
@@ -362,6 +463,15 @@ export function validateConnector(connector: Connector): string[] {
     // comfortable mistake this file exists to avoid.
     if (route.mode && route.effect === "read") {
       errors.push(`route "${connector.id}.${route.name}" is a read and cannot carry a mode`);
+    }
+    // Unlike a mode or a policy target, this one is meaningful on a read —
+    // reads are where the bulk listings are. Only its value is checked: a zero
+    // or a fraction refuses every call, which reads as "the connector is
+    // broken" hours later rather than as the typo it was.
+    if (!isPositiveInteger(route.maxResponseBytes)) {
+      errors.push(
+        `route "${connector.id}.${route.name}" maxResponseBytes must be a positive integer`,
+      );
     }
   }
   return errors;
@@ -424,6 +534,11 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
     byId.set(connector.id, connector);
   }
 
+  const defaultMaxBytes = opts.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  /** Route wins, then connector, then the deployment default. */
+  const maxBytesFor = (connector: Connector, route: ConnectorRoute): number =>
+    route.maxResponseBytes ?? connector.maxResponseBytes ?? defaultMaxBytes;
+
   const resolve = (name: string): { connector: Connector; route: ConnectorRoute } | undefined => {
     const dot = name.indexOf(".");
     if (dot <= 0) return undefined;
@@ -445,6 +560,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           id: connector.id,
           baseUrl: connector.baseUrl,
           timeoutMs: connector.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxResponseBytes: connector.maxResponseBytes ?? defaultMaxBytes,
           auth: {
             kind: (connector.auth ?? { kind: "none" as const }).kind,
             envVars,
@@ -472,6 +588,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
                     source: { kind: "route-default" as const },
                   })
                 : null,
+            maxResponseBytes: maxBytesFor(connector, route),
           })),
         };
       }),
@@ -539,11 +656,16 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
       }
 
       const started = Date.now();
+      const maxBytes = maxBytesFor(connector, route);
       const controller = new AbortController();
       const timer = setTimeout(
         () => controller.abort(),
         connector.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       );
+      // Resolved before the call so the refusal path can put the same seat on
+      // the trail that a successful call would have.
+      const seat = ctx.principal?.trim().toLowerCase();
+      const crew = crewIdForSeat(seat ?? "", [...(ctx.managers ?? [])]);
       let status = 0;
       let body: unknown;
       try {
@@ -573,7 +695,39 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           res = await send();
         }
         status = res.status;
-        const text = await res.text();
+        let text: string;
+        try {
+          text = await readBounded(res, maxBytes, name);
+        } catch (err) {
+          // Only the refusal earns a row here. A stream that broke mid-read is
+          // a transport failure, and labelling it "too large" would send an
+          // operator to raise a limit that was never the problem.
+          if (!`${(err as Error)?.message}`.startsWith("connector_response_too_large")) throw err;
+          // The call went out and the other side answered — that is a side
+          // effect and a cost, and a write may already have happened. Leaving
+          // it off the trail would make an oversized response the one thing a
+          // crew can do without a row, and the operator's first question
+          // ("what did it call?") unanswerable.
+          opts.onEvent?.({
+            type: "ToolCalled",
+            at: new Date().toISOString(),
+            payload: {
+              connector: connector.id,
+              route: route.name,
+              method: route.method,
+              effect: route.effect,
+              ...(seat ? { agentId: seat, crewId: crew } : {}),
+              status,
+              ok: false,
+              ms: Date.now() - started,
+              policyChecked: Boolean(route.policyTarget),
+              ...(route.effect === "write" ? { mode } : {}),
+              refused: "response_too_large",
+              maxResponseBytes: maxBytes,
+            },
+          });
+          throw err;
+        }
         try {
           body = text ? JSON.parse(text) : null;
         } catch {
@@ -599,8 +753,6 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
       // and a side effect belonging to a desk (F2.33): without them, a period
       // report can count calls but cannot say whose they were. Addresses only —
       // the same identifiers every other row on this trail already carries.
-      const seat = ctx.principal?.trim().toLowerCase();
-      const crew = crewIdForSeat(seat ?? "", [...(ctx.managers ?? [])]);
       opts.onEvent?.({
         type: "ToolCalled",
         at: new Date().toISOString(),
