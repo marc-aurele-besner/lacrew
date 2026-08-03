@@ -148,7 +148,7 @@ const GH = getCrewBlueprint("github-experts")!;
 function wired(): Record<string, unknown> {
   return {
     "/health": { mode: "chain", mocked: false, chainId: 31337, model: { provider: "openrouter" } },
-    "/connectors": { connectors: [{ id: "github", ready: true }] },
+    "/connectors": { connectors: [{ id: "github", auth: { ready: true } }] },
     "/flows": { flows: GH.flows.map((id) => ({ id })) },
     "/flows/runs": { runs: [{ id: "run_1" }] },
     "/messages": { messages: [{ id: "m1" }] },
@@ -233,7 +233,7 @@ describe("lacrew crews checklist", () => {
   });
 
   it("exits non-zero when the connector is registered without a credential", async () => {
-    const routes = { ...wired(), "/connectors": { connectors: [{ id: "github", ready: false }] } };
+    const routes = { ...wired(), "/connectors": { connectors: [{ id: "github", auth: { ready: false } }] } };
     await withOrch(routes, async (url) => {
       const { out, code } = await captureAsync(["checklist", "github-experts", "--url", url]);
       assert.match(out, /credential is not set/);

@@ -276,7 +276,12 @@ type HealthProbe = {
   model?: { provider?: string };
 };
 
-type ConnectorProbe = { connectors?: Array<{ id: string; ready?: boolean }> };
+/**
+ * `/connectors` reports credential presence under `auth.ready` — presence only,
+ * never the value, since reading a token into a response is how a status
+ * surface becomes an exfiltration route.
+ */
+type ConnectorProbe = { connectors?: Array<{ id: string; auth?: { ready?: boolean } }> };
 type FlowsProbe = { flows?: Array<{ id: string }> };
 type RunsProbe = { runs?: unknown[] };
 type MessagesProbe = { messages?: unknown[] };
@@ -317,7 +322,23 @@ async function probeFacts(
     probe<OrgProbe>(args, "/org"),
   ]);
 
-  const seats = org?.nodes ? resolveCrewSeats(bp, org.nodes) : null;
+  /*
+    A self-host has nowhere to persist "this account is the reviewer": the chain
+    stores no labels and the orchestrator stores no role ids, so the mapping
+    lives in whatever the operator installed the crew from. `--bind` is that
+    file, in the same vocabulary `crews plan --bind` already uses — and it makes
+    the checklist survive a rename here for the same reason the hosted control
+    plane's stored map does.
+  */
+  const bound = parseBindings(args).roles ?? {};
+  const roleOf = new Map(
+    Object.entries(bound).map(([role, account]) => [account.trim().toLowerCase(), role]),
+  );
+  const nodes = org?.nodes?.map((n) => {
+    const roleId = n.account ? roleOf.get(n.account.trim().toLowerCase()) : undefined;
+    return roleId ? { ...n, roleId } : n;
+  });
+  const seats = nodes ? resolveCrewSeats(bp, nodes) : null;
   return {
     seatsReadable: Boolean(seats),
     missingSeats: seats?.missing ?? [],
@@ -340,7 +361,7 @@ async function probeFacts(
         : null,
       model: health ? { configured: Boolean(health.model?.provider && health.model.provider !== "memory") } : null,
       connectors: connectors?.connectors
-        ? connectors.connectors.map((c) => ({ id: c.id, ready: c.ready !== false }))
+        ? connectors.connectors.map((c) => ({ id: c.id, ready: c.auth?.ready === true }))
         : null,
       installedFlows: flows?.flows ? flows.flows.map((f) => f.id) : null,
       blueprintFlows: bp.flows,
@@ -486,7 +507,7 @@ export async function cmdCrews(args: string[]): Promise<void> {
       const bp = id ? getCrewBlueprint(id) : undefined;
       if (!bp) {
         console.error(
-          `Usage: lacrew crews checklist <id> [--url http://…] [--thread crew:…] [--json]  (${crewBlueprints
+          `Usage: lacrew crews checklist <id> [--url http://…] [--thread crew:…] [--bind <role>=0x…] [--json]  (${crewBlueprints
             .map((b) => b.id)
             .join(", ")})`,
         );
@@ -542,6 +563,8 @@ export async function cmdCrews(args: string[]): Promise<void> {
   sample <id> [--json]       The certified first run and its input
   checklist <id> [--json]    Probe a running orchestrator for what the first run
         [--url] [--thread]   still needs. Exits non-zero while anything blocks.
+        [--bind <role>=0x…]  Name the account each seat landed on, so a renamed
+                             seat still resolves.
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
   eval [id…] [--list]        Run the crew's eval scenarios offline; a failure
