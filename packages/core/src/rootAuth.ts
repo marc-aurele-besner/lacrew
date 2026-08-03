@@ -1,11 +1,15 @@
 /**
- * Root authorization for session-key lifecycle actions (PRD F0.7 / F1.3).
+ * Root authorization for the actions only the workspace root may take
+ * (PRD F0.7 / F1.3 / F2.6).
  *
  * Session keys are the blast-radius boundary, so the two actions that move that
  * boundary — retiring a key and re-issuing one — are proved by the workspace
  * root, not by whoever happens to hold an orchestrator or cloud credential. The
  * proof is verified where the action executes (the orchestrator), so a cloud
  * control plane can gate the request but can never manufacture the authority.
+ *
+ * Approving an escalated intent that has climbed to the human root is the same
+ * kind of decision about the same money, so it proves the same way.
  *
  * The vocabulary lives here because four layers speak it: the orchestrator
  * issues and verifies, the SDK and CLI carry it, and the cloud relays it.
@@ -18,14 +22,33 @@ export type RootAuthKind = "passkey" | "wallet";
  * What a proof authorizes. Bound into the challenge record, so a proof
  * collected for one action can never be replayed as another — a rotate
  * re-issues authority, a revoke only removes it, and they are not the same
- * consent.
+ * consent. Approving a spend and refusing one are likewise opposites, and an
+ * assertion collected for the second must never settle the first.
  */
-export type RootAuthAction = "session:revoke" | "session:rotate";
+export type RootAuthAction =
+  | "session:revoke"
+  | "session:rotate"
+  | "intent:approve"
+  | "intent:deny";
 
 /**
- * A single-use challenge the root signs. `subject` is the session id the proof
- * is bound to: without it, one revoke's assertion would authorize revoking any
- * other key.
+ * Every action a root proof can authorize. Exported so the layers that only
+ * carry proofs validate against one list rather than each keeping its own copy
+ * — a relay that silently drops an action it has not heard of is a gate that
+ * stops applying the moment a new one ships.
+ */
+export const ROOT_AUTH_ACTIONS: readonly RootAuthAction[] = [
+  "session:revoke",
+  "session:rotate",
+  "intent:approve",
+  "intent:deny",
+];
+
+/**
+ * A single-use challenge the root signs. `subject` is what the proof is bound
+ * to — the session id for a lifecycle action, the intent id for an approval.
+ * Without it, one revoke's assertion would authorize revoking any other key,
+ * and one approval's would release any other pending spend.
  */
 export interface RootChallenge {
   /** Opaque nonce (base64url). The WebAuthn challenge; part of the wallet statement. */

@@ -44,6 +44,35 @@ describe("createRuntimeMcpBackend", () => {
     assert.ok(!after.some((i) => i.id === proposed.intentId));
   });
 
+  it("refuses to let an agent settle an intent that has climbed to the human root", async () => {
+    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), mode: "mock" });
+    const backend = createRuntimeMcpBackend(runtime);
+
+    // Proposed by the manager, so the seat waiting on it is the root above it.
+    const proposed = (await runMcpTool(
+      "lacrew_propose_intent",
+      {
+        agent: "0x2222222222222222222222222222222222222222",
+        target: "0x4444444444444444444444444444444444444444",
+        value: "900000000",
+      },
+      { backend },
+    )) as { intentId: string; verdict: string };
+    assert.equal(proposed.verdict, "ESCALATE");
+
+    // A tool call carries no root proof and never can. Approving here would be
+    // the agent answering the one step of the tree that exists to hold it.
+    await assert.rejects(
+      runMcpTool(
+        "lacrew_approve_intent",
+        { intentId: proposed.intentId, approved: true },
+        { backend },
+      ),
+      /root_approval_required/,
+    );
+    assert.ok((await runtime.listPending()).some((i) => i.id === proposed.intentId));
+  });
+
   it("forwards the scope's window and rate onto propose", async () => {
     // The last link of the flow-scope → session-key thread: a flow's scope
     // window/rate ride the actor into every propose the run makes.

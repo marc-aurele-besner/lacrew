@@ -22,4 +22,12 @@ export {
   type ClientPolicyConfig,
 } from "./policy.js";
 export type { ResolveResult } from "./types.js";
+export {
+  approveIntent,
+  denyIntent,
+  resolveIntentWithProof,
+  type ResolveIntentOptions,
+  type ResolvedIntent,
+  type RootSigner,
+} from "./approvals.js";
 export { simulateIntentAction, type SimulateIntentInput } from "./simulate.js";

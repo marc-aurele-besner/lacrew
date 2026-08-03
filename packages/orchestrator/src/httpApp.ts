@@ -31,7 +31,9 @@ import {
 } from "./skillPacks.js";
 import {
   isSessionScope,
+  ROOT_AUTH_ACTIONS,
   SESSION_SCOPES,
+  type ApprovalAuthority,
   type OrgNode,
   type RootAuthAction,
   type RootProof,
@@ -1602,8 +1604,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.post("/root-auth/challenge", async (c) => {
     const body = await bodyOf<{ action?: string; subject?: string }>(c);
     const action = body.action as RootAuthAction | undefined;
-    if (action !== "session:revoke" && action !== "session:rotate") {
-      return jsonBig(c, { error: "action_must_be_session_revoke_or_session_rotate" }, 400);
+    if (!action || !ROOT_AUTH_ACTIONS.includes(action)) {
+      return jsonBig(
+        c,
+        { error: `action_must_be_one_of: ${ROOT_AUTH_ACTIONS.join(", ")}` },
+        400,
+      );
     }
     if (!body.subject) return jsonBig(c, { error: "subject_required" }, 400);
     if (!rootAuth?.required) {
@@ -1611,6 +1617,35 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // nonce here would let a client render a signing prompt whose result
       // nothing would ever check.
       return jsonBig(c, { required: false, challenge: null, kind: null }, 200);
+    }
+    // An approval only needs the root when the intent has actually climbed to
+    // the root. Minting a challenge for a manager-depth intent would put an
+    // authenticator prompt in front of a decision the manager is entitled to
+    // make alone, and a prompt that is not really required is one operators
+    // learn to click through.
+    if (action === "intent:approve" || action === "intent:deny") {
+      let authority: ApprovalAuthority;
+      try {
+        authority = await runtime.approvalAuthority(body.subject);
+      } catch (err) {
+        return jsonBig(
+          c,
+          {
+            error: "approver_unreadable",
+            detail: err instanceof Error ? err.message.split("\n")[0] : "unknown error",
+          },
+          502,
+        );
+      }
+      if (!authority.found) return jsonBig(c, { error: "intent_not_pending" }, 404);
+      if (!authority.isRoot) {
+        return jsonBig(c, {
+          required: false,
+          challenge: null,
+          kind: null,
+          awaitingApprover: authority.awaitingApprover,
+        });
+      }
     }
     return jsonBig(c, {
       required: true,
@@ -2027,16 +2062,72 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }),
   );
 
+  /**
+   * Settle a pending intent (PRD F2.6 / F1.3).
+   *
+   * The chain already refuses a `resolve` from anyone but the intent's
+   * `awaitingApprover`. What this route adds is the half the chain cannot see:
+   * when the waiter is the human root, holding this orchestrator's credential
+   * is not being the root. Without the gate, a deployment whose keyring happens
+   * to include the root key — every Anvil fixture, and any self-host that put
+   * root in `LACREW_PRIVATE_KEY` — would let a bearer token spend the root's
+   * reserved authority, and the receipt would name the root as the approver.
+   *
+   * Manager-depth intents are untouched: the manager's own key is the authority
+   * there, and demanding a root passkey for a spend inside a manager's bounds
+   * would make the tree meaningless.
+   */
   app.post("/intents/resolve", async (c) => {
     const body = await bodyOf<{
       intentId?: string;
       approved?: boolean;
       approver?: `0x${string}`;
+      challenge?: string;
+      rootProof?: RootProof;
     }>(c);
     if (!body.intentId || typeof body.approved !== "boolean") {
       return jsonBig(c, { error: "intentId_and_approved_required" }, 400);
     }
-    return jsonBig(c, await runtime.resolve(body.intentId, body.approved, body.approver));
+
+    let authority: ApprovalAuthority;
+    try {
+      authority = await runtime.approvalAuthority(body.intentId);
+    } catch (err) {
+      // Refused, not resolved. This read is what decides whether a proof is
+      // demanded, and an unreadable answer that fell through to "resolve it"
+      // would drop the gate exactly when the chain is having a bad day.
+      return jsonBig(
+        c,
+        {
+          error: "approver_unreadable",
+          detail: err instanceof Error ? err.message.split("\n")[0] : "unknown error",
+        },
+        502,
+      );
+    }
+    if (!authority.found) return jsonBig(c, { error: "intent_not_pending" }, 404);
+
+    let authorizedBy = "approver";
+    if (authority.isRoot) {
+      const proof = await (rootAuth?.verify({
+        action: body.approved ? "intent:approve" : "intent:deny",
+        subject: body.intentId,
+        ...(body.challenge ? { challenge: body.challenge } : {}),
+        ...(body.rootProof ? { proof: body.rootProof } : {}),
+      }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+      if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
+      authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
+    }
+
+    // The awaiting approver, not the caller's suggestion: a body that could
+    // name its own approver would pick which of this process's keys signs.
+    const result = await runtime.resolve(
+      body.intentId,
+      body.approved,
+      authority.awaitingApprover ?? undefined,
+      authorizedBy,
+    );
+    return jsonBig(c, { ...result, authorizedBy, approver: authority.awaitingApprover });
   });
 
   app.get("/marketplace/quote", async (c) => {

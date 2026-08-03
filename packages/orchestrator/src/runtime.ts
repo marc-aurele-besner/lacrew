@@ -34,6 +34,7 @@ import {
   MOCK_WORKER,
   SESSION_SCOPES,
   type AgentWallet,
+  type ApprovalAuthority,
   type Allowance,
   type AssetStack,
   type ChainWallets,
@@ -1517,6 +1518,52 @@ export class CrewRuntime {
     return this.propose({ value });
   }
 
+  /**
+   * Who the chain is waiting on for one pending intent, and whether that is the
+   * workspace's human root (PRD F2.6).
+   *
+   * Read without simulating. `listPending` dry-runs every approval, traces it
+   * and measures its state diffs — worth it for an approver reading a queue,
+   * and several chain round-trips to answer a question that is only "whose
+   * signature does this need".
+   *
+   * An intent nobody is waiting on is reported as such rather than as
+   * manager-depth: this answer decides whether a root proof is demanded, and
+   * "we could not find it" defaulting to "no proof needed" is the failure the
+   * gate exists to prevent.
+   */
+  async approvalAuthority(intentId: string): Promise<ApprovalAuthority> {
+    const intents = await this.client.getPendingIntents();
+    const intent = intents.find((i) => i.id === intentId);
+    if (!intent) return { found: false, awaitingApprover: null, isRoot: false };
+    const awaiting = intent.awaitingApprover;
+    if (!awaiting) return { found: true, awaitingApprover: null, isRoot: false };
+    return {
+      found: true,
+      awaitingApprover: awaiting,
+      isRoot: await this.isHumanRoot(awaiting),
+    };
+  }
+
+  /**
+   * Whether an address holds the org's human-root seat.
+   *
+   * The org chart answers first, because the root is a seat in the tree; the
+   * address book's `humanRoot` is a deployment convenience that a chain
+   * without one leaves empty. Both are consulted, and a chart this process
+   * cannot read raises rather than answering "no" — a false negative here
+   * silently drops the proof requirement on the one intent that most needs it.
+   */
+  private async isHumanRoot(address: `0x${string}`): Promise<boolean> {
+    const wanted = address.toLowerCase();
+    const booked = isOnchainClient(this.client) ? this.client.addresses.humanRoot : undefined;
+    if (booked && booked.toLowerCase() === wanted) return true;
+    const nodes = await this.client.getOrgTree();
+    return nodes.some(
+      (n) => n.kind === "human_root" && n.account.toLowerCase() === wanted,
+    );
+  }
+
   async listPending(): Promise<Intent[]> {
     const intents = await this.client.getPendingIntents();
     const unsimulated = intents.filter((i) => !i.simulation);
@@ -1700,12 +1747,21 @@ export class CrewRuntime {
 
   /**
    * Manager (or root) resolves a pending intent.
-   * Onchain mode signs with resolverAccount (MANAGER_PRIVATE_KEY).
+   *
+   * `approver` is the seat the chain is waiting on, and onchain it selects the
+   * key that signs: `EscalationRouter.resolve` reverts for any other sender, so
+   * a resolve that always signed with the manager key would be a manager
+   * approving on the root's behalf wherever it happened not to revert.
+   *
+   * `authorizedBy` records what let this call through — a verified root proof,
+   * or the fact that nothing was asked. The trail must never read as though a
+   * root signed for a decision no root was shown.
    */
   async resolve(
     intentId: string,
     approved: boolean,
     approver: `0x${string}` = this.managerAgent,
+    authorizedBy?: string,
   ): Promise<ResolveResult> {
     const result = await this.client.resolveIntent(intentId, approved, approver);
     const txHash = "txHash" in result ? result.txHash : undefined;
@@ -1726,6 +1782,8 @@ export class CrewRuntime {
         intentId,
         approved,
         escalated: result.escalated,
+        approver,
+        ...(authorizedBy ? { authorizedBy } : {}),
         txHash,
       },
     });

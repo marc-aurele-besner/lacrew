@@ -191,6 +191,23 @@ export interface Intent {
 }
 
 /**
+ * Whose signature a pending intent's next decision needs (PRD F2.6).
+ *
+ * `EscalationRouter.resolve` reverts for any sender that is not the intent's
+ * `awaitingApprover`, so this is a read of the chain's own gate rather than a
+ * policy this stack invents. `isRoot` is what decides whether a fresh root
+ * proof is demanded before anything is signed: an intent that has climbed to
+ * the human root is settled by the human, not by whichever key the
+ * orchestrator happens to hold.
+ */
+export interface ApprovalAuthority {
+  /** False when the intent is not pending — never read as "no proof needed". */
+  found: boolean;
+  awaitingApprover: `0x${string}` | null;
+  isRoot: boolean;
+}
+
+/**
  * The scopes a session key can carry. Closed on purpose: SessionRegistry
  * rejects a mask with any bit it does not know, so a scope invented here
  * without a matching bit onchain would be refused at issue time rather than
