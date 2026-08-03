@@ -379,6 +379,66 @@ lacrew session-set-issuer 0x<issuer address> --rpc
 lacrew session-issuer --rpc   # read it back
 ``` A compromise of that key can issue session keys (already bounded by scope, `maxValue`, and expiry the chain enforces) but cannot change the issuer, move the treasury, or touch governance; only root can `setIssuer`.
 
+## Deploying a passkey root Safe
+
+A Safe-with-passkey root is deterministic before it exists: the credential implies a `SafeWebAuthnSigner` address, and that signer implies a 1-of-1 Safe. `predictPasskeySafe` answers both, and the address is real and fundable while still counterfactual — most roots never need more than that, since a Safe deploys with its first transaction.
+
+Deployment is the step that puts code at those two addresses, and it needs a sender with gas. Two modes, and which one you are in is a different call rather than a flag:
+
+```ts
+import { deployRootSafe, relayRootSafeDeployment, verifyRootSafeDeployed } from "@lacrew/adapter-wallet-safe";
+
+// Builds only. `txs` is what is still outstanding, in order — an already
+// deployed root comes back with an empty list, not an error.
+const plan = await deployRootSafe(publicClient, {
+  provider: rpcUrl,
+  publicKey: coseKeyFromRegistration,
+  saltNonce: workspaceId,
+});
+```
+
+**The default sender is the user's own wallet.** Hand `plan.txs` to whatever the human already holds — MetaMask, a hardware wallet — and no key beyond theirs is involved in establishing their root. Deploying does not confer ownership: the owner is the signer the credential implies, whoever paid the gas.
+
+**A relayer is opt-in and allowlisted.** `relayRootSafeDeployment` broadcasts with a key you supply, and only for chain ids you name:
+
+```ts
+const relayed = await relayRootSafeDeployment({
+  provider: rpcUrl,
+  privateKey: process.env.LACREW_ROOT_DEPLOY_RELAYER as `0x${string}`,
+  allowChainIds: [31337],   // no default; an empty list refuses everything
+  plan,
+});
+```
+
+There is no "unless it looks like mainnet" heuristic, because an allowlist that has to be passed in is the only version an operator cannot end up with by accident. Public-network gas is a separate ops decision this path deliberately does not make for you — it will refuse a chain you did not name, whatever the balance on the key.
+
+Either way, confirm rather than assume. A landed transaction is not the same claim as a passkey-owned root:
+
+```ts
+const check = await verifyRootSafeDeployed({
+  provider: rpcUrl,
+  safeAddress: plan.predicted.safeAddress,
+  expectedOwner: plan.predicted.ownerAddress,
+});
+// check.deployed    → there is code at the predicted address
+// check.ownerMatches → it is 1-of-1 owned by the passkey signer, not the sender
+// check.reason      → why not, when either is false
+```
+
+### The recipe, on Anvil
+
+Anvil's prefunded accounts are the sender, and a fork carries the canonical Safe singletons and passkey module that a bare chain does not have. Nothing is published:
+
+```bash
+anvil --port 8546 --fork-url https://mainnet.base.org
+
+SAFE_FORK_RPC=http://127.0.0.1:8546 \
+SAFE_FORK_PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  pnpm --filter @lacrew/adapter-wallet-safe test
+```
+
+That suite drives the whole loop — predict, relay, `getCode` at the predicted address, live owners read back as the passkey signer — plus the refusals: an unconfigured relayer stops before it reaches an RPC, and a chain outside the allowlist sends nothing at all.
+
 ## Model provider
 
 Orchestrator model calls go through `ModelProvider` (never a hard-wired vendor SDK):
