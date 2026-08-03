@@ -823,20 +823,46 @@ export class OnchainLacrewClient {
   }
 
   /**
+   * Who a dry-run of this approval must come from.
+   *
+   * `resolve` reverts for any sender that is not the intent's
+   * `awaitingApprover`, so simulating as the resolver key reports "reverted"
+   * for every intent that has climbed past that seat — a warning about the
+   * caller's own authority, dressed as a warning about the spend, shown at
+   * exactly the moment somebody is deciding whether to allow it. Falls back to
+   * the resolver when the intent cannot be read, which is the old behaviour and
+   * no worse than it was.
+   */
+  private async simulationSender(intentId: string): Promise<`0x${string}` | null> {
+    const fallback = this.resolverWalletClient?.account?.address ?? null;
+    try {
+      const intent = await this.readIntent(BigInt(intentId));
+      return intent.awaitingApprover ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
    * Dry-run an approval (viem eth_call through router.resolve → finalize →
    * the agent's actual target call) without signing. PRD F1.16.
    */
   async simulateResolveApproval(
     intentId: string,
   ): Promise<{ ok: boolean; reason?: string }> {
-    const wallet = this.requireResolverWallet();
+    const sender = await this.simulationSender(intentId);
+    if (!sender) {
+      throw new Error(
+        "Onchain resolve requires an account (createOnchainClient({ account }) or resolverAccount)",
+      );
+    }
     try {
       await this.publicClient.simulateContract({
         address: this.addresses.escalationRouter,
         abi: escalationRouterAbi,
         functionName: "resolve",
         args: [BigInt(intentId), true],
-        account: wallet.account!,
+        account: sender,
       });
       return { ok: true };
     } catch (err) {
@@ -869,14 +895,16 @@ export class OnchainLacrewClient {
       }>
     | null
   > {
-    const resolver = this.resolverWalletClient?.account;
-    if (!resolver) return null;
     let intent: Intent;
     try {
       intent = await this.readIntent(BigInt(intentId));
     } catch {
       return null;
     }
+    // The seat the chain is waiting on, not whichever key this client holds:
+    // simulated from anyone else the resolve reverts and nothing is measured.
+    const sender = intent.awaitingApprover ?? this.resolverWalletClient?.account?.address ?? null;
+    if (!sender) return null;
 
     const stacks = listAssetStacks(this.addresses).filter(
       (s) => s.token && s.token !== "0x0000000000000000000000000000000000000000",
@@ -923,7 +951,7 @@ export class OnchainLacrewClient {
 
       const simCalls: Array<{ from?: `0x${string}`; to: `0x${string}`; data: `0x${string}` }> = [
         {
-          from: resolver.address,
+          from: sender,
           to: this.addresses.escalationRouter,
           data: encodeFunctionData({
             abi: escalationRouterAbi,
@@ -988,8 +1016,8 @@ export class OnchainLacrewClient {
       }>
     | null
   > {
-    const resolver = this.resolverWalletClient?.account;
-    if (!resolver) return null;
+    const sender = await this.simulationSender(intentId);
+    if (!sender) return null;
     type Frame = {
       type?: string;
       from?: `0x${string}`;
@@ -1005,7 +1033,7 @@ export class OnchainLacrewClient {
         method: "debug_traceCall" as never,
         params: [
           {
-            from: resolver.address,
+            from: sender,
             to: this.addresses.escalationRouter,
             data: encodeFunctionData({
               abi: escalationRouterAbi,
