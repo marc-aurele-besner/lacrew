@@ -277,7 +277,7 @@ const botPrTriage: FlowTemplate = {
   id: "tpl-bot-pr-triage",
   name: "Bot PR triage",
   description:
-    "Read one dependency-bot PR from GitHub, classify it, and either merge it, reserve the budget for a fix, or hand it to a human. The merge is asked of policy first and refused by the connector independently — admitting or revoking one address turns the crew's merge authority on or off org-wide.",
+    "Read one dependency-bot PR from GitHub, classify it, and either merge it, reserve the budget for a fix, or hand it to a human. The fix path posts its note back on the PR. Both writes are asked of policy first and refused by the connector independently, against separate addresses — merge authority and comment authority are revoked one without the other.",
   category: "dev",
   author: "LaCrew",
   definition: flow("bot-pr-triage", "Bot PR triage")
@@ -364,7 +364,36 @@ const botPrTriage: FlowTemplate = {
     .model("fix-note", {
       label: "Report the fix attempt",
       prompt:
-        "Fixer result: {{steps.delegate-fix.json}}\nPR: {{steps.pr.json}}\n\nWrite the PR comment: what was changed, why, and what a reviewer should check before the merge.",
+        "Fixer result: {{steps.delegate-fix.json}}\nPR: {{steps.pr.json}}\n\nWrite the PR comment: what was changed, why, and what a reviewer should check before the merge. Write only the comment body — it is posted verbatim.",
+      next: "comment-check",
+    })
+    .tool(
+      "comment-check",
+      "lacrew_check_policy",
+      { target: "{{target.comment-authority}}", value: "0" },
+      { label: "May this crew comment?", next: "may-comment" },
+    )
+    .branch("may-comment", {
+      label: "Comment authority admitted?",
+      when: { source: "{{steps.comment-check.json}}", op: "contains", value: '"ALLOW"' },
+      onTrue: "post-fix-note",
+      onFalse: "comment-blocked",
+    })
+    .tool(
+      "post-fix-note",
+      "github.create_issue_comment",
+      {
+        owner: "{{input.owner}}",
+        repo: "{{input.repo}}",
+        number: "{{input.number}}",
+        body: "{{steps.fix-note.text}}",
+      },
+      { label: "Post the note on the PR", next: null },
+    )
+    .model("comment-blocked", {
+      label: "Comment authority refused",
+      prompt:
+        "Policy answered {{steps.comment-check.json}} for the comment-authority address, so the note was written but not posted.\nNote: {{steps.fix-note.text}}\n\nWrite one line for the maintainer's queue: which PR the note belongs on, and that admitting the comment-authority address is a governance change, not a retry.",
       next: null,
     })
     .model("hold-note", {

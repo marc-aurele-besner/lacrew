@@ -394,12 +394,13 @@ const githubExperts: CrewBlueprint = {
         "Reads the diff and the release notes, classifies risk, checks CI, and decides merge, fix, hold, or reject.",
       capUsdc: usdc(15),
       grantUsdc: usdc(40),
-      spends: ["model-api", "merge-authority"],
+      spends: ["model-api", "merge-authority", "comment-authority"],
       tools: [
         "lacrew_check_policy",
         "lacrew_propose_intent",
         "lacrew_invoke_agent",
         "github.get_pull_request",
+        "github.create_issue_comment",
         "github.merge_pull_request",
       ],
       flows: ["bot-pr-triage"],
@@ -473,13 +474,20 @@ const githubExperts: CrewBlueprint = {
       whitelisted: true,
       note: "Not a payee — an address standing for permission to merge. The triage flow asks policy about it before merging and the connector re-checks it, so revoking this one address turns the crew's merge authority off org-wide in a single governance action, without touching GitHub.",
     },
+    {
+      id: "comment-authority",
+      label: "Comment authority",
+      kind: "payout",
+      whitelisted: true,
+      note: "Not a payee — an address standing for permission to speak on the crew's own pull requests. Deliberately separate from merge authority: the fix-note runs on the path where merging did *not* happen, so binding both to one address would mean revoking merge rights also silences the explanation of why a PR is stuck. Two addresses, two governance decisions.",
+    },
   ],
   connectors: [
     {
       id: "github",
-      routes: ["get_pull_request", "merge_pull_request"],
+      routes: ["get_pull_request", "create_issue_comment", "merge_pull_request"],
       usedBy: "flow",
-      note: "Reads the PR being triaged and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Either way the merge route is a write and carries the merge-authority policy target.",
+      note: "Reads the PR being triaged, posts the fixer's note back on it, and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Either way both writes carry their own policy target: merge-authority for the merge, comment-authority for the comment.",
     },
   ],
   externalScopes: [

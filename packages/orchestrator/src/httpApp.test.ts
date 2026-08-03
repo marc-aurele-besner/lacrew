@@ -117,7 +117,10 @@ describe("orchestrator Hono app", () => {
       connectors: [
         buildConnectorPreset("github", {
           authMode: "token",
-          policyTargets: { merge_pull_request: "0x00000000000000000000000000000000000000aa" },
+          policyTargets: {
+            merge_pull_request: "0x00000000000000000000000000000000000000aa",
+            create_issue_comment: "0x00000000000000000000000000000000000000bb",
+          },
         }),
       ],
       env: { GH_TOKEN: "ghp_supersecret" },
@@ -151,7 +154,10 @@ describe("orchestrator Hono app", () => {
   it("reports a connector whose credential is absent as not ready", async () => {
     const registry = createConnectorRegistry({
       connectors: [
-        buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+        buildConnectorPreset("github", {
+          authMode: "token",
+          omitRoutes: ["merge_pull_request", "create_issue_comment"],
+        }),
       ],
       env: {},
     });
@@ -1086,6 +1092,7 @@ describe("connector write policy routes (F2.24)", () => {
         buildConnectorPreset("github", {
           policyTargets: {
             merge_pull_request: "0x00000000000000000000000000000000000000aa",
+            create_issue_comment: "0x00000000000000000000000000000000000000bb",
           },
         }),
       ],
@@ -1099,6 +1106,10 @@ describe("connector write policy routes (F2.24)", () => {
     };
     const routes = body.connectors[0]!.routes;
     assert.equal(routes.find((r) => r.name === "merge_pull_request")!.mode, "ask");
+    // The comment write is `auto` by design: visible, reversible, and the thing
+    // a maintainer is waiting for. Confirming every one of them is how an
+    // operator learns to click through the merge confirmation too.
+    assert.equal(routes.find((r) => r.name === "create_issue_comment")!.mode, "auto");
     assert.equal(
       routes.find((r) => r.name === "get_pull_request")!.mode,
       null,

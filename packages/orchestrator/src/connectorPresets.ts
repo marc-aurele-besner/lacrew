@@ -155,7 +155,7 @@ const github: ConnectorPreset = {
   id: "github",
   title: "GitHub REST API",
   summary:
-    "Reads pull requests, their files, and their CI state; merges the ones that clear policy. What the `github-experts` crew's triage flow calls.",
+    "Reads pull requests, their files, and their CI state; comments on them, and merges the ones that clear policy. What the `github-experts` crew's triage flow calls.",
   baseUrl: "https://api.github.com",
   auth: [
     {
@@ -164,7 +164,7 @@ const github: ConnectorPreset = {
       privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
       installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
       label: "GitHub App installation",
-      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read, Pull requests: read (write only if the merge route is registered), Checks: read. The registry mints and refreshes the hourly installation token itself.",
+      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read, Pull requests: read (write only if the merge or comment route is registered), Issues: write if the comment route is registered — GitHub files PR conversation comments under issues, Checks: read. The registry mints and refreshes the hourly installation token itself.",
     },
     {
       mode: "token",
@@ -214,6 +214,27 @@ const github: ConnectorPreset = {
         "Check runs for a ref — where GitHub Actions results live. Combined status alone reads green on a repo that only uses checks.",
       effect: "read",
       params: ["status", "filter", "per_page", "page"],
+    },
+    {
+      name: "create_issue_comment",
+      method: "POST",
+      // GitHub files pull request comments under `issues`: a PR is an issue
+      // with a branch, and `/pulls/{n}/comments` is the *review* comment
+      // endpoint, which needs a diff position. This is the one that posts to
+      // the conversation.
+      path: "/repos/{owner}/{repo}/issues/{number}/comments",
+      description:
+        "Post a comment on a pull request's conversation. What the triage flow's fix-note is actually written for.",
+      effect: "write",
+      params: ["body"],
+      // `auto`, unlike the merge. A comment is visible, reversible, and the
+      // thing a maintainer is waiting for; stopping to confirm each one would
+      // train an operator to approve without reading, which is the habit that
+      // makes the merge confirmation worthless.
+      policyTarget: {
+        required: true,
+        note: "The crew's authority to speak on its own PRs — not a payee, and deliberately not the merge authority. A crew whose merge rights were revoked should still be able to say why a PR is stuck; binding both to one address makes silencing it the side effect of a governance action nobody meant that way. In the `github-experts` blueprint this is the `comment-authority` target.",
+      },
     },
     {
       name: "merge_pull_request",
@@ -863,12 +884,15 @@ const coingecko: ConnectorPreset = {
  * market is an onchain intent through the policy stack rather than anything
  * reachable from here.
  *
- * Two of these carry a size warning in their route descriptions, and it is
- * not decoration. `callConnector` reads the whole response body and the flow
- * runtime stringifies it into `{{steps.<id>.json}}` — there is no size cap on
- * that path, so an 11 MB bulk route handed straight to a model step is an
- * 11 MB prompt. The crews that ship call the narrow routes; the bulk ones are
- * for building a watch list once, outside a flow.
+ * The bulk routes here carry a size warning in their descriptions, and each
+ * now carries the limit that enforces it. `callConnector` refuses a body over
+ * `maxResponseBytes` rather than stringifying it into `{{steps.<id>.json}}`,
+ * so the default ceiling would refuse these three outright — which would be
+ * wrong, because reading every pool once to build a watch list is what they
+ * are for. They declare their own ceilings instead: generous enough for the
+ * documented job, and written next to the route rather than discovered when a
+ * run fails. Handing one to a model step is still a mistake; it is now a
+ * bounded one.
  * ------------------------------------------------------------------ */
 
 const defillama: ConnectorPreset = {
@@ -916,6 +940,7 @@ const defillama: ConnectorPreset = {
       description:
         "Every tracked protocol with current TVL, chains, category and audit links. Around eight megabytes — read it to build a watch list once, not inside a flow that hands the result to a model.",
       effect: "read",
+      maxResponseBytes: 16 * 1024 * 1024,
     },
     {
       name: "get_protocol",
@@ -924,6 +949,10 @@ const defillama: ConnectorPreset = {
       description:
         "One protocol's full TVL history broken out by chain and token. Tens of megabytes for a large protocol; prefer `get_protocol_tvl` when only the current number matters.",
       effect: "read",
+      // The largest thing any preset here will accept. "Tens of megabytes" is
+      // the documented shape of a big protocol's full history, and a ceiling
+      // under that would refuse the route's whole purpose.
+      maxResponseBytes: 64 * 1024 * 1024,
     },
   ],
 };
@@ -957,6 +986,7 @@ const defillamaYields: ConnectorPreset = {
       description:
         "Every tracked pool with current APY, its base and reward split, TVL and a seven-day impermanent-loss estimate. Around eleven megabytes — register a longer `timeoutMs`, and filter it before a model ever sees it.",
       effect: "read",
+      maxResponseBytes: 16 * 1024 * 1024,
     },
   ],
 };

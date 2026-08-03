@@ -91,7 +91,7 @@ what is still unbound.
 
 | Preset | What a crew uses it for | Writes (need an address) | Credential modes |
 | --- | --- | --- | --- |
-| `github` | Pull requests, files, combined status, check runs | `merge_pull_request` | `github-app` (default) · `token` → `GH_TOKEN` |
+| `github` | Pull requests, files, combined status, check runs | `merge_pull_request`, `create_issue_comment` | `github-app` (default) · `token` → `GH_TOKEN` |
 | `gitlab` | Merge requests, diffs, pipelines — gitlab.com or self-hosted | `merge_merge_request` | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`) |
 | `npm` | Published versions, dist-tags, deprecations | — | `none` |
 | `pypi` | Release history, requires-python, yanked releases | — | `none` |
@@ -129,10 +129,12 @@ mistake presets exist to prevent, so they are separate and a test pins the two
 base URLs apart.
 
 Two of those routes are bulk: `defillama.list_protocols` is around eight
-megabytes and `defillama-yields.list_pools` around eleven. Nothing in the
-connector path caps a response size, and a flow that interpolates one into a
-model step sends the whole thing as a prompt. Register a longer `timeoutMs`,
-and use them to build a watch list rather than inside a pipeline.
+megabytes and `defillama-yields.list_pools` around eleven. Both carry a raised
+`maxResponseBytes` so the default 1 MB ceiling does not refuse them outright —
+see [Responses have a size limit](#responses-have-a-size-limit). Register a
+longer `timeoutMs`, and use them to build a watch list rather than inside a
+pipeline: the limit bounds what a mistake costs, it does not make one a good
+idea.
 
 **Where the publish gate actually sits.** For `typefully` it is the arg
 allowlist: `create_draft` and `schedule_draft` are the same endpoint, and the
@@ -213,10 +215,73 @@ marketplace listing. The registry is built on that assumption:
 | **Undeclared args are dropped** | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described. |
 | **Credentials never enter the flow** | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one. |
 | **`http://` is refused** | Except for loopback, so a local tool server still works in development. |
+| **Responses have a ceiling** | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit). |
 
 An invalid connector is rejected at registration, and the orchestrator refuses
 to boot with one — a silently dropped connector reads to a flow author as "the
 tool does not exist yet".
+
+## Responses have a size limit
+
+A connector's response is stringified into `{{steps.<id>.json}}` and handed to
+whatever reads it next — usually a model prompt. Without a ceiling, one call to
+a bulk listing route is an eleven-megabyte prompt, billed and truncated
+somewhere downstream where the cause is invisible.
+
+Every route has a limit. The default is **1 MB**, and a body over it is refused:
+
+```
+connector_response_too_large:defillama-yields.list_pools:1048576
+```
+
+The step fails with that code. It does **not** return a truncated body — a
+half-object is invalid JSON, so it would reach a model as a string that looks
+like data and reasons like noise, and nothing downstream could tell that from a
+real answer. A refusal is something an operator can act on; a truncation is a
+wrong answer nobody sees.
+
+The refusal is on the audit trail as a `ToolCalled` row with `ok: false` and
+`refused: "response_too_large"`, carrying the limit that applied. The response
+body is not on it — the reason for refusing a body is not a reason to record it.
+
+Where the size is a property of the endpoint rather than the deployment, the
+route says so. The bulk DefiLlama routes ship with their own raised ceilings,
+because reading every pool once to build a watch list is what they are for:
+
+| Route | Limit |
+| --- | --- |
+| `defillama.list_protocols` | 16 MB |
+| `defillama.get_protocol` | 64 MB |
+| `defillama-yields.list_pools` | 16 MB |
+
+`lacrew connectors show <id>` prints the default and any route that raises it.
+
+Set your own at either level — a route's limit wins over its connector's, which
+wins over the default:
+
+```jsonc
+{
+  "id": "reports",
+  "baseUrl": "https://reports.example",
+  "auth": { "kind": "bearer", "tokenEnv": "REPORTS_TOKEN" },
+  "maxResponseBytes": 262144,          // everything here, unless a route says otherwise
+  "routes": [
+    { "name": "get_summary", "method": "GET", "path": "/summary/{id}", "effect": "read" },
+    {
+      "name": "export_all",
+      "method": "GET",
+      "path": "/export",
+      "effect": "read",
+      "maxResponseBytes": 33554432     // the bulk one, raised deliberately
+    }
+  ]
+}
+```
+
+Raising a limit is not the only answer, and usually not the right one. A route
+that returns megabytes is a route whose result should be filtered before a model
+ever sees it — call the narrow endpoint, or pass the parameters that narrow the
+bulk one.
 
 ## Connector or MCP server?
 
@@ -440,7 +505,7 @@ to register before standing the crew up:
 ```bash
 lacrew crews show github-experts
 # Connectors to register before the crew can work
-#   github  (github.get_pull_request, github.merge_pull_request)
+#   github  (github.get_pull_request, github.create_issue_comment, github.merge_pull_request)
 #      ships as a preset:  lacrew connectors show github
 ```
 
