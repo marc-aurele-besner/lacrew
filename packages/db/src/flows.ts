@@ -132,6 +132,9 @@ export interface FlowRunStateRow {
   state?: Record<string, unknown> | null;
   pause?: Record<string, unknown> | null;
   attempt?: Record<string, unknown> | null;
+  /** Set only on a run an `agent` step delegated; see the schema comment. */
+  parentRunId?: string | null;
+  parentStepId?: string | null;
   startedAt: string;
   updatedAt: string;
 }
@@ -160,6 +163,8 @@ function toRunState(row: typeof flowRunState.$inferSelect): FlowRunStateRow {
     state: row.state,
     pause: row.pause,
     attempt: row.attempt,
+    parentRunId: row.parentRunId,
+    parentStepId: row.parentStepId,
     startedAt: row.startedAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -171,6 +176,11 @@ function toRunState(row: typeof flowRunState.$inferSelect): FlowRunStateRow {
  * `request` is deliberately not written here: it belongs to whoever asked for
  * the pause, and a worker checkpointing its own progress must not clear an
  * operator's instruction it has not yet reached.
+ *
+ * The delegation link is written on insert and never on conflict, for the same
+ * reason: who delegated a run is settled the moment it starts, and every later
+ * write — a checkpoint, a resume — comes from a caller that has no business
+ * restating it, and would clear it by simply not knowing it.
  */
 export async function upsertFlowRunState(
   handle: DbHandle,
@@ -186,6 +196,8 @@ export async function upsertFlowRunState(
     state: row.state ?? null,
     pause: row.pause ?? null,
     attempt: row.attempt ?? null,
+    parentRunId: row.parentRunId ?? null,
+    parentStepId: row.parentStepId ?? null,
     startedAt: new Date(row.startedAt),
     updatedAt: new Date(),
   };
@@ -206,6 +218,65 @@ export async function upsertFlowRunState(
         updatedAt: values.updatedAt,
       },
     });
+}
+
+/**
+ * The run one `agent` step delegated, if it has one yet.
+ *
+ * What a resumed parent asks before delegating again: a child that already
+ * exists is the run this step started, whatever state it is in, and starting a
+ * second one would be the double delegation `flow_run_state_parent_step_uq`
+ * refuses at the table.
+ */
+export async function getChildFlowRunState(
+  handle: DbHandle,
+  parentRunId: string,
+  parentStepId: string,
+): Promise<FlowRunStateRow | null> {
+  const rows = await handle.db
+    .select()
+    .from(flowRunState)
+    .where(
+      and(eq(flowRunState.parentRunId, parentRunId), eq(flowRunState.parentStepId, parentStepId)),
+    )
+    .limit(1);
+  const row = rows[0];
+  return row ? toRunState(row) : null;
+}
+
+/** Every run one parent delegated, oldest first — the cancel cascade reads this. */
+export async function listChildFlowRunStates(
+  handle: DbHandle,
+  parentRunId: string,
+): Promise<FlowRunStateRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(flowRunState)
+    .where(eq(flowRunState.parentRunId, parentRunId))
+    .orderBy(flowRunState.startedAt);
+  return rows.map(toRunState);
+}
+
+/**
+ * Take a parked run out of `waiting`, atomically, and return it to exactly one
+ * caller.
+ *
+ * A run can be woken by more than one thing at once — a child ending in one
+ * replica while an operator presses Resume in another — and both would read
+ * `waiting` and both would resume. The transition *is* the claim: whoever's
+ * UPDATE matches gets the row, everyone else gets null and does nothing.
+ */
+export async function claimWaitingFlowRun(
+  handle: DbHandle,
+  runId: string,
+): Promise<FlowRunStateRow | null> {
+  const rows = await handle.db
+    .update(flowRunState)
+    .set({ status: "running", request: null, updatedAt: new Date() })
+    .where(and(eq(flowRunState.runId, runId), eq(flowRunState.status, "waiting")))
+    .returning();
+  const row = rows[0];
+  return row ? toRunState(row) : null;
 }
 
 /** Set or clear the open attempt without disturbing the rest of the row. */

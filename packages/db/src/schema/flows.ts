@@ -86,12 +86,26 @@ export const flowRunState = pgTable(
     pause: jsonb("pause").$type<Record<string, unknown>>(),
     /** FlowAttempt, non-null only while a side-effecting step is in flight. */
     attempt: jsonb("attempt").$type<Record<string, unknown>>(),
+    /**
+     * The run whose `agent` step delegated this one (F2.24 / F2.27), and the
+     * step it delegated from. Null on every run a person or a trigger started.
+     *
+     * This is the link a parked child is woken *up* through: when the child
+     * ends, the parent parked on `awaiting_child` is the row named here, and
+     * the parent's own pause token carries this run's id back the other way.
+     * The pair is unique because one step delegates one run — a second row for
+     * the same (run, step) would mean a resume started the delegate twice,
+     * which is precisely the double-write the checkpoint ledger exists to stop.
+     */
+    parentRunId: text("parent_run_id"),
+    parentStepId: text("parent_step_id"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("flow_run_state_status_idx").on(table.status),
     index("flow_run_state_updated_idx").on(table.updatedAt),
+    unique("flow_run_state_parent_step_uq").on(table.parentRunId, table.parentStepId),
   ],
 );
 
