@@ -19,6 +19,14 @@ contracts/lib/
 # next, which turns the following migration into a diff nobody can read.
 packages/db/drizzle/
 
+# Written by packages/core/scripts/sync-abis.mjs from the Foundry build, and
+# checked in so consumers need no toolchain. Same reasoning as the drizzle
+# snapshots: prettier's copy and the generator's copy differ, so formatting
+# these makes the next `pnpm build` look like an unexplained source change.
+packages/core/src/abis.ts
+packages/core/src/bytecode.generated.ts
+packages/core/src/deployments.generated.ts
+
 # typedoc output, regenerated on every docs build
 apps/docs/content/reference/
 
