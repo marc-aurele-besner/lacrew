@@ -85,7 +85,9 @@ async function orchPost<T>(
  * and refusing here says which root this workspace has and what it needs to
  * sign, which is what the operator is actually missing.
  */
-export async function resolveIntentWithProof(options: ResolveIntentOptions): Promise<ResolvedIntent> {
+export async function resolveIntentWithProof(
+  options: ResolveIntentOptions,
+): Promise<ResolvedIntent> {
   const action = options.approved ? "intent:approve" : "intent:deny";
   const issued = await orchPost<ChallengeResponse>(options, "/root-auth/challenge", {
     action,

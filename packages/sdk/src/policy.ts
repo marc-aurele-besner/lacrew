@@ -34,9 +34,7 @@ export function checkClientPolicy(
   config: ClientPolicyConfig,
   input: { agent: `0x${string}`; target: `0x${string}`; value: bigint },
 ): Verdict {
-  const allowed = config.whitelist.some(
-    (t) => t.toLowerCase() === input.target.toLowerCase(),
-  );
+  const allowed = config.whitelist.some((t) => t.toLowerCase() === input.target.toLowerCase());
   if (!allowed) return "DENY";
 
   const cap = resolveCap(config, input.agent);

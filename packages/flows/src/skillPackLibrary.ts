@@ -61,7 +61,8 @@ const githubPrTriage: SkillPack = {
     {
       id: "write-the-merge-digest",
       name: "Write the merge-window digest",
-      trigger: "The weekly merge window has closed, or someone asks what the crew merged and what is stuck.",
+      trigger:
+        "The weekly merge window has closed, or someone asks what the crew merged and what is stuck.",
       body: [
         "Run the `merge-window-digest` flow with the week's merge log. It reads the org chart and the pending escalations itself, so do not summarize either from memory.",
         "Four sections, and no more: what merged, what is blocked and why, spend against the allowance, and the decisions waiting on a human. Name anything pending more than a week.",

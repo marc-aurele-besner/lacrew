@@ -45,7 +45,7 @@ describe("event source registry", () => {
     const github = described.find((s) => s.id === "github")!;
     assert.equal(github.usesSecret, true);
     assert.equal(github.signatureHeader, "x-hub-signature-256");
-    assert.ok(!JSON.stringify(described).includes("secret\":\""));
+    assert.ok(!JSON.stringify(described).includes('secret":"'));
   });
 });
 
@@ -62,7 +62,10 @@ describe("github event source", () => {
   });
 
   it("falls back to the bare event when the body carries no action", () => {
-    assert.equal(github.eventType(ctx("{}", { "x-github-event": "push" }), { ref: "refs/heads/main" }), "push");
+    assert.equal(
+      github.eventType(ctx("{}", { "x-github-event": "push" }), { ref: "refs/heads/main" }),
+      "push",
+    );
   });
 
   it("takes X-GitHub-Delivery as the idempotency key", () => {
@@ -124,10 +127,10 @@ describe("google pub/sub event source", () => {
   it("refuses to verify without the audience and service account bindings", async () => {
     // Without them a valid Google signature proves only that *somebody* has a
     // Google project, which is not an authorization to start a funded flow.
-    assert.deepEqual(
-      await pubsub.verify({ ctx: ctx("{}"), secret: undefined, config: {} }),
-      { ok: false, reason: "source_config_missing" },
-    );
+    assert.deepEqual(await pubsub.verify({ ctx: ctx("{}"), secret: undefined, config: {} }), {
+      ok: false,
+      reason: "source_config_missing",
+    });
     assert.deepEqual(
       await pubsub.verify({
         ctx: ctx("{}"),

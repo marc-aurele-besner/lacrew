@@ -187,14 +187,9 @@ describe("crew P&L", () => {
       report.seats.map((s) => s.agentId).sort(),
       [MOCK_MANAGER.toLowerCase(), MOCK_WORKER.toLowerCase()].sort(),
     );
-    const worker = report.seats.find(
-      (s) => s.agentId === MOCK_WORKER.toLowerCase(),
-    )!;
+    const worker = report.seats.find((s) => s.agentId === MOCK_WORKER.toLowerCase())!;
     assert.equal(worker.inference.usdMicros, 4_500);
-    assert.equal(
-      worker.onchain.assets.find((a) => a.asset === "USDC")!.spent,
-      "50000000",
-    );
+    assert.equal(worker.onchain.assets.find((a) => a.asset === "USDC")!.spent, "50000000");
   });
 
   it("charges a seat's call to its crew without counting it twice", async () => {
@@ -326,10 +321,7 @@ describe("crew P&L", () => {
     });
     assert.equal(report.scope.kind, "agent");
     assert.equal(report.seats.length, 0);
-    assert.equal(
-      report.totals.onchain.assets.find((a) => a.asset === "USDC")!.spent,
-      "50000000",
-    );
+    assert.equal(report.totals.onchain.assets.find((a) => a.asset === "USDC")!.spent, "50000000");
   });
 });
 
@@ -337,9 +329,7 @@ describe("GET /pnl", () => {
   it("serves the report, and the same figures as CSV", async () => {
     const h = harness();
     seedTrail(h.runtime);
-    const res = await h.app.request(
-      `/pnl?crewId=${MOCK_MANAGER}&from=${FROM}&to=${TO}`,
-    );
+    const res = await h.app.request(`/pnl?crewId=${MOCK_MANAGER}&from=${FROM}&to=${TO}`);
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
       totals: { onchain: { assets: Array<{ asset: string; spent: string }> } };
@@ -349,9 +339,7 @@ describe("GET /pnl", () => {
     assert.equal(body.period.from, FROM);
     assert.equal(body.totals.onchain.assets[0]!.spent, "50000000");
 
-    const csv = await h.app.request(
-      `/pnl?crewId=${MOCK_MANAGER}&from=${FROM}&to=${TO}&format=csv`,
-    );
+    const csv = await h.app.request(`/pnl?crewId=${MOCK_MANAGER}&from=${FROM}&to=${TO}&format=csv`);
     assert.equal(csv.status, 200);
     assert.match(csv.headers.get("content-type") ?? "", /text\/csv/);
     const text = await csv.text();
@@ -360,14 +348,9 @@ describe("GET /pnl", () => {
 
   it("400s a window it cannot measure and 404s a foreign seat", async () => {
     const h = harness();
-    const bad = await h.app.request(
-      `/pnl?crewId=${MOCK_MANAGER}&from=nonsense`,
-    );
+    const bad = await h.app.request(`/pnl?crewId=${MOCK_MANAGER}&from=nonsense`);
     assert.equal(bad.status, 400);
-    assert.equal(
-      ((await bad.json()) as { error: string }).error,
-      "invalid_from",
-    );
+    assert.equal(((await bad.json()) as { error: string }).error, "invalid_from");
 
     const missing = await h.app.request("/pnl");
     assert.equal(missing.status, 400);
@@ -399,11 +382,8 @@ describe("GET /pnl", () => {
 describe("connector price table from the environment", () => {
   it("reads nothing by default — no vendor ships pre-priced", () => {
     assert.equal(connectorPricesFromEnv({}), null);
-    assert.deepEqual(
-      connectorPricesFromEnv({ LACREW_CONNECTOR_PRICES: '{"github":0.001}' }),
-      {
-        github: 0.001,
-      },
-    );
+    assert.deepEqual(connectorPricesFromEnv({ LACREW_CONNECTOR_PRICES: '{"github":0.001}' }), {
+      github: 0.001,
+    });
   });
 });

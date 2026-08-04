@@ -64,9 +64,7 @@ export async function cmdEval(args: string[], scope: EvalScope): Promise<void> {
       );
       if (s.describe) console.log(`  ${s.describe}`);
     }
-    console.log(
-      `\n${scenarios.length} scenario(s). Run them:  lacrew ${scope} eval`,
-    );
+    console.log(`\n${scenarios.length} scenario(s). Run them:  lacrew ${scope} eval`);
     return;
   }
 
@@ -101,10 +99,7 @@ export async function cmdEval(args: string[], scope: EvalScope): Promise<void> {
   // Coverage only means something over the whole suite; printed under a filter
   // it would read as "these flows have no eval" when they simply were not run.
   console.log(
-    formatEvalReport(
-      suite,
-      refs.length === 0 ? evalCoverage(firstPartyEvals) : undefined,
-    ),
+    formatEvalReport(suite, refs.length === 0 ? evalCoverage(firstPartyEvals) : undefined),
   );
   if (!suite.ok) process.exitCode = 1;
 }

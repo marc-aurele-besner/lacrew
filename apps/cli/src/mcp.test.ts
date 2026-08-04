@@ -88,7 +88,13 @@ describe("lacrew mcp", () => {
       "/mcp/servers/refresh": {
         body: {
           results: [
-            { server: "gh", ok: true, added: ["delete_repository"], removed: [], unchanged: ["search_issues"] },
+            {
+              server: "gh",
+              ok: true,
+              added: ["delete_repository"],
+              removed: [],
+              unchanged: ["search_issues"],
+            },
           ],
         },
       },
@@ -103,7 +109,18 @@ describe("lacrew mcp", () => {
   it("reports an unreachable server without implying the allowlist moved", async () => {
     const stub = stubFetch({
       "/mcp/servers/refresh": {
-        body: { results: [{ server: "gh", ok: false, added: [], removed: [], unchanged: [], error: "mcp_http_502:gh" }] },
+        body: {
+          results: [
+            {
+              server: "gh",
+              ok: false,
+              added: [],
+              removed: [],
+              unchanged: [],
+              error: "mcp_http_502:gh",
+            },
+          ],
+        },
       },
     });
     const { out } = await capture(["refresh", "gh"]);

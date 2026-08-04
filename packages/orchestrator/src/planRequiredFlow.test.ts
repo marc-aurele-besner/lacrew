@@ -95,9 +95,7 @@ function harness(opts: { now?: () => Date } = {}) {
     .tool("read", "github.get_pull_request", { owner: "acme", repo: "site", number: "7" })
     .build();
 
-  const spend = flow("desk-spend", "Spend from the desk")
-    .gate("pay", { value: "1000000" })
-    .build();
+  const spend = flow("desk-spend", "Spend from the desk").gate("pay", { value: "1000000" }).build();
 
   return { runtime, surface, planRequired, calls, events, merge, read, spend };
 }
@@ -350,7 +348,10 @@ describe("plan-required mode, end to end", () => {
   it("an agent-scope rule carves one seat out of a workspace requirement", async () => {
     const h = harness();
     await h.planRequired.set({ scope: { level: "workspace" }, mode: "side_effects" });
-    await h.planRequired.set({ scope: { level: "agent", ref: h.runtime.defaultAgent }, mode: "off" });
+    await h.planRequired.set({
+      scope: { level: "agent", ref: h.runtime.defaultAgent },
+      mode: "off",
+    });
     await h.surface.save(h.merge);
 
     const ran = await h.surface.run({ id: "pr-merge" });

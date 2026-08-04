@@ -433,7 +433,9 @@ describe("flow run lifecycle routes", () => {
 
     const res = await app.request("/flows/runs/open");
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { runs: Array<{ status: string; pause?: { reason: string } }> };
+    const body = (await res.json()) as {
+      runs: Array<{ status: string; pause?: { reason: string } }>;
+    };
     assert.equal(body.runs.length, 1);
     assert.equal(body.runs[0]?.status, "waiting");
     assert.equal(body.runs[0]?.pause?.reason, "awaiting_human");

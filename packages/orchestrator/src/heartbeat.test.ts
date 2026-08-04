@@ -51,7 +51,9 @@ async function makeSurface() {
     mcpBackend,
     store: createMemoryFlowStore(),
   });
-  await flows.save(flow("desk-risk-sweep", "Risk sweep").model("look", { prompt: "{{input}}" }).build());
+  await flows.save(
+    flow("desk-risk-sweep", "Risk sweep").model("look", { prompt: "{{input}}" }).build(),
+  );
   await flows.save(flow("desk-digest", "Digest").model("write", { prompt: "summarize" }).build());
   const heartbeats = createHeartbeatSurface({
     runtime,
@@ -105,10 +107,7 @@ describe("heartbeat — what may be put on a checklist", () => {
 
   it("refuses a cadence under the floor before anything is stored", async () => {
     const { heartbeats } = await makeSurface();
-    await assert.rejects(
-      heartbeats.save(config({ schedule: "* * * * *" })),
-      /invalid_heartbeat/,
-    );
+    await assert.rejects(heartbeats.save(config({ schedule: "* * * * *" })), /invalid_heartbeat/);
     assert.equal(heartbeats.list().length, 0);
   });
 });

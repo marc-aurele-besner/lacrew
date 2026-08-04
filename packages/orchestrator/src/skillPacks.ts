@@ -77,7 +77,11 @@ export type SkillPacksSurface = {
   availability(): Promise<SkillPackAvailability>;
   /** Unmet requirements for one pack; empty arrays mean it can be installed. */
   check(pack: SkillPack): Promise<MissingRequirements>;
-  install(agent: `0x${string}`, pack: SkillPack, opts?: { label?: string }): Promise<SkillPackInstallReport>;
+  install(
+    agent: `0x${string}`,
+    pack: SkillPack,
+    opts?: { label?: string },
+  ): Promise<SkillPackInstallReport>;
   remove(agent: `0x${string}`, packId: string): { agent: string; pack: string; removed: number };
   installed(agent: `0x${string}`): InstalledSkillPack[];
 };

@@ -156,7 +156,12 @@ export type PlanRequiredCheckInput = {
 
 export type PlanRequiredOutcome =
   | { required: false; effect: PlanRequiredEffect | null; mode: PlanRequiredMode }
-  | { required: true; effect: PlanRequiredEffect; mode: PlanRequiredMode; plan: { id: string; at: string } };
+  | {
+      required: true;
+      effect: PlanRequiredEffect;
+      mode: PlanRequiredMode;
+      plan: { id: string; at: string };
+    };
 
 export interface PlanRequiredStore {
   loadPlanRequirements(): Promise<PlanRequiredRecord[]>;
@@ -298,7 +303,10 @@ export function createPlanRequirements(opts: {
           effect,
           principal: input.principal,
           mode: settings.mode,
-          scope: settings.source.kind === "rule" ? planRequiredScopeKey(settings.source.scope) : "default",
+          scope:
+            settings.source.kind === "rule"
+              ? planRequiredScopeKey(settings.source.scope)
+              : "default",
           windowMs: settings.windowMs,
           // Why it missed, never what the thread contains: a plan body names
           // repositories, counterparties and amounts, and the trail is not the

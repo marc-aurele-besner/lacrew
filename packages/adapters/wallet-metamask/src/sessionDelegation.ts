@@ -163,7 +163,13 @@ export function createMetaMaskDelegationProvider(
       return {
         delegation,
         ...(seatDeployTx
-          ? { seatDeployTx: { to: seatDeployTx.to, data: seatDeployTx.data, value: seatDeployTx.value } }
+          ? {
+              seatDeployTx: {
+                to: seatDeployTx.to,
+                data: seatDeployTx.data,
+                value: seatDeployTx.value,
+              },
+            }
           : {}),
       };
     },
@@ -186,18 +192,24 @@ export function createMetaMaskDelegationProvider(
         delegation.signed as Delegation,
       );
       const entryPoint = await entryPointAddress(delegation.chainId);
-      const callData = await (seat as unknown as {
-        encodeCalls: (calls: Array<{ to: `0x${string}`; data: `0x${string}`; value: bigint }>) => Promise<`0x${string}`>;
-      }).encodeCalls([{ to: disable.to, data: disable.data, value: 0n }]);
+      const callData = await (
+        seat as unknown as {
+          encodeCalls: (
+            calls: Array<{ to: `0x${string}`; data: `0x${string}`; value: bigint }>,
+          ) => Promise<`0x${string}`>;
+        }
+      ).encodeCalls([{ to: disable.to, data: disable.data, value: 0n }]);
       const nonce = (await client.readContract({
         address: entryPoint,
         abi: entryPoint07Abi,
         functionName: "getNonce",
         args: [delegation.seat, 0n],
       })) as bigint;
-      const signature = await (seat as unknown as {
-        signUserOperation: (op: Record<string, unknown>) => Promise<`0x${string}`>;
-      }).signUserOperation({
+      const signature = await (
+        seat as unknown as {
+          signUserOperation: (op: Record<string, unknown>) => Promise<`0x${string}`>;
+        }
+      ).signUserOperation({
         sender: delegation.seat,
         nonce,
         callData,

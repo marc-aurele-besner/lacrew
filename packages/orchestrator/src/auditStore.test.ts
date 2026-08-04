@@ -31,22 +31,18 @@ describe("AuditStore", () => {
     }
   });
 
-  it(
-    "postgres store round-trips an event",
-    { skip: !process.env.DATABASE_URL },
-    async () => {
-      const store = createPgAuditStore();
-      const marker = `test-${Date.now()}`;
-      await store.append({ ...EVENT, payload: { ...EVENT.payload, marker } });
-      const recent = await store.recent(50);
-      try {
-        assert.ok(
-          recent.some((e) => e.payload.marker === marker),
-          "appended event should be readable back",
-        );
-      } finally {
-        await store.close();
-      }
-    },
-  );
+  it("postgres store round-trips an event", { skip: !process.env.DATABASE_URL }, async () => {
+    const store = createPgAuditStore();
+    const marker = `test-${Date.now()}`;
+    await store.append({ ...EVENT, payload: { ...EVENT.payload, marker } });
+    const recent = await store.recent(50);
+    try {
+      assert.ok(
+        recent.some((e) => e.payload.marker === marker),
+        "appended event should be readable back",
+      );
+    } finally {
+      await store.close();
+    }
+  });
 });

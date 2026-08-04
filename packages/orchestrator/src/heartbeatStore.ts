@@ -159,9 +159,7 @@ export function createMemoryHeartbeatStore(): HeartbeatStore {
       return true;
     },
     settleTick: async (row) => {
-      const found = ticks.find(
-        (t) => t.crewId === row.crewId && t.windowKey === row.windowKey,
-      );
+      const found = ticks.find((t) => t.crewId === row.crewId && t.windowKey === row.windowKey);
       if (found) {
         found.status = row.status;
         found.items = row.items;

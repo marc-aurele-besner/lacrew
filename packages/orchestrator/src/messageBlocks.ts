@@ -176,7 +176,9 @@ export function normalizeBlocks(raw: readonly unknown[]): MessageBlock[] {
     if (kind === "ref") {
       const refKind = trimmed(block.ref) as MessageRefKind;
       if (!REF_KINDS.includes(refKind)) {
-        throw new BlockError(`${at}: unknown_ref_kind (${refKind}); known: ${REF_KINDS.join(", ")}`);
+        throw new BlockError(
+          `${at}: unknown_ref_kind (${refKind}); known: ${REF_KINDS.join(", ")}`,
+        );
       }
       const id = trimmed(block.id);
       if (!id) throw new BlockError(`${at}: ref_id_required`);

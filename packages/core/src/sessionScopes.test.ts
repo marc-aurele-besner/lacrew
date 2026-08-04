@@ -180,10 +180,7 @@ describe("policyForcesEscalation — rate limit", () => {
     const nearlyOver = rateLimit({ windowStartSec: NOW - 3570, actionsUsed: 10 });
     assert.equal(policyForcesEscalation([nearlyOver], ctx()), false);
     // With no margin demanded, the same state is proof.
-    assert.equal(
-      policyForcesEscalation([nearlyOver], ctx({ rateWindowMarginSec: 0 })),
-      true,
-    );
+    assert.equal(policyForcesEscalation([nearlyOver], ctx({ rateWindowMarginSec: 0 })), true);
   });
 
   it("needs the usage read, not just the module's limits", () => {

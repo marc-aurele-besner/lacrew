@@ -87,7 +87,9 @@ function predictedSafeConfig(opts: PredictSafeWalletOptions, threshold: number) 
     ...(opts.signer ? { signer: opts.signer } : {}),
     predictedSafe: {
       safeAccountConfig: { owners: opts.owners, threshold },
-      ...(opts.saltNonce ? { safeDeploymentConfig: { saltNonce: toSaltNonce(opts.saltNonce) } } : {}),
+      ...(opts.saltNonce
+        ? { safeDeploymentConfig: { saltNonce: toSaltNonce(opts.saltNonce) } }
+        : {}),
     },
   };
 }
@@ -97,9 +99,7 @@ function assertOwners(owners: `0x${string}`[], threshold: number): void {
     throw new Error("A Safe needs at least one owner.");
   }
   if (threshold < 1 || threshold > owners.length) {
-    throw new Error(
-      `Safe threshold ${threshold} is out of range for ${owners.length} owner(s).`,
-    );
+    throw new Error(`Safe threshold ${threshold} is out of range for ${owners.length} owner(s).`);
   }
 }
 

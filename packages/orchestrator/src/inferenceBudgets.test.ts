@@ -242,7 +242,9 @@ describe("the guard at ModelProvider.complete", () => {
     const meta = { crewId: "trading" };
 
     await guarded.complete({ prompt: "july", model: "test-model", meta });
-    await assert.rejects(() => guarded.complete({ prompt: "july again", model: "test-model", meta }));
+    await assert.rejects(() =>
+      guarded.complete({ prompt: "july again", model: "test-model", meta }),
+    );
 
     clock = new Date("2026-08-01T00:00:00Z");
     // A new month is a new counter — no sweep, no job, no migration.
@@ -359,10 +361,7 @@ describe("budget routes", () => {
 
     const off = await post(app, "/budgets/enabled", { crewId: "trading", enabled: false });
     assert.equal(off.status, 200);
-    assert.equal(
-      ((await off.json()) as { budget: { enabled: boolean } }).budget.enabled,
-      false,
-    );
+    assert.equal(((await off.json()) as { budget: { enabled: boolean } }).budget.enabled, false);
 
     // Raising or removing a cap is what lets a stopped crew spend again, so it
     // is in the trail.
@@ -371,7 +370,10 @@ describe("budget routes", () => {
 
     const removed = await post(app, "/budgets/delete", { crewId: "trading" });
     assert.equal(((await removed.json()) as { removed: boolean }).removed, true);
-    assert.equal((await post(app, "/budgets/enabled", { crewId: "trading", enabled: true })).status, 404);
+    assert.equal(
+      (await post(app, "/budgets/enabled", { crewId: "trading", enabled: true })).status,
+      404,
+    );
   });
 
   it("refuses a budget that bounds nothing, and one with a bad address", async () => {
@@ -421,9 +423,7 @@ describe("budget routes", () => {
     });
     await post(app, "/model/complete", { prompt: "a", model: "test-model", crewId: "trading" });
 
-    const usage = (await (
-      await app.request("/budgets/usage?crewId=trading")
-    ).json()) as {
+    const usage = (await (await app.request("/budgets/usage?crewId=trading")).json()) as {
       events: Array<{ model: string; outputTokens: number; priceSource: string }>;
     };
     assert.equal(usage.events.length, 1);

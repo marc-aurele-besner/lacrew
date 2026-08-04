@@ -51,7 +51,9 @@ test("the http transport handshakes, lists and calls over JSON-RPC", async () =>
     seen.push(method);
     if (method === "initialize") return { protocolVersion: "2024-11-05", capabilities: {} };
     if (method === "tools/list") {
-      return { tools: [{ name: "search", description: "Search", annotations: { readOnlyHint: true } }] };
+      return {
+        tools: [{ name: "search", description: "Search", annotations: { readOnlyHint: true } }],
+      };
     }
     return { content: [{ type: "text", text: "ok" }], isError: false };
   });
@@ -84,7 +86,10 @@ test("an event-stream reply is read for its last frame", async () => {
     { sse: true },
   );
   const client = createHttpMcpClient({ serverId: "gh", url: http.url });
-  assert.deepEqual((await client.listTools()).map((t) => t.name), ["search"]);
+  assert.deepEqual(
+    (await client.listTools()).map((t) => t.name),
+    ["search"],
+  );
   await client.close();
   await http.close();
 });
@@ -144,10 +149,7 @@ test("the stdio transport talks to a real subprocess", async () => {
   });
 
   const tools = await client.listTools();
-  assert.deepEqual(
-    tools.map((t) => t.name).sort(),
-    ["create_issue", "search_issues"],
-  );
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["create_issue", "search_issues"]);
   assert.equal(tools.find((t) => t.name === "search_issues")!.annotations?.readOnlyHint, true);
 
   const result = await client.callTool("search_issues", { q: "bug" });

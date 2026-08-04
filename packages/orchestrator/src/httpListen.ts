@@ -10,11 +10,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function attemptListen(
-  server: Server,
-  port: number,
-  onListening: () => void,
-): Promise<void> {
+async function attemptListen(server: Server, port: number, onListening: () => void): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const onError = (err: NodeJS.ErrnoException) => {
       server.off("listening", onListen);
@@ -80,10 +76,7 @@ export async function listenHttp(
   throw lastErr;
 }
 
-export function installShutdownHooks(
-  server: Server,
-  onStop?: () => Promise<void>,
-): void {
+export function installShutdownHooks(server: Server, onStop?: () => Promise<void>): void {
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) return;

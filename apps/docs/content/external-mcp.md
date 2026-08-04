@@ -104,7 +104,7 @@ The sweep runs hourly by default (`LACREW_MCP_REFRESH_MINUTES`, `0` disables
 it), and each pass emits an `ExternalMcpDiscovered` audit row naming what
 appeared. Nothing about that row changes what a crew may call.
 
-For the same reason, a wildcard rule may only *narrow*:
+For the same reason, a wildcard rule may only _narrow_:
 
 ```bash
 # Kill switch for a whole server, for one seat — allowed.
@@ -123,11 +123,11 @@ runs in a mode — the same `auto` / `ask` / `deny` vocabulary as
 knows what ESCALATE means for a spend already knows what `ask` means for an
 issue that gets filed under the company's name.
 
-| Mode | What happens |
-| --- | --- |
-| `auto` | called |
-| `ask` | a question goes into the principal's thread; the run parks until someone answers `yes` |
-| `deny` | never called, and the server is never reached |
+| Mode   | What happens                                                                           |
+| ------ | -------------------------------------------------------------------------------------- |
+| `auto` | called                                                                                 |
+| `ask`  | a question goes into the principal's thread; the run parks until someone answers `yes` |
+| `deny` | never called, and the server is never reached                                          |
 
 ```bash
 curl -s -X PUT http://127.0.0.1:8788/mcp/servers/tools \
@@ -136,7 +136,7 @@ curl -s -X PUT http://127.0.0.1:8788/mcp/servers/tools \
 ```
 
 A tool nobody has classified counts as a **write** — the unexamined tool is the
-one to be careful with. With no ask surface wired, an `ask` write is *refused*
+one to be careful with. With no ask surface wired, an `ask` write is _refused_
 (`mcp_mode_denied:…:ask_unavailable`) rather than called: "confirm this first"
 must never degrade into "go ahead" because of a wiring gap.
 
@@ -206,15 +206,15 @@ a sandboxing problem, not a configuration one.
 
 ## The audit trail
 
-| Event | When |
-| --- | --- |
-| `ExternalMcpCalled` | every call *and every refusal* — server, tool, effect, mode, duration, whether it went out |
-| `ExternalMcpDiscovered` | a refresh, with what appeared and what vanished |
-| `ExternalMcpToolPolicyChanged` | somebody allowed, disabled, or re-moded a tool |
+| Event                          | When                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `ExternalMcpCalled`            | every call _and every refusal_ — server, tool, effect, mode, duration, whether it went out |
+| `ExternalMcpDiscovered`        | a refresh, with what appeared and what vanished                                            |
+| `ExternalMcpToolPolicyChanged` | somebody allowed, disabled, or re-moded a tool                                             |
 
 No arguments, and no results. A tool argument routinely names a customer or a
 private repository, and a result is unbounded third-party text.
-`LACREW_MCP_AUDIT_ARGS=1` adds argument *keys* — never values — when you are
+`LACREW_MCP_AUDIT_ARGS=1` adds argument _keys_ — never values — when you are
 debugging a flow.
 
 Refusals are recorded for a reason: an attempt on a tool nobody admitted leaves
@@ -240,19 +240,19 @@ answer that matches what its flows run under.
 
 ## Environment
 
-| Variable | Meaning |
-| --- | --- |
-| `LACREW_MCP_SERVERS` | inline JSON or a path to a JSON file; unset means no server is attached |
-| `LACREW_MCP_REFRESH_MINUTES` | discovery cadence in minutes (default `60`, `0` disables the sweep) |
-| `LACREW_MCP_AUDIT_ARGS` | `1` records argument keys on the audit trail; values are never recorded |
+| Variable                     | Meaning                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `LACREW_MCP_SERVERS`         | inline JSON or a path to a JSON file; unset means no server is attached |
+| `LACREW_MCP_REFRESH_MINUTES` | discovery cadence in minutes (default `60`, `0` disables the sweep)     |
+| `LACREW_MCP_AUDIT_ARGS`      | `1` records argument keys on the audit trail; values are never recorded |
 
 ## Routes
 
-| Route | What it does |
-| --- | --- |
-| `GET /mcp/servers[?as=]` | attached servers, their tools, and what each resolves to for a seat |
-| `POST /mcp/servers/refresh` | re-read tool lists; new tools are recorded blocked |
-| `POST /mcp/servers/ping` | reachability check for a setup drawer |
-| `PUT /mcp/servers/tools` | allow, disable, re-mode, or clear one tool rule |
-| `GET /mcp/tools[?as=]` | first-party tools plus the external ones a seat may call |
-| `POST /mcp/call` | call a tool by name, through the same allowlist a flow meets |
+| Route                       | What it does                                                        |
+| --------------------------- | ------------------------------------------------------------------- |
+| `GET /mcp/servers[?as=]`    | attached servers, their tools, and what each resolves to for a seat |
+| `POST /mcp/servers/refresh` | re-read tool lists; new tools are recorded blocked                  |
+| `POST /mcp/servers/ping`    | reachability check for a setup drawer                               |
+| `PUT /mcp/servers/tools`    | allow, disable, re-mode, or clear one tool rule                     |
+| `GET /mcp/tools[?as=]`      | first-party tools plus the external ones a seat may call            |
+| `POST /mcp/call`            | call a tool by name, through the same allowlist a flow meets        |

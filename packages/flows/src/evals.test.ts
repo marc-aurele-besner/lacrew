@@ -18,20 +18,14 @@ import { getFlowTemplate } from "./templates.js";
 import type { FlowDefinition, FlowStep } from "./types.js";
 
 /** The scenario every other test in this file mutates around. */
-const goldenMergeDeny = firstPartyEvals.find(
-  (s) => s.id === "github-experts/merge-refused",
-)!;
+const goldenMergeDeny = firstPartyEvals.find((s) => s.id === "github-experts/merge-refused")!;
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 /** A copy of a shipped template with one step replaced — the mutation lever. */
-function mutate(
-  flowId: string,
-  stepId: string,
-  patch: Record<string, unknown>,
-): FlowDefinition {
+function mutate(flowId: string, stepId: string, patch: Record<string, unknown>): FlowDefinition {
   const def = clone(getFlowTemplate(flowId)!.definition);
   const step = def.steps.find((s) => s.id === stepId);
   assert.ok(step, `no step "${stepId}" in "${flowId}"`);
@@ -43,10 +37,7 @@ test("the first-party suite is green", async () => {
   const suite = await runFlowEvals(firstPartyEvals);
   assert.equal(suite.ok, true, formatEvalReport(suite));
   assert.equal(suite.failed, 0);
-  assert.ok(
-    suite.passed >= 5,
-    "the seed suite should cover several blueprints",
-  );
+  assert.ok(suite.passed >= 5, "the seed suite should cover several blueprints");
 });
 
 /*
@@ -66,10 +57,7 @@ test("mutation: routing the refusal port at the merge makes the golden scenario 
 
   assert.equal(result.ok, false, "a DENY that still merges must fail the eval");
   const named = result.failures.map((f) => f.assertion);
-  assert.ok(
-    named.includes("notCalled"),
-    `expected a notCalled failure, got ${named.join(", ")}`,
-  );
+  assert.ok(named.includes("notCalled"), `expected a notCalled failure, got ${named.join(", ")}`);
   const write = result.failures.find((f) => f.assertion === "notCalled")!;
   assert.match(write.detail, /github\.merge_pull_request/);
 });
@@ -94,9 +82,7 @@ test("mutation: skipping the policy check entirely makes the golden scenario fai
   assert.equal(result.ok, false);
   assert.ok(result.failures.some((f) => f.assertion === "notCalled"));
   assert.ok(
-    result.failures.some(
-      (f) => f.assertion === "ran" || f.assertion === "port",
-    ),
+    result.failures.some((f) => f.assertion === "ran" || f.assertion === "port"),
     "the missing policy step should also break the expected path",
   );
 });
@@ -115,9 +101,7 @@ test("mutation: a connector call added to the sign-off path breaks noConnectorCa
   Object.assign(signoff, { next: "leak" });
 
   const scenario = clone(
-    firstPartyEvals.find(
-      (s) => s.id === "content-studio/publish-denied-ends-in-signoff",
-    )!,
+    firstPartyEvals.find((s) => s.id === "content-studio/publish-denied-ends-in-signoff")!,
   );
   const result = await runFlowEval({
     ...scenario,
@@ -126,11 +110,7 @@ test("mutation: a connector call added to the sign-off path breaks noConnectorCa
     definition: def,
   } as FlowEvalScenario);
 
-  assert.equal(
-    result.ok,
-    false,
-    "a publish route on the DENY path must fail the eval",
-  );
+  assert.equal(result.ok, false, "a publish route on the DENY path must fail the eval");
   const leak = result.failures.find((f) => f.assertion === "noConnectorCalls");
   assert.ok(
     leak,
@@ -145,28 +125,15 @@ test("mutation: a connector call added to the sign-off path breaks noConnectorCa
   so — and the same mocks without the declaration are not.
 */
 test("a scenario cannot quietly admit a target its blueprint refuses", async () => {
-  const drift = clone(
-    firstPartyEvals.find(
-      (s) => s.id === "lp-advisor/router-admitted-is-drift",
-    )!,
-  );
+  const drift = clone(firstPartyEvals.find((s) => s.id === "lp-advisor/router-admitted-is-drift")!);
   delete drift.mocks!.policy!.admitsUnadmitted;
   const result = await runFlowEval({ ...drift, id: "mutant/undeclared-admit" });
 
   assert.equal(result.ok, false);
-  const guard = result.failures.find(
-    (f) => f.assertion === "mock_contradicts_blueprint",
-  );
-  assert.ok(
-    guard,
-    "an undeclared ALLOW over an unadmitted target must be refused",
-  );
+  const guard = result.failures.find((f) => f.assertion === "mock_contradicts_blueprint");
+  assert.ok(guard, "an undeclared ALLOW over an unadmitted target must be refused");
   assert.match(guard.detail, /dex-router/);
-  assert.equal(
-    result.run,
-    undefined,
-    "a contradicted scenario must not run at all",
-  );
+  assert.equal(result.run, undefined, "a contradicted scenario must not run at all");
 });
 
 test("a scenario cannot run a flow its seat does not own", async () => {
@@ -193,17 +160,9 @@ test("the run executes as the seat the scenario names", async () => {
 test("bindings are derived, stable, and unique per seat and target", () => {
   const a = evalCrewBindings(getCrewBlueprint("github-experts")!);
   const b = evalCrewBindings(getCrewBlueprint("github-experts")!);
-  assert.deepEqual(
-    a,
-    b,
-    "the same blueprint must bind to the same addresses every run",
-  );
+  assert.deepEqual(a, b, "the same blueprint must bind to the same addresses every run");
   const all = [...Object.values(a.roles), ...Object.values(a.targets)];
-  assert.equal(
-    new Set(all).size,
-    all.length,
-    "two seats must not share an address",
-  );
+  assert.equal(new Set(all).size, all.length, "two seats must not share an address");
   for (const address of all) assert.match(address, /^0x[0-9a-f]{40}$/);
   assert.notEqual(
     evalAddress("github-experts:crew:reviewer"),
@@ -286,18 +245,14 @@ test("scripted model replies are consumed in order; unscripted ones are one cons
     expect: { status: "completed", called: { model: 3 } },
   });
   assert.equal(result.ok, true, JSON.stringify(result.failures, null, 2));
-  const texts = result.run!.steps.map(
-    (s) => (s.output as { text?: string }).text,
-  );
+  const texts = result.run!.steps.map((s) => (s.output as { text?: string }).text);
   assert.deepEqual(texts.slice(0, 2), ["A", "B"]);
   assert.match(texts[2] ?? "", /^\[eval\]/);
 });
 
 test("a tool mock can fail a route, and the flow reports the failure rather than the write", async () => {
   const scenario: FlowEvalScenario = {
-    ...clone(
-      firstPartyEvals.find((s) => s.id === "github-experts/merge-admitted")!,
-    ),
+    ...clone(firstPartyEvals.find((s) => s.id === "github-experts/merge-admitted")!),
     id: "github-experts/merge-route-down",
   };
   scenario.mocks!.tools!["github.merge_pull_request"] = { error: "github_502" };
@@ -329,11 +284,7 @@ test("assertions bite: a wrong port, verdict, or call count fails", async () => 
   assert.match(wrongCount.failures[0]?.detail ?? "", /called 1×, expected 2×/);
 
   const wrongVerdict = await runFlowEval({
-    ...clone(
-      firstPartyEvals.find(
-        (s) => s.id === "defi-desk/oversized-trade-escalates",
-      )!,
-    ),
+    ...clone(firstPartyEvals.find((s) => s.id === "defi-desk/oversized-trade-escalates")!),
     id: "assert/verdict",
     expect: { verdict: { trade: "ALLOW" } },
   });
@@ -359,21 +310,12 @@ test("the runner blocks the network for the duration of a run", async () => {
   const before = globalThis.fetch;
   const { attempts } = await withNetworkBlocked(async () => {
     await assert.rejects(
-      () =>
-        fetch(
-          "https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/94",
-        ),
+      () => fetch("https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/94"),
       /eval_network_blocked/,
     );
   });
-  assert.deepEqual(attempts, [
-    "https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/94",
-  ]);
-  assert.equal(
-    globalThis.fetch,
-    before,
-    "the real fetch must be restored afterwards",
-  );
+  assert.deepEqual(attempts, ["https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/94"]);
+  assert.equal(globalThis.fetch, before, "the real fetch must be restored afterwards");
 });
 
 test("coverage names the flows and blueprints no scenario touches", () => {

@@ -113,8 +113,7 @@ export function zonedParts(date: Date, timeZone = "UTC"): ZonedParts {
     hour: "numeric",
     minute: "numeric",
   }).formatToParts(date);
-  const read = (type: string): string =>
-    parts.find((p) => p.type === type)?.value ?? "";
+  const read = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
   // "24" is what hour12:false reports for midnight in some ICU versions; cron
   // has no hour 24, and reading it as one would make an `0 0 * * *` heartbeat
   // silently never fire.

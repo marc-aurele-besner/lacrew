@@ -287,13 +287,23 @@ const gitlab: ConnectorPreset = {
       path: "/projects/{id}/merge_requests",
       description: "Open merge requests on a project — the watcher's queue.",
       effect: "read",
-      params: ["state", "target_branch", "source_branch", "scope", "order_by", "sort", "per_page", "page"],
+      params: [
+        "state",
+        "target_branch",
+        "source_branch",
+        "scope",
+        "order_by",
+        "sort",
+        "per_page",
+        "page",
+      ],
     },
     {
       name: "list_merge_request_diffs",
       method: "GET",
       path: "/projects/{id}/merge_requests/{iid}/diffs",
-      description: "Changed files and diffs — what the reviewer classifies risk from. GitLab 15.7+.",
+      description:
+        "Changed files and diffs — what the reviewer classifies risk from. GitLab 15.7+.",
       effect: "read",
       params: ["per_page", "page", "unidiff"],
     },
@@ -369,7 +379,8 @@ const npm: ConnectorPreset = {
 const pypi: ConnectorPreset = {
   id: "pypi",
   title: "PyPI JSON API",
-  summary: "Release history, requires-python, and yanked releases for a Python package. The npm preset's counterpart for a Python dependency bot.",
+  summary:
+    "Release history, requires-python, and yanked releases for a Python package. The npm preset's counterpart for a Python dependency bot.",
   baseUrl: "https://pypi.org",
   auth: [
     {
@@ -452,13 +463,21 @@ const twitter: ConnectorPreset = {
       path: "/users/{id}/tweets",
       description: "An account's own recent posts — what the brand-voice check compares against.",
       effect: "read",
-      params: ["max_results", "exclude", "start_time", "end_time", "tweet.fields", "pagination_token"],
+      params: [
+        "max_results",
+        "exclude",
+        "start_time",
+        "end_time",
+        "tweet.fields",
+        "pagination_token",
+      ],
     },
     {
       name: "create_tweet",
       method: "POST",
       path: "/tweets",
-      description: "Publish. There is no draft state here — this is live the moment it returns 201.",
+      description:
+        "Publish. There is no draft state here — this is live the moment it returns 201.",
       effect: "write",
       params: ["text", "reply", "quote_tweet_id", "poll", "reply_settings", "media"],
       mode: "ask",
@@ -519,7 +538,14 @@ const typefully: ConnectorPreset = {
       description:
         "File a draft with a schedule date, which sends it at that time with nobody looking again.",
       effect: "write",
-      params: ["content", "threadify", "share", "schedule-date", "auto_retweet_enabled", "auto_plug_enabled"],
+      params: [
+        "content",
+        "threadify",
+        "share",
+        "schedule-date",
+        "auto_retweet_enabled",
+        "auto_plug_enabled",
+      ],
       mode: "ask",
       policyTarget: {
         required: true,
@@ -653,7 +679,7 @@ const medium: ConnectorPreset = {
       mode: "ask",
       policyTarget: {
         required: true,
-        note: "Publishing authority for the account. `publishStatus: \"draft\"` is still this route, so admitting it admits publishing.",
+        note: 'Publishing authority for the account. `publishStatus: "draft"` is still this route, so admitting it admits publishing.',
       },
     },
   ],
@@ -838,7 +864,8 @@ const coingecko: ConnectorPreset = {
       name: "token_price",
       method: "GET",
       path: "/simple/token_price/{platform}",
-      description: "Prices by contract address on one chain — how the desk prices what it actually holds.",
+      description:
+        "Prices by contract address on one chain — how the desk prices what it actually holds.",
       effect: "read",
       params: [
         "contract_addresses",
@@ -855,7 +882,14 @@ const coingecko: ConnectorPreset = {
       path: "/coins/{id}",
       description: "One asset in full: market data, links, categories.",
       effect: "read",
-      params: ["localization", "tickers", "market_data", "community_data", "developer_data", "sparkline"],
+      params: [
+        "localization",
+        "tickers",
+        "market_data",
+        "community_data",
+        "developer_data",
+        "sparkline",
+      ],
     },
     {
       name: "coin_market_chart",
@@ -871,7 +905,15 @@ const coingecko: ConnectorPreset = {
       path: "/coins/markets",
       description: "A ranked market page, for a scanner that starts from the top of the book.",
       effect: "read",
-      params: ["vs_currency", "ids", "category", "order", "per_page", "page", "price_change_percentage"],
+      params: [
+        "vs_currency",
+        "ids",
+        "category",
+        "order",
+        "per_page",
+        "page",
+        "price_change_percentage",
+      ],
     },
   ],
 };
@@ -922,7 +964,7 @@ const defillama: ConnectorPreset = {
       method: "GET",
       path: "/v2/chains",
       description:
-        "Current TVL per chain. The denominator for \"is this protocol bleeding, or is the whole chain?\" — around fifty kilobytes.",
+        'Current TVL per chain. The denominator for "is this protocol bleeding, or is the whole chain?" — around fifty kilobytes.',
       effect: "read",
     },
     {
@@ -1088,10 +1130,7 @@ function buildAuth(auth: ConnectorPresetAuth, options: ConnectorPresetOptions): 
  * and one that quietly ignored a misspelled `omitRoutes` entry would register a
  * write the operator believed they had left out.
  */
-export function buildConnectorPreset(
-  id: string,
-  options: ConnectorPresetOptions = {},
-): Connector {
+export function buildConnectorPreset(id: string, options: ConnectorPresetOptions = {}): Connector {
   const preset = getConnectorPreset(id);
   if (!preset) {
     throw new Error(
@@ -1170,7 +1209,9 @@ export function buildConnectorPreset(
  */
 export type ConnectorConfigEntry = Connector | ({ preset: string } & ConnectorPresetOptions);
 
-function isPresetRef(entry: ConnectorConfigEntry): entry is { preset: string } & ConnectorPresetOptions {
+function isPresetRef(
+  entry: ConnectorConfigEntry,
+): entry is { preset: string } & ConnectorPresetOptions {
   return typeof (entry as { preset?: unknown }).preset === "string";
 }
 

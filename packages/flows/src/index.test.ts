@@ -244,7 +244,11 @@ test("scope validates a session window and rate limit", () => {
   const good = validateFlow({
     id: "w1",
     name: "W1",
-    scope: { level: "org", window: { start: 32400, end: 61200 }, rate: { maxProposals: 5, ratePeriod: 3600 } },
+    scope: {
+      level: "org",
+      window: { start: 32400, end: 61200 },
+      rate: { maxProposals: 5, ratePeriod: 3600 },
+    },
     steps: [{ id: "m", kind: "model", prompt: "hi", next: null }],
   });
   assert.ok(good.ok, good.errors.join("; "));
@@ -359,7 +363,7 @@ test("validateFlow rejects malformed org, budget, and governance steps", () => {
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((e) => e.includes("must be a 0x address")));
   assert.ok(result.errors.some((e) => e.includes(`org step "o" parent is required`)));
-  assert.ok(result.errors.some((e) => e.includes("unknown action \"teleport\"")));
+  assert.ok(result.errors.some((e) => e.includes('unknown action "teleport"')));
   assert.ok(result.errors.some((e) => e.includes("needs a proposalId")));
 });
 

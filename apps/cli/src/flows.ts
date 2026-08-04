@@ -185,9 +185,7 @@ export async function cmdFlows(args: string[]): Promise<void> {
         // The orchestrator's refusals are expected outcomes, not crashes.
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("flow_out_of_scope")) {
-          console.error(
-            `"${ref}" is not in scope for ${as}. Check: lacrew flows list --as ${as}`,
-          );
+          console.error(`"${ref}" is not in scope for ${as}. Check: lacrew flows list --as ${as}`);
         } else if (msg.includes("flow_not_found")) {
           console.error(`No flow "${ref}" on the orchestrator. See: lacrew flows list`);
         } else {
@@ -436,9 +434,7 @@ async function cmdTriggers(args: string[]): Promise<void> {
     case "list": {
       const triggers = await client().listTriggers();
       if (triggers.length === 0) {
-        console.log(
-          "No webhook triggers. Create one: lacrew flows triggers create --flow <id>",
-        );
+        console.log("No webhook triggers. Create one: lacrew flows triggers create --flow <id>");
         return;
       }
       for (const t of triggers) printTrigger(t);
@@ -466,7 +462,9 @@ async function cmdTriggers(args: string[]): Promise<void> {
           ...(flagValue(rest, "--source") ? { scheme: flagValue(rest, "--source")! } : {}),
           ...(flagValue(rest, "--as") ? { principal: flagValue(rest, "--as")! } : {}),
           ...(listValue(rest, "--events") ? { events: listValue(rest, "--events")! } : {}),
-          ...(fields || path ? { input: { ...(path ? { path } : {}), ...(fields ? { fields } : {}) } } : {}),
+          ...(fields || path
+            ? { input: { ...(path ? { path } : {}), ...(fields ? { fields } : {}) } }
+            : {}),
           ...(flagValue(rest, "--description")
             ? { description: flagValue(rest, "--description")! }
             : {}),
@@ -626,9 +624,10 @@ Env:
 }
 
 function orchBase(args: string[]): string {
-  return (
-    flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788"
-  ).replace(/\/$/, "");
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
 }
 
 /** Turn the orchestrator's refusal codes into something an operator can act on. */
@@ -637,8 +636,10 @@ export function triggerError(err: unknown): string {
   if (msg.includes("flow_not_webhook_triggered")) {
     return 'That flow does not declare trigger: "webhook". Add it to the definition and save again — a hook cannot make a flow externally startable on its own.';
   }
-  if (msg.includes("flow_not_found")) return "No such flow on the orchestrator. See: lacrew flows list";
-  if (msg.includes("webhook_trigger_not_found")) return "No such trigger. See: lacrew flows triggers list";
+  if (msg.includes("flow_not_found"))
+    return "No such flow on the orchestrator. See: lacrew flows list";
+  if (msg.includes("webhook_trigger_not_found"))
+    return "No such trigger. See: lacrew flows triggers list";
   if (msg.includes("source_config_required")) {
     return "This source needs --audience and --service-account before it can verify anything.";
   }

@@ -20,10 +20,7 @@ const rpc = process.env.ANVIL_RPC;
  */
 function loadAnvilDeployment(): ChainAddresses | null {
   try {
-    const path = new URL(
-      "../../../contracts/deployments/31337.json",
-      import.meta.url,
-    );
+    const path = new URL("../../../contracts/deployments/31337.json", import.meta.url);
     return JSON.parse(readFileSync(path, "utf8")) as ChainAddresses;
   } catch {
     return null;
@@ -83,25 +80,18 @@ describe("createOnchainClient", () => {
     );
   });
 
-  it(
-    "reads org tree from Anvil when ANVIL_RPC is set",
-    { skip: !rpc },
-    async () => {
-      const addresses = getAddresses(ANVIL_CHAIN_ID);
-      assert.notEqual(
-        addresses.orgRegistry,
-        "0x0000000000000000000000000000000000000000",
-      );
-      const client = createOnchainClient({
-        transport: http(rpc!),
-        chainId: ANVIL_CHAIN_ID,
-        addresses,
-      });
-      const tree = await client.getOrgTree();
-      assert.ok(tree.length >= 1);
-      assert.equal(tree[0]?.kind, "human_root");
-    },
-  );
+  it("reads org tree from Anvil when ANVIL_RPC is set", { skip: !rpc }, async () => {
+    const addresses = getAddresses(ANVIL_CHAIN_ID);
+    assert.notEqual(addresses.orgRegistry, "0x0000000000000000000000000000000000000000");
+    const client = createOnchainClient({
+      transport: http(rpc!),
+      chainId: ANVIL_CHAIN_ID,
+      addresses,
+    });
+    const tree = await client.getOrgTree();
+    assert.ok(tree.length >= 1);
+    assert.equal(tree[0]?.kind, "human_root");
+  });
 });
 
 describe("node policy read-back (F2.5)", () => {
@@ -120,9 +110,7 @@ describe("node policy read-back (F2.5)", () => {
 
       // The worker's per-node override is the deploy's 4-module stack:
       // [timeWindow, whitelist, spendCap, rateLimit] in check() order.
-      const worker = policies.find(
-        (p) => p.node.toLowerCase() === addresses.worker!.toLowerCase(),
-      );
+      const worker = policies.find((p) => p.node.toLowerCase() === addresses.worker!.toLowerCase());
       assert.ok(worker);
       assert.equal(worker.source, "node");
       assert.equal(worker.policyModule.toLowerCase(), addresses.policyStack!.toLowerCase());

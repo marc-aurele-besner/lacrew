@@ -97,7 +97,12 @@ export type GithubAppTokenSource = {
    * is the connector's own, so a GitHub Enterprise install mints against its
    * host rather than github.com.
    */
-  get(args: { cacheKey: string; baseUrl: string; auth: GithubAppAuth; env: GithubAppEnv }): Promise<string>;
+  get(args: {
+    cacheKey: string;
+    baseUrl: string;
+    auth: GithubAppAuth;
+    env: GithubAppEnv;
+  }): Promise<string>;
   /** Drop a cached token so the next call re-mints. Used after a 401. */
   invalidate(cacheKey: string): void;
   /**

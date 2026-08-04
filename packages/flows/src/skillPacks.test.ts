@@ -157,7 +157,9 @@ test("installing twice is idempotent and keeps the pack's slot on update", () =>
   const v2: SkillPack = {
     ...pack,
     version: "2.0.0",
-    skills: [{ id: "first", name: "First", trigger: "When one, revised.", body: "Do one, better." }],
+    skills: [
+      { id: "first", name: "First", trigger: "When one, revised.", body: "Do one, better." },
+    ],
   };
   const updated = installSkillPack(twice.layers, v2);
   const names = updated.layers[0]!.skills!.map((s) => s.name);
@@ -173,7 +175,11 @@ test("installing twice is idempotent and keeps the pack's slot on update", () =>
 
 test("installing onto a second layer moves the pack rather than duplicating it", () => {
   const first = installSkillPack([], { ...pack, scope: "either" });
-  const second = installSkillPack(first.layers, { ...pack, scope: "either" }, { label: "crew:desk" });
+  const second = installSkillPack(
+    first.layers,
+    { ...pack, scope: "either" },
+    { label: "crew:desk" },
+  );
   const installed = installedSkillPacks(second.layers);
   assert.equal(installed.length, 1);
   assert.equal(installed[0]!.label, "crew:desk");
@@ -213,7 +219,12 @@ test("uninstall removes only the pack's skills, in every layer", () => {
 
 test("export round-trips a directive's skills back into a valid pack", () => {
   const layers = installSkillPack(
-    [{ label: "agent", skills: [{ name: "Mine", when: "When I say.", instructions: "As written." }] }],
+    [
+      {
+        label: "agent",
+        skills: [{ name: "Mine", when: "When I say.", instructions: "As written." }],
+      },
+    ],
     pack,
   ).layers;
   const exported = exportSkillPack(layers, { id: "backup", version: "1.0.0", name: "Backup" });
@@ -225,11 +236,14 @@ test("export round-trips a directive's skills back into a valid pack", () => {
 });
 
 test("export names a missing trigger instead of dropping the skill", () => {
-  const exported = exportSkillPack([{ label: "agent", skills: [{ name: "Mine", instructions: "As written." }] }], {
-    id: "backup",
-    version: "1.0.0",
-    name: "Backup",
-  });
+  const exported = exportSkillPack(
+    [{ label: "agent", skills: [{ name: "Mine", instructions: "As written." }] }],
+    {
+      id: "backup",
+      version: "1.0.0",
+      name: "Backup",
+    },
+  );
   assert.ok(exported.skills[0]!.trigger.startsWith("TODO"));
 });
 

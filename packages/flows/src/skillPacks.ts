@@ -184,7 +184,8 @@ export function validateSkillPack(input: unknown): SkillPackValidation {
     const body = str(s.body);
 
     if (!skillId) errors.push(`${at}.id is required`);
-    else if (!ID_RE.test(skillId)) errors.push(`${at}.id "${skillId}" must be lowercase letters, digits, . _ or -`);
+    else if (!ID_RE.test(skillId))
+      errors.push(`${at}.id "${skillId}" must be lowercase letters, digits, . _ or -`);
     else if (seen.has(skillId)) errors.push(`${at}.id "${skillId}" is duplicated`);
     seen.add(skillId);
 
@@ -247,7 +248,10 @@ export function parseSkillPack(text: string): SkillPackValidation {
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    return { ok: false, errors: [`pack is not valid JSON: ${err instanceof Error ? err.message : "parse failed"}`] };
+    return {
+      ok: false,
+      errors: [`pack is not valid JSON: ${err instanceof Error ? err.message : "parse failed"}`],
+    };
   }
   return validateSkillPack(parsed);
 }
@@ -363,9 +367,12 @@ export function installSkillPack(
   opts: { label?: string } = {},
 ): SkillPackInstallResult {
   const label = opts.label?.trim() || (pack.scope === "crew" ? "" : DEFAULT_SKILL_PACK_LABEL);
-  if (!label) throw new Error("label_required: a crew-scoped pack must name the crew layer it installs onto");
+  if (!label)
+    throw new Error("label_required: a crew-scoped pack must name the crew layer it installs onto");
   if (!skillPackScopeFits(pack, label)) {
-    throw new Error(`scope_mismatch: pack "${pack.id}" is ${pack.scope}-scoped and cannot install onto "${label}"`);
+    throw new Error(
+      `scope_mismatch: pack "${pack.id}" is ${pack.scope}-scoped and cannot install onto "${label}"`,
+    );
   }
 
   const fresh = skillPackSkills(pack);
@@ -395,7 +402,9 @@ export function installSkillPack(
     }
     const kept = layer.skills ?? [];
     const at = insertAt < 0 ? kept.length : insertAt;
-    out.push(stripEmptySkills({ ...layer, skills: [...kept.slice(0, at), ...fresh, ...kept.slice(at)] }));
+    out.push(
+      stripEmptySkills({ ...layer, skills: [...kept.slice(0, at), ...fresh, ...kept.slice(at)] }),
+    );
     landed = true;
   }
   if (!landed) out.push({ label, skills: fresh });
@@ -412,7 +421,10 @@ function stripEmptySkills(layer: BriefLayer): BriefLayer {
 export type SkillPackRemoveResult = { layers: BriefLayer[]; removed: number };
 
 /** Remove every skill this pack installed, in any layer and any version. */
-export function removeSkillPack(layers: readonly BriefLayer[], packId: string): SkillPackRemoveResult {
+export function removeSkillPack(
+  layers: readonly BriefLayer[],
+  packId: string,
+): SkillPackRemoveResult {
   let removed = 0;
   const out = layers.map((layer) => {
     const kept = (layer.skills ?? []).filter((skill) => {
@@ -478,7 +490,14 @@ export function installedSkillPacks(layers: readonly BriefLayer[]): InstalledSki
  */
 export function exportSkillPack(
   layers: readonly BriefLayer[],
-  meta: { id: string; version: string; name: string; summary?: string; label?: string; scope?: SkillPackScope },
+  meta: {
+    id: string;
+    version: string;
+    name: string;
+    summary?: string;
+    label?: string;
+    scope?: SkillPackScope;
+  },
 ): SkillPack {
   const label = meta.label?.trim();
   const chosen = layers.filter((layer) => !label || layer.label === label);

@@ -99,9 +99,7 @@ test("a sample that makes no model call marks the model optional", () => {
 });
 
 test("flows waiting on a hire say so rather than pointing at an install button", () => {
-  const steps = crewChecklist(
-    ready({ seats: { total: 6, withAccount: 0 }, installedFlows: [] }),
-  );
+  const steps = crewChecklist(ready({ seats: { total: 6, withAccount: 0 }, installedFlows: [] }));
   assert.match(step(steps, "flows").detail, /cannot be installed until at least one hire/);
   // Seats come first, so that is the one thing to fix.
   assert.equal(crewChecklistBlocker(steps)?.id, "seats");

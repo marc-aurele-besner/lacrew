@@ -63,6 +63,9 @@ test("the listing carries what a surface offers, and nothing heavier", () => {
   for (const entry of listed) {
     assert.ok(entry.id);
     // Mocks and expectations are the suite's business, not a listing's.
-    assert.deepEqual(Object.keys(entry).filter((k) => !["id", "describe", "flow", "blueprint"].includes(k)), []);
+    assert.deepEqual(
+      Object.keys(entry).filter((k) => !["id", "describe", "flow", "blueprint"].includes(k)),
+      [],
+    );
   }
 });

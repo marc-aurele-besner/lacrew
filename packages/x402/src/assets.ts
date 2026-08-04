@@ -48,9 +48,7 @@ export const CHAIN_IDS: Record<X402Network, number> = {
 };
 
 export function networkForChainId(chainId: number): X402Network {
-  const match = (Object.keys(CHAIN_IDS) as X402Network[]).find(
-    (n) => CHAIN_IDS[n] === chainId,
-  );
+  const match = (Object.keys(CHAIN_IDS) as X402Network[]).find((n) => CHAIN_IDS[n] === chainId);
   if (!match) throw new Error(`No x402 network configured for chain ${chainId}.`);
   return match;
 }
@@ -73,9 +71,7 @@ export type CreateRequirementsOptions = {
  * domain hints ride along so the client signs the right domain without an extra
  * round trip to the chain.
  */
-export function createPaymentRequirements(
-  opts: CreateRequirementsOptions,
-): PaymentRequirements {
+export function createPaymentRequirements(opts: CreateRequirementsOptions): PaymentRequirements {
   const asset = opts.asset ?? USDC[opts.network];
   if (!asset) {
     throw new Error(

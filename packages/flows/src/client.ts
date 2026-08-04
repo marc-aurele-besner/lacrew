@@ -138,19 +138,14 @@ export type FlowsClient = {
    * Mint a trigger. The secret comes back exactly once and is not readable
    * again; sources that authenticate their sender return none at all.
    */
-  createTrigger(
-    input: FlowTriggerCreate,
-  ): Promise<{ trigger: FlowTriggerRecord; secret?: string }>;
+  createTrigger(input: FlowTriggerCreate): Promise<{ trigger: FlowTriggerRecord; secret?: string }>;
   rotateTriggerSecret(
     id: string,
     secret?: string,
   ): Promise<{ trigger: FlowTriggerRecord; secret?: string }>;
   setTriggerEnabled(id: string, enabled: boolean): Promise<FlowTriggerRecord>;
   removeTrigger(id: string): Promise<boolean>;
-  triggerDeliveries(opts?: {
-    triggerId?: string;
-    limit?: number;
-  }): Promise<FlowTriggerDelivery[]>;
+  triggerDeliveries(opts?: { triggerId?: string; limit?: number }): Promise<FlowTriggerDelivery[]>;
 };
 
 /** Typed HTTP client for the orchestrator's /flows surface (code-first path). */
@@ -182,10 +177,12 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
         )
       ).flows,
     save: async (def) =>
-      (await call<{ flow: FlowDefinition }>("/flows", {
-        method: "POST",
-        body: JSON.stringify({ flow: def }),
-      })).flow,
+      (
+        await call<{ flow: FlowDefinition }>("/flows", {
+          method: "POST",
+          body: JSON.stringify({ flow: def }),
+        })
+      ).flow,
     remove: async (id) => {
       await call("/flows/delete", { method: "POST", body: JSON.stringify({ id }) });
     },
@@ -200,8 +197,7 @@ export function createFlowsClient(opts: FlowsClientOptions): FlowsClient {
         body: JSON.stringify({ flow: def, input: runOpts?.input, as: runOpts?.as }),
       }),
     runs: async () => (await call<{ runs: FlowRunResult[] }>("/flows/runs")).runs,
-    openRuns: async () =>
-      (await call<{ runs: FlowRunStateRecord[] }>("/flows/runs/open")).runs,
+    openRuns: async () => (await call<{ runs: FlowRunStateRecord[] }>("/flows/runs/open")).runs,
     gates: async (gateOpts) => {
       const params = new URLSearchParams();
       if (gateOpts?.status) params.set("status", gateOpts.status);

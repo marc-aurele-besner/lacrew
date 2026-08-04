@@ -29,11 +29,7 @@ import {
   mockPendingIntents,
   mockSessionKeys,
 } from "./fixtures.js";
-import {
-  checkClientPolicy,
-  defaultMockPolicy,
-  type ClientPolicyConfig,
-} from "../policy.js";
+import { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "../policy.js";
 import { simulateIntentAction } from "../simulate.js";
 
 export interface LacrewClientOptions {
@@ -45,10 +41,15 @@ export interface LacrewClientOptions {
   policy?: ClientPolicyConfig;
 }
 
-
 /** Mock governance action recorded at propose time, applied on execute. */
 type MockProposalAction =
-  | { kind: "hire"; account: `0x${string}`; nodeKind: OrgNode["kind"]; parent: `0x${string}`; label: string }
+  | {
+      kind: "hire";
+      account: `0x${string}`;
+      nodeKind: OrgNode["kind"];
+      parent: `0x${string}`;
+      label: string;
+    }
   | { kind: "fire"; account: `0x${string}` }
   | { kind: "setActive"; account: `0x${string}`; active: boolean }
   | { kind: "reparent"; account: `0x${string}`; newParent: `0x${string}` }
@@ -189,9 +190,7 @@ export class LacrewClient {
       return { intentId: "0", verdict };
     }
 
-    const node = mockOrgNodes.find(
-      (n) => n.account.toLowerCase() === input.agent.toLowerCase(),
-    );
+    const node = mockOrgNodes.find((n) => n.account.toLowerCase() === input.agent.toLowerCase());
     const intent: Intent = {
       id: `intent-mock-${this.intents.length + 1}`,
       agent: input.agent,
@@ -583,8 +582,7 @@ export class LacrewClient {
     if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
     if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
     const quorum =
-      proposal.yesVotes >= 2 &&
-      (proposal.tier === "low" || (proposal.yesHumanVotes ?? 0) >= 1);
+      proposal.yesVotes >= 2 && (proposal.tier === "low" || (proposal.yesHumanVotes ?? 0) >= 1);
     if (!quorum) throw new Error(`Quorum not met for ${proposalId}`);
 
     const action = this.proposalActions.get(proposalId);
@@ -611,14 +609,10 @@ export class LacrewClient {
       }
     } else if (action?.kind === "setActive") {
       // Reversible suspend: the node keeps its place and its children.
-      const node = this.nodes.find(
-        (n) => n.account.toLowerCase() === action.account.toLowerCase(),
-      );
+      const node = this.nodes.find((n) => n.account.toLowerCase() === action.account.toLowerCase());
       if (node) node.active = action.active;
     } else if (action?.kind === "reparent") {
-      const node = this.nodes.find(
-        (n) => n.account.toLowerCase() === action.account.toLowerCase(),
-      );
+      const node = this.nodes.find((n) => n.account.toLowerCase() === action.account.toLowerCase());
       if (node) node.parent = action.newParent;
     } else if (action?.kind === "setGrant") {
       const allowance = this.allowances.find(
@@ -687,4 +681,3 @@ export class LacrewClient {
 export function createLacrewClient(options?: LacrewClientOptions): LacrewClient {
   return new LacrewClient(options);
 }
-

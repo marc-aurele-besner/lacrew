@@ -22,12 +22,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { p256 } from "@noble/curves/nist";
 import { privateKeyToAccount } from "viem/accounts";
 import { createLacrewClient } from "@lacrew/sdk/testing";
-import {
-  ANVIL_CHAIN_ID,
-  rootChallengeStatement,
-  type Intent,
-  type OrgNode,
-} from "@lacrew/core";
+import { ANVIL_CHAIN_ID, rootChallengeStatement, type Intent, type OrgNode } from "@lacrew/core";
 import { CrewRuntime } from "./runtime.js";
 import { createFlowsSurface } from "./flows.js";
 import { createMemoryFlowStore } from "./flowStore.js";
@@ -53,7 +48,21 @@ const STRANGER_WALLET = privateKeyToAccount(
 
 function coseKey(x: Uint8Array, y: Uint8Array): string {
   return Buffer.from([
-    0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y,
+    0xa5,
+    0x01,
+    0x02,
+    0x03,
+    0x26,
+    0x20,
+    0x01,
+    0x21,
+    0x58,
+    0x20,
+    ...x,
+    0x22,
+    0x58,
+    0x20,
+    ...y,
   ]).toString("base64url");
 }
 
@@ -109,7 +118,9 @@ function intent(id: string, awaitingApprover: `0x${string}`): Intent {
 }
 
 /** Records every resolve the runtime asks the chain for, and as whom. */
-function approvalClient(state: { resolved: Array<{ id: string; approved: boolean; approver?: string }> }) {
+function approvalClient(state: {
+  resolved: Array<{ id: string; approved: boolean; approver?: string }>;
+}) {
   const base = createLacrewClient({ useMock: true }) as unknown as Record<string, unknown>;
   const pending = [intent("root-1", ROOT), intent("mgr-1", MANAGER)];
   return {
@@ -195,7 +206,10 @@ describe("POST /intents/resolve — root-depth approvals", () => {
       approved: true,
       challenge: challenge.challenge,
       // A stranger's key, wearing the registered credential id.
-      rootProof: { ...assertFor(credential(), challenge.challenge), credentialId: cred.credentialId },
+      rootProof: {
+        ...assertFor(credential(), challenge.challenge),
+        credentialId: cred.credentialId,
+      },
     });
     assert.equal(res.status, 401);
     assert.deepEqual(state.resolved, []);
@@ -233,10 +247,7 @@ describe("POST /intents/resolve — root-depth approvals", () => {
       rootProof: assertFor(cred, challenge.challenge),
     });
     assert.equal(res.status, 401);
-    assert.equal(
-      ((await res.json()) as { error: string }).error,
-      "challenge_not_for_this_action",
-    );
+    assert.equal(((await res.json()) as { error: string }).error, "challenge_not_for_this_action");
     assert.deepEqual(state.resolved, []);
   });
 
@@ -265,7 +276,10 @@ describe("POST /intents/resolve — root-depth approvals", () => {
       intentId: "root-1",
       approved: true,
       challenge: challenge.challenge,
-      rootProof: { ...assertFor(credential(), challenge.challenge), credentialId: cred.credentialId },
+      rootProof: {
+        ...assertFor(credential(), challenge.challenge),
+        credentialId: cred.credentialId,
+      },
     });
     assert.equal(wrong.status, 401);
 
@@ -279,10 +293,7 @@ describe("POST /intents/resolve — root-depth approvals", () => {
       rootProof: assertFor(cred, challenge.challenge),
     });
     assert.equal(retry.status, 401);
-    assert.equal(
-      ((await retry.json()) as { error: string }).error,
-      "challenge_expired_or_unknown",
-    );
+    assert.equal(((await retry.json()) as { error: string }).error, "challenge_expired_or_unknown");
     assert.deepEqual(state.resolved, []);
   });
 
@@ -419,10 +430,7 @@ describe("root-depth approvals with no root configured", () => {
     const { app, state } = buildApp();
     const res = await post(app, "/intents/resolve", { intentId: "root-1", approved: true });
     assert.equal(res.status, 200);
-    assert.equal(
-      ((await res.json()) as { authorizedBy: string }).authorizedBy,
-      "unauthenticated",
-    );
+    assert.equal(((await res.json()) as { authorizedBy: string }).authorizedBy, "unauthenticated");
     assert.deepEqual(state.resolved, [{ id: "root-1", approved: true, approver: ROOT }]);
   });
 });

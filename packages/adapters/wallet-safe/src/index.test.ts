@@ -89,39 +89,31 @@ test("readable seat labels normalize to a numeric salt", () => {
   assert.notEqual(toSaltNonce("worker-1"), toSaltNonce("worker-2"));
 });
 
-test(
-  "predicted address is deterministic in the salt",
-  { skip: skipChain },
-  async () => {
-    const base = { provider: rpc!, owners: [OWNER_A, OWNER_B], threshold: 2 };
-    const first = await predictSafeWallet({ ...base, saltNonce: "1" });
-    const again = await predictSafeWallet({ ...base, saltNonce: "1" });
-    const other = await predictSafeWallet({ ...base, saltNonce: "2" });
+test("predicted address is deterministic in the salt", { skip: skipChain }, async () => {
+  const base = { provider: rpc!, owners: [OWNER_A, OWNER_B], threshold: 2 };
+  const first = await predictSafeWallet({ ...base, saltNonce: "1" });
+  const again = await predictSafeWallet({ ...base, saltNonce: "1" });
+  const other = await predictSafeWallet({ ...base, saltNonce: "2" });
 
-    assert.match(first.address, /^0x[0-9a-fA-F]{40}$/);
-    assert.equal(first.address, again.address);
-    assert.notEqual(first.address, other.address);
-    assert.equal(first.deployed, false);
-    assert.equal(first.threshold, 2);
-  },
-);
+  assert.match(first.address, /^0x[0-9a-fA-F]{40}$/);
+  assert.equal(first.address, again.address);
+  assert.notEqual(first.address, other.address);
+  assert.equal(first.deployed, false);
+  assert.equal(first.threshold, 2);
+});
 
-test(
-  "connecting to an undeployed Safe fails loudly",
-  { skip: skipChain },
-  async () => {
-    const predicted = await predictSafeWallet({
-      provider: rpc!,
-      owners: [OWNER_A, OWNER_B],
-      threshold: 2,
-      saltNonce: "connect-miss",
-    });
-    await assert.rejects(
-      () => connectSafeWallet({ provider: rpc!, safeAddress: predicted.address }),
-      /No Safe deployed at/,
-    );
-  },
-);
+test("connecting to an undeployed Safe fails loudly", { skip: skipChain }, async () => {
+  const predicted = await predictSafeWallet({
+    provider: rpc!,
+    owners: [OWNER_A, OWNER_B],
+    threshold: 2,
+    saltNonce: "connect-miss",
+  });
+  await assert.rejects(
+    () => connectSafeWallet({ provider: rpc!, safeAddress: predicted.address }),
+    /No Safe deployed at/,
+  );
+});
 
 test(
   "a deployed Safe reports its onchain owners and threshold",

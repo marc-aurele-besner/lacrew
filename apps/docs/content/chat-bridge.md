@@ -16,10 +16,10 @@ Telegram message, and anyone in a shared group can type.
 
 So the bridge produces exactly two kinds:
 
-| Kind | When |
-| --- | --- |
-| `answer` | A reply to a question that is still open, in the thread that asked it. |
-| `note` | Everything else — a reply to a plan, a second opinion on a closed question, a message from a room an operator bound to a crew. |
+| Kind     | When                                                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `answer` | A reply to a question that is still open, in the thread that asked it.                                                         |
+| `note`   | Everything else — a reply to a plan, a second opinion on a closed question, a message from a room an operator bound to a crew. |
 
 It cannot produce a `plan`, a `result` or a `handoff`, and it never calls `approve`,
 `deny`, `vote`, `veto` or `execute`. "approve 500 USDC" typed into a chat is a sentence in
@@ -43,7 +43,7 @@ worth stating plainly:
 
 - **A sender cannot mint one.** Editing the payload to name another thread changes the
   signature, and the signature is checked before the payload is parsed.
-- **It proves *which thread*, not *who*.** Pairing (F2.20) still decides whether this
+- **It proves _which thread_, not _who_.** Pairing (F2.20) still decides whether this
   person may write there. Both must pass.
 - **It expires** after 14 days (`CORRELATION_TTL_MS`), so an old chat log is not a set of
   live write handles. The question is not lost — it is still in the Questions rail.
@@ -56,17 +56,17 @@ worth stating plainly:
 `@lacrew/orchestrator`, and the hosted control plane calls them rather than re-deriving the
 rules — a self-hoster can read the rule that is actually being applied.
 
-| Situation | Result |
-| --- | --- |
-| Reply to an open question | `answer`, `replyTo` the question |
-| Reply to a question someone already answered | `note`, still referencing it |
-| Reply to a plan or a note | `note`, referencing it |
-| `/note …` with a reference | `note` |
-| `/answer …` with nothing to answer | refused |
-| No token, room bound to a crew | `note` in that crew's thread |
-| No token, room not bound | refused |
-| Token this deployment did not sign | refused, and no thread is read |
-| Token naming a message that is not in that thread | refused |
+| Situation                                         | Result                           |
+| ------------------------------------------------- | -------------------------------- |
+| Reply to an open question                         | `answer`, `replyTo` the question |
+| Reply to a question someone already answered      | `note`, still referencing it     |
+| Reply to a plan or a note                         | `note`, referencing it           |
+| `/note …` with a reference                        | `note`                           |
+| `/answer …` with nothing to answer                | refused                          |
+| No token, room bound to a crew                    | `note` in that crew's thread     |
+| No token, room not bound                          | refused                          |
+| Token this deployment did not sign                | refused, and no thread is read   |
+| Token naming a message that is not in that thread | refused                          |
 
 Refusals never name a thread the sender did not already hold a token for, and never
 distinguish "not yours" from "does not exist" — an endpoint anyone can message must not

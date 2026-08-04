@@ -10,6 +10,7 @@ import {
   createMockFlowBackend,
   cronMatches,
   flowTemplates,
+  FlowWaitingError,
   runFlow,
   validateFlow,
   type FlowBackend,
@@ -31,11 +32,7 @@ import type { ConnectorRegistry } from "./connectors.js";
 import type { ExternalMcpRegistry } from "./externalMcp.js";
 import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
 import type { DualControlReviewRecord, DualControlSurface } from "./dualControl.js";
-import {
-  createFlowStoreFromEnv,
-  type FlowRunState,
-  type FlowStore,
-} from "./flowStore.js";
+import { createFlowStoreFromEnv, type FlowRunState, type FlowStore } from "./flowStore.js";
 import { ancestorsOf, ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { crewIdForSeat } from "./inferenceBudgets.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
@@ -193,6 +190,9 @@ export function createFlowsSurface(opts: {
    */
   dualControl?: DualControlSurface;
 }): FlowsSurface {
+  /** Statuses a run cannot come back from. `waiting` is the one that can. */
+  const TERMINAL = new Set(["completed", "error", "max_steps", "cancelled"]);
+
   const store = opts.store ?? createFlowStoreFromEnv();
   const flows = new Map<string, FlowDefinition>();
   const runRing: FlowRunResult[] = [];
@@ -231,7 +231,13 @@ export function createFlowsSurface(opts: {
   const requirePlan = async (
     tool: string,
     principal: `0x${string}`,
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): Promise<void> => {
     if (!opts.planRequired) return;
     try {
@@ -293,7 +299,13 @@ export function createFlowsSurface(opts: {
     sessionLimits: ReturnType<typeof scopeSessionLimits>,
     chain: string[],
     /** Identifies the run to an ask-mode write, so it can be resumed. */
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
     const bound = createRuntimeMcpBackend(opts.runtime, {
@@ -389,6 +401,67 @@ export function createFlowsSurface(opts: {
   };
 
   /**
+   * The finished trace of a run, from this process's ring or the store.
+   *
+   * The ring is asked first because it is the only place a memory-store
+   * deployment keeps one, and it is also the cheaper read where both have it.
+   */
+  const finishedRun = async (runId: string): Promise<FlowRunResult | null> => {
+    const local = runRing.find((r) => r.runId === runId);
+    if (local) return local;
+    return store.getRun(runId);
+  };
+
+  /**
+   * What the delegating step gets back, given where the delegated run got to.
+   *
+   * Three answers, and only one of them is a value. A child still parked (or
+   * still moving in another replica) suspends the *parent* on `awaiting_child`
+   * — the run is durable, the child's own question is answered where it was
+   * asked, and the parent is woken when the child ends. A child that failed or
+   * was cancelled fails the step, because returning that as data would let the
+   * parent report "completed". Anything else returns the delegate's outcome.
+   */
+  const delegateOutcome = async (input: {
+    flowId: string;
+    agent: `0x${string}`;
+    childRunId: string;
+    status: string;
+    /** The child's own pause line, for the parent's stalled-run entry. */
+    waiting?: string;
+    /** Set when the child ended in this call, so its trace is already in hand. */
+    result?: FlowRunResult;
+  }): Promise<unknown> => {
+    if (!TERMINAL.has(input.status)) {
+      throw new FlowWaitingError({
+        reason: "awaiting_child",
+        token: input.childRunId,
+        detail:
+          `waiting on delegated run ${input.childRunId} (${input.flowId})` +
+          (input.waiting ? `: ${input.waiting}` : ""),
+      });
+    }
+    if (input.status === "cancelled") {
+      throw new Error(
+        `flow_delegate_cancelled (${input.flowId}): delegated run ${input.childRunId} was cancelled`,
+      );
+    }
+    const result = input.result ?? (await finishedRun(input.childRunId));
+    if (input.status !== "completed") {
+      // A delegate that failed must fail the delegating step. Returning the
+      // failure as data would let the parent run report "completed".
+      const cause = result?.steps.find((s) => s.status === "error")?.error ?? input.status;
+      throw new Error(`flow_delegate_failed (${input.flowId}): ${cause}`);
+    }
+    return {
+      agent: input.agent,
+      runId: input.childRunId,
+      status: input.status,
+      text: result?.steps.at(-1)?.summary ?? input.status,
+    };
+  };
+
+  /**
    * Delegate to another agent: run `flowId` as that agent when given, else hand
    * the prompt to the model. The delegate's own policy stack applies because
    * the nested run gets its own principal — a flow cannot borrow authority by
@@ -398,11 +471,37 @@ export function createFlowsSurface(opts: {
     args: Record<string, unknown>,
     chain: string[],
     caller: `0x${string}`,
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): Promise<unknown> => {
     const agent = String(args.agent ?? "") as `0x${string}`;
     const flowId = args.flowId ? String(args.flowId) : undefined;
+    // The engine names the step so a resumed parent can find the run it already
+    // delegated. A caller that did not name one gets the old behaviour: the
+    // delegate runs, and a parked one fails the step rather than parking a
+    // parent nothing could ever wake.
+    const stepId = String(args.stepId ?? "");
     if (flowId) {
+      if (stepId) {
+        // Re-entering this step after a pause: the child it started is the run
+        // to read, whatever state it is in. Starting a second one is the double
+        // delegation the (parent, step) uniqueness refuses at the table.
+        const existing = await store.childRun(run.runId, stepId);
+        if (existing) {
+          return delegateOutcome({
+            flowId,
+            agent,
+            childRunId: existing.runId,
+            status: existing.status,
+            ...(existing.pause?.detail ? { waiting: existing.pause.detail } : {}),
+          });
+        }
+      }
       if (chain.includes(flowId)) {
         throw new Error(`flow_delegation_cycle: ${[...chain, flowId].join(" → ")}`);
       }
@@ -420,32 +519,27 @@ export function createFlowsSurface(opts: {
           // is still the seat that must have planned — this only matters where
           // a rule says a manager's plan covers its workers.
           upstream: [caller, ...(run.upstream ?? [])],
+          ...(stepId ? { parent: { runId: run.runId, stepId } } : {}),
         },
         chain,
       );
-      if (result.status === "waiting") {
-        // A nested run cannot be suspended and picked up later: the ask holds
-        // the *child's* resume state, and releasing it would leave the parent
-        // parked with nothing to continue it. Failing the delegating step says
-        // so, rather than reporting a run that quietly did half its work.
+      if (result.status === "waiting" && !stepId) {
+        // No step id, so no link back: the ask holds the child's resume state
+        // and nothing could pair the answer with this run. Failing says so,
+        // rather than reporting a run that quietly did half its work.
         throw new Error(
           `flow_delegate_waiting (${flowId}): ${result.waiting?.detail ?? result.waiting?.reason ?? "waiting"}` +
-            " — a delegated flow cannot park: neither an ask-mode write nor a human gate" +
-            " can be answered inside one",
+            " — the delegating step was not named, so the parent cannot be parked on it",
         );
       }
-      if (result.status === "error") {
-        // A delegate that failed must fail the delegating step. Returning the
-        // failure as data would let the parent run report "completed".
-        const cause = result.steps.find((s) => s.status === "error")?.error ?? result.status;
-        throw new Error(`flow_delegate_failed (${flowId}): ${cause}`);
-      }
-      return {
+      return delegateOutcome({
+        flowId,
         agent,
-        runId: result.runId,
+        childRunId: result.runId,
         status: result.status,
-        text: result.steps.at(-1)?.summary ?? result.status,
-      };
+        ...(result.waiting?.detail ? { waiting: result.waiting.detail } : {}),
+        result,
+      });
     }
     // The identity line used to be the whole system prompt, which made every
     // agent in every org identical in disposition. It is now the first layer of
@@ -467,6 +561,56 @@ export function createFlowsSurface(opts: {
     return { agent, text: completion.text, model: completion.model };
   };
 
+  /**
+   * Continue a run whose claim this caller already holds.
+   *
+   * Separate from `resume` because the claim is what makes a wake safe, and the
+   * caller that took it is the one that must spend it: re-reading the run here
+   * would find it `running` and refuse to continue the very run it just took.
+   */
+  const resumeClaimed = async (state: FlowRunState): Promise<FlowRunResult> => {
+    if (!state.state) throw new Error("run_has_no_checkpoint");
+    const principal = state.principal as `0x${string}` | undefined;
+    // Same principal as the original run, or nothing: a resume that reached for
+    // a different (or a paused) identity would launder authority through a
+    // pause, which is the one thing durable state must never buy.
+    if (principal && opts.runtime.isAgentPaused(principal)) {
+      throw new Error(`run_principal_paused:${principal}`);
+    }
+    await store.request(state.runId, null);
+    return runOne({
+      id: state.flowId,
+      runId: state.runId,
+      // The replica that wakes a run is rarely the one that saved its flow.
+      refresh: true,
+      ...(principal ? { as: principal } : {}),
+      ...(state.trigger ? { trigger: state.trigger as FlowRunTrigger } : {}),
+      resume: state.state,
+    });
+  };
+
+  /**
+   * Continue a run parked on a delegated child, once — whoever gets there first.
+   *
+   * Two things race to do this: the child ending, and the parent finishing the
+   * write that parked it. Both call here, the claim settles which one continues
+   * the run, and the loser does nothing. A claim this caller took and then
+   * failed to spend leaves the run marked in flight, which is exactly what boot
+   * recovery picks up.
+   */
+  const wakeDelegator = async (parentRunId: string): Promise<void> => {
+    const claimed = await store.claimWaiting(parentRunId);
+    if (!claimed) return;
+    try {
+      await resumeClaimed(claimed);
+    } catch (err) {
+      console.error(
+        `[@lacrew/orchestrator] resuming run ${parentRunId} after its delegated run ended failed:`,
+        err,
+      );
+    }
+  };
+
   const pushRun = async (result: FlowRunResult): Promise<void> => {
     // A resumed run carries the id it suspended under, so it replaces its own
     // waiting entry rather than appearing twice — once stalled, once finished.
@@ -478,6 +622,12 @@ export function createFlowsSurface(opts: {
     // row, and a boot that raced it would find a finished run still marked in
     // flight and offer to redo it. The store swallows its own errors.
     await store.appendRun(result);
+    // Every way a run can end passes through here — its own last step, a
+    // cancel, a boot that failed it closed — so this is the one place that has
+    // to notice a delegating run waiting on it (F2.24 / F2.27).
+    if (!TERMINAL.has(result.status)) return;
+    const parentRunId = (await store.runState(result.runId))?.parentRunId;
+    if (parentRunId) await wakeDelegator(parentRunId);
   };
 
   /**
@@ -521,12 +671,18 @@ export function createFlowsSurface(opts: {
       resume?: FlowResumeState;
       /** Seats that delegated this run, nearest-first (F2.31). */
       upstream?: string[];
+      /**
+       * The run and step that delegated this one (F2.24 / F2.27). Recorded on
+       * the run's durable state, which is how a parked parent is found again
+       * when this run ends — and how a resumed parent finds this run instead of
+       * starting a second one.
+       */
+      parent?: { runId: string; stepId: string };
     },
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
     chain: string[] = [],
   ): Promise<FlowRunResult> => {
-    const fresh =
-      input.refresh && input.id && !input.flow ? await store.get(input.id) : null;
+    const fresh = input.refresh && input.id && !input.flow ? await store.get(input.id) : null;
     if (fresh) flows.set(fresh.id, fresh);
     const def =
       input.flow ??
@@ -552,6 +708,9 @@ export function createFlowsSurface(opts: {
       principal,
       trigger: input.trigger ?? "manual",
       startedAt,
+      ...(input.parent
+        ? { parentRunId: input.parent.runId, parentStepId: input.parent.stepId }
+        : {}),
     });
     const result = await runFlow(
       def,
@@ -578,8 +737,15 @@ export function createFlowsSurface(opts: {
     // The suspended run is attached to the thing holding it up, so whichever
     // replica handles the answer can continue it. Without this the run is a
     // trace nobody can pick back up.
-    if (result.status === "waiting" && result.resume && result.waiting?.token) {
-      // Both surfaces are asked; each ignores a token it does not own, which
+    // A run parked on a delegated one has nothing to attach: it is held by
+    // another run, whose question is asked and answered where it was raised.
+    if (
+      result.status === "waiting" &&
+      result.resume &&
+      result.waiting?.token &&
+      result.waiting.reason !== "awaiting_child"
+    ) {
+      // Every surface is asked; each ignores a token it does not own, which
       // keeps the run from having to know what parked it.
       await opts.asks?.attachResume(result.waiting.token, result.resume);
       await opts.gates?.attachResume(result.waiting.token, result.resume);
@@ -601,6 +767,15 @@ export function createFlowsSurface(opts: {
         ...(result.waiting ? { waiting: result.waiting.reason } : {}),
       },
     });
+    // The delegated run may have ended while this one was still writing the
+    // pause that parked it on that very run — its wake would have found this
+    // run still marked in flight and left it alone. Nobody else is coming back
+    // for it, so it checks the run it is waiting on for itself. The claim makes
+    // the two orderings settle the same way.
+    if (result.status === "waiting" && result.waiting?.reason === "awaiting_child") {
+      const child = result.waiting.token ? await store.runState(result.waiting.token) : null;
+      if (child && TERMINAL.has(child.status)) await wakeDelegator(runId);
+    }
     return result;
   };
 
@@ -658,9 +833,6 @@ export function createFlowsSurface(opts: {
     await resumeReview(review);
   });
 
-  /** Statuses a run cannot come back from. `waiting` is the one that can. */
-  const TERMINAL = new Set(["completed", "error", "max_steps", "cancelled"]);
-
   const requireState = async (runId: string): Promise<FlowRunState> => {
     const state = await store.runState(runId);
     if (!state) throw new Error("run_not_found");
@@ -717,15 +889,43 @@ export function createFlowsSurface(opts: {
     return { ...state, request: "pause" };
   };
 
+  /**
+   * End the runs this one delegated, after it is itself past cancelling.
+   *
+   * Cancel is the documented policy, not abandonment: a delegated run holds a
+   * session-scoped principal and an open question, and leaving it runnable
+   * behind a cancelled parent is a pipeline that spends on work nobody is
+   * waiting for. Recursive, so a chain ends at every level; each child's own
+   * cancel closes its gates and asks.
+   *
+   * Called only once the parent can no longer be woken, because a child ending
+   * is a wake signal — reversing the order would resume the run being cancelled.
+   */
+  const cancelChildren = async (parentRunId: string, reason?: string): Promise<void> => {
+    for (const child of await store.childRuns(parentRunId)) {
+      if (TERMINAL.has(child.status)) continue;
+      try {
+        await cancel(child.runId, reason ?? `delegating run ${parentRunId} was cancelled`);
+      } catch (err) {
+        console.error(
+          `[@lacrew/orchestrator] cancelling delegated run ${child.runId} failed:`,
+          err,
+        );
+      }
+    }
+  };
+
   const cancel = async (runId: string, reason?: string): Promise<FlowRunState> => {
     const state = await requireState(runId);
     if (state.status === "cancelled") return state;
     if (TERMINAL.has(state.status)) throw new Error(`run_not_cancellable:${state.status}`);
     // Close the questions this run is holding open first. A gate outliving its
     // run is one a person can still answer, and answering it would resume a run
-    // the operator ended (F2.27). A review outlives its run the same way, and a
-    // late concurrence must not restart an effect the operator cancelled.
+    // the operator ended (F2.27). An ask outlives its run the same way, and so
+    // does a review, whose late concurrence must not restart an effect the
+    // operator cancelled.
     await opts.gates?.cancelRun(runId, reason);
+    await opts.asks?.cancelRun(runId, reason);
     await opts.dualControl?.cancelRun(runId, reason);
     if (state.status === "waiting") {
       // Nothing is holding a parked run, so the cancel lands now rather than
@@ -745,6 +945,7 @@ export function createFlowsSurface(opts: {
         at: new Date().toISOString(),
         payload: { action: "cancel", runId, flowId: state.flowId, ...(reason ? { reason } : {}) },
       });
+      await cancelChildren(runId, reason);
       return (await store.runState(runId)) ?? { ...state, status: "cancelled" };
     }
     await store.request(runId, "cancel");
@@ -759,6 +960,10 @@ export function createFlowsSurface(opts: {
         ...(reason ? { reason } : {}),
       },
     });
+    // A run still moving stops at its next step boundary, but a delegate it is
+    // blocked on would never reach one — it is waiting on a person. Ending the
+    // child now is what makes the parent's own cancel land instead of hanging.
+    await cancelChildren(runId, reason);
     return { ...state, request: "cancel" };
   };
 
@@ -770,18 +975,17 @@ export function createFlowsSurface(opts: {
     const principal = state.principal as `0x${string}` | undefined;
     // Same principal as the original run, or nothing: a resume that reached for
     // a different (or a paused) identity would launder authority through a
-    // pause, which is the one thing durable state must never buy.
+    // pause, which is the one thing durable state must never buy. Checked
+    // before the claim, so a refusal leaves the run parked rather than marking
+    // it in flight for a resume that never happened.
     if (principal && opts.runtime.isAgentPaused(principal)) {
       throw new Error(`run_principal_paused:${principal}`);
     }
-    await store.request(runId, null);
-    return runOne({
-      id: state.flowId,
-      runId,
-      ...(principal ? { as: principal } : {}),
-      ...(state.trigger ? { trigger: state.trigger as FlowRunTrigger } : {}),
-      resume: state.state,
-    });
+    // An operator pressing Resume races everything else that can wake a run —
+    // a delegated child ending, another replica's boot. The claim decides.
+    const claimed = await store.claimWaiting(runId);
+    if (!claimed) throw new Error("run_not_resumable:already_claimed");
+    return resumeClaimed(claimed);
   };
 
   const surface: FlowsSurface = {
@@ -799,9 +1003,7 @@ export function createFlowsSurface(opts: {
           return stored;
         }
       }
-      return (
-        flows.get(id) ?? flowTemplates.find((t) => t.definition.id === id)?.definition
-      );
+      return flows.get(id) ?? flowTemplates.find((t) => t.definition.id === id)?.definition;
     },
     save: async (def) => {
       const check = validateFlow(def);
@@ -960,10 +1162,7 @@ export function createFlowsSurface(opts: {
           if (result.status === "error") failed++;
           else resumed++;
         } catch (err) {
-          console.error(
-            `[@lacrew/orchestrator] resuming flow run ${state.runId} failed:`,
-            err,
-          );
+          console.error(`[@lacrew/orchestrator] resuming flow run ${state.runId} failed:`, err);
           failed++;
         }
       }

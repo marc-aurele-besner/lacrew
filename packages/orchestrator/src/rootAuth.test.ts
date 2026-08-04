@@ -32,8 +32,7 @@ function coseKey(x: Uint8Array, y: Uint8Array): string {
 
 function credential() {
   const privateKey = p256.utils.randomPrivateKey();
-  const point =
-    p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
   return {
     privateKey,
     publicKey: coseKey(point.slice(1, 33), point.slice(33, 65)),
@@ -49,12 +48,7 @@ function assertFor(cred: ReturnType<typeof credential>, challenge: string) {
   authData.set(new Uint8Array(createHash("sha256").update(RP_ID).digest()), 0);
   authData[32] = 0x05;
   const digest = createHash("sha256")
-    .update(
-      Buffer.concat([
-        authData,
-        createHash("sha256").update(clientData).digest(),
-      ]),
-    )
+    .update(Buffer.concat([authData, createHash("sha256").update(clientData).digest()]))
     .digest();
   return {
     kind: "passkey" as const,
@@ -67,10 +61,7 @@ function assertFor(cred: ReturnType<typeof credential>, challenge: string) {
   };
 }
 
-function passkeySurface(
-  cred: ReturnType<typeof credential>,
-  now?: () => number,
-) {
+function passkeySurface(cred: ReturnType<typeof credential>, now?: () => number) {
   return createRootAuthSurface({
     config: {
       kind: "passkey",
@@ -152,10 +143,7 @@ describe("passkey root proofs", () => {
       challenge: challenge.challenge,
       proof: assertFor(cred, challenge.challenge),
     });
-    assert.equal(
-      outcome.ok === false && outcome.error,
-      "challenge_not_for_this_action",
-    );
+    assert.equal(outcome.ok === false && outcome.error, "challenge_not_for_this_action");
   });
 
   it("refuses a revoke proof replayed as a rotate", async () => {
@@ -170,10 +158,7 @@ describe("passkey root proofs", () => {
     });
     // Rotate re-issues authority; revoke only removes it. Consent to one is
     // not consent to the other.
-    assert.equal(
-      outcome.ok === false && outcome.error,
-      "challenge_not_for_this_action",
-    );
+    assert.equal(outcome.ok === false && outcome.error, "challenge_not_for_this_action");
   });
 
   it("burns the challenge, so a captured assertion cannot be replayed", async () => {
@@ -189,10 +174,7 @@ describe("passkey root proofs", () => {
     };
     assert.equal((await surface.verify(args)).ok, true);
     const replay = await surface.verify(args);
-    assert.equal(
-      replay.ok === false && replay.error,
-      "challenge_expired_or_unknown",
-    );
+    assert.equal(replay.ok === false && replay.error, "challenge_expired_or_unknown");
   });
 
   it("burns the challenge on a failed attempt too", async () => {
@@ -218,10 +200,7 @@ describe("passkey root proofs", () => {
       challenge: challenge.challenge,
       proof: assertFor(cred, challenge.challenge),
     });
-    assert.equal(
-      retry.ok === false && retry.error,
-      "challenge_expired_or_unknown",
-    );
+    assert.equal(retry.ok === false && retry.error, "challenge_expired_or_unknown");
   });
 
   it("refuses an unknown credential before it looks at the signature", async () => {
@@ -262,10 +241,7 @@ describe("passkey root proofs", () => {
       challenge: challenge.challenge,
       proof: assertFor(cred, challenge.challenge),
     });
-    assert.equal(
-      outcome.ok === false && outcome.error,
-      "challenge_expired_or_unknown",
-    );
+    assert.equal(outcome.ok === false && outcome.error, "challenge_expired_or_unknown");
   });
 
   it("refuses a wallet signature when the root is a passkey", async () => {
@@ -293,8 +269,7 @@ describe("passkey root proofs", () => {
 });
 
 describe("wallet root proofs", () => {
-  const key =
-    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
+  const key = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
   const account = privateKeyToAccount(key);
 
   it("accepts a personal_sign over the challenge statement", async () => {
@@ -343,10 +318,7 @@ describe("wallet root proofs", () => {
         signature: await stranger.signMessage({ message: challenge.statement }),
       },
     });
-    assert.equal(
-      outcome.ok === false && outcome.error,
-      "signature_not_from_root",
-    );
+    assert.equal(outcome.ok === false && outcome.error, "signature_not_from_root");
   });
 
   it("refuses a signature over some other statement", async () => {
@@ -364,10 +336,7 @@ describe("wallet root proofs", () => {
         signature: await account.signMessage({ message: "gm" }),
       },
     });
-    assert.equal(
-      outcome.ok === false && outcome.error,
-      "signature_not_from_root",
-    );
+    assert.equal(outcome.ok === false && outcome.error, "signature_not_from_root");
   });
 
   it("refuses a configured address the chain does not call root", async () => {

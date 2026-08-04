@@ -7,17 +7,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  createOnchainClient,
-  type OnchainLacrewClient,
-} from "@lacrew/sdk";
+import { createOnchainClient, type OnchainLacrewClient } from "@lacrew/sdk";
 import { CrewRuntime, createEphemeralSession } from "@lacrew/orchestrator";
-import {
-  PROTOCOL_NAME,
-  PROTOCOL_VERSION,
-  getAddresses,
-  ANVIL_CHAIN_ID,
-} from "@lacrew/core";
+import { PROTOCOL_NAME, PROTOCOL_VERSION, getAddresses, ANVIL_CHAIN_ID } from "@lacrew/core";
 import { http, parseEther, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { cmdConnectors } from "./connectors.js";
@@ -156,8 +148,7 @@ function cmdDeploy(args: string[]): void {
     process.env.RPC_URL ??
     "http://127.0.0.1:8545";
   const privateKey =
-    process.env.PRIVATE_KEY ??
-    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    process.env.PRIVATE_KEY ?? "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
   const sepoliaRpc = process.env.SEPOLIA_RPC_URL ?? process.env.BASE_SEPOLIA_RPC_URL;
   if (!anvil && !sepoliaRpc && !hasFlag(args, "--rpc")) {
@@ -377,7 +368,11 @@ async function main(): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      printJson(await (client as { revokeSession: (id: string) => Promise<unknown> }).revokeSession(sessionId));
+      printJson(
+        await (client as { revokeSession: (id: string) => Promise<unknown> }).revokeSession(
+          sessionId,
+        ),
+      );
       return;
     }
 
@@ -423,9 +418,9 @@ async function main(): Promise<void> {
       }
       // --asset SYMBOL|token streams that asset's own EpochStreamer; omit for USDC.
       printJson(
-        await (
-          client as { runEpoch: (asset?: string) => Promise<unknown> }
-        ).runEpoch(flagValue(rest, "--asset")),
+        await (client as { runEpoch: (asset?: string) => Promise<unknown> }).runEpoch(
+          flagValue(rest, "--asset"),
+        ),
       );
       return;
     }
@@ -463,10 +458,7 @@ async function main(): Promise<void> {
       const value = BigInt(valueRaw);
 
       // Onchain + SessionRegistry: issue an ephemeral key and sign propose with it.
-      if (
-        "issueSession" in client &&
-        (client as OnchainLacrewClient).addresses?.sessionRegistry
-      ) {
+      if ("issueSession" in client && (client as OnchainLacrewClient).addresses?.sessionRegistry) {
         const onchain = client as OnchainLacrewClient;
         const ephemeral = createEphemeralSession({
           agent: agentAddr,
@@ -556,7 +548,7 @@ async function main(): Promise<void> {
         const tier = cleaned[1];
         const target = cleaned[2];
         const data = (cleaned[3] ?? "0x") as `0x${string}`;
-        if (tier !== "low" && tier !== "high" || !target) {
+        if ((tier !== "low" && tier !== "high") || !target) {
           console.error("Usage: lacrew gov propose <low|high> <target> [dataHex] [--rpc]");
           process.exitCode = 1;
           return;
@@ -627,9 +619,7 @@ async function main(): Promise<void> {
         const account = cleaned[1] as `0x${string}` | undefined;
         const amountRaw = cleaned[2];
         if (!account || amountRaw === undefined) {
-          console.error(
-            "Usage: lacrew gov grant <account> <amountWei> [--asset <symbol>] [--rpc]",
-          );
+          console.error("Usage: lacrew gov grant <account> <amountWei> [--asset <symbol>] [--rpc]");
           process.exitCode = 1;
           return;
         }

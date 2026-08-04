@@ -7,7 +7,10 @@ import { createLacrewClient } from "@lacrew/sdk/testing";
 
 describe("createRuntimeMcpBackend", () => {
   it("MCP propose lands in the same runtime the server reads", async () => {
-    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), mode: "mock" });
+    const runtime = new CrewRuntime({
+      client: createLacrewClient({ useMock: true }),
+      mode: "mock",
+    });
     const backend = createRuntimeMcpBackend(runtime);
 
     // 150 USDC exceeds the mock worker cap → escalation intent.
@@ -45,7 +48,10 @@ describe("createRuntimeMcpBackend", () => {
   });
 
   it("refuses to let an agent settle an intent that has climbed to the human root", async () => {
-    const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }), mode: "mock" });
+    const runtime = new CrewRuntime({
+      client: createLacrewClient({ useMock: true }),
+      mode: "mock",
+    });
     const backend = createRuntimeMcpBackend(runtime);
 
     // Proposed by the manager, so the seat waiting on it is the root above it.

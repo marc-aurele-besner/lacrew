@@ -1,11 +1,7 @@
 /** Query helpers for inference budgets (keeps Drizzle inside @lacrew/db). */
 
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import {
-  inferenceBudgets,
-  inferenceUsage,
-  inferenceUsageEvents,
-} from "./schema/budgets.js";
+import { inferenceBudgets, inferenceUsage, inferenceUsageEvents } from "./schema/budgets.js";
 import type { DbHandle } from "./client.js";
 
 export interface InferenceBudgetRow {
@@ -193,9 +189,7 @@ export async function getInferenceUsage(
   const rows = await handle.db
     .select()
     .from(inferenceUsage)
-    .where(
-      and(eq(inferenceUsage.scopeKey, scopeKey), eq(inferenceUsage.periodKey, periodKey)),
-    )
+    .where(and(eq(inferenceUsage.scopeKey, scopeKey), eq(inferenceUsage.periodKey, periodKey)))
     .limit(1);
   const row = rows[0];
   return row ? usageFromRow(row) : null;

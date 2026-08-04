@@ -4,11 +4,7 @@ import { flow } from "./builder.js";
 import { flowToCode } from "./codegen.js";
 import { createMockFlowBackend, FlowWaitingError, runFlow } from "./run.js";
 import { stepEdges, validateFlow } from "./validate.js";
-import type {
-  FlowBackend,
-  FlowDefinition,
-  HumanGateResolution,
-} from "./types.js";
+import type { FlowBackend, FlowDefinition, HumanGateResolution } from "./types.js";
 
 /**
  * Model → human gate → connector write. The write is what the gate is holding:
@@ -86,11 +82,7 @@ test("entering the gate parks the run before anything downstream happens", async
   assert.equal(run.waiting?.reason, "human_gate");
   assert.equal(run.waiting?.token, "gate_1");
   assert.equal(run.waiting?.stepId, "signoff");
-  assert.deepEqual(
-    state.calls,
-    ["lacrew_human_gate"],
-    "the write never went out",
-  );
+  assert.deepEqual(state.calls, ["lacrew_human_gate"], "the write never went out");
   assert.equal(run.resume?.stepId, "signoff");
 });
 
@@ -116,19 +108,13 @@ test("answering yes resumes the run down that option's port", async () => {
   });
 
   assert.equal(resumed.status, "completed");
-  assert.deepEqual(state.calls, [
-    "lacrew_human_gate",
-    "typefully.create_draft",
-  ]);
+  assert.deepEqual(state.calls, ["lacrew_human_gate", "typefully.create_draft"]);
   assert.deepEqual(
     resumed.steps.map((s) => `${s.stepId}:${s.status}`),
     ["draft:ok", "signoff:waiting", "signoff:ok", "publish:ok"],
   );
   assert.match(
-    String(
-      resumed.steps.find((s) => s.stepId === "signoff" && s.status === "ok")
-        ?.summary,
-    ),
+    String(resumed.steps.find((s) => s.stepId === "signoff" && s.status === "ok")?.summary),
     /Publish.*dana/,
   );
 });
@@ -145,10 +131,7 @@ test("answering no takes the other port and never runs the write", async () => {
 
   assert.equal(run.status, "completed");
   assert.equal(run.steps.at(-1)?.stepId, "memo");
-  assert.ok(
-    !state.calls.includes("typefully.create_draft"),
-    "the declined write stayed unsent",
-  );
+  assert.ok(!state.calls.includes("typefully.create_draft"), "the declined write stayed unsent");
 });
 
 test("a timeout takes the timeout port, and stops the run when none is declared", async () => {
@@ -167,15 +150,8 @@ test("a timeout takes the timeout port, and stops the run when none is declared"
     ) as FlowDefinition["steps"],
   };
   const stopped = await runFlow(failsClosed, gatedBackend(state), {});
-  assert.equal(
-    stopped.status,
-    "error",
-    "no timeout port means the run stops, not continues",
-  );
-  assert.match(
-    String(stopped.steps.at(-1)?.error),
-    /human_gate_timeout:signoff/,
-  );
+  assert.equal(stopped.status, "error", "no timeout port means the run stops, not continues");
+  assert.match(String(stopped.steps.at(-1)?.error), /human_gate_timeout:signoff/);
   assert.ok(!state.calls.includes("typefully.create_draft"));
 });
 
@@ -189,10 +165,7 @@ test("an answer the step never offered routes nowhere", async () => {
   };
   const run = await runFlow(def, gatedBackend(state), {});
   assert.equal(run.status, "error");
-  assert.match(
-    String(run.steps.at(-1)?.error),
-    /human_gate_unrecognized:signoff:maybe/,
-  );
+  assert.match(String(run.steps.at(-1)?.error), /human_gate_unrecognized:signoff:maybe/);
 });
 
 test("the gate's decision is readable by later steps", async () => {
@@ -270,10 +243,7 @@ test("an option pointing at a step that does not exist is a validation error", (
         : s,
     ) as FlowDefinition["steps"],
   };
-  assert.match(
-    validateFlow(broken).errors.join(" | "),
-    /points to unknown step "nowhere"/,
-  );
+  assert.match(validateFlow(broken).errors.join(" | "), /points to unknown step "nowhere"/);
 });
 
 test("an option with no port stops the run instead of falling through", () => {

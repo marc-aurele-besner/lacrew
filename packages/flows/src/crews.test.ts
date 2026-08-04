@@ -87,7 +87,11 @@ test("every blueprint says what it looks after, with a field shape of its own", 
   }
 
   const placeholders = crewBlueprints.map((b) => b.caresFor!.placeholder);
-  assert.equal(new Set(placeholders).size, placeholders.length, "two blueprints share a placeholder");
+  assert.equal(
+    new Set(placeholders).size,
+    placeholders.length,
+    "two blueprints share a placeholder",
+  );
 });
 
 test("every blueprint puts its own manager between the root and its workers", () => {
@@ -339,7 +343,10 @@ test("the GitHub crew asks policy before it merges, and cannot merge otherwise",
   assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
   // The merge step is reachable only from the branch that read the verdict.
   const reachesMerge = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"merge"'));
-  assert.deepEqual(reachesMerge.map((s) => s.id), ["may-merge"]);
+  assert.deepEqual(
+    reachesMerge.map((s) => s.id),
+    ["may-merge"],
+  );
   const merge = def.steps.find((s) => s.id === "merge");
   assert.equal(merge?.kind === "tool" && merge.tool, "github.merge_pull_request");
 });
@@ -355,9 +362,7 @@ test("publication is asked of policy before it is ever proposed", () => {
   assert.equal(check?.kind, "tool");
   assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
 
-  const reachesGate = def.steps.filter((s) =>
-    JSON.stringify(stepEdges(s)).includes('"publish"'),
-  );
+  const reachesGate = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"publish"'));
   assert.deepEqual(
     reachesGate.map((s) => s.id),
     ["publish-allowed"],
@@ -413,7 +418,10 @@ test("a seat that needs its own policy stack gets a binding step", () => {
   assert.deepEqual(bind[0]!.pending, ["crew.executor", "policy.executor"]);
 
   // No seat in the GitHub crew needs one, so no step is invented for it.
-  assert.equal(crewPlan(getCrewBlueprint("github-experts")!).filter((s) => s.kind === "bind-policy").length, 0);
+  assert.equal(
+    crewPlan(getCrewBlueprint("github-experts")!).filter((s) => s.kind === "bind-policy").length,
+    0,
+  );
 });
 
 test("plan steps report what is still unbound, and stop reporting it once bound", () => {
@@ -428,7 +436,10 @@ test("plan steps report what is still unbound, and stop reporting it once bound"
     [],
   );
   for (const step of bound) {
-    assert.ok(!JSON.stringify(step.args).includes("{{"), `${step.summary} still carries a placeholder`);
+    assert.ok(
+      !JSON.stringify(step.args).includes("{{"),
+      `${step.summary} still carries a placeholder`,
+    );
   }
 });
 

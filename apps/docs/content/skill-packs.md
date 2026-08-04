@@ -55,13 +55,13 @@ file, a marketplace payload — and those are already JSON.
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Lowercase, stable. Two installs of the same id replace each other. |
-| `version` | Any string. Changing it is what makes an install an update. |
-| `scope` | `agent`, `crew`, or `either`. A `crew` pack installs onto a `crew:<id>` layer; an `agent` pack onto any other. |
-| `skills[].id` | Stable **within the pack**. An update replaces the skill with the same id in place. |
-| `skills[].trigger` | Mandatory. A skill with no trigger is one the model applies to everything. |
+| Field                 | Meaning                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                  | Lowercase, stable. Two installs of the same id replace each other.                                                                                                                                                 |
+| `version`             | Any string. Changing it is what makes an install an update.                                                                                                                                                        |
+| `scope`               | `agent`, `crew`, or `either`. A `crew` pack installs onto a `crew:<id>` layer; an `agent` pack onto any other.                                                                                                     |
+| `skills[].id`         | Stable **within the pack**. An update replaces the skill with the same id in place.                                                                                                                                |
+| `skills[].trigger`    | Mandatory. A skill with no trigger is one the model applies to everything.                                                                                                                                         |
 | `requires.connectors` | A connector id (`github`) or one route (`github.merge_pull_request`). Prefer the route: a connector registered with reads only is a real setup, and a merge procedure installed against it fails where it matters. |
 
 Bounds: 20 skills per pack, 400 characters of trigger, 4,000 of body — and the
@@ -100,12 +100,12 @@ with no trigger is exported with the gap named in the field rather than dropped.
 
 ## Over HTTP
 
-| Route | Does |
-| --- | --- |
-| `GET /skills/packs` | The packs that ship, each with what this deployment is missing and whether it is installable |
-| `GET /agents/skills?agent=0x…` | Which packs a seat's directive carries, and the directive itself |
-| `POST /agents/skills/install` | `{agent, packId}` for a shipped pack, or `{agent, pack}` with the pack inline. `label` picks the directive layer (default `agent`) |
-| `POST /agents/skills/remove` | `{agent, packId}` |
+| Route                          | Does                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /skills/packs`            | The packs that ship, each with what this deployment is missing and whether it is installable                                       |
+| `GET /agents/skills?agent=0x…` | Which packs a seat's directive carries, and the directive itself                                                                   |
+| `POST /agents/skills/install`  | `{agent, packId}` for a shipped pack, or `{agent, pack}` with the pack inline. `label` picks the directive layer (default `agent`) |
+| `POST /agents/skills/remove`   | `{agent, packId}`                                                                                                                  |
 
 The install refuses in three distinguishable ways, because they are fixed in
 different places:

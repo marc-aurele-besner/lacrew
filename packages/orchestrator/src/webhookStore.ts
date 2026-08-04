@@ -64,10 +64,7 @@ export interface WebhookStore {
     reason?: string | null;
     runId?: string | null;
   }): Promise<void>;
-  recentDeliveries(
-    limit: number,
-    triggerId?: string,
-  ): Promise<WebhookDeliveryRow[]>;
+  recentDeliveries(limit: number, triggerId?: string): Promise<WebhookDeliveryRow[]>;
   /** Drop deliveries past the retention window (called on boot). */
   prune(): Promise<void>;
   close(): Promise<void>;
@@ -82,13 +79,11 @@ export function createMemoryWebhookStore(): WebhookStore {
   // JSON rather than a delimiter: delivery keys come from the producer and may
   // contain anything, so a separator could be forged to collide with another
   // trigger's claim.
-  const key = (triggerId: string, deliveryKey: string) =>
-    JSON.stringify([triggerId, deliveryKey]);
+  const key = (triggerId: string, deliveryKey: string) => JSON.stringify([triggerId, deliveryKey]);
 
   const push = (row: WebhookDeliveryRow): void => {
     ring.push(row);
-    if (ring.length > DELIVERY_RING_MAX)
-      ring.splice(0, ring.length - DELIVERY_RING_MAX);
+    if (ring.length > DELIVERY_RING_MAX) ring.splice(0, ring.length - DELIVERY_RING_MAX);
   };
 
   return {
@@ -123,8 +118,7 @@ export function createMemoryWebhookStore(): WebhookStore {
     },
     settleDelivery: async (row) => {
       const found = ring.find(
-        (d) =>
-          d.triggerId === row.triggerId && d.deliveryKey === row.deliveryKey,
+        (d) => d.triggerId === row.triggerId && d.deliveryKey === row.deliveryKey,
       );
       if (found) {
         found.result = row.result;

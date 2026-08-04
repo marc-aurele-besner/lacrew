@@ -393,7 +393,8 @@ export function validateConnector(connector: Connector): string[] {
     errors.push(`connector "${connector.id}" bearer auth needs tokenEnv`);
   }
   if (connector.auth?.kind === "header") {
-    if (!connector.auth.header?.trim()) errors.push(`connector "${connector.id}" needs a header name`);
+    if (!connector.auth.header?.trim())
+      errors.push(`connector "${connector.id}" needs a header name`);
     if (!connector.auth.valueEnv?.trim()) errors.push(`connector "${connector.id}" needs valueEnv`);
   }
   if (connector.auth?.kind === "github-app") {
@@ -453,7 +454,9 @@ export function validateConnector(connector: Connector): string[] {
     // resolve: the check would gate nothing, and reading it as a control later
     // is exactly the kind of comfortable mistake this file exists to avoid.
     if (route.policyTarget && route.effect === "read") {
-      errors.push(`route "${connector.id}.${route.name}" is a read and cannot carry a policyTarget`);
+      errors.push(
+        `route "${connector.id}.${route.name}" is a read and cannot carry a policyTarget`,
+      );
     }
     if (route.mode !== undefined && !isConnectorWriteMode(route.mode)) {
       errors.push(`route "${connector.id}.${route.name}" mode must be auto | ask | deny`);
@@ -549,8 +552,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
 
   return {
     list: () => [...byId.values()],
-    toolNames: () =>
-      [...byId.values()].flatMap((c) => c.routes.map((r) => `${c.id}.${r.name}`)),
+    toolNames: () => [...byId.values()].flatMap((c) => c.routes.map((r) => `${c.id}.${r.name}`)),
     handles: (name) => resolve(name) !== undefined,
     effectOf: (name) => resolve(name)?.route.effect,
     describe: (subject = {}) =>
@@ -658,10 +660,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
       const started = Date.now();
       const maxBytes = maxBytesFor(connector, route);
       const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        connector.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      );
+      const timer = setTimeout(() => controller.abort(), connector.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       // Resolved before the call so the refusal path can put the same seat on
       // the trail that a successful call would have.
       const seat = ctx.principal?.trim().toLowerCase();
@@ -797,8 +796,7 @@ export function loadConnectorsFromEnv(
     text = readFile(raw);
   }
   const parsed = JSON.parse(text) as
-    | ConnectorConfigEntry[]
-    | { connectors: ConnectorConfigEntry[] };
+    ConnectorConfigEntry[] | { connectors: ConnectorConfigEntry[] };
   const entries = Array.isArray(parsed) ? parsed : parsed.connectors;
   if (!Array.isArray(entries)) throw new Error("connector_config_invalid: expected an array");
   return resolveConnectorConfig(entries);

@@ -40,10 +40,7 @@ const AT = "2026-07-28T00:00:00.000Z";
 
 describe("composeSystemPrompt", () => {
   it("is the bare identity line when nothing is briefed", () => {
-    assert.equal(
-      composeSystemPrompt(AGENT),
-      `You are agent ${AGENT} in a LaCrew organization.`,
-    );
+    assert.equal(composeSystemPrompt(AGENT), `You are agent ${AGENT} in a LaCrew organization.`);
   });
 
   it("applies layers in the order given", () => {
@@ -169,10 +166,7 @@ describe("AgentControls — briefs", () => {
 
   it("falls back to the identity line for an agent with no brief", () => {
     const c = new AgentControls();
-    assert.equal(
-      c.systemPromptFor(AGENT),
-      `You are agent ${AGENT} in a LaCrew organization.`,
-    );
+    assert.equal(c.systemPromptFor(AGENT), `You are agent ${AGENT} in a LaCrew organization.`);
   });
 
   it("replaces layers wholesale rather than appending", () => {
@@ -187,10 +181,7 @@ describe("AgentControls — briefs", () => {
     c.setBrief(AGENT, [{ label: "agent", text: "something" }], AT);
     assert.equal(c.setBrief(AGENT, [{ label: "agent", text: "  " }], AT), null);
     assert.equal(c.briefFor(AGENT), null);
-    assert.equal(
-      c.systemPromptFor(AGENT),
-      `You are agent ${AGENT} in a LaCrew organization.`,
-    );
+    assert.equal(c.systemPromptFor(AGENT), `You are agent ${AGENT} in a LaCrew organization.`);
   });
 
   it("keeps provenance labels without interpreting them", () => {
@@ -265,7 +256,10 @@ describe("renderLayer — a directive reads like the AGENTS.md someone would wri
   });
 
   it("defaults a resource with no kind rather than dropping it", () => {
-    assert.match(renderLayer({ label: "x", resources: [{ kind: "", ref: "a/b" }] }), /- resource a\/b/);
+    assert.match(
+      renderLayer({ label: "x", resources: [{ kind: "", ref: "a/b" }] }),
+      /- resource a\/b/,
+    );
   });
 
   it("drops a skill missing its name or its body — a half-skill instructs nothing", () => {
@@ -302,7 +296,10 @@ describe("normalizeLayers with structure", () => {
         {
           label: " crew:x ",
           text: " guidelines ",
-          resources: [{ kind: " repo ", ref: " a/b ", note: "  " }, { kind: "repo", ref: "" }],
+          resources: [
+            { kind: " repo ", ref: " a/b ", note: "  " },
+            { kind: "repo", ref: "" },
+          ],
           skills: [{ name: " s ", when: "  ", instructions: " do " }],
         },
       ]),

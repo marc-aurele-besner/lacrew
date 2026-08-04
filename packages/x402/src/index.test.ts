@@ -130,9 +130,9 @@ test("malformed X-PAYMENT headers are rejected", () => {
   assert.throws(() => decodePaymentHeader("not-base64-json"), /valid base64 JSON/);
   const wrongVersion = Buffer.from(JSON.stringify({ x402Version: 99 })).toString("base64");
   assert.throws(() => decodePaymentHeader(wrongVersion), /Unsupported x402 version/);
-  const wrongScheme = Buffer.from(
-    JSON.stringify({ x402Version: 1, scheme: "upto" }),
-  ).toString("base64");
+  const wrongScheme = Buffer.from(JSON.stringify({ x402Version: 1, scheme: "upto" })).toString(
+    "base64",
+  );
   assert.throws(() => decodePaymentHeader(wrongScheme), /Unsupported x402 scheme/);
   const noSig = Buffer.from(
     JSON.stringify({ x402Version: 1, scheme: "exact", payload: {} }),

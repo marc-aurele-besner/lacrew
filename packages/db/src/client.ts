@@ -71,10 +71,7 @@ function logNotice(notice: { code?: string; message?: string }): void {
   console.warn(`[@lacrew/db] postgres notice ${notice.code ?? "?"}: ${notice.message ?? ""}`);
 }
 
-export function createDb(
-  url = getDatabaseUrl(),
-  schemaName = getDatabaseSchema(),
-): DbHandle {
+export function createDb(url = getDatabaseUrl(), schemaName = getDatabaseSchema()): DbHandle {
   if (!url) {
     throw new Error("DATABASE_URL is required (Neon or Docker Postgres)");
   }

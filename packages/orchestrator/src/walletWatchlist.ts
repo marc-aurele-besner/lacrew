@@ -17,9 +17,7 @@ import type { WatchedChain, WatchedToken } from "@lacrew/core";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
-export type ParseResult =
-  | { ok: true; value: WatchedChain[] }
-  | { ok: false; error: string };
+export type ParseResult = { ok: true; value: WatchedChain[] } | { ok: false; error: string };
 
 function parseToken(raw: unknown, chainId: number): WatchedToken | string {
   if (typeof raw !== "object" || raw === null) return `chain ${chainId}: token must be an object`;

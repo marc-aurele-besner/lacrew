@@ -95,15 +95,12 @@ test("the default credential mode is the App, and the PAT is an explicit opt-in"
   // attributes every crew action to a person. Whichever mode is listed first
   // is what an operator who does not choose ends up running.
   assert.equal(getConnectorPreset("github")!.auth[0]!.mode, "github-app");
-  assert.deepEqual(
-    buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }).auth,
-    {
-      kind: "github-app",
-      appIdEnv: "GITHUB_APP_ID",
-      privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
-      installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
-    },
-  );
+  assert.deepEqual(buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }).auth, {
+    kind: "github-app",
+    appIdEnv: "GITHUB_APP_ID",
+    privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
+    installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
+  });
   assert.deepEqual(
     buildConnectorPreset("github", {
       authMode: "token",
@@ -135,7 +132,8 @@ test("a write with no policy target is refused rather than registered unadmitted
   );
   // Binding one write does not carry the other in with it.
   assert.throws(
-    () => buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }),
+    () =>
+      buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }),
     /connector_preset_unbound_policy_target:github\.create_issue_comment/,
   );
 });
@@ -255,7 +253,9 @@ test("resolveConnectorConfig passes a full definition through untouched", () => 
     id: "cms",
     baseUrl: "https://cms.example",
     auth: { kind: "none" as const },
-    routes: [{ name: "get_post", method: "GET" as const, path: "/posts/{id}", effect: "read" as const }],
+    routes: [
+      { name: "get_post", method: "GET" as const, path: "/posts/{id}", effect: "read" as const },
+    ],
   };
   assert.deepEqual(resolveConnectorConfig([written]), [written]);
 });
@@ -277,7 +277,10 @@ test("no preset ships a write that could be registered unadmitted", () => {
         route.policyTarget?.required,
         `${preset.id}.${route.name} is a write with no required policy target`,
       );
-      assert.ok(route.policyTarget!.note.length > 20, `${preset.id}.${route.name} target needs a note`);
+      assert.ok(
+        route.policyTarget!.note.length > 20,
+        `${preset.id}.${route.name} target needs a note`,
+      );
     }
     // Building with nothing bound must fail rather than register the write.
     if (writes.some((r) => r.policyTarget?.required)) {
@@ -372,9 +375,13 @@ test("the header override applies to a header credential and nothing else", () =
 });
 
 test("a preset with no default host refuses to build pointed at somebody else's site", () => {
-  assert.throws(() => buildConnectorPreset("ghost", {
-    policyTargets: { create_post: MERGE_AUTHORITY, update_post: MERGE_AUTHORITY },
-  }), /connector_preset_unbound_base_url:ghost/);
+  assert.throws(
+    () =>
+      buildConnectorPreset("ghost", {
+        policyTargets: { create_post: MERGE_AUTHORITY, update_post: MERGE_AUTHORITY },
+      }),
+    /connector_preset_unbound_base_url:ghost/,
+  );
   // The error carries the note, so the operator learns the shape of the URL.
   assert.throws(
     () => buildConnectorPreset("ghost", { omitRoutes: ["create_post", "update_post"] }),

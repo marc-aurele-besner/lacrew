@@ -10,17 +10,17 @@ LaCrew is an open source protocol and platform for organizing AI agents the way 
 
 ## What's in this repo
 
-| Path | Purpose |
-| --- | --- |
-| `contracts/` | Solidity contracts (Foundry): OrgRegistry, Treasury, EscalationRouter, GovernanceModule, PolicyModules |
-| `packages/core` | Shared TypeScript types, ABIs, constants |
-| `packages/sdk` | Typed client for org state, intents, escalations, sessions |
-| `packages/db` | Drizzle + Postgres (Neon or Docker) |
-| `packages/orchestrator` | Agent runtime: pg-boss queue, session keys, intent proposal |
-| `packages/adapters/*` | Wallet and agent-framework adapters |
-| `apps/cli` | Scaffold an org, run a crew locally, self-host |
-| `apps/docs` | Protocol docs (docs.lacrew.xyz) |
-| `examples/` | Starter crew templates |
+| Path                    | Purpose                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `contracts/`            | Solidity contracts (Foundry): OrgRegistry, Treasury, EscalationRouter, GovernanceModule, PolicyModules |
+| `packages/core`         | Shared TypeScript types, ABIs, constants                                                               |
+| `packages/sdk`          | Typed client for org state, intents, escalations, sessions                                             |
+| `packages/db`           | Drizzle + Postgres (Neon or Docker)                                                                    |
+| `packages/orchestrator` | Agent runtime: pg-boss queue, session keys, intent proposal                                            |
+| `packages/adapters/*`   | Wallet and agent-framework adapters                                                                    |
+| `apps/cli`              | Scaffold an org, run a crew locally, self-host                                                         |
+| `apps/docs`             | Protocol docs (docs.lacrew.xyz)                                                                        |
+| `examples/`             | Starter crew templates                                                                                 |
 
 The hosted cloud (`lacrew.xyz`) is a separate private repo. It depends on these packages; it does not fork them.
 

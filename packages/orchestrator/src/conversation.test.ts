@@ -99,7 +99,10 @@ describe("normalizeMessage", () => {
         body: "pick",
         kind: "question",
         options: ["a", "  ", ""],
-        refs: [{ kind: "intent", id: " 7 " }, { kind: "tx", id: "" }],
+        refs: [
+          { kind: "intent", id: " 7 " },
+          { kind: "tx", id: "" },
+        ],
       },
       "m1",
       AT,
@@ -111,7 +114,10 @@ describe("normalizeMessage", () => {
   it("keeps provenance only when it looks like a channel slug", () => {
     // It renders next to the author's name, so whatever posts a message must
     // not be able to put markup — or a sentence — in that position.
-    assert.equal(normalizeMessage({ ...base, body: "hi", via: "Telegram" }, "m1", AT).via, "telegram");
+    assert.equal(
+      normalizeMessage({ ...base, body: "hi", via: "Telegram" }, "m1", AT).via,
+      "telegram",
+    );
     for (const bad of ["<b>slack</b>", "posted by the ceo", "", "x".repeat(40)]) {
       assert.equal(normalizeMessage({ ...base, body: "hi", via: bad }, "m1", AT).via, undefined);
     }
@@ -137,7 +143,10 @@ describe("verifiability", () => {
 describe("openQuestions", () => {
   it("finds a question nobody answered", () => {
     const q = msg({ id: "q1", kind: "question", body: "merge?" });
-    assert.deepEqual(openQuestions([q]).map((m) => m.id), ["q1"]);
+    assert.deepEqual(
+      openQuestions([q]).map((m) => m.id),
+      ["q1"],
+    );
   });
 
   it("closes a question once answered", () => {
@@ -151,13 +160,19 @@ describe("openQuestions", () => {
     // have been to the question that follows it.
     const a = msg({ id: "a1", kind: "answer", replyTo: "q1", body: "yes" });
     const q = msg({ id: "q1", kind: "question", body: "merge?" });
-    assert.deepEqual(openQuestions([a, q]).map((m) => m.id), ["q1"]);
+    assert.deepEqual(
+      openQuestions([a, q]).map((m) => m.id),
+      ["q1"],
+    );
   });
 
   it("ignores an answer pointing at nothing", () => {
     const q = msg({ id: "q1", kind: "question", body: "merge?" });
     const a = msg({ id: "a1", kind: "answer", replyTo: "gone", body: "yes" });
-    assert.deepEqual(openQuestions([q, a]).map((m) => m.id), ["q1"]);
+    assert.deepEqual(
+      openQuestions([q, a]).map((m) => m.id),
+      ["q1"],
+    );
   });
 });
 
@@ -190,13 +205,29 @@ describe("pendingPlan", () => {
 describe("Conversation", () => {
   it("keeps threads apart and reads oldest first", () => {
     const c = new Conversation();
-    c.post({ scope: { kind: "crew", id: "trading" }, author: AGENT, authorKind: "agent", body: "one" });
-    c.post({ scope: { kind: "crew", id: "trading" }, author: AGENT, authorKind: "agent", body: "two" });
+    c.post({
+      scope: { kind: "crew", id: "trading" },
+      author: AGENT,
+      authorKind: "agent",
+      body: "one",
+    });
+    c.post({
+      scope: { kind: "crew", id: "trading" },
+      author: AGENT,
+      authorKind: "agent",
+      body: "two",
+    });
     c.post({ scope: { kind: "org" }, author: "seat1", authorKind: "human", body: "elsewhere" });
 
     const trading = c.thread({ kind: "crew", id: "trading" });
-    assert.deepEqual(trading.map((m) => m.body), ["one", "two"]);
-    assert.deepEqual(c.thread({ kind: "org" }).map((m) => m.body), ["elsewhere"]);
+    assert.deepEqual(
+      trading.map((m) => m.body),
+      ["one", "two"],
+    );
+    assert.deepEqual(
+      c.thread({ kind: "org" }).map((m) => m.body),
+      ["elsewhere"],
+    );
   });
 
   it("serves the cross-thread feed newest first", () => {
@@ -223,7 +254,10 @@ describe("Conversation", () => {
       body: "merge?",
       options: ["yes", "no"],
     });
-    assert.deepEqual(c.openQuestionsIn({ kind: "crew", id: "trading" }).map((m) => m.id), [q.id]);
+    assert.deepEqual(
+      c.openQuestionsIn({ kind: "crew", id: "trading" }).map((m) => m.id),
+      [q.id],
+    );
 
     c.post({
       scope: { kind: "crew", id: "trading" },
@@ -284,15 +318,30 @@ describe("Conversation", () => {
   it("gathers unanswered questions from every thread, oldest first", () => {
     const c = new Conversation();
     const older = c.post(
-      { scope: { kind: "crew", id: "a" }, author: AGENT, authorKind: "agent", kind: "question", body: "first?" },
+      {
+        scope: { kind: "crew", id: "a" },
+        author: AGENT,
+        authorKind: "agent",
+        kind: "question",
+        body: "first?",
+      },
       "2026-07-28T10:00:00.000Z",
     );
     const newer = c.post(
-      { scope: { kind: "crew", id: "b" }, author: AGENT, authorKind: "agent", kind: "question", body: "second?" },
+      {
+        scope: { kind: "crew", id: "b" },
+        author: AGENT,
+        authorKind: "agent",
+        kind: "question",
+        body: "second?",
+      },
       "2026-07-28T11:00:00.000Z",
     );
     // The one that has waited longest is the one holding something up.
-    assert.deepEqual(c.allOpenQuestions().map((m) => m.id), [older.id, newer.id]);
+    assert.deepEqual(
+      c.allOpenQuestions().map((m) => m.id),
+      [older.id, newer.id],
+    );
   });
 
   it("does not let an answer in one crew close a question in another", () => {
@@ -314,7 +363,10 @@ describe("Conversation", () => {
       replyTo: q.id,
       body: "yes",
     });
-    assert.deepEqual(c.allOpenQuestions().map((m) => m.id), [q.id]);
+    assert.deepEqual(
+      c.allOpenQuestions().map((m) => m.id),
+      [q.id],
+    );
   });
 
   it("is empty once every question is answered in its own thread", () => {
@@ -343,9 +395,12 @@ describe("Conversation", () => {
     c.post({ scope: { kind: "crew", id: "b" }, author: "s", authorKind: "human", body: "y" });
     c.post({ scope: { kind: "crew", id: "b" }, author: "s", authorKind: "human", body: "z" });
     const threads = c.threads().sort((x, y) => x.threadId.localeCompare(y.threadId));
-    assert.deepEqual(threads.map((t) => [t.threadId, t.messages]), [
-      ["crew:a", 1],
-      ["crew:b", 2],
-    ]);
+    assert.deepEqual(
+      threads.map((t) => [t.threadId, t.messages]),
+      [
+        ["crew:a", 1],
+        ["crew:b", 2],
+      ],
+    );
   });
 });

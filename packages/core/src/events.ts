@@ -406,4 +406,3 @@ export interface ProtocolEvent {
   orgId?: string;
   payload: Record<string, unknown>;
 }
-

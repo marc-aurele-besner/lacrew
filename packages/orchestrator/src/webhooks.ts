@@ -17,16 +17,8 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { FlowDefinition, FlowRunResult } from "@lacrew/flows";
-import {
-  isSealedSecret,
-  seal,
-  sessionSealingAvailable,
-  unseal,
-} from "./secretBox.js";
-import {
-  createWebhookStoreFromEnv,
-  type WebhookStore,
-} from "./webhookStore.js";
+import { isSealedSecret, seal, sessionSealingAvailable, unseal } from "./secretBox.js";
+import { createWebhookStoreFromEnv, type WebhookStore } from "./webhookStore.js";
 import { generateWebhookSecret } from "./webhookSignature.js";
 import {
   eventSelected,
@@ -140,13 +132,8 @@ export type WebhookSurface = {
    * Returns the cleartext secret exactly once — it is not readable again.
    * Absent for sources that authenticate the sender rather than share a key.
    */
-  create(
-    input: WebhookCreateInput,
-  ): Promise<{ trigger: WebhookTrigger; secret?: string }>;
-  rotate(
-    id: string,
-    secret?: string,
-  ): Promise<{ trigger: WebhookTrigger; secret?: string }>;
+  create(input: WebhookCreateInput): Promise<{ trigger: WebhookTrigger; secret?: string }>;
+  rotate(id: string, secret?: string): Promise<{ trigger: WebhookTrigger; secret?: string }>;
   setEnabled(id: string, enabled: boolean): Promise<WebhookTrigger>;
   remove(id: string): Promise<boolean>;
   deliveries(limit?: number, triggerId?: string): Promise<WebhookDelivery[]>;
@@ -192,10 +179,7 @@ function asInputValue(value: unknown): string {
 }
 
 /** Body → the flow's `input` string, per the trigger's mapping. */
-export function mapWebhookInput(
-  body: unknown,
-  map: WebhookInputMap | undefined,
-): string {
+export function mapWebhookInput(body: unknown, map: WebhookInputMap | undefined): string {
   if (map?.fields && Object.keys(map.fields).length > 0) {
     const out: Record<string, string> = {};
     for (const [key, path] of Object.entries(map.fields)) {
@@ -215,14 +199,9 @@ export function mapWebhookInput(
  */
 function deliveryKeyFor(header: (name: string) => string | undefined): string {
   const explicit =
-    header("idempotency-key") ??
-    header("x-github-delivery") ??
-    header("x-lacrew-delivery");
+    header("idempotency-key") ?? header("x-github-delivery") ?? header("x-lacrew-delivery");
   if (explicit?.trim()) return explicit.trim().slice(0, 200);
-  const signature =
-    header("x-lacrew-signature") ??
-    header("x-hub-signature-256") ??
-    randomUUID();
+  const signature = header("x-lacrew-signature") ?? header("x-hub-signature-256") ?? randomUUID();
   return `sig_${createHash("sha256").update(signature).digest("hex").slice(0, 32)}`;
 }
 
@@ -288,10 +267,7 @@ export function createWebhookSurface(opts: {
     return JSON.stringify(seal(secret));
   };
 
-  const persist = async (
-    trigger: WebhookTrigger,
-    secret: string | undefined,
-  ): Promise<void> => {
+  const persist = async (trigger: WebhookTrigger, secret: string | undefined): Promise<void> => {
     await store.save({
       id: trigger.id,
       flowId: trigger.flowId,
@@ -300,9 +276,7 @@ export function createWebhookSurface(opts: {
       secretSealed: secret ? sealForStore(secret) : "",
       secretVersion: trigger.secretVersion ?? 0,
       enabled: trigger.enabled,
-      inputMap: trigger.input
-        ? (trigger.input as Record<string, unknown>)
-        : null,
+      inputMap: trigger.input ? (trigger.input as Record<string, unknown>) : null,
       description: trigger.description ?? null,
       events: trigger.events ?? null,
       config: trigger.config ? (trigger.config as Record<string, unknown>) : null,
@@ -315,23 +289,18 @@ export function createWebhookSurface(opts: {
    * flow remotely startable, and the definition — the thing an operator reads
    * and the marketplace ships — would not say so.
    */
-  const requireWebhookFlow = async (
-    flowId: string,
-  ): Promise<FlowDefinition> => {
+  const requireWebhookFlow = async (flowId: string): Promise<FlowDefinition> => {
     // Always through the store: this runs on registration and on every
     // delivery, both of which can land on a replica that booted before the flow
     // was saved, and both of which already touch the database anyway.
     const def = await opts.flows.get(flowId, { refresh: true });
     if (!def) throw new Error("flow_not_found");
-    if (def.trigger !== "webhook")
-      throw new Error("flow_not_webhook_triggered");
+    if (def.trigger !== "webhook") throw new Error("flow_not_webhook_triggered");
     return def;
   };
 
   /** Adopt a store row into the in-process maps, unsealing its secret. */
-  const adopt = (
-    row: Awaited<ReturnType<WebhookStore["get"]>>,
-  ): WebhookTrigger | undefined => {
+  const adopt = (row: Awaited<ReturnType<WebhookStore["get"]>>): WebhookTrigger | undefined => {
     if (!row || !isEventSource(row.scheme)) return undefined;
     const trigger: WebhookTrigger = {
       id: row.id,
@@ -346,9 +315,7 @@ export function createWebhookSurface(opts: {
       ...(row.secretVersion ? { secretVersion: row.secretVersion } : {}),
     };
     triggers.set(row.id, trigger);
-    const secret = row.secretSealed
-      ? readSealed(row.id, row.secretSealed)
-      : null;
+    const secret = row.secretSealed ? readSealed(row.id, row.secretSealed) : null;
     if (secret) secrets.set(row.id, secret);
     else if (store.durable && getEventSource(trigger.scheme).usesSecret) {
       // Sealed material exists and could not be opened — wrong key, or a
@@ -514,8 +481,7 @@ export function createWebhookSurface(opts: {
 
     accept: async ({ triggerId, rawBody, header, contentLength }) => {
       const trigger = await resolve(triggerId);
-      if (!trigger)
-        return { ok: false, status: 404, error: "webhook_trigger_not_found" };
+      if (!trigger) return { ok: false, status: 404, error: "webhook_trigger_not_found" };
 
       const bytes = Buffer.byteLength(rawBody, "utf8");
       const cap = webhookMaxBodyBytes();
@@ -545,8 +511,7 @@ export function createWebhookSurface(opts: {
         return reject(triggerId, status, `webhook_${verified.reason}`, bytes);
       }
 
-      if (!trigger.enabled)
-        return reject(triggerId, 403, "webhook_trigger_disabled", bytes);
+      if (!trigger.enabled) return reject(triggerId, 403, "webhook_trigger_disabled", bytes);
 
       let body: unknown;
       try {
@@ -589,12 +554,7 @@ export function createWebhookSurface(opts: {
         def = await requireWebhookFlow(trigger.flowId);
       } catch (err) {
         const reason = err instanceof Error ? err.message : "flow_not_found";
-        return reject(
-          triggerId,
-          reason === "flow_not_found" ? 404 : 400,
-          reason,
-          bytes,
-        );
+        return reject(triggerId, reason === "flow_not_found" ? 404 : 400, reason, bytes);
       }
 
       // Reject rather than skip: a webhook producer retries, and a silent skip
@@ -610,8 +570,7 @@ export function createWebhookSurface(opts: {
         deliveryKey,
         bytes,
       });
-      if (!claimed)
-        return { ok: true, status: 200, duplicate: true, deliveryKey };
+      if (!claimed) return { ok: true, status: 200, duplicate: true, deliveryKey };
 
       const runId = `run-wh-${randomBytes(6).toString("hex")}`;
       const job: WebhookJob = {
@@ -686,10 +645,7 @@ export function createWebhookSurface(opts: {
           reason,
           runId: job.runId,
         });
-        console.error(
-          `[@lacrew/orchestrator] webhook flow "${trigger.flowId}" failed:`,
-          reason,
-        );
+        console.error(`[@lacrew/orchestrator] webhook flow "${trigger.flowId}" failed:`, reason);
         return null;
       }
     },

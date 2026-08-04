@@ -70,10 +70,7 @@ test("a read route calls the registered URL with the credential from env", async
   });
 
   assert.equal(calls.length, 1);
-  assert.equal(
-    calls[0]!.url,
-    "https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/7",
-  );
+  assert.equal(calls[0]!.url, "https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/7");
   const headers = calls[0]!.init.headers as Record<string, string>;
   assert.equal(headers.authorization, "Bearer ghp_secret");
   assert.equal(result.ok, true);
@@ -91,10 +88,7 @@ test("a flow cannot reach a route, host, or method nobody registered", async () 
   assert.equal(registry.handles("github.close_issue"), false);
   assert.equal(registry.handles("evil.exfiltrate"), false);
   assert.equal(registry.handles("lacrew_propose_intent"), false);
-  await assert.rejects(
-    () => registry.call("github.close_issue", {}),
-    /unknown_connector_tool/,
-  );
+  await assert.rejects(() => registry.call("github.close_issue", {}), /unknown_connector_tool/);
   assert.equal(calls.length, 0, "an unregistered name must not reach the network");
 
   assert.deepEqual(registry.toolNames(), [
@@ -329,9 +323,7 @@ test("a constant header cannot be used to smuggle in a second credential", () =>
 test("validation rejects the connectors an operator gets wrong", () => {
   assert.deepEqual(validateConnector(githubConnector()), []);
 
-  const plaintext = validateConnector(
-    githubConnector({ baseUrl: "http://api.example.com" }),
-  );
+  const plaintext = validateConnector(githubConnector({ baseUrl: "http://api.example.com" }));
   assert.ok(plaintext.some((e) => /must be https/.test(e)));
 
   // Loopback over http is how a local tool server is reached in development.
@@ -383,9 +375,8 @@ test("config loads from inline JSON or a file, and no config is not an error", (
   });
   assert.equal(inline[0]!.id, "github");
 
-  const fromFile = loadConnectorsFromEnv(
-    { LACREW_CONNECTORS: "/etc/lacrew/connectors.json" },
-    () => JSON.stringify({ connectors: [githubConnector()] }),
+  const fromFile = loadConnectorsFromEnv({ LACREW_CONNECTORS: "/etc/lacrew/connectors.json" }, () =>
+    JSON.stringify({ connectors: [githubConnector()] }),
   );
   assert.equal(fromFile[0]!.routes.length, 3);
 
@@ -427,7 +418,9 @@ test("deny is answered before the policy stack is even asked", async () => {
     },
     resolveMode: () => ({ mode: "deny", source: { kind: "route-default" } }),
   });
-  await assert.rejects(() => registry.call("github.merge_pull_request", { owner: "a", repo: "b", number: 1 }));
+  await assert.rejects(() =>
+    registry.call("github.merge_pull_request", { owner: "a", repo: "b", number: 1 }),
+  );
   assert.equal(policyReads, 0);
 });
 
@@ -474,7 +467,11 @@ test("ask mode gates on the built request, not the raw args", async () => {
   await registry.call(
     "github.merge_pull_request",
     { owner: "acme", repo: "site", number: 7, merge_method: "squash", sneaky: "dropped" },
-    { principal: "0x00000000000000000000000000000000000000a1", runId: "run-1", flowId: "pr-triage" },
+    {
+      principal: "0x00000000000000000000000000000000000000a1",
+      runId: "run-1",
+      flowId: "pr-triage",
+    },
   );
 
   assert.deepEqual(gates, [

@@ -37,11 +37,7 @@ describe("lacrew flows eval", () => {
     assert.match(out, /scenarios green\./);
     assert.doesNotMatch(out, /^✗/m);
     assert.match(out, /first-party flow\(s\) have no eval/);
-    assert.equal(
-      code,
-      undefined,
-      "a green suite must not set a failing exit code",
-    );
+    assert.equal(code, undefined, "a green suite must not set a failing exit code");
   });
 
   it("filters by blueprint, and drops the coverage warning when it does", async () => {

@@ -147,7 +147,9 @@ describe("plan-required surface", () => {
       loadPlanRequirements: async () => [...rows.values()],
       savePlanRequirement: async (record) => {
         rows.set(
-          record.scope.level === "workspace" ? "workspace" : `${record.scope.level}:${record.scope.ref}`,
+          record.scope.level === "workspace"
+            ? "workspace"
+            : `${record.scope.level}:${record.scope.ref}`,
           record,
         );
       },

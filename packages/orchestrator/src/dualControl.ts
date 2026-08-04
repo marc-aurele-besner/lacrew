@@ -73,12 +73,7 @@ import { createHash } from "node:crypto";
 import { threadIdOf, type Message } from "./conversation.js";
 
 export type DualControlReviewStatus =
-  | "pending"
-  | "concurred"
-  | "rejected"
-  | "timed_out"
-  | "cancelled"
-  | "consumed";
+  "pending" | "concurred" | "rejected" | "timed_out" | "cancelled" | "consumed";
 
 /**
  * One review: the effect it holds, who was asked, and what they said.
@@ -442,10 +437,7 @@ export function createDualControl(opts: {
       "Concurring releases a paused step only: it approves no spend, changes no policy and signs nothing onchain." +
         " The policy stack, the escalation path and human approvals all still apply.",
       ...(input.target.escalated
-        ? [
-            "",
-            "The configured reviewer was unavailable, so this came to you instead.",
-          ]
+        ? ["", "The configured reviewer was unavailable, so this came to you instead."]
         : []),
     ].join("\n");
   };
@@ -473,12 +465,9 @@ export function createDualControl(opts: {
     // same parked run — converges on one question rather than asking twice. A
     // *different* run doing the same thing gets its own review: a concurrence
     // belongs to the run it was given for.
-    const seed = [
-      input.runId ?? "",
-      input.actor.toLowerCase(),
-      input.tool,
-      input.fingerprint,
-    ].join("|");
+    const seed = [input.runId ?? "", input.actor.toLowerCase(), input.tool, input.fingerprint].join(
+      "|",
+    );
     return `review_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
   };
 

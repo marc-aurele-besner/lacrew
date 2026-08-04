@@ -16,17 +16,15 @@ import type { PnlReport } from "@lacrew/flows";
 
 function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-"))
-    return args[i + 1];
+  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
   return undefined;
 }
 
 function orchUrl(args: string[]): string {
-  return (
-    flagValue(args, "--url") ??
-    process.env.ORCH_URL ??
-    "http://127.0.0.1:8788"
-  ).replace(/\/$/, "");
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
 }
 
 const usd = (micros: number): string => `$${(micros / 1_000_000).toFixed(4)}`;
@@ -46,20 +44,15 @@ function amount(base: string, decimals = 6): string {
 }
 
 function printReport(report: PnlReport): void {
-  const who =
-    report.scope.kind === "agent" ? report.scope.agentId! : report.scope.crewId;
-  console.log(
-    `${who}  ${report.period.key}  (${report.period.from} → ${report.period.to} UTC)`,
-  );
+  const who = report.scope.kind === "agent" ? report.scope.agentId! : report.scope.crewId;
+  console.log(`${who}  ${report.period.key}  (${report.period.from} → ${report.period.to} UTC)`);
   console.log(`  asOf        ${report.asOf}`);
 
   for (const asset of report.totals.onchain.assets) {
     console.log(
       `  Onchain     ${amount(asset.spent)} ${asset.asset} spent · ` +
         `${amount(asset.pending)} pending · ${amount(asset.granted)} granted` +
-        (asset.marketplace !== "0"
-          ? ` · ${amount(asset.marketplace)} marketplace`
-          : ""),
+        (asset.marketplace !== "0" ? ` · ${amount(asset.marketplace)} marketplace` : ""),
     );
   }
   if (report.totals.onchain.assets.length === 0) {
@@ -77,18 +70,14 @@ function printReport(report: PnlReport): void {
   console.log(
     `  Inference   ${inferenceCost} · ` +
       `${inf.calls} call(s) · ${inf.inputTokens} in · ${inf.outputTokens} out` +
-      (inf.unpricedCalls > 0
-        ? `  (${inf.unpricedCalls} unpriced — this is a floor)`
-        : ""),
+      (inf.unpricedCalls > 0 ? `  (${inf.unpricedCalls} unpriced — this is a floor)` : ""),
   );
 
   const con = report.totals.connectors;
   console.log(
     `  Connectors  ${con.calls} call(s) · ${con.writes} write · ${con.reads} read · ` +
       `${con.failed} failed · ` +
-      (con.usdMicros === null
-        ? "price unknown"
-        : `${usd(con.usdMicros)} priced`),
+      (con.usdMicros === null ? "price unknown" : `${usd(con.usdMicros)} priced`),
   );
 
   if (report.headroom.inference) {
@@ -110,9 +99,7 @@ function printReport(report: PnlReport): void {
 
   if (report.seats.length > 0) {
     console.log("");
-    console.log(
-      "  seat                                        spent      model $   calls",
-    );
+    console.log("  seat                                        spent      model $   calls");
     for (const seat of report.seats) {
       const spent = seat.onchain.assets[0]?.spent ?? "0";
       console.log(
@@ -158,12 +145,8 @@ shown, and neither is added to the other.`);
     return;
   }
 
-  const crew =
-    flagValue(args, "--crew") ?? (first.startsWith("-") ? undefined : first);
-  if (!crew)
-    throw new Error(
-      "lacrew pnl --crew <id> [--agent 0x…] [--period calendar_month]",
-    );
+  const crew = flagValue(args, "--crew") ?? (first.startsWith("-") ? undefined : first);
+  if (!crew) throw new Error("lacrew pnl --crew <id> [--agent 0x…] [--period calendar_month]");
 
   const query = new URLSearchParams({ crewId: crew });
   const pass = [

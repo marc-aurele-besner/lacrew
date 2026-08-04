@@ -1,9 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": [
-    "../../packages/sdk/src/index.ts",
-    "../../packages/flows/src/index.ts"
-  ],
+  "entryPoints": ["../../packages/sdk/src/index.ts", "../../packages/flows/src/index.ts"],
   "tsconfig": "./tsconfig.json",
   "plugin": ["typedoc-plugin-markdown"],
   "out": "content/reference",

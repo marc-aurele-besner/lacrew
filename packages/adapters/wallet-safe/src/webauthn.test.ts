@@ -35,15 +35,9 @@ function authenticatorData(rpId: string, flags = 0x05): Uint8Array {
 }
 
 /** A complete, valid assertion for `challenge`, plus the credential to check it against. */
-function assertion(opts: {
-  challenge: string;
-  rpId?: string;
-  origin?: string;
-  flags?: number;
-}) {
+function assertion(opts: { challenge: string; rpId?: string; origin?: string; flags?: number }) {
   const privateKey = p256.utils.randomPrivateKey();
-  const point =
-    p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
   const publicKey = coseKey(point.slice(1, 33), point.slice(33, 65));
 
   const clientData = Buffer.from(
@@ -54,14 +48,9 @@ function assertion(opts: {
     }),
   );
   const authData = authenticatorData(opts.rpId ?? RP_ID, opts.flags ?? 0x05);
-  const signed = Buffer.concat([
-    authData,
-    createHash("sha256").update(clientData).digest(),
-  ]);
+  const signed = Buffer.concat([authData, createHash("sha256").update(clientData).digest()]);
   const digest = createHash("sha256").update(signed).digest();
-  const signature = p256
-    .sign(new Uint8Array(digest), privateKey)
-    .toDERRawBytes();
+  const signature = p256.sign(new Uint8Array(digest), privateKey).toDERRawBytes();
 
   return {
     publicKey,
@@ -140,10 +129,7 @@ test("user presence is required, and user verification only when asked for", () 
     rpId: RP_ID,
     origin: ORIGIN,
   });
-  assert.equal(
-    noPresence.verified === false && noPresence.error,
-    "user_not_present",
-  );
+  assert.equal(noPresence.verified === false && noPresence.error, "user_not_present");
 
   const presentOnly = assertion({ challenge, flags: 0x01 });
   assert.deepEqual(
@@ -178,10 +164,7 @@ test("a non-get ceremony cannot stand in for an assertion", () => {
     rpId: RP_ID,
     origin: ORIGIN,
   });
-  assert.equal(
-    result.verified === false && result.error,
-    "client_data_type_not_get",
-  );
+  assert.equal(result.verified === false && result.error, "client_data_type_not_get");
 });
 
 test("several allowed origins are accepted, anything else is not", () => {
@@ -215,10 +198,7 @@ test("a garbled assertion names what was unreadable rather than failing blank", 
     rpId: RP_ID,
     origin: ORIGIN,
   });
-  assert.equal(
-    shortAuth.verified === false && shortAuth.error,
-    "authenticator_data_too_short",
-  );
+  assert.equal(shortAuth.verified === false && shortAuth.error, "authenticator_data_too_short");
 
   const badSig = verifyWebAuthnAssertion({
     ...built,
@@ -227,10 +207,7 @@ test("a garbled assertion names what was unreadable rather than failing blank", 
     rpId: RP_ID,
     origin: ORIGIN,
   });
-  assert.equal(
-    badSig.verified === false && badSig.error,
-    "signature_unparseable",
-  );
+  assert.equal(badSig.verified === false && badSig.error, "signature_unparseable");
 
   const rsaKey = verifyWebAuthnAssertion({
     ...built,

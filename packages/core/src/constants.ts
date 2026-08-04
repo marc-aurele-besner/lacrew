@@ -19,8 +19,7 @@ const ZERO = "0x0000000000000000000000000000000000000000" as const;
  * JSON would point callers at a different org than the operator intended.
  */
 function envAddress(key: string): `0x${string}` | undefined {
-  const raw =
-    typeof process !== "undefined" && process.env ? process.env[key] : undefined;
+  const raw = typeof process !== "undefined" && process.env ? process.env[key] : undefined;
   if (raw === undefined) return undefined;
 
   const trimmed = raw.trim();
@@ -77,10 +76,7 @@ export const ADDRESS_ENV_VARS = {
   manager: "LACREW_MANAGER",
   worker: "LACREW_WORKER",
   x402Target: "LACREW_X402_TARGET",
-} as const satisfies Record<
-  Exclude<keyof ChainAddresses, "chainId" | "assets">,
-  string
->;
+} as const satisfies Record<Exclude<keyof ChainAddresses, "chainId" | "assets">, string>;
 
 /**
  * Resolve contract addresses for a chain.
@@ -164,10 +160,7 @@ export function listAssetStacks(addresses: ChainAddresses): AssetStack[] {
  * (case-insensitive) or token address, throwing when none matches — silently
  * falling back to the primary would budget or read the wrong asset's treasury.
  */
-export function resolveAssetStack(
-  addresses: ChainAddresses,
-  selector?: string,
-): AssetStack {
+export function resolveAssetStack(addresses: ChainAddresses, selector?: string): AssetStack {
   if (selector === undefined || selector === "") {
     return primaryAssetStack(addresses);
   }

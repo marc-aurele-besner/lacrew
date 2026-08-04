@@ -107,7 +107,10 @@ describe("lacrew plan-required", () => {
   });
 
   it("refuses a mode nobody defined, and a scope nobody named", async () => {
-    await assert.rejects(() => cmdPlanRequired(["set", "--workspace", "--mode", "always"]), /--mode must be/);
+    await assert.rejects(
+      () => cmdPlanRequired(["set", "--workspace", "--mode", "always"]),
+      /--mode must be/,
+    );
     await assert.rejects(() => cmdPlanRequired(["set", "--mode", "off"]), /name a scope/);
     assert.equal(calls.length, 0, "nothing was sent for a request that could not be formed");
   });

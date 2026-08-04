@@ -143,7 +143,10 @@ describe("lacrew dual-control", () => {
     });
 
     calls = [];
-    await assert.rejects(() => capture(["set", "--workspace", "--mode", "risky_writes", "--reviewer", "whoever"]), /--reviewer must be/);
+    await assert.rejects(
+      () => capture(["set", "--workspace", "--mode", "risky_writes", "--reviewer", "whoever"]),
+      /--reviewer must be/,
+    );
     assert.equal(calls.length, 0, "nothing was sent for a reviewer the CLI cannot name");
   });
 

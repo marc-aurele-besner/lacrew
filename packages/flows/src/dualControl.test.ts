@@ -69,7 +69,10 @@ describe("dual-control rules", () => {
       rule({ scope: { level: "crew", ref: MANAGER }, mode: "spends_and_writes" }),
       rule({ scope: { level: "agent", ref: PEER }, mode: "off" }),
     ];
-    assert.equal(resolveDualControl(rules, { principal: WORKER, managers: [MANAGER] }).mode, "spends_and_writes");
+    assert.equal(
+      resolveDualControl(rules, { principal: WORKER, managers: [MANAGER] }).mode,
+      "spends_and_writes",
+    );
     assert.equal(resolveDualControl(rules, { principal: PEER, managers: [MANAGER] }).mode, "off");
     assert.equal(resolveDualControl(rules, { principal: "0xdead" }).mode, "risky_writes");
     assert.equal(resolveDualControl([], {}).mode, "off");
@@ -97,7 +100,10 @@ describe("what needs a second seat", () => {
       effect: "write",
       surface: "connector",
     });
-    assert.equal(classifyDualEffect("github.list_prs", {}, () => "read"), null);
+    assert.equal(
+      classifyDualEffect("github.list_prs", {}, () => "read"),
+      null,
+    );
     assert.deepEqual(classifyDualEffect("mcp__linear__create_issue", {}), {
       effect: "write",
       surface: "connector",
@@ -157,7 +163,10 @@ describe("who may concur", () => {
     const fired = CHART.map((seat) =>
       seat.account === MANAGER ? { ...seat, active: false } : seat,
     );
-    assert.equal(resolveReviewer({ kind: "seat", account: MANAGER }, WORKER, fired).escalated, true);
+    assert.equal(
+      resolveReviewer({ kind: "seat", account: MANAGER }, WORKER, fired).escalated,
+      true,
+    );
   });
 
   it("never resolves the actor as its own reviewer", () => {
@@ -217,7 +226,10 @@ describe("resolving a review", () => {
 
   it("refuses an agent nobody asked, and admits a person in its place", () => {
     const target = resolveReviewer({ kind: "seat", account: MANAGER }, WORKER, CHART);
-    assert.equal(concurrenceQualifies(target, { author: PEER, authorKind: "agent" }, WORKER), false);
+    assert.equal(
+      concurrenceQualifies(target, { author: PEER, authorKind: "agent" }, WORKER),
+      false,
+    );
     // A crew whose reviewer agent is wedged must not be a crew that is frozen.
     assert.equal(
       concurrenceQualifies(target, { author: "ops@example.com", authorKind: "human" }, WORKER),

@@ -48,8 +48,20 @@ export type ContractReader = {
 };
 
 const TOKEN_METADATA_ABI = [
-  { type: "function", name: "name", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
-  { type: "function", name: "version", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  {
+    type: "function",
+    name: "name",
+    inputs: [],
+    outputs: [{ type: "string" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "version",
+    inputs: [],
+    outputs: [{ type: "string" }],
+    stateMutability: "view",
+  },
 ] as const satisfies Abi;
 
 /**
@@ -65,8 +77,18 @@ export async function resolveDomain(
   hints?: { name?: string; version?: string },
 ): Promise<Eip712Domain> {
   const [name, version] = await Promise.all([
-    hints?.name ?? (client.readContract({ address: asset, abi: TOKEN_METADATA_ABI as Abi, functionName: "name" }) as Promise<string>),
-    hints?.version ?? (client.readContract({ address: asset, abi: TOKEN_METADATA_ABI as Abi, functionName: "version" }) as Promise<string>),
+    hints?.name ??
+      (client.readContract({
+        address: asset,
+        abi: TOKEN_METADATA_ABI as Abi,
+        functionName: "name",
+      }) as Promise<string>),
+    hints?.version ??
+      (client.readContract({
+        address: asset,
+        abi: TOKEN_METADATA_ABI as Abi,
+        functionName: "version",
+      }) as Promise<string>),
   ]);
   return { name, version, chainId, verifyingContract: getAddress(asset) };
 }

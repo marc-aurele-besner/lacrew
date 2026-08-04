@@ -62,13 +62,13 @@ import type {
   GovernanceActionInput,
   OrgActionInput,
 } from "@lacrew/adapter-agents-mcp";
-import { issueSession, isSessionExpired, revokeSession, createEphemeralSession } from "./sessions.js";
 import {
-  Conversation,
-  type Message,
-  type PostInput,
-  type ThreadScope,
-} from "./conversation.js";
+  issueSession,
+  isSessionExpired,
+  revokeSession,
+  createEphemeralSession,
+} from "./sessions.js";
+import { Conversation, type Message, type PostInput, type ThreadScope } from "./conversation.js";
 import {
   AgentControls,
   AgentPausedError,
@@ -196,7 +196,9 @@ function normalizePk(raw: string | undefined): `0x${string}` | undefined {
 function isOnchainClient(
   client: LacrewClient | OnchainLacrewClient,
 ): client is OnchainLacrewClient {
-  return "publicClient" in client && typeof (client as OnchainLacrewClient).publicClient === "object";
+  return (
+    "publicClient" in client && typeof (client as OnchainLacrewClient).publicClient === "object"
+  );
 }
 
 /**
@@ -214,8 +216,7 @@ export type RuntimeBootFailure =
   | "delegations_unavailable";
 
 export type RuntimeBoot =
-  | { ok: true; runtime: CrewRuntime }
-  | { ok: false; reason: RuntimeBootFailure; detail: string };
+  { ok: true; runtime: CrewRuntime } | { ok: false; reason: RuntimeBootFailure; detail: string };
 
 /**
  * Build a runtime from env.
@@ -232,11 +233,19 @@ export type RuntimeBoot =
 export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
   const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
   if (!rpc) {
-    return { ok: false, reason: "no_rpc", detail: "Set ANVIL_RPC (or RPC_URL) to a JSON-RPC endpoint." };
+    return {
+      ok: false,
+      reason: "no_rpc",
+      detail: "Set ANVIL_RPC (or RPC_URL) to a JSON-RPC endpoint.",
+    };
   }
   const pk = normalizePk(process.env.PRIVATE_KEY);
   if (!pk) {
-    return { ok: false, reason: "no_private_key", detail: "Set PRIVATE_KEY; it signs proposals and sponsors session gas." };
+    return {
+      ok: false,
+      reason: "no_private_key",
+      detail: "Set PRIVATE_KEY; it signs proposals and sponsors session gas.",
+    };
   }
 
   const chainId = Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID);
@@ -340,9 +349,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       };
     }
     try {
-      const { createMetaMaskDelegationProvider } = await import(
-        "@lacrew/adapter-wallet-metamask"
-      );
+      const { createMetaMaskDelegationProvider } = await import("@lacrew/adapter-wallet-metamask");
       delegations = createMetaMaskDelegationProvider({
         rpcUrl: rpc,
         chainId,
@@ -441,8 +448,7 @@ export class CrewRuntime {
     }
     this.client = options.client;
     this.workerAgent = options.workerAgent ?? MOCK_WORKER;
-    this.spendTarget =
-      options.spendTarget ?? "0x4444444444444444444444444444444444444444";
+    this.spendTarget = options.spendTarget ?? "0x4444444444444444444444444444444444444444";
     this.managerAgent = options.managerAgent ?? MOCK_MANAGER;
     this.chainId = options.chainId ?? null;
     this.watchlist = options.watchlist ?? [];
@@ -891,9 +897,7 @@ export class CrewRuntime {
   }
 
   private addressesHasSessions(): boolean {
-    return Boolean(
-      isOnchainClient(this.client) && this.client.addresses.sessionRegistry,
-    );
+    return Boolean(isOnchainClient(this.client) && this.client.addresses.sessionRegistry);
   }
 
   /** Ephemeral session account for `agent`'s onchain propose (never logged). */
@@ -1559,9 +1563,7 @@ export class CrewRuntime {
     const booked = isOnchainClient(this.client) ? this.client.addresses.humanRoot : undefined;
     if (booked && booked.toLowerCase() === wanted) return true;
     const nodes = await this.client.getOrgTree();
-    return nodes.some(
-      (n) => n.kind === "human_root" && n.account.toLowerCase() === wanted,
-    );
+    return nodes.some((n) => n.kind === "human_root" && n.account.toLowerCase() === wanted);
   }
 
   async listPending(): Promise<Intent[]> {
@@ -1587,23 +1589,17 @@ export class CrewRuntime {
           allowanceBalance: balanceOf(intent.agent),
         });
         if (onchain) {
-          const approval = await onchain
-            .simulateResolveApproval(intent.id)
-            .catch(() => null);
+          const approval = await onchain.simulateResolveApproval(intent.id).catch(() => null);
           if (approval && !approval.ok) {
             simulation.status = "revert";
-            simulation.warnings.push(
-              `Approval dry-run reverted: ${approval.reason ?? "unknown"}`,
-            );
+            simulation.warnings.push(`Approval dry-run reverted: ${approval.reason ?? "unknown"}`);
           } else if (approval?.ok) {
             simulation.warnings.push("Approval dry-run succeeded (eth_call).");
             // Measured movements from executing the approval in a simulated
             // block — what the chain would actually do, including anything
             // the target's own code moves. Null (node can't simulate) simply
             // leaves the heuristic standing alone, honestly unmeasured.
-            const measured = await onchain
-              .simulateApprovalStateDiffs(intent.id)
-              .catch(() => null);
+            const measured = await onchain.simulateApprovalStateDiffs(intent.id).catch(() => null);
             if (measured) simulation.measuredChanges = measured;
             // Which contracts the approval would actually execute, in order —
             // the last piece an approver needs beside verdict and movements.
@@ -2285,8 +2281,7 @@ export class CrewRuntime {
     const recorderCurrent = customRate
       ? await this.client.readNodeRateRecorder(input.node, input.asset)
       : undefined;
-    const recorderOk =
-      !customRate || recorderCurrent?.toLowerCase() === customRate.toLowerCase();
+    const recorderOk = !customRate || recorderCurrent?.toLowerCase() === customRate.toLowerCase();
 
     if (stackUnchanged(members, current)) {
       if (recorderOk) {
@@ -2486,7 +2481,9 @@ export class CrewRuntime {
     return { txHashes, proposal };
   }
 
-  async vetoGovernance(proposalId: string): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
+  async vetoGovernance(
+    proposalId: string,
+  ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
     if (!isOnchainClient(this.client)) {
       const { proposal } = await this.client.vetoGovernance(proposalId);
       this.pushAudit({
@@ -2710,12 +2707,7 @@ export class CrewRuntime {
     try {
       return {
         ...base,
-        wallets: await readAccountBalances(
-          publicClient,
-          accounts,
-          watch.tokens,
-          meta.nativeSymbol,
-        ),
+        wallets: await readAccountBalances(publicClient, accounts, watch.tokens, meta.nativeSymbol),
         read: true,
         rpcSource,
       };

@@ -91,10 +91,10 @@ describe("decideAutoExecute", () => {
       via: "unanimity",
     });
     // Fast path off → the same tally waits for the timelock.
-    assert.deepEqual(
-      decideAutoExecute(unanimous, { ...CONFIG, unanimityFastPath: false }, NOW),
-      { execute: false, reason: "timelock_pending" },
-    );
+    assert.deepEqual(decideAutoExecute(unanimous, { ...CONFIG, unanimityFastPath: false }, NOW), {
+      execute: false,
+      reason: "timelock_pending",
+    });
   });
 
   it("gates high tier on the human tally, not the total", () => {

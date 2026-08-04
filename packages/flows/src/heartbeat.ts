@@ -255,14 +255,12 @@ function zonedMinuteOfDay(config: CrewHeartbeat, now: Date): number {
     hour: "numeric",
     minute: "numeric",
   }).formatToParts(now);
-  const value = (type: string): number =>
-    Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const value = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? "0");
   return (value("hour") % 24) * 60 + value("minute");
 }
 
 export type HeartbeatDue =
-  | { due: true }
-  | { due: false; reason: "disabled" | "empty" | "quiet" | "not-scheduled" };
+  { due: true } | { due: false; reason: "disabled" | "empty" | "quiet" | "not-scheduled" };
 
 /**
  * Whether this heartbeat should fire at `now`.

@@ -30,9 +30,7 @@ export async function runDbMigrations(): Promise<MigrateResult> {
       // The connection already points `search_path` here, but Postgres does
       // not create a schema by being pointed at one — without this the first
       // migration fails on a schema that does not exist yet.
-      await handle.sql.unsafe(
-        `CREATE SCHEMA IF NOT EXISTS ${assertValidSchemaName(schemaName)}`,
-      );
+      await handle.sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${assertValidSchemaName(schemaName)}`);
     }
     await migrate(handle.db, {
       migrationsFolder: join(__dirname, "../drizzle"),

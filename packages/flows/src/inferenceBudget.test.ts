@@ -60,15 +60,9 @@ describe("inference budget shape", () => {
 
   it("refuses a bad agent address, period, policy and window", () => {
     assert.equal(validateInferenceBudget({ ...base(), agentId: "0xnope" }).ok, false);
-    assert.equal(
-      validateInferenceBudget({ ...base(), period: "yearly" as never }).ok,
-      false,
-    );
+    assert.equal(validateInferenceBudget({ ...base(), period: "yearly" as never }).ok, false);
     assert.equal(validateInferenceBudget({ ...base(), policy: "warn" as never }).ok, false);
-    assert.equal(
-      validateInferenceBudget({ ...base(), period: "window", windowDays: 0 }).ok,
-      false,
-    );
+    assert.equal(validateInferenceBudget({ ...base(), period: "window", windowDays: 0 }).ok, false);
     assert.equal(
       validateInferenceBudget({ ...base(), period: "window", windowDays: 365 }).ok,
       false,
@@ -77,17 +71,11 @@ describe("inference budget shape", () => {
 
   it("nests an agent scope under its crew so the two rows read as related", () => {
     assert.equal(budgetScopeKey({ crewId: "Trading" }), "crew:trading");
-    assert.equal(
-      budgetScopeKey({ crewId: "Trading", agentId: "0xAB" }),
-      "crew:trading/agent:0xab",
-    );
+    assert.equal(budgetScopeKey({ crewId: "Trading", agentId: "0xAB" }), "crew:trading/agent:0xab");
   });
 
   it("reports only the dimensions actually bounded", () => {
-    assert.deepEqual(limitDimensions({ maxUsd: 1, maxOutputTokens: 2 }), [
-      "usd",
-      "outputTokens",
-    ]);
+    assert.deepEqual(limitDimensions({ maxUsd: 1, maxOutputTokens: 2 }), ["usd", "outputTokens"]);
     assert.deepEqual(limitDimensions({}), []);
   });
 });

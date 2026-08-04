@@ -92,7 +92,11 @@ describe("lacrew skills, against an orchestrator", () => {
               name: "GitHub PR triage",
               summary: "Triage.",
               installable: false,
-              missing: { flows: ["dep-fix-loop"], connectors: ["github.merge_pull_request"], mcpTools: [] },
+              missing: {
+                flows: ["dep-fix-loop"],
+                connectors: ["github.merge_pull_request"],
+                mcpTools: [],
+              },
             },
           ],
         },
@@ -111,12 +115,28 @@ describe("lacrew skills, against an orchestrator", () => {
   it("posts the pack itself, not just its id, and reports what landed", async () => {
     const stub = stubFetch({
       "/agents/skills/install": {
-        body: { pack: "github-pr-triage", version: "1.0.0", label: "agent", installed: 3, replaced: 0 },
+        body: {
+          pack: "github-pr-triage",
+          version: "1.0.0",
+          label: "agent",
+          installed: 3,
+          replaced: 0,
+        },
       },
     });
     try {
-      const { out } = await capture(["install", "github-pr-triage", "--agent", AGENT, "--url", "http://orch.test"]);
-      const sent = stub.calls[0]!.body as { agent: string; pack: { id: string; skills: unknown[] } };
+      const { out } = await capture([
+        "install",
+        "github-pr-triage",
+        "--agent",
+        AGENT,
+        "--url",
+        "http://orch.test",
+      ]);
+      const sent = stub.calls[0]!.body as {
+        agent: string;
+        pack: { id: string; skills: unknown[] };
+      };
       assert.equal(stub.calls[0]!.url, "/agents/skills/install");
       assert.equal(sent.agent, AGENT);
       assert.equal(sent.pack.id, "github-pr-triage");
@@ -157,7 +177,14 @@ describe("lacrew skills, against an orchestrator", () => {
   it("says plainly when a removal changed nothing", async () => {
     const stub = stubFetch({ "/agents/skills/remove": { body: { removed: 0 } } });
     try {
-      const { out } = await capture(["remove", "desk-notes", "--agent", AGENT, "--url", "http://orch.test"]);
+      const { out } = await capture([
+        "remove",
+        "desk-notes",
+        "--agent",
+        AGENT,
+        "--url",
+        "http://orch.test",
+      ]);
       assert.match(out, /was not installed .* Nothing changed/);
     } finally {
       stub.restore();
@@ -189,7 +216,10 @@ describe("lacrew skills, against an orchestrator", () => {
         "--url",
         "http://orch.test",
       ]);
-      const pack = JSON.parse(out) as { id: string; skills: Array<{ id: string; trigger: string }> };
+      const pack = JSON.parse(out) as {
+        id: string;
+        skills: Array<{ id: string; trigger: string }>;
+      };
       assert.equal(pack.id, "my-pack");
       assert.deepEqual(pack.skills[0], {
         id: "mine",
@@ -205,7 +235,15 @@ describe("lacrew skills, against an orchestrator", () => {
   it("refuses an export from a seat with no skills rather than writing an empty pack", async () => {
     const stub = stubFetch({ "/agents/skills": { body: { brief: null } } });
     try {
-      const { error } = await capture(["export", "--agent", AGENT, "--id", "my-pack", "--url", "http://orch.test"]);
+      const { error } = await capture([
+        "export",
+        "--agent",
+        AGENT,
+        "--id",
+        "my-pack",
+        "--url",
+        "http://orch.test",
+      ]);
       assert.match(error ?? "", /no skills to export/);
     } finally {
       stub.restore();
@@ -213,7 +251,12 @@ describe("lacrew skills, against an orchestrator", () => {
   });
 
   it("refuses every write path without an agent", async () => {
-    for (const args of [["install", "github-pr-triage"], ["remove", "x"], ["installed"], ["export", "--id", "p"]]) {
+    for (const args of [
+      ["install", "github-pr-triage"],
+      ["remove", "x"],
+      ["installed"],
+      ["export", "--id", "p"],
+    ]) {
       const { error } = await capture(args);
       assert.match(error ?? "", /--agent/);
     }

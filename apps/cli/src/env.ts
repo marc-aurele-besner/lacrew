@@ -21,7 +21,10 @@ export function parseEnvFile(contents: string): Record<string, string> {
     const eq = trimmed.indexOf("=");
     if (eq === -1) continue;
 
-    const key = trimmed.slice(0, eq).replace(/^export\s+/, "").trim();
+    const key = trimmed
+      .slice(0, eq)
+      .replace(/^export\s+/, "")
+      .trim();
     if (key === "") continue;
 
     let value = trimmed.slice(eq + 1).trim();

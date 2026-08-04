@@ -1,11 +1,11 @@
 # Dual control
 
-Policy bounds what a crew *may* do. [Plan-required](./plan-required.md) bounds
+Policy bounds what a crew _may_ do. [Plan-required](./plan-required.md) bounds
 when it may do it without having said so. Neither catches the plan that is
 simply wrong — a hallucinated venue, a merge target injected through a tool
 result, a goal that drifted three steps ago. One agent can plan the thing,
 propose it and, under cap, execute it, and every control it passed was a control
-about the *agent* rather than about the *decision*.
+about the _agent_ rather than about the _decision_.
 
 Dual control is the four-eyes rule for that gap:
 
@@ -31,19 +31,19 @@ governance, and if the thing you are protecting is the treasury rather than the
 workflow, set `--reviewer role:human`.
 
 **It is not the human gate.** A [blocking human gate](./flows.md) stops a run at
-a step the *flow author* chose. Dual control stops it at an effect the
-*operator's policy* matched — wherever in the run it happens, including inside a
+a step the _flow author_ chose. Dual control stops it at an effect the
+_operator's policy_ matched — wherever in the run it happens, including inside a
 delegated flow.
 
 Five controls, five different questions, and it is worth keeping them apart:
 
-| Control | Question it answers | Who decides | Where | Fails |
-| --- | --- | --- | --- | --- |
-| Plan-required (F2.31) | did the agent say what it was about to do? | the agent itself | orchestrator | open |
-| Dual control (F2.32) | does a **second seat** agree with this specific effect? | another agent, or a person | orchestrator | closed |
-| Human gate (F2.27) | does a person agree, at this step? | a human seat | orchestrator | as declared |
-| Approvals / `ESCALATE` | is this spend admitted, and by whom? | the org chart + policy | **onchain** | closed |
-| Governance | may the constitution change? | weighted vote + timelock | **onchain** | closed |
+| Control                | Question it answers                                     | Who decides                | Where        | Fails       |
+| ---------------------- | ------------------------------------------------------- | -------------------------- | ------------ | ----------- |
+| Plan-required (F2.31)  | did the agent say what it was about to do?              | the agent itself           | orchestrator | open        |
+| Dual control (F2.32)   | does a **second seat** agree with this specific effect? | another agent, or a person | orchestrator | closed      |
+| Human gate (F2.27)     | does a person agree, at this step?                      | a human seat               | orchestrator | as declared |
+| Approvals / `ESCALATE` | is this spend admitted, and by whom?                    | the org chart + policy     | **onchain**  | closed      |
+| Governance             | may the constitution change?                            | weighted vote + timelock   | **onchain**  | closed      |
 
 The two off-chain review controls compose in the obvious order: the agent posts
 a plan, a second seat reads it and concurs, and only then does the effect go
@@ -52,16 +52,16 @@ that was always there.
 
 ## Modes
 
-| Mode | What needs a second seat |
-| --- | --- |
-| `off` | nothing — what crews did before this existed |
-| `risky_writes` | connector and external-MCP writes, and the `org` / `budget` / `governance` mutators. A merge, a publish, a reparent |
-| `spends_and_writes` | those, plus onchain proposes at or above `minSpend` |
+| Mode                | What needs a second seat                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `off`               | nothing — what crews did before this existed                                                                        |
+| `risky_writes`      | connector and external-MCP writes, and the `org` / `budget` / `governance` mutators. A merge, a publish, a reparent |
+| `spends_and_writes` | those, plus onchain proposes at or above `minSpend`                                                                 |
 
 Reads are never reviewed, in any mode. `lacrew_say` carries no effect either, so
 a crew can still talk while a review is open.
 
-`lacrew_approve_intent` is deliberately never reviewed: approving *is* the
+`lacrew_approve_intent` is deliberately never reviewed: approving _is_ the
 second pair of eyes — a manager answering something a worker escalated — and
 reviewing a review would stall the escalation path.
 
@@ -69,11 +69,11 @@ reviewing a review would stall the escalation path.
 
 Within a mode, three composable flags narrow what qualifies:
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--min-spend <base units>` | `0` (every spend) | proposes below this are not reviewed |
-| `--no-connector-writes` | connector writes reviewed | leave connector + external-MCP writes alone |
-| `--no-org-mutators` | org mutators reviewed | leave `org` / `budget` / `governance` alone |
+| Flag                       | Default                   | Meaning                                     |
+| -------------------------- | ------------------------- | ------------------------------------------- |
+| `--min-spend <base units>` | `0` (every spend)         | proposes below this are not reviewed        |
+| `--no-connector-writes`    | connector writes reviewed | leave connector + external-MCP writes alone |
+| `--no-org-mutators`        | org mutators reviewed     | leave `org` / `budget` / `governance` alone |
 
 The threshold reads the number the propose itself carries. A value the
 orchestrator cannot parse is reviewed whatever the floor says — the alternative
@@ -81,12 +81,12 @@ is a spend escaping review because its amount was malformed.
 
 ## Who reviews
 
-| Reviewer | Resolves to |
-| --- | --- |
+| Reviewer            | Resolves to                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------ |
 | `manager` (default) | the nearest available seat above the actor; a human root if that is what is above it |
-| `seat:0x…` | one named seat — for a dedicated reviewer agent |
-| `role:human` | a person, always. The only setting that does not depend on an agent being honest |
-| `any_peer_in_crew` | any other active seat under the same manager |
+| `seat:0x…`          | one named seat — for a dedicated reviewer agent                                      |
+| `role:human`        | a person, always. The only setting that does not depend on an agent being honest     |
+| `any_peer_in_crew`  | any other active seat under the same manager                                         |
 
 Resolution walks the live org chart on every review, so a reparent moves a
 crew's reviewer with it.
@@ -183,12 +183,12 @@ lacrew dual-control clear --agent 0xBOT               # inherit again
 Or from the environment, for a deployment that wants one setting and no runtime
 edits:
 
-| Variable | Meaning |
-| --- | --- |
-| `LACREW_DUAL_CONTROL` | `off` (default) \| `risky_writes` \| `spends_and_writes` |
-| `LACREW_DUAL_CONTROL_REVIEWER` | `manager` \| `seat:0x…` \| `role:human` \| `any_peer_in_crew` |
-| `LACREW_DUAL_CONTROL_MIN_SPEND` | base units; spends below this are not reviewed |
-| `LACREW_DUAL_CONTROL_TIMEOUT_MIN` | how long a review waits before failing closed |
+| Variable                          | Meaning                                                       |
+| --------------------------------- | ------------------------------------------------------------- |
+| `LACREW_DUAL_CONTROL`             | `off` (default) \| `risky_writes` \| `spends_and_writes`      |
+| `LACREW_DUAL_CONTROL_REVIEWER`    | `manager` \| `seat:0x…` \| `role:human` \| `any_peer_in_crew` |
+| `LACREW_DUAL_CONTROL_MIN_SPEND`   | base units; spends below this are not reviewed                |
+| `LACREW_DUAL_CONTROL_TIMEOUT_MIN` | how long a review waits before failing closed                 |
 
 A bad value stops the boot rather than defaulting: an orchestrator whose
 reviewer setting silently became `manager` would be reviewing to a seat nobody
@@ -199,7 +199,7 @@ which beats `workspace` — write one broad rule and carve exceptions out of it.
 
 ## Delegation
 
-The seat that would *act* is the one checked against the reviewer. When a
+The seat that would _act_ is the one checked against the reviewer. When a
 manager delegates to a worker and the worker reaches a reviewed effect, the
 worker's rule applies and the worker's reviewer is asked — which will often be
 the delegating manager, and that is real dual control: two seats, two decisions.
@@ -220,14 +220,14 @@ rather than minting another.
 
 ## Audit
 
-| Event | When |
-| --- | --- |
-| `DualControlOpened` | an effect parked on a review — tool, actor, who was asked, whether it escalated |
-| `DualControlConcurred` | a second seat agreed and the effect proceeded |
-| `DualControlRejected` | a second seat refused (or the run was cancelled mid-review) |
-| `DualControlTimedOut` | nobody answered; the effect failed closed |
+| Event                   | When                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `DualControlOpened`     | an effect parked on a review — tool, actor, who was asked, whether it escalated      |
+| `DualControlConcurred`  | a second seat agreed and the effect proceeded                                        |
+| `DualControlRejected`   | a second seat refused (or the run was cancelled mid-review)                          |
+| `DualControlTimedOut`   | nobody answered; the effect failed closed                                            |
 | `DualControlUnresolved` | somebody replied without deciding — including the actor trying to concur with itself |
-| `DualControlChanged` | somebody set or cleared a rule |
+| `DualControlChanged`    | somebody set or cleared a rule                                                       |
 
 The rows carry a fingerprint of the call and, for a spend, the amount — never
 the arguments. A call's fields name repositories and counterparties, and the
@@ -235,11 +235,11 @@ trail is not the place to publish one.
 
 ## Routes
 
-| Route | What it does |
-| --- | --- |
-| `GET /dual-control[?as=]` | rules in force; `?as=` also resolves one seat and the reviewer it would actually get |
-| `PUT /dual-control` | set a rule (`{scope, mode, reviewer?, minSpend?, connectorWrites?, orgMutators?, timeoutMs?}`), or clear it with `mode: null` |
-| `GET /dual-control/reviews[?status=&runId=]` | the review queue |
+| Route                                        | What it does                                                                                                                  |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET /dual-control[?as=]`                    | rules in force; `?as=` also resolves one seat and the reviewer it would actually get                                          |
+| `PUT /dual-control`                          | set a rule (`{scope, mode, reviewer?, minSpend?, connectorWrites?, orgMutators?, timeoutMs?}`), or clear it with `mode: null` |
+| `GET /dual-control/reviews[?status=&runId=]` | the review queue                                                                                                              |
 
 Concurring happens through the conversation, never through a route: an endpoint
 that resolved a review directly would be a second way to release an effect, and

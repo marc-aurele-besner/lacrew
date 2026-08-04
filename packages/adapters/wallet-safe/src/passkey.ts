@@ -40,14 +40,7 @@ const ALG_ES256 = -7;
 const CRV_P256 = 1;
 
 type CborValue =
-  | number
-  | bigint
-  | string
-  | Uint8Array
-  | boolean
-  | null
-  | CborValue[]
-  | Map<number, CborValue>;
+  number | bigint | string | Uint8Array | boolean | null | CborValue[] | Map<number, CborValue>;
 
 /**
  * Minimal CBOR reader for the subset a COSE_Key uses (ints, byte/text
@@ -162,10 +155,7 @@ export function coseP256Coordinates(publicKey: string | Uint8Array): P256Coordin
  * every chain, rather than a different owner address where a precompile
  * happens to exist.
  */
-export function packVerifiers(
-  fallbackVerifier: `0x${string}`,
-  precompile = 0,
-): bigint {
+export function packVerifiers(fallbackVerifier: `0x${string}`, precompile = 0): bigint {
   if (precompile < 0 || precompile > 0xffff) {
     throw new Error(`Precompile ${precompile} does not fit the 2-byte field.`);
   }

@@ -592,7 +592,7 @@ const contentWeeklyBrief: FlowTemplate = {
     )
     .branch("publish-allowed", {
       label: "Is the publishing endpoint admitted?",
-      when: { source: "{{steps.publish-check.json}}", op: "contains", value: "\"ALLOW\"" },
+      when: { source: "{{steps.publish-check.json}}", op: "contains", value: '"ALLOW"' },
       onTrue: "publish",
       onFalse: "signoff",
     })
@@ -645,8 +645,7 @@ const contentDailySocial: FlowTemplate = {
       label: "Brand-safety check",
       system:
         "You are the brand-safety reviewer. Fabricated statistics, invented quotes, unreleased product details, and competitor claims are all failures.",
-      prompt:
-        "Posts: {{steps.drafts.text}}\n\nReply with exactly one word: CLEAR or REWRITE.",
+      prompt: "Posts: {{steps.drafts.text}}\n\nReply with exactly one word: CLEAR or REWRITE.",
       next: "clear",
     })
     .branch("clear", {

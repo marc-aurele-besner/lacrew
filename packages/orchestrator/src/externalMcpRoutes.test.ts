@@ -221,7 +221,10 @@ describe("external MCP routes", () => {
     await h.app.request(
       allow("gh", "search_issues", { scope: { level: "agent", ref: "0xabc" }, enabled: false }),
     );
-    assert.equal(h.externalMcp.resolve("gh", "search_issues", { principal: "0xabc" }).enabled, false);
+    assert.equal(
+      h.externalMcp.resolve("gh", "search_issues", { principal: "0xabc" }).enabled,
+      false,
+    );
 
     const cleared = await h.app.request("http://x/mcp/servers/tools", {
       method: "PUT",
@@ -235,7 +238,10 @@ describe("external MCP routes", () => {
     assert.equal(cleared.status, 200);
     assert.equal(((await cleared.json()) as { cleared: boolean }).cleared, true);
     // Cleared means "inherit again", not "disabled".
-    assert.equal(h.externalMcp.resolve("gh", "search_issues", { principal: "0xabc" }).enabled, true);
+    assert.equal(
+      h.externalMcp.resolve("gh", "search_issues", { principal: "0xabc" }).enabled,
+      true,
+    );
   });
 
   it("lists a seat's callable tools beside the first-party ones", async () => {

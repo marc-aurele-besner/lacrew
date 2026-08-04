@@ -71,9 +71,7 @@ export type PlanRequiredEffect = "spend" | "write";
 
 /** Where a requirement applies — the same three levels connector modes use. */
 export type PlanRequiredScope =
-  | { level: "workspace" }
-  | { level: "crew"; ref: string }
-  | { level: "agent"; ref: string };
+  { level: "workspace" } | { level: "crew"; ref: string } | { level: "agent"; ref: string };
 
 /**
  * How long a plan stays current, by default.
@@ -237,7 +235,9 @@ export function resolvePlanRequired(
     if (hit) return settingsOf(hit);
   }
   const workspace = byKey.get("workspace");
-  return workspace ? settingsOf(workspace) : { ...PLAN_REQUIRED_DEFAULT, source: { kind: "default" } };
+  return workspace
+    ? settingsOf(workspace)
+    : { ...PLAN_REQUIRED_DEFAULT, source: { kind: "default" } };
 }
 
 /**

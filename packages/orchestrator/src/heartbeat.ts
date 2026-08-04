@@ -257,10 +257,7 @@ export function createHeartbeatSurface(opts: {
   };
 
   /** What the crew's thread is told, and whether it is told anything at all. */
-  const postSummary = (
-    config: CrewHeartbeat,
-    items: HeartbeatItemResult[],
-  ): Message | null => {
+  const postSummary = (config: CrewHeartbeat, items: HeartbeatItemResult[]): Message | null => {
     const attention = items.filter((i) => i.status !== "ok");
     const refs: MessageRef[] = items
       .filter((i) => i.runId)
@@ -295,8 +292,7 @@ export function createHeartbeatSurface(opts: {
       authorKind: "agent",
       kind: "result",
       body:
-        `Heartbeat — ${attention.length} of ${items.length} item(s) need you.\n` +
-        lines.join("\n"),
+        `Heartbeat — ${attention.length} of ${items.length} item(s) need you.\n` + lines.join("\n"),
       ...(refs.length > 0 ? { refs } : {}),
     });
   };
@@ -340,10 +336,7 @@ export function createHeartbeatSurface(opts: {
     return Date.now() - Date.parse(last.startedAt) < STALE_TICK_MS;
   };
 
-  const runChecklist = async (
-    config: CrewHeartbeat,
-    windowKey: string,
-  ): Promise<HeartbeatTick> => {
+  const runChecklist = async (config: CrewHeartbeat, windowKey: string): Promise<HeartbeatTick> => {
     const startedAt = new Date().toISOString();
     inFlight.add(config.crewId);
     const items: HeartbeatItemResult[] = [];

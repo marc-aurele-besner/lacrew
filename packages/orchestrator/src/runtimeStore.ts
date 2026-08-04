@@ -8,7 +8,11 @@
 import type { AgentControlRecord } from "./agentControls.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
-import type { ConnectorModeRecord, ConnectorModeScope, ConnectorModeStore } from "./connectorPolicy.js";
+import type {
+  ConnectorModeRecord,
+  ConnectorModeScope,
+  ConnectorModeStore,
+} from "./connectorPolicy.js";
 import type { PlanRequiredStore } from "./planRequired.js";
 import type { DualControlReviewRecord, DualControlStore } from "./dualControl.js";
 import {
@@ -71,9 +75,9 @@ import {
 export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
 
-
 export interface RuntimeStore
-  extends ConnectorModeStore,
+  extends
+    ConnectorModeStore,
     ConnectorAskStore,
     HumanGateStore,
     ExternalMcpStore,
@@ -589,10 +593,20 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
           // Dropping it silently would apply "no rule" — which is `auto` — so
           // it is reported instead.
           if (!scope) {
-            warn("connector mode load", new Error(`unreadable scope: ${JSON.stringify(row.scope)}`));
+            warn(
+              "connector mode load",
+              new Error(`unreadable scope: ${JSON.stringify(row.scope)}`),
+            );
             return [];
           }
-          return [{ scope, route: row.route, mode: row.mode as ConnectorModeRecord["mode"], at: row.updatedAt }];
+          return [
+            {
+              scope,
+              route: row.route,
+              mode: row.mode as ConnectorModeRecord["mode"],
+              at: row.updatedAt,
+            },
+          ];
         });
       } catch (err) {
         // Rethrown, like agent controls: an empty answer here reads as "nothing
@@ -688,7 +702,10 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         return rows.flatMap((row) => {
           const scope = modeScopeFromRow(row.scope);
           if (!scope) {
-            warn("plan requirement load", new Error(`unreadable scope: ${JSON.stringify(row.scope)}`));
+            warn(
+              "plan requirement load",
+              new Error(`unreadable scope: ${JSON.stringify(row.scope)}`),
+            );
             return [];
           }
           return [

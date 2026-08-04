@@ -50,7 +50,10 @@ function flagValue(args: string[], flag: string): string | undefined {
 }
 
 function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(/\/$/, "");
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
 }
 
 async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
@@ -96,7 +99,8 @@ function resolvePack(idOrNothing: string | undefined, args: string[]): SkillPack
   const file = flagValue(args, "--file");
   if (file) {
     const parsed = parseSkillPack(readFileSync(file, "utf8"));
-    if (!parsed.pack) throw new Error(`${file} is not a valid skill pack:\n  ${parsed.errors.join("\n  ")}`);
+    if (!parsed.pack)
+      throw new Error(`${file} is not a valid skill pack:\n  ${parsed.errors.join("\n  ")}`);
     return parsed.pack;
   }
   if (!idOrNothing) throw new Error("Name a shipped pack id, or pass --file <path>.");
@@ -118,7 +122,9 @@ function printLocalList(): void {
     console.log("");
   }
   console.log("Detail:   lacrew skills show <id>");
-  console.log("Live:     lacrew skills list --url http://…   (adds what this deployment is missing)");
+  console.log(
+    "Live:     lacrew skills list --url http://…   (adds what this deployment is missing)",
+  );
 }
 
 async function printLiveList(args: string[]): Promise<void> {
@@ -130,10 +136,12 @@ async function printLiveList(args: string[]): Promise<void> {
     if (!pack.installable) {
       // Named per dimension because they are fixed in different places: a flow
       // is saved here, a connector is registered with a credential.
-      if (pack.missing.flows.length) console.log(`     missing flows: ${pack.missing.flows.join(", ")}`);
+      if (pack.missing.flows.length)
+        console.log(`     missing flows: ${pack.missing.flows.join(", ")}`);
       if (pack.missing.connectors.length)
         console.log(`     missing connectors: ${pack.missing.connectors.join(", ")}`);
-      if (pack.missing.mcpTools.length) console.log(`     missing tools: ${pack.missing.mcpTools.join(", ")}`);
+      if (pack.missing.mcpTools.length)
+        console.log(`     missing tools: ${pack.missing.mcpTools.join(", ")}`);
     }
     console.log("");
   }
@@ -179,16 +187,23 @@ export async function cmdSkills(args: string[]): Promise<void> {
     const label = flagValue(args, "--layer");
     // The pack travels inline even when it ships here, so the orchestrator
     // validates the bytes it is about to install rather than a name it trusts.
-    const body = await orchFetch<{ pack: string; version: string; label: string; installed: number; replaced: number }>(
-      args,
-      "/agents/skills/install",
-      { method: "POST", body: JSON.stringify({ agent, pack, ...(label ? { label } : {}) }) },
-    );
+    const body = await orchFetch<{
+      pack: string;
+      version: string;
+      label: string;
+      installed: number;
+      replaced: number;
+    }>(args, "/agents/skills/install", {
+      method: "POST",
+      body: JSON.stringify({ agent, pack, ...(label ? { label } : {}) }),
+    });
     console.log(
       `Installed ${body.pack} ${body.version} on ${agent} (layer "${body.label}"): ` +
         `${body.installed} skills${body.replaced > 0 ? `, replacing ${body.replaced}` : ""}.`,
     );
-    console.log("A skill is instruction, not authority — caps, whitelists and session scopes are unchanged.");
+    console.log(
+      "A skill is instruction, not authority — caps, whitelists and session scopes are unchanged.",
+    );
     return;
   }
 
