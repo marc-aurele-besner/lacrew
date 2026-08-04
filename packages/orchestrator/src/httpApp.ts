@@ -1851,10 +1851,24 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   const skillPacks = createSkillPacksSurface({
     runtime,
     listFlowIds: async () => (await flows.list()).map((f) => f.id),
-    listConnectors: () => ({
-      ids: connectors?.list().map((conn) => conn.id) ?? [],
-      tools: connectors?.toolNames() ?? [],
-    }),
+    /**
+     * Registered **and** credentialed.
+     *
+     * `list()` answers "is this connector configured", which is not the
+     * question a pack's `requires` is asking. A GitHub connector registered
+     * with no token is a connector every call through fails on, so a merge
+     * procedure installed against it is a procedure that fails at the step
+     * that matters — the same defect an unregistered connector causes, and the
+     * one `requires` exists to refuse. Readiness is presence of the env vars,
+     * never a value, so nothing here reads a credential.
+     */
+    listConnectors: () => {
+      const ready = (connectors?.describe() ?? []).filter((conn) => conn.auth.ready);
+      return {
+        ids: ready.map((conn) => conn.id),
+        tools: ready.flatMap((conn) => conn.routes.map((route) => `${conn.id}.${route.name}`)),
+      };
+    },
     listMcpTools: () => listLacrewMcpTools().map((tool) => tool.name),
   });
 

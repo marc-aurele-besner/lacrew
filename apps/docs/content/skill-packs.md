@@ -130,7 +130,10 @@ different places:
 
 - **400** — the pack is malformed. The body lists every reason.
 - **409** — a requirement is unmet. The body names the missing flows, connector
-  routes and tools; register them and install again.
+  routes and tools; register them and install again. A connector counts as
+  registered only when its credential is actually set — a connector with no
+  token is one every call through fails on, which is the same defect an
+  unregistered one causes.
 - **413** — the merged directive would blow the rendered ceiling. Remove a pack
   or shorten a layer.
 

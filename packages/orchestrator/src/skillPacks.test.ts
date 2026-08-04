@@ -18,7 +18,14 @@ const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb";
  * An app with a knob for each thing a pack's `requires` is checked against:
  * which GitHub routes are registered, and which flows are saved.
  */
-async function buildApp(opts: { github?: "none" | "read" | "full"; flows?: string[] } = {}) {
+async function buildApp(
+  opts: {
+    github?: "none" | "read" | "full";
+    flows?: string[];
+    /** Whether the GitHub connector's credential is actually set. */
+    credential?: boolean;
+  } = {},
+) {
   const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
   const model = new MemoryModelProvider();
   const flows = createFlowsSurface({ runtime, model });
@@ -41,7 +48,7 @@ async function buildApp(opts: { github?: "none" | "read" | "full"; flows?: strin
                   }),
             }),
           ],
-          env: { GH_TOKEN: "ghp_test" },
+          env: opts.credential === false ? {} : { GH_TOKEN: "ghp_test" },
         });
 
   for (const id of opts.flows ?? []) {
@@ -115,6 +122,28 @@ describe("skill packs (F2.23)", () => {
     // that showed only triggers would ask an operator to approve instruction
     // reaching a model's prompt without letting them read it first.
     assert.ok(pack.skills.every((s) => s.trigger.length > 0 && s.body.length > 0));
+  });
+
+  it("refuses a connector that is registered but has no credential", async () => {
+    // The failure this catches is the one a status page hides: the connector is
+    // there, so the pack reads installable, and every call the procedure makes
+    // fails on an unset token. Registered is not the same as usable.
+    const unset = await buildApp({ github: "full", credential: false, flows: GITHUB_FLOWS });
+    const refused = await install(unset.app, { agent: AGENT, packId: "github-pr-triage" });
+    assert.equal(refused.status, 409);
+    const body = (await refused.json()) as { missing: { connectors: string[] } };
+    assert.deepEqual(body.missing.connectors, [
+      "github.get_pull_request",
+      "github.merge_pull_request",
+    ]);
+    assert.equal(unset.runtime.agentBrief(AGENT), null);
+
+    // The same deployment with the token set takes it.
+    const set = await buildApp({ github: "full", flows: GITHUB_FLOWS });
+    assert.equal(
+      (await install(set.app, { agent: AGENT, packId: "github-pr-triage" })).status,
+      200,
+    );
   });
 
   it("refuses an install whose connector is not registered, and takes it once it is", async () => {
