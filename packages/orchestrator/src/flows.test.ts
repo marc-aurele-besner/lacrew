@@ -103,7 +103,9 @@ describe("flows surface", () => {
 
   it("runTriggered runs only epoch-triggered flows and tags the trigger", async () => {
     const { surface } = makeSurface();
-    await surface.save(flow("auto", "Auto").trigger("epoch").model("m", { prompt: "tick" }).build());
+    await surface.save(
+      flow("auto", "Auto").trigger("epoch").model("m", { prompt: "tick" }).build(),
+    );
     await surface.save(flow("hand", "Hand").model("m", { prompt: "manual only" }).build());
     const results = await surface.runTriggered("epoch");
     assert.equal(results.length, 1);
@@ -120,11 +122,7 @@ describe("flows surface", () => {
 
   it("fires cron flows once per matching minute", async () => {
     const { surface } = makeSurface();
-    await surface.save(
-      flow("cron-pulse", "Cron pulse")
-        .model("say", { prompt: "ping" })
-        .build(),
-    );
+    await surface.save(flow("cron-pulse", "Cron pulse").model("say", { prompt: "ping" }).build());
     const def = (await surface.list()).find((f) => f.id === "cron-pulse")!;
     await surface.save({ ...def, trigger: "cron", schedule: "*/5 * * * *" });
 
@@ -155,7 +153,6 @@ describe("flows surface", () => {
   });
 });
 
-
 /** Surface with a live-shaped MCP backend, so `agent` steps route to delegate. */
 function makeDelegatingSurface() {
   const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
@@ -185,7 +182,14 @@ describe("flow delegation guards", () => {
       id: "loop",
       name: "Loop",
       steps: [
-        { id: "again", kind: "agent", action: "invoke", agent: DELEGATE, flowId: "loop", next: null },
+        {
+          id: "again",
+          kind: "agent",
+          action: "invoke",
+          agent: DELEGATE,
+          flowId: "loop",
+          next: null,
+        },
       ],
     });
     const run = await surface.run({ id: "loop" });
@@ -203,7 +207,14 @@ describe("flow delegation guards", () => {
         id: id!,
         name: id!,
         steps: [
-          { id: "go", kind: "agent", action: "invoke", agent: DELEGATE, flowId: target!, next: null },
+          {
+            id: "go",
+            kind: "agent",
+            action: "invoke",
+            agent: DELEGATE,
+            flowId: target!,
+            next: null,
+          },
         ],
       });
     }
@@ -223,7 +234,16 @@ describe("flow delegation guards", () => {
         id: ids[i]!,
         name: ids[i]!,
         steps: next
-          ? [{ id: "go", kind: "agent", action: "invoke", agent: DELEGATE, flowId: next, next: null }]
+          ? [
+              {
+                id: "go",
+                kind: "agent",
+                action: "invoke",
+                agent: DELEGATE,
+                flowId: next,
+                next: null,
+              },
+            ]
           : [{ id: "done", kind: "model", prompt: "end", next: null }],
       });
     }

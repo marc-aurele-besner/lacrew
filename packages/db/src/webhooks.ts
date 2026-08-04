@@ -79,19 +79,12 @@ export async function getWebhookTrigger(
   };
 }
 
-export async function deleteWebhookTrigger(
-  handle: DbHandle,
-  id: string,
-): Promise<void> {
+export async function deleteWebhookTrigger(handle: DbHandle, id: string): Promise<void> {
   await handle.db.delete(webhookTriggers).where(eq(webhookTriggers.id, id));
-  await handle.db
-    .delete(webhookDeliveries)
-    .where(eq(webhookDeliveries.triggerId, id));
+  await handle.db.delete(webhookDeliveries).where(eq(webhookDeliveries.triggerId, id));
 }
 
-export async function listWebhookTriggers(
-  handle: DbHandle,
-): Promise<WebhookTriggerRow[]> {
+export async function listWebhookTriggers(handle: DbHandle): Promise<WebhookTriggerRow[]> {
   const rows = await handle.db
     .select()
     .from(webhookTriggers)
@@ -187,9 +180,7 @@ export async function recentWebhookDeliveries(
   triggerId?: string,
 ): Promise<WebhookDeliveryRow[]> {
   const base = handle.db.select().from(webhookDeliveries);
-  const rows = await (
-    triggerId ? base.where(eq(webhookDeliveries.triggerId, triggerId)) : base
-  )
+  const rows = await (triggerId ? base.where(eq(webhookDeliveries.triggerId, triggerId)) : base)
     .orderBy(desc(webhookDeliveries.at), desc(webhookDeliveries.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -208,13 +199,8 @@ export async function recentWebhookDeliveries(
  * without bound. Replay protection past the retention window is the signature
  * timestamp's job, not this table's.
  */
-export async function pruneWebhookDeliveries(
-  handle: DbHandle,
-  days: number,
-): Promise<void> {
+export async function pruneWebhookDeliveries(handle: DbHandle, days: number): Promise<void> {
   await handle.db
     .delete(webhookDeliveries)
-    .where(
-      sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`,
-    );
+    .where(sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`);
 }

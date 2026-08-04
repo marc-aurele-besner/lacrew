@@ -16,11 +16,11 @@ lacrew crews plan defi-desk --bind executor=0x… --bind target:dex-router=0x…
 Three first-party blueprints come from filled design-partner intakes
 (`design-partner-intake.md`), one per vertical:
 
-| Blueprint | Vertical | Shape |
-| --- | --- | --- |
-| `defi-desk` | Trading | Scanner, planner, executor, rebalancer under a risk manager who can halt the desk |
-| `github-experts` | Dev | Watcher, reviewer, merger, fixer, release scribe under a review lead |
-| `content-studio` | Content | Ideation, writer, three-seat review board, visual packager, social desk under an editor manager |
+| Blueprint        | Vertical | Shape                                                                                           |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `defi-desk`      | Trading  | Scanner, planner, executor, rebalancer under a risk manager who can halt the desk               |
+| `github-experts` | Dev      | Watcher, reviewer, merger, fixer, release scribe under a review lead                            |
+| `content-studio` | Content  | Ideation, writer, three-seat review board, visual packager, social desk under an editor manager |
 
 The rest are author-drafted patterns. They carry no `intake.file`, and the
 absence is the honest signal rather than an oversight: their caps and grants are
@@ -28,31 +28,31 @@ a starting point somebody reasoned about, not a figure a real operator gave.
 Pointing them at a document that does not exist would lend partner-derived
 authority to a guess.
 
-| Blueprint | Vertical | Shape |
-| --- | --- | --- |
-| `research-desk` | Research | Source scout, analyst and librarian under a research lead |
-| `support-desk` | Support | Triager and responder under a desk lead |
-| `platform-oncall` | Ops | Monitor and remediator under an on-call lead |
-| `lp-advisor` | Trading | Position mapper, range analyst and depth watch under an advisory lead |
-| `yield-desk` | Trading | Rate scout, risk scorer and allocator under a treasury lead |
-| `risk-watch` | Ops | Peg, oracle and event watches under a risk lead |
+| Blueprint         | Vertical | Shape                                                                       |
+| ----------------- | -------- | --------------------------------------------------------------------------- |
+| `research-desk`   | Research | Source scout, analyst and librarian under a research lead                   |
+| `support-desk`    | Support  | Triager and responder under a desk lead                                     |
+| `platform-oncall` | Ops      | Monitor and remediator under an on-call lead                                |
+| `lp-advisor`      | Trading  | Position mapper, range analyst and depth watch under an advisory lead       |
+| `yield-desk`      | Trading  | Rate scout, risk scorer and allocator under a treasury lead                 |
+| `risk-watch`      | Ops      | Peg, oracle and event watches under a risk lead                             |
 | `governance-desk` | Research | Proposal scout, rationale writer and conflict checker under a delegate lead |
 
 The first three ship no flows, because how a support desk or an on-call rota
 actually works is the part most specific to one team, and inventing it would be
 the same fabrication one level down. The four DeFi patterns each ship one,
-because there the pipeline *is* the claim: "this crew can only advise" is not a
+because there the pipeline _is_ the claim: "this crew can only advise" is not a
 sentence in a summary, it is a policy check `lp-range-review` performs against a
 router nobody admitted — and it is only checkable because the flow runs it.
 
 Each of the four is built around a different layer:
 
-| Blueprint | What it demonstrates |
-| --- | --- |
-| `lp-advisor` | A crew with no execution authority at all. No venue and no payout target is admitted, so the advice is a property of the whitelist rather than a promise |
-| `yield-desk` | Admission as the risk control. It carries an unadmitted-market entry so the refusal path is exercised, and its allocator holds a dedicated stack because the org-wide whitelist admits a market for every seat at once |
-| `risk-watch` | Detection is not prevention. Every guardrail states its residual risk, not only the `monitoring` ones validation demands it of |
-| `governance-desk` | An onchain action that moves no value. The cap, the whitelist and the allowance all answer ALLOW on a vote, and the blueprint says so instead of implying the policy stack covers it |
+| Blueprint         | What it demonstrates                                                                                                                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lp-advisor`      | A crew with no execution authority at all. No venue and no payout target is admitted, so the advice is a property of the whitelist rather than a promise                                                               |
+| `yield-desk`      | Admission as the risk control. It carries an unadmitted-market entry so the refusal path is exercised, and its allocator holds a dedicated stack because the org-wide whitelist admits a market for every seat at once |
+| `risk-watch`      | Detection is not prevention. Every guardrail states its residual risk, not only the `monitoring` ones validation demands it of                                                                                         |
+| `governance-desk` | An onchain action that moves no value. The cap, the whitelist and the allowance all answer ALLOW on a vote, and the blueprint says so instead of implying the policy stack covers it                                   |
 
 ## What a blueprint holds
 
@@ -63,30 +63,30 @@ const bp = getCrewBlueprint("github-experts")!;
 validateCrewBlueprint(bp); // { ok: true, errors: [] }
 ```
 
-| Field | What it answers |
-| --- | --- |
-| `roles` | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc` |
-| `targets` | Where money may go, and which targets are deliberately **not** whitelisted |
-| `externalScopes` | Credentials LaCrew does not govern — a GitHub App, a draft-only social token |
-| `escalation` | The "ask me first" ladder, and which layer carries each rung |
-| `governance` | Which changes are constitutional, and at which tier |
-| `guardrails` | Each "must never happen", its enforcement layer, and its residual risk |
-| `outOfScope` | What the crew deliberately does not do |
+| Field            | What it answers                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------- |
+| `roles`          | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc` |
+| `targets`        | Where money may go, and which targets are deliberately **not** whitelisted                            |
+| `externalScopes` | Credentials LaCrew does not govern — a GitHub App, a draft-only social token                          |
+| `escalation`     | The "ask me first" ladder, and which layer carries each rung                                          |
+| `governance`     | Which changes are constitutional, and at which tier                                                   |
+| `guardrails`     | Each "must never happen", its enforcement layer, and its residual risk                                |
+| `outOfScope`     | What the crew deliberately does not do                                                                |
 
 ### Enforcement layers
 
 Every guardrail names where it is enforced, because a config that implies the
 chain refuses something it has never seen is worse than no config:
 
-| Layer | Meaning |
-| --- | --- |
-| `policy` | A policy module — cap, whitelist, rate limit, time window. DENY is final. |
-| `treasury` | Allowance topology: seats spend their own stream, never the treasury. |
-| `session` | The session key's own limits; the key cannot sign it at all. |
-| `governance` | Proposal, quorum, and — at the high tier — timelock plus human veto. |
-| `escalation` | The action waits for a manager or the human root. |
-| `flow` | The pipeline's own routing. Real, but orchestrator-side. |
-| `external` | A credential scoped outside LaCrew. |
+| Layer        | Meaning                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy`     | A policy module — cap, whitelist, rate limit, time window. DENY is final.                                                                   |
+| `treasury`   | Allowance topology: seats spend their own stream, never the treasury.                                                                       |
+| `session`    | The session key's own limits; the key cannot sign it at all.                                                                                |
+| `governance` | Proposal, quorum, and — at the high tier — timelock plus human veto.                                                                        |
+| `escalation` | The action waits for a manager or the human root.                                                                                           |
+| `flow`       | The pipeline's own routing. Real, but orchestrator-side.                                                                                    |
+| `external`   | A credential scoped outside LaCrew.                                                                                                         |
 | `monitoring` | Detected after the fact by Guardian. Not prevention — and a guardrail on this layer must state its residual risk, or validation rejects it. |
 
 `validateCrewBlueprint` also rejects a manager whose cap is smaller than a
@@ -100,7 +100,7 @@ The default `WhitelistPolicy` allows a target for the whole org, not per seat.
 A blueprint's `targets` are therefore an org-level answer, and `crewPlan` emits
 one whitelist call per target rather than one per seat.
 
-When a seat must be the *only* payer of a target — the DeFi executor and its
+When a seat must be the _only_ payer of a target — the DeFi executor and its
 routers — the role carries `dedicatedPolicy`, and the plan emits a
 `set-policy` step binding that seat to its own stack through
 `EscalationRouter.setNodePolicy`.
@@ -269,7 +269,7 @@ credential header — is the production path.
 A model key is optional. Without one, completions come back as the
 orchestrator's stub, a classifier reading stub text falls through to its default
 branch, and a run that "succeeded" would mean nothing — so the checklist blocks
-on the model and the script asserts *that*. Set `OPENROUTER_API_KEY` (or any
+on the model and the script asserts _that_. Set `OPENROUTER_API_KEY` (or any
 provider key) and it drives the sample run itself, asserting the run was served
 by the runtime rather than the mock backend, that it reached the connector, and
 that it never merged.

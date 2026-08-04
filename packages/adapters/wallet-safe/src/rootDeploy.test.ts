@@ -131,10 +131,7 @@ test("only a 1-of-1 owned by the passkey signer matches", () => {
   // Address case is display, not identity.
   assert.equal(rootSafeOwnersMatch([signer.toLowerCase()], signer.toUpperCase()), true);
   // The relayer paid for the deployment; it must not come back as an owner.
-  assert.equal(
-    rootSafeOwnersMatch(["0x00000000000000000000000000000000000000f0"], signer),
-    false,
-  );
+  assert.equal(rootSafeOwnersMatch(["0x00000000000000000000000000000000000000f0"], signer), false);
   assert.equal(
     rootSafeOwnersMatch([signer, "0x00000000000000000000000000000000000000f0"], signer),
     false,
@@ -145,7 +142,10 @@ test("only a 1-of-1 owned by the passkey signer matches", () => {
 test("relaying refuses without an explicit allowlist", () => {
   assert.throws(() => assertRelayAllowlist([]), /explicit chain allowlist/);
   assert.throws(() => assertRelayableChain(31337, []), /explicit chain allowlist/);
-  assert.throws(() => assertRelayableChain(1, [31337]), /Chain 1 is not in the root-Safe relay allowlist/);
+  assert.throws(
+    () => assertRelayableChain(1, [31337]),
+    /Chain 1 is not in the root-Safe relay allowlist/,
+  );
   assert.doesNotThrow(() => assertRelayableChain(31337, [31337, 8453]));
 });
 
@@ -217,10 +217,7 @@ test(
     assert.equal(relayed.verification.threshold, 1);
     // The sender paid the gas and owns none of the result.
     assert.deepEqual(relayed.verification.owners, [plan.predicted.ownerAddress]);
-    assert.notEqual(
-      relayed.verification.owners[0]!.toLowerCase(),
-      relayed.sender.toLowerCase(),
-    );
+    assert.notEqual(relayed.verification.owners[0]!.toLowerCase(), relayed.sender.toLowerCase());
 
     const signerCode = await client.getCode({ address: plan.predicted.ownerAddress });
     assert.ok(signerCode && signerCode !== "0x", "signer code at the predicted address");

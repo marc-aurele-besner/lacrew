@@ -4,10 +4,10 @@ LaCrew splits decisions into two regimes and refuses to confuse them.
 
 ## Operational vs constitutional
 
-| Regime | Examples | Path |
-| --- | --- | --- |
-| Operational | Spend, execute, escalate | Policy stack + escalation tree |
-| Constitutional | Hire/fire agents, change budgets, upgrade modules, admit humans | GovernanceModule |
+| Regime         | Examples                                                        | Path                           |
+| -------------- | --------------------------------------------------------------- | ------------------------------ |
+| Operational    | Spend, execute, escalate                                        | Policy stack + escalation tree |
+| Constitutional | Hire/fire agents, change budgets, upgrade modules, admit humans | GovernanceModule               |
 
 ## Risk tiers
 
@@ -28,14 +28,14 @@ Seats are role-weighted (`votingPower` + `seatRole`): humans decide high-tier fi
 
 All parameters are onchain and adjustable by the root directly or via a High-tier proposal targeting the module:
 
-| Parameter | Default | Setter |
-| --- | --- | --- |
-| `quorumYes` (low tier, all seats) | 2 | `setQuorumYes` |
-| `quorumHumanYes` (high tier, human seats) | 1 | `setQuorumHumanYes` |
-| `votingPeriod` | 3 days (bounds 1h–30d) | `setTiming` |
-| `highTierTimelock` | 1 day (bounds 0–30d) | `setTiming` |
-| `unanimityFastPath` | on | `setUnanimityFastPath` |
-| Seat weight / role | root: 2 human (constructor `rootPower_`) | `setVotingPower` |
+| Parameter                                 | Default                                  | Setter                 |
+| ----------------------------------------- | ---------------------------------------- | ---------------------- |
+| `quorumYes` (low tier, all seats)         | 2                                        | `setQuorumYes`         |
+| `quorumHumanYes` (high tier, human seats) | 1                                        | `setQuorumHumanYes`    |
+| `votingPeriod`                            | 3 days (bounds 1h–30d)                   | `setTiming`            |
+| `highTierTimelock`                        | 1 day (bounds 0–30d)                     | `setTiming`            |
+| `unanimityFastPath`                       | on                                       | `setUnanimityFastPath` |
+| Seat weight / role                        | root: 2 human (constructor `rootPower_`) | `setVotingPower`       |
 
 ## Current scaffolding gaps
 

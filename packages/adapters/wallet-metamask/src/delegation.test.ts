@@ -83,10 +83,7 @@ async function provisionSeat(salt: string) {
     data: deployTx.data,
     value: deployTx.value,
   });
-  assert.equal(
-    (await publicClient.waitForTransactionReceipt({ hash })).status,
-    "success",
-  );
+  assert.equal((await publicClient.waitForTransactionReceipt({ hash })).status, "success");
 
   const after = await createMetaMaskWallet(opts);
   assert.equal(after.deployed, true);
@@ -214,10 +211,7 @@ test(
 
     // The cap holds even though the seat still holds 8 USDC — funds present,
     // not spendable by this key.
-    await assert.rejects(
-      () => spend(2_000_000n),
-      "spending past the delegation cap must revert",
-    );
+    await assert.rejects(() => spend(2_000_000n), "spending past the delegation cap must revert");
     assert.equal(
       await balanceOf(payee.address),
       2_000_000n,
@@ -267,8 +261,7 @@ test(
       transport: http(rpc!),
     });
     await assert.rejects(
-      () =>
-        intruderWallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value }),
+      () => intruderWallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value }),
       "only the named delegate may redeem",
     );
     assert.equal(
@@ -317,11 +310,7 @@ test(
       transport: http(rpc!),
     });
     const spend = async (amount: bigint) => {
-      const tx = await buildRedeemTx(
-        BASE,
-        signed,
-        nativeTransferExecution(payee.address, amount),
-      );
+      const tx = await buildRedeemTx(BASE, signed, nativeTransferExecution(payee.address, amount));
       const hash = await delegateWallet.sendTransaction({
         to: tx.to,
         data: tx.data,

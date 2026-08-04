@@ -24,7 +24,11 @@ type Args = { name: string; network: string; faucet: boolean };
 
 function parseArgs(argv: string[]): Args {
   const get = (flag: string) =>
-    argv.find((a) => a.startsWith(`--${flag}=`))?.split("=").slice(1).join("=");
+    argv
+      .find((a) => a.startsWith(`--${flag}=`))
+      ?.split("=")
+      .slice(1)
+      .join("=");
   return {
     name: get("name") ?? "lacrew-smoke",
     network: get("network") ?? "base-sepolia",

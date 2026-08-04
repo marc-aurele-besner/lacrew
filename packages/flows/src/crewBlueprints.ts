@@ -65,7 +65,8 @@ const defiDesk: CrewBlueprint = {
     {
       id: "operator",
       label: "Desk operator",
-      holds: "Root key; sole vote on the high tier. A co-signer for large treasury moves is a later change, not day one.",
+      holds:
+        "Root key; sole vote on the high tier. A co-signer for large treasury moves is a later change, not day one.",
     },
   ],
   roles: [
@@ -613,7 +614,8 @@ const contentStudio: CrewBlueprint = {
   summary:
     "Ideation, a staff writer, a three-seat review board, a visual packager, and a social desk under an editor manager. Everything ships as a draft: the publish endpoint is deliberately unadmitted, so publication is a DENY a human has to clear.",
   intake: {
-    persona: "Founder running a personal brand and an organization brand, wanting a weekly content engine",
+    persona:
+      "Founder running a personal brand and an organization brand, wanting a weekly content engine",
     file: "design-partners/03-marketing-content-crew.md",
   },
   epoch: "week",
@@ -811,7 +813,8 @@ const contentStudio: CrewBlueprint = {
     {
       id: "brand-docs",
       label: "Brand documentation",
-      boundary: "Read-only. Voice guidelines are changed by a human, not by the crew that follows them.",
+      boundary:
+        "Read-only. Voice guidelines are changed by a human, not by the crew that follows them.",
     },
   ],
   escalation: [
@@ -842,7 +845,10 @@ const contentStudio: CrewBlueprint = {
     },
   ],
   governance: [
-    { change: "Admit the publishing endpoint — the change that turns drafts into posts", tier: "high" },
+    {
+      change: "Admit the publishing endpoint — the change that turns drafts into posts",
+      tier: "high",
+    },
     { change: "Connect a new account or publishing surface", tier: "high" },
     { change: "Raise a seat's cap or the monthly budget", tier: "high" },
     { change: "Hire or fire the editor manager", tier: "high" },
@@ -900,7 +906,6 @@ const contentStudio: CrewBlueprint = {
     "A single voice across both brands. Two accounts means two briefs, two runs, and two sets of credentials.",
   ],
 };
-
 
 /* ------------------------------------------------------------------ *
  * Author-drafted patterns (no filled intake — see the note at the top)
@@ -1022,7 +1027,11 @@ const researchDesk: CrewBlueprint = {
   ],
   connectors: [],
   escalation: [
-    { when: "A single article or dataset costs more than the analyst's cap", to: "research-lead", via: "escalation" },
+    {
+      when: "A single article or dataset costs more than the analyst's cap",
+      to: "research-lead",
+      via: "escalation",
+    },
     { when: "A purchase exceeds the lead's own cap", to: "human_root", via: "escalation" },
     { when: "Adding a paid source to the tracked list", to: "human_root", via: "governance" },
   ],
@@ -1084,7 +1093,8 @@ const supportDesk: CrewBlueprint = {
     {
       id: "support-lead",
       label: "Support lead",
-      holds: "Root key; sole vote on the high tier. Owns what the desk is allowed to promise a customer.",
+      holds:
+        "Root key; sole vote on the high tier. Owns what the desk is allowed to promise a customer.",
     },
   ],
   roles: [
@@ -1155,7 +1165,11 @@ const supportDesk: CrewBlueprint = {
   connectors: [],
   escalation: [
     { when: "A ticket the triager cannot classify", to: "desk-lead", via: "escalation" },
-    { when: "A reply that would commit the company to something (refund, exception, deadline)", to: "human_root", via: "escalation" },
+    {
+      when: "A reply that would commit the company to something (refund, exception, deadline)",
+      to: "human_root",
+      via: "escalation",
+    },
     { when: "Adding a queue to the desk's care", to: "human_root", via: "governance" },
   ],
   governance: [
@@ -1216,7 +1230,8 @@ const platformOncall: CrewBlueprint = {
     {
       id: "platform-owner",
       label: "Platform owner",
-      holds: "Root key; sole vote on the high tier. The only seat that can widen what the crew may change.",
+      holds:
+        "Root key; sole vote on the high tier. The only seat that can widen what the crew may change.",
     },
   ],
   roles: [
@@ -1287,7 +1302,11 @@ const platformOncall: CrewBlueprint = {
   connectors: [],
   escalation: [
     { when: "Any remediation the owner has not pre-agreed", to: "human_root", via: "escalation" },
-    { when: "A second remediation after the first did not restore service", to: "human_root", via: "escalation" },
+    {
+      when: "A second remediation after the first did not restore service",
+      to: "human_root",
+      via: "escalation",
+    },
     { when: "Widening what the crew may change", to: "human_root", via: "governance" },
   ],
   governance: [
@@ -2232,8 +2251,7 @@ const governanceDesk: CrewBlueprint = {
       never: "A seat pulls straight from the org treasury",
       enforcedBy: "treasury",
       how: "Treasury streams down the tree through EpochStreamer and seats spend their own allowance.",
-      residualRisk:
-        "The topology bounds the loss to an epoch's allowance rather than to zero.",
+      residualRisk: "The topology bounds the loss to an epoch's allowance rather than to zero.",
     },
     {
       never: "Unlimited spend from a compromised seat",

@@ -87,7 +87,13 @@ describe("google pub/sub OIDC verification", () => {
     const impostor = makeSigner("kid-1");
     const forged = impostor.sign(
       { alg: "RS256", kid: "kid-1", typ: "JWT" },
-      { iss: "https://accounts.google.com", aud: AUD, email: SA, email_verified: true, exp: NOW_SEC + 600 },
+      {
+        iss: "https://accounts.google.com",
+        aud: AUD,
+        email: SA,
+        email_verified: true,
+        exp: NOW_SEC + 600,
+      },
     );
     assert.deepEqual(await verify(`Bearer ${forged}`), {
       ok: false,
@@ -98,7 +104,13 @@ describe("google pub/sub OIDC verification", () => {
   it("refuses a tampered payload", async () => {
     const [h, , s] = token().split(".") as [string, string, string];
     const swapped = Buffer.from(
-      JSON.stringify({ iss: "https://accounts.google.com", aud: AUD, email: SA, email_verified: true, exp: NOW_SEC + 600 }),
+      JSON.stringify({
+        iss: "https://accounts.google.com",
+        aud: AUD,
+        email: SA,
+        email_verified: true,
+        exp: NOW_SEC + 600,
+      }),
     ).toString("base64url");
     assert.deepEqual(await verify(`Bearer ${h}.${swapped}.${s}`), {
       ok: false,
@@ -130,10 +142,13 @@ describe("google pub/sub OIDC verification", () => {
   });
 
   it("refuses a token from another service account, or an unverified email", async () => {
-    assert.deepEqual(await verify(`Bearer ${token({ email: "attacker@evil.iam.gserviceaccount.com" })}`), {
-      ok: false,
-      reason: "token_email_invalid",
-    });
+    assert.deepEqual(
+      await verify(`Bearer ${token({ email: "attacker@evil.iam.gserviceaccount.com" })}`),
+      {
+        ok: false,
+        reason: "token_email_invalid",
+      },
+    );
     assert.deepEqual(await verify(`Bearer ${token({ email_verified: false })}`), {
       ok: false,
       reason: "token_email_invalid",
@@ -232,7 +247,13 @@ describe("google pub/sub OIDC verification", () => {
     const check = await verifyGoogleOidcToken({
       authorization: `Bearer ${signer.sign(
         { alg: "RS256", kid: "kid-1", typ: "JWT" },
-        { iss: "https://accounts.google.com", aud: AUD, email: SA, email_verified: true, exp: Math.floor(later / 1000) + 600 },
+        {
+          iss: "https://accounts.google.com",
+          aud: AUD,
+          email: SA,
+          email_verified: true,
+          exp: Math.floor(later / 1000) + 600,
+        },
       )}`,
       audience: AUD,
       serviceAccountEmail: SA,

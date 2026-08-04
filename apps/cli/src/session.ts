@@ -22,24 +22,18 @@ import type { RootAuthAction, RootChallenge, RootProof } from "@lacrew/core";
 
 function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-"))
-    return args[i + 1];
+  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
   return undefined;
 }
 
 function orchUrl(args: string[]): string {
-  return (
-    flagValue(args, "--url") ??
-    process.env.ORCH_URL ??
-    "http://127.0.0.1:8788"
-  ).replace(/\/$/, "");
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
 }
 
-async function orchFetch<T>(
-  args: string[],
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
   const token = process.env.ORCH_TOKEN?.trim();
   const res = await fetch(`${orchUrl(args)}${path}`, {
     ...init,
@@ -68,14 +62,10 @@ async function proveRoot(
   action: RootAuthAction,
   sessionId: string,
 ): Promise<{ challenge: string; rootProof: RootProof } | undefined> {
-  const issued = await orchFetch<ChallengeResponse>(
-    args,
-    "/root-auth/challenge",
-    {
-      method: "POST",
-      body: JSON.stringify({ action, subject: sessionId }),
-    },
-  );
+  const issued = await orchFetch<ChallengeResponse>(args, "/root-auth/challenge", {
+    method: "POST",
+    body: JSON.stringify({ action, subject: sessionId }),
+  });
   if (!issued.required) {
     console.error(
       "! This orchestrator has no root configured, so it is not asking anyone to authorize this.",
@@ -164,24 +154,16 @@ export async function cmdSession(args: string[]): Promise<void> {
       challengeTtlSec: number;
     }>(args, "/root-auth");
     if (!body.required) {
-      console.log(
-        "Root authorization: not configured — revoke and rotate are ungated here.",
-      );
-      console.log(
-        "Set LACREW_ROOT_AUTH (passkey|wallet) on the orchestrator to anchor them.",
-      );
+      console.log("Root authorization: not configured — revoke and rotate are ungated here.");
+      console.log("Set LACREW_ROOT_AUTH (passkey|wallet) on the orchestrator to anchor them.");
       return;
     }
     if (body.configError) {
-      console.log(
-        `Root authorization: ${body.kind}, but UNUSABLE — ${body.configError}`,
-      );
+      console.log(`Root authorization: ${body.kind}, but UNUSABLE — ${body.configError}`);
       console.log("Revoke and rotate will refuse until this is fixed.");
       return;
     }
-    console.log(
-      `Root authorization: ${body.kind} (challenges live ${body.challengeTtlSec}s)`,
-    );
+    console.log(`Root authorization: ${body.kind} (challenges live ${body.challengeTtlSec}s)`);
     return;
   }
 
@@ -192,17 +174,12 @@ export async function cmdSession(args: string[]): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    const action: RootAuthAction =
-      sub === "rotate" ? "session:rotate" : "session:revoke";
+    const action: RootAuthAction = sub === "rotate" ? "session:rotate" : "session:revoke";
     const proof = await proveRoot(args, action, sessionId);
-    const body = await orchFetch<Record<string, unknown>>(
-      args,
-      `/sessions/${sub}`,
-      {
-        method: "POST",
-        body: JSON.stringify({ sessionId, ...(proof ?? {}) }),
-      },
-    );
+    const body = await orchFetch<Record<string, unknown>>(args, `/sessions/${sub}`, {
+      method: "POST",
+      body: JSON.stringify({ sessionId, ...(proof ?? {}) }),
+    });
     console.log(JSON.stringify(body, null, 2));
     return;
   }

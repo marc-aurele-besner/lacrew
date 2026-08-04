@@ -45,12 +45,17 @@ describe("parseWatchlist", () => {
       assert.equal(parsed.ok, false, `decimals ${String(decimals)} should be refused`);
     }
     // Zero is legitimate — some tokens genuinely use it.
-    assert.ok(parseWatchlist([{ chainId: 1, tokens: [{ symbol: "X", address: USDC, decimals: 0 }] }]).ok);
+    assert.ok(
+      parseWatchlist([{ chainId: 1, tokens: [{ symbol: "X", address: USDC, decimals: 0 }] }]).ok,
+    );
   });
 
   it("refuses a duplicate chain or a duplicate token", () => {
     assert.equal(
-      parseWatchlist([{ chainId: 1, tokens: [] }, { chainId: 1, tokens: [] }]).ok,
+      parseWatchlist([
+        { chainId: 1, tokens: [] },
+        { chainId: 1, tokens: [] },
+      ]).ok,
       false,
     );
     // The same contract twice would double it in any total summed from rows.

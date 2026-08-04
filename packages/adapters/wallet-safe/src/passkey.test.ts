@@ -86,7 +86,13 @@ test("foreign key kinds are refused, never coerced", () => {
   ];
   // RSA (kty 3, alg RS256): a WebAuthn key this module must not pretend to own.
   assert.throws(
-    () => coseP256Coordinates(encodeCoseKey([[1, 3], [3, -257]])),
+    () =>
+      coseP256Coordinates(
+        encodeCoseKey([
+          [1, 3],
+          [3, -257],
+        ]),
+      ),
     /not EC2/,
   );
   // Wrong curve (P-384 is crv 2).
@@ -137,94 +143,102 @@ const rpc = process.env.SAFE_FORK_RPC;
 const pk = process.env.SAFE_FORK_PK;
 const skipChain = !rpc;
 
-test("fork: a passkey predicts one owner and one Safe, deterministically", { skip: skipChain }, async () => {
-  const client = createPublicClient({ transport: http(rpc!) });
-  const { x, y } = realP256();
-  const cose = encodeCoseKey([
-    [1, 2],
-    [3, -7],
-    [-1, 1],
-    [-2, x],
-    [-3, y],
-  ]);
+test(
+  "fork: a passkey predicts one owner and one Safe, deterministically",
+  { skip: skipChain },
+  async () => {
+    const client = createPublicClient({ transport: http(rpc!) });
+    const { x, y } = realP256();
+    const cose = encodeCoseKey([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ]);
 
-  const owner = await predictPasskeyOwner(client, cose);
-  assert.match(owner.address, /^0x[0-9a-fA-F]{40}$/);
-  assert.equal(owner.deployed, false);
+    const owner = await predictPasskeyOwner(client, cose);
+    assert.match(owner.address, /^0x[0-9a-fA-F]{40}$/);
+    assert.equal(owner.deployed, false);
 
-  // Same credential → same owner; a different credential → a different owner.
-  const again = await predictPasskeyOwner(client, cose);
-  assert.equal(again.address, owner.address);
-  const other = realP256();
-  const otherCose = encodeCoseKey([
-    [1, 2],
-    [3, -7],
-    [-1, 1],
-    [-2, other.x],
-    [-3, other.y],
-  ]);
-  assert.notEqual((await predictPasskeyOwner(client, otherCose)).address, owner.address);
+    // Same credential → same owner; a different credential → a different owner.
+    const again = await predictPasskeyOwner(client, cose);
+    assert.equal(again.address, owner.address);
+    const other = realP256();
+    const otherCose = encodeCoseKey([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, other.x],
+      [-3, other.y],
+    ]);
+    assert.notEqual((await predictPasskeyOwner(client, otherCose)).address, owner.address);
 
-  const predicted = await predictPasskeySafe(client, {
-    provider: rpc!,
-    publicKey: cose,
-    saltNonce: "passkey-root-test",
-  });
-  assert.equal(predicted.owner.address, owner.address);
-  assert.deepEqual(predicted.safe.owners, [owner.address]);
-  assert.equal(predicted.safe.threshold, 1);
-  assert.equal(predicted.safe.deployed, false);
-});
-
-test("fork: both deploy txs land and the Safe reads back passkey-owned", { skip: skipChain || !pk }, async () => {
-  const publicClient = createPublicClient({ transport: http(rpc!) });
-  const chainId = await publicClient.getChainId();
-  const chain = defineChain({
-    id: chainId,
-    name: "safe-passkey-fork",
-    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: { default: { http: [rpc!] } },
-  });
-  const account = privateKeyToAccount(pk as `0x${string}`);
-  const walletClient = createWalletClient({ account, chain, transport: http(rpc!) });
-
-  const { x, y } = realP256();
-  const cose = encodeCoseKey([
-    [1, 2],
-    [3, -7],
-    [-1, 1],
-    [-2, x],
-    [-3, y],
-  ]);
-
-  // Salt keyed to the sender's nonce so a re-run against a live fork starts clean.
-  const salt = `passkey-e2e-${await publicClient.getTransactionCount({ address: account.address })}`;
-  const plan = await deployPasskeySafe(publicClient, {
-    provider: rpc!,
-    publicKey: cose,
-    saltNonce: salt,
-  });
-
-  for (const tx of [plan.signerDeployTx, plan.safeDeployTx]) {
-    const hash = await walletClient.sendTransaction({
-      to: tx.to,
-      data: tx.data,
-      value: tx.value,
+    const predicted = await predictPasskeySafe(client, {
+      provider: rpc!,
+      publicKey: cose,
+      saltNonce: "passkey-root-test",
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    assert.equal(receipt.status, "success");
-  }
+    assert.equal(predicted.owner.address, owner.address);
+    assert.deepEqual(predicted.safe.owners, [owner.address]);
+    assert.equal(predicted.safe.threshold, 1);
+    assert.equal(predicted.safe.deployed, false);
+  },
+);
 
-  // The signer now has code at exactly the predicted address…
-  const code = await publicClient.getCode({ address: plan.owner.address });
-  assert.ok(code && code !== "0x", "signer contract deployed at the predicted address");
+test(
+  "fork: both deploy txs land and the Safe reads back passkey-owned",
+  { skip: skipChain || !pk },
+  async () => {
+    const publicClient = createPublicClient({ transport: http(rpc!) });
+    const chainId = await publicClient.getChainId();
+    const chain = defineChain({
+      id: chainId,
+      name: "safe-passkey-fork",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: { default: { http: [rpc!] } },
+    });
+    const account = privateKeyToAccount(pk as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain, transport: http(rpc!) });
 
-  // …and the deployed Safe's live owner set is the signer, nothing else.
-  const safe = await connectSafeWallet({
-    provider: rpc!,
-    safeAddress: plan.safeDeployTx.safeAddress,
-  });
-  assert.deepEqual(safe.owners, [plan.owner.address]);
-  assert.equal(safe.threshold, 1);
-  assert.equal(safe.deployed, true);
-});
+    const { x, y } = realP256();
+    const cose = encodeCoseKey([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, x],
+      [-3, y],
+    ]);
+
+    // Salt keyed to the sender's nonce so a re-run against a live fork starts clean.
+    const salt = `passkey-e2e-${await publicClient.getTransactionCount({ address: account.address })}`;
+    const plan = await deployPasskeySafe(publicClient, {
+      provider: rpc!,
+      publicKey: cose,
+      saltNonce: salt,
+    });
+
+    for (const tx of [plan.signerDeployTx, plan.safeDeployTx]) {
+      const hash = await walletClient.sendTransaction({
+        to: tx.to,
+        data: tx.data,
+        value: tx.value,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      assert.equal(receipt.status, "success");
+    }
+
+    // The signer now has code at exactly the predicted address…
+    const code = await publicClient.getCode({ address: plan.owner.address });
+    assert.ok(code && code !== "0x", "signer contract deployed at the predicted address");
+
+    // …and the deployed Safe's live owner set is the signer, nothing else.
+    const safe = await connectSafeWallet({
+      provider: rpc!,
+      safeAddress: plan.safeDeployTx.safeAddress,
+    });
+    assert.deepEqual(safe.owners, [plan.owner.address]);
+    assert.equal(safe.threshold, 1);
+    assert.equal(safe.deployed, true);
+  },
+);

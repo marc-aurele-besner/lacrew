@@ -32,11 +32,7 @@ import type { ConnectorRegistry } from "./connectors.js";
 import type { ExternalMcpRegistry } from "./externalMcp.js";
 import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
 import type { DualControlReviewRecord, DualControlSurface } from "./dualControl.js";
-import {
-  createFlowStoreFromEnv,
-  type FlowRunState,
-  type FlowStore,
-} from "./flowStore.js";
+import { createFlowStoreFromEnv, type FlowRunState, type FlowStore } from "./flowStore.js";
 import { ancestorsOf, ceilingAgent, scopeOf, scopeSessionLimits, visibleTo } from "./flowScope.js";
 import { crewIdForSeat } from "./inferenceBudgets.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
@@ -235,7 +231,13 @@ export function createFlowsSurface(opts: {
   const requirePlan = async (
     tool: string,
     principal: `0x${string}`,
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): Promise<void> => {
     if (!opts.planRequired) return;
     try {
@@ -297,7 +299,13 @@ export function createFlowsSurface(opts: {
     sessionLimits: ReturnType<typeof scopeSessionLimits>,
     chain: string[],
     /** Identifies the run to an ask-mode write, so it can be resumed. */
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): FlowBackend => {
     if (mocked) return createMockFlowBackend();
     const bound = createRuntimeMcpBackend(opts.runtime, {
@@ -463,7 +471,13 @@ export function createFlowsSurface(opts: {
     args: Record<string, unknown>,
     chain: string[],
     caller: `0x${string}`,
-    run: { flowId: string; runId: string; startedAt: string; managers: string[]; upstream?: string[] },
+    run: {
+      flowId: string;
+      runId: string;
+      startedAt: string;
+      managers: string[];
+      upstream?: string[];
+    },
   ): Promise<unknown> => {
     const agent = String(args.agent ?? "") as `0x${string}`;
     const flowId = args.flowId ? String(args.flowId) : undefined;
@@ -668,8 +682,7 @@ export function createFlowsSurface(opts: {
     /** Flow ids already on the delegation stack; guards nested `agent` steps. */
     chain: string[] = [],
   ): Promise<FlowRunResult> => {
-    const fresh =
-      input.refresh && input.id && !input.flow ? await store.get(input.id) : null;
+    const fresh = input.refresh && input.id && !input.flow ? await store.get(input.id) : null;
     if (fresh) flows.set(fresh.id, fresh);
     const def =
       input.flow ??
@@ -894,7 +907,10 @@ export function createFlowsSurface(opts: {
       try {
         await cancel(child.runId, reason ?? `delegating run ${parentRunId} was cancelled`);
       } catch (err) {
-        console.error(`[@lacrew/orchestrator] cancelling delegated run ${child.runId} failed:`, err);
+        console.error(
+          `[@lacrew/orchestrator] cancelling delegated run ${child.runId} failed:`,
+          err,
+        );
       }
     }
   };
@@ -987,9 +1003,7 @@ export function createFlowsSurface(opts: {
           return stored;
         }
       }
-      return (
-        flows.get(id) ?? flowTemplates.find((t) => t.definition.id === id)?.definition
-      );
+      return flows.get(id) ?? flowTemplates.find((t) => t.definition.id === id)?.definition;
     },
     save: async (def) => {
       const check = validateFlow(def);
@@ -1148,10 +1162,7 @@ export function createFlowsSurface(opts: {
           if (result.status === "error") failed++;
           else resumed++;
         } catch (err) {
-          console.error(
-            `[@lacrew/orchestrator] resuming flow run ${state.runId} failed:`,
-            err,
-          );
+          console.error(`[@lacrew/orchestrator] resuming flow run ${state.runId} failed:`, err);
           failed++;
         }
       }

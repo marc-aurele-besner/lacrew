@@ -69,9 +69,7 @@ export type PnlRuntime = {
   getClient(): { getOrgTree(): Promise<OrgNode[]> };
   getAllowances(
     asset?: string,
-  ): Promise<
-    Array<{ node: string; token: string; balance: bigint; cap: bigint | null }>
-  >;
+  ): Promise<Array<{ node: string; token: string; balance: bigint; cap: bigint | null }>>;
   listAssets(): Array<{ symbol: string; token: string; decimals: number }>;
 };
 
@@ -91,8 +89,7 @@ export function createPnl(opts: {
       // The shared bucket belongs to no crew, so it has no roster, no
       // allowance and no chart position — a P&L over it would be a report on
       // whoever else happens to share this orchestrator.
-      if (crewId === UNATTRIBUTED_CREW_ID)
-        throw new Error("unattributed_has_no_pnl");
+      if (crewId === UNATTRIBUTED_CREW_ID) throw new Error("unattributed_has_no_pnl");
       const agentId = request.agentId?.trim().toLowerCase() || undefined;
       const period = resolvePnlPeriod(request, now());
 
@@ -133,11 +130,7 @@ export function createPnl(opts: {
         throw new Error("agent_not_in_crew");
       }
 
-      const trail = await opts.runtime.auditBetween(
-        period.from,
-        period.to,
-        AUDIT_ROW_CAP,
-      );
+      const trail = await opts.runtime.auditBetween(period.from, period.to, AUDIT_ROW_CAP);
       const events: PnlAuditEvent[] = trail.events.map((e) => ({
         type: e.type,
         at: e.at,
@@ -165,10 +158,7 @@ export function createPnl(opts: {
         note: "Inference metering is not configured (F2.28).",
       };
       if (opts.budgets) {
-        const scopeKeys = [
-          budgetScopeKey({ crewId }),
-          ...seats.map((s) => s.usageScopeKey),
-        ];
+        const scopeKeys = [budgetScopeKey({ crewId }), ...seats.map((s) => s.usageScopeKey)];
         try {
           const metered = await opts.budgets.usageBetween({
             scopeKeys,
@@ -206,9 +196,7 @@ export function createPnl(opts: {
       }
 
       const budgetView = opts.budgets
-        ? await opts.budgets
-            .get(agentId ? { crewId, agentId } : { crewId })
-            .catch(() => null)
+        ? await opts.budgets.get(agentId ? { crewId, agentId } : { crewId }).catch(() => null)
         : null;
 
       const primary = opts.runtime.listAssets()[0];

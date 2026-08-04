@@ -462,11 +462,7 @@ export async function listCrashedFlowWrites(handle: DbHandle): Promise<FlowRunSt
 
 /** One finished run by id; null while it is still in flight. */
 export async function getFlowRun(handle: DbHandle, runId: string): Promise<FlowRunRow | null> {
-  const rows = await handle.db
-    .select()
-    .from(flowRuns)
-    .where(eq(flowRuns.runId, runId))
-    .limit(1);
+  const rows = await handle.db.select().from(flowRuns).where(eq(flowRuns.runId, runId)).limit(1);
   const row = rows[0];
   if (!row) return null;
   return {

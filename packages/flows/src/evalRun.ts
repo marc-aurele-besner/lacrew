@@ -60,7 +60,7 @@ export function listEvalScenarios(
   return scenarios.map((scenario) => ({
     id: scenario.id,
     ...(scenario.describe ? { describe: scenario.describe } : {}),
-    ...(scenario.flow ?? scenario.definition?.id
+    ...((scenario.flow ?? scenario.definition?.id)
       ? { flow: scenario.flow ?? scenario.definition!.id }
       : {}),
     ...(scenario.blueprint ? { blueprint: scenario.blueprint } : {}),

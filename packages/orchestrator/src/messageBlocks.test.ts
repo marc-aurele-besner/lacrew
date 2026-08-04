@@ -105,14 +105,21 @@ describe("normalizeBlocks", () => {
 
   it("names the offending block so an agent can fix it", () => {
     assert.throws(
-      () => normalizeBlocks([{ kind: "text", text: "fine" }, { kind: "link", url: "nope" }]),
+      () =>
+        normalizeBlocks([
+          { kind: "text", text: "fine" },
+          { kind: "link", url: "nope" },
+        ]),
       /block\[1\]/,
     );
   });
 
   it("holds its ceilings", () => {
     assert.throws(
-      () => normalizeBlocks(Array.from({ length: BLOCKS_MAX + 1 }, () => ({ kind: "text", text: "x" }))),
+      () =>
+        normalizeBlocks(
+          Array.from({ length: BLOCKS_MAX + 1 }, () => ({ kind: "text", text: "x" })),
+        ),
       /too_many_blocks/,
     );
     assert.throws(
@@ -122,7 +129,10 @@ describe("normalizeBlocks", () => {
     assert.throws(
       () =>
         normalizeBlocks([
-          { kind: "fields", items: Array.from({ length: 13 }, (_, i) => ({ label: `l${i}`, value: "v" })) },
+          {
+            kind: "fields",
+            items: Array.from({ length: 13 }, (_, i) => ({ label: `l${i}`, value: "v" })),
+          },
         ]),
       /too_many_fields/,
     );
@@ -131,7 +141,10 @@ describe("normalizeBlocks", () => {
   it("refuses a block that would carry nothing", () => {
     assert.throws(() => normalizeBlocks([{ kind: "text", text: "   " }]), /text_required/);
     assert.throws(() => normalizeBlocks([{ kind: "fields", items: [] }]), /fields_required/);
-    assert.throws(() => normalizeBlocks([{ kind: "ref", ref: "intent", id: " " }]), /ref_id_required/);
+    assert.throws(
+      () => normalizeBlocks([{ kind: "ref", ref: "intent", id: " " }]),
+      /ref_id_required/,
+    );
   });
 
   it("has no block whose contract is to render markup", () => {

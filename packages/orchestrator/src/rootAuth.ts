@@ -92,9 +92,7 @@ type Pending = {
 };
 
 /** `LACREW_ROOT_AUTH=passkey|wallet` plus that kind's material. */
-export function readRootAuthConfig(
-  env: NodeJS.ProcessEnv = process.env,
-): RootAuthConfig | null {
+export function readRootAuthConfig(env: NodeJS.ProcessEnv = process.env): RootAuthConfig | null {
   const kind = env.LACREW_ROOT_AUTH?.trim().toLowerCase();
   if (!kind) return null;
   if (kind === "passkey") {
@@ -118,9 +116,7 @@ export function readRootAuthConfig(
   );
 }
 
-export function createRootAuthSurface(
-  options: RootAuthOptions = {},
-): RootAuthSurface {
+export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSurface {
   const config = options.config ?? null;
   const now = options.now ?? (() => Date.now());
   const ttlSec = options.challengeTtlSec ?? DEFAULT_TTL_SEC;
@@ -134,17 +130,12 @@ export function createRootAuthSurface(
     }
   }
 
-  function issueChallenge(
-    action: RootAuthAction,
-    subject: string,
-  ): RootChallenge {
+  function issueChallenge(action: RootAuthAction, subject: string): RootChallenge {
     prune();
     if (pending.size >= MAX_PENDING) {
       // Oldest first: a burst of unanswered challenges must not lock out the
       // operator who is actually standing at the authenticator.
-      const oldest = [...pending.entries()].sort(
-        (a, b) => a[1].expiresAt - b[1].expiresAt,
-      )[0];
+      const oldest = [...pending.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
       if (oldest) pending.delete(oldest[0]);
     }
     const challenge = randomBytes(32).toString("base64url");
@@ -182,18 +173,15 @@ export function createRootAuthSurface(
         status: 501,
       };
     }
-    if (!input.proof)
-      return { ok: false, error: "root_proof_required", status: 401 };
-    if (!input.challenge)
-      return { ok: false, error: "challenge_required", status: 400 };
+    if (!input.proof) return { ok: false, error: "root_proof_required", status: 401 };
+    if (!input.challenge) return { ok: false, error: "challenge_required", status: 400 };
 
     prune();
     const record = pending.get(input.challenge);
     // Burned on any attempt, pass or fail: a challenge that survived a failure
     // would let a caller grind proofs against one live nonce.
     pending.delete(input.challenge);
-    if (!record)
-      return { ok: false, error: "challenge_expired_or_unknown", status: 401 };
+    if (!record) return { ok: false, error: "challenge_expired_or_unknown", status: 401 };
     if (record.action !== input.action || record.subject !== input.subject) {
       return { ok: false, error: "challenge_not_for_this_action", status: 401 };
     }
@@ -214,8 +202,7 @@ export function createRootAuthSurface(
         clientDataJSON: input.proof.clientDataJSON,
         signature: input.proof.signature,
       });
-      if (!verified.verified)
-        return { ok: false, error: verified.error, status: 401 };
+      if (!verified.verified) return { ok: false, error: verified.error, status: 401 };
       return { ok: true, via: "passkey" };
     }
 
@@ -271,11 +258,7 @@ export function createRootAuthSurface(
   };
 }
 
-function statementFor(
-  record: Pending,
-  challenge: string,
-  options: RootAuthOptions,
-): string {
+function statementFor(record: Pending, challenge: string, options: RootAuthOptions): string {
   const chainId = options.chainId?.() ?? undefined;
   return rootChallengeStatement({
     action: record.action,

@@ -60,9 +60,7 @@ export async function getEnvironment(chainId: number): Promise<Record<string, un
 }
 
 /** Address of the DelegationManager a redemption must be sent to. */
-export async function getDelegationManagerAddress(
-  chainId: number,
-): Promise<`0x${string}`> {
+export async function getDelegationManagerAddress(chainId: number): Promise<`0x${string}`> {
   const env = await getEnvironment(chainId);
   const address = env.DelegationManager as `0x${string}` | undefined;
   if (!address) {

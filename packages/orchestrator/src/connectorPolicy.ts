@@ -58,9 +58,7 @@ export function isConnectorWriteMode(value: unknown): value is ConnectorWriteMod
  * does not exist. `agent` is one seat.
  */
 export type ConnectorModeScope =
-  | { level: "workspace" }
-  | { level: "crew"; ref: string }
-  | { level: "agent"; ref: string };
+  { level: "workspace" } | { level: "crew"; ref: string } | { level: "agent"; ref: string };
 
 export type ConnectorModeRule = {
   scope: ConnectorModeScope;
@@ -87,9 +85,7 @@ export type ConnectorModeSubject = {
 export type ConnectorModeResolution = {
   mode: ConnectorWriteMode;
   /** What decided it — shown in the UI so an inherited value is legible. */
-  source:
-    | { kind: "route-default" }
-    | { kind: "rule"; scope: ConnectorModeScope; route: string };
+  source: { kind: "route-default" } | { kind: "rule"; scope: ConnectorModeScope; route: string };
 };
 
 const norm = (value: string): string => value.trim().toLowerCase();
@@ -161,7 +157,9 @@ export function resolveWriteMode(
     if (!bucket) return null;
     // Last writer wins within a scope+pattern, so re-setting a rule replaces it.
     const hit = [...bucket].reverse().find((r) => r.route === exact) ?? [...bucket].reverse()[0];
-    return hit ? { mode: hit.mode, source: { kind: "rule", scope: hit.scope, route: hit.route } } : null;
+    return hit
+      ? { mode: hit.mode, source: { kind: "rule", scope: hit.scope, route: hit.route } }
+      : null;
   };
 
   const principal = subject.principal ? norm(subject.principal) : undefined;
@@ -216,8 +214,7 @@ export function createConnectorModes(opts: {
 }): ConnectorModesSurface {
   const now = opts.now ?? (() => new Date());
   const rules = new Map<string, ConnectorModeRecord>();
-  const keyOf = (scope: ConnectorModeScope, route: string): string =>
-    `${scopeKey(scope)}|${route}`;
+  const keyOf = (scope: ConnectorModeScope, route: string): string => `${scopeKey(scope)}|${route}`;
 
   for (const rule of opts.seed ?? []) {
     rules.set(keyOf(rule.scope, rule.route), { ...rule, at: now().toISOString() });

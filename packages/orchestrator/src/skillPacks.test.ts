@@ -106,7 +106,10 @@ describe("skill packs (F2.23)", () => {
     const pack = body.packs.find((p) => p.id === "github-pr-triage")!;
     assert.equal(pack.installable, false);
     assert.deepEqual(pack.missing.flows, GITHUB_FLOWS);
-    assert.deepEqual(pack.missing.connectors, ["github.get_pull_request", "github.merge_pull_request"]);
+    assert.deepEqual(pack.missing.connectors, [
+      "github.get_pull_request",
+      "github.merge_pull_request",
+    ]);
     // The trigger is part of the listing: it is what an operator reads to
     // decide whether a skill belongs on this seat.
     assert.ok(pack.skills.every((s) => s.trigger.length > 0));
@@ -116,7 +119,10 @@ describe("skill packs (F2.23)", () => {
     const unwired = await buildApp({ flows: GITHUB_FLOWS });
     const refused = await install(unwired.app, { agent: AGENT, packId: "github-pr-triage" });
     assert.equal(refused.status, 409);
-    const refusedBody = (await refused.json()) as { error: string; missing: { connectors: string[] } };
+    const refusedBody = (await refused.json()) as {
+      error: string;
+      missing: { connectors: string[] };
+    };
     assert.deepEqual(refusedBody.missing.connectors, [
       "github.get_pull_request",
       "github.merge_pull_request",
@@ -215,7 +221,11 @@ describe("skill packs (F2.23)", () => {
 
     const updated = await install(app, {
       agent: AGENT,
-      pack: { ...plain, version: "2.0.0", skills: [{ ...plain.skills[0]!, body: "Say it in one line." }] },
+      pack: {
+        ...plain,
+        version: "2.0.0",
+        skills: [{ ...plain.skills[0]!, body: "Say it in one line." }],
+      },
     });
     assert.equal(updated.status, 200);
     assert.equal(((await updated.json()) as { replaced: number }).replaced, 1);
@@ -225,7 +235,13 @@ describe("skill packs (F2.23)", () => {
       packs: Array<{ pack: string; version: string; skills: number }>;
     };
     assert.deepEqual(listedBody.packs, [
-      { pack: "desk-notes", version: "2.0.0", label: "agent", skills: 1, skillIds: ["write-the-note"] },
+      {
+        pack: "desk-notes",
+        version: "2.0.0",
+        label: "agent",
+        skills: 1,
+        skillIds: ["write-the-note"],
+      },
     ]);
 
     const removed = await app.request("/agents/skills/remove", {
@@ -277,7 +293,11 @@ describe("skill packs (F2.23)", () => {
       body: JSON.stringify({
         agent: AGENT,
         layers: [
-          { ...layers[0], text: "Now with guidelines.", resources: [{ kind: "repo", ref: "owner/repo" }] },
+          {
+            ...layers[0],
+            text: "Now with guidelines.",
+            resources: [{ kind: "repo", ref: "owner/repo" }],
+          },
         ],
       }),
     });

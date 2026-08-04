@@ -72,7 +72,9 @@ function printList(): void {
   for (const preset of connectorPresets) {
     console.log(`  ${preset.id}  —  ${preset.title}`);
     console.log(`     ${preset.summary}`);
-    console.log(`     auth: ${preset.auth.map((a) => a.mode).join(" | ")} (default ${preset.auth[0]!.mode})`);
+    console.log(
+      `     auth: ${preset.auth.map((a) => a.mode).join(" | ")} (default ${preset.auth[0]!.mode})`,
+    );
     console.log(
       `     routes: ${preset.routes.length} (${preset.routes.filter((r) => r.effect === "write").length} write)`,
     );
@@ -214,16 +216,13 @@ type AskRow = {
 };
 
 function orchUrl(args: string[]): string {
-  return (
-    flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788"
-  ).replace(/\/$/, "");
+  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
+    /\/$/,
+    "",
+  );
 }
 
-async function orchFetch<T>(
-  args: string[],
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
   const token = process.env.ORCH_TOKEN?.trim();
   const res = await fetch(`${orchUrl(args)}${path}`, {
     ...init,
@@ -250,7 +249,9 @@ function parseScope(raw: string | undefined): ModeRule["scope"] {
   const level = colon > 0 ? value.slice(0, colon) : value;
   const ref = colon > 0 ? value.slice(colon + 1) : "";
   if ((level !== "crew" && level !== "agent") || !ref) {
-    throw new Error(`--scope expects workspace, crew:<address>, or agent:<address>, got "${value}"`);
+    throw new Error(
+      `--scope expects workspace, crew:<address>, or agent:<address>, got "${value}"`,
+    );
   }
   return { level, ref };
 }
@@ -292,11 +293,10 @@ async function setMode(args: string[]): Promise<void> {
     return;
   }
   const scope = parseScope(flagValue(rest, "--scope"));
-  const body = await orchFetch<{ rule?: ModeRule; cleared?: boolean }>(
-    rest,
-    "/connectors/modes",
-    { method: "PUT", body: JSON.stringify({ scope, route, mode }) },
-  );
+  const body = await orchFetch<{ rule?: ModeRule; cleared?: boolean }>(rest, "/connectors/modes", {
+    method: "PUT",
+    body: JSON.stringify({ scope, route, mode }),
+  });
   if (clear) {
     console.log(
       body.cleared
@@ -321,7 +321,9 @@ async function printAsks(args: string[]): Promise<void> {
   for (const ask of body.asks) {
     console.log(`${ask.id}  ${ask.connector}.${ask.route}  ${ask.status}`);
     console.log(`  ${ask.method} ${ask.path}`);
-    console.log(`  as ${ask.principal || "—"}${ask.flowId ? ` · flow ${ask.flowId}` : ""}${ask.runId ? ` · run ${ask.runId}` : ""}`);
+    console.log(
+      `  as ${ask.principal || "—"}${ask.flowId ? ` · flow ${ask.flowId}` : ""}${ask.runId ? ` · run ${ask.runId}` : ""}`,
+    );
     console.log(`  thread ${ask.threadId} · question ${ask.questionId} · expires ${ask.expiresAt}`);
     console.log(`  Answer:  lacrew connectors answer ${ask.id} yes|no --as <you>`);
     console.log("");
@@ -363,7 +365,9 @@ async function answerAsk(args: string[]): Promise<void> {
       ? `Confirmed ${ask.connector}.${ask.route}. The run picks up where it stopped and calls once.`
       : `Declined ${ask.connector}.${ask.route}. Nothing was called.`,
   );
-  console.log("This confirmed an external write only — it approved no spend and changed no policy.");
+  console.log(
+    "This confirmed an external write only — it approved no spend and changed no policy.",
+  );
 }
 
 export async function cmdConnectors(args: string[]): Promise<void> {

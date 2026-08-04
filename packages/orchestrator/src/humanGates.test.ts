@@ -106,12 +106,7 @@ function harness(opts: { ttlMs?: number; now?: () => Date } = {}) {
       ],
       timeoutPort: "memo",
     })
-    .tool(
-      "publish",
-      "typefully.create_draft",
-      { content: "{{steps.draft.text}}" },
-      { next: null },
-    )
+    .tool("publish", "typefully.create_draft", { content: "{{steps.draft.text}}" }, { next: null })
     .model("memo", { prompt: "Nothing was published.", next: null })
     .build();
 
@@ -150,11 +145,7 @@ describe("blocking human gates, end to end", () => {
     assert.equal(parked.status, "waiting");
     assert.equal(parked.waiting?.reason, "human_gate");
     assert.equal(parked.waiting?.stepId, "signoff");
-    assert.equal(
-      h.calls.length,
-      0,
-      "nothing was published before anyone answered",
-    );
+    assert.equal(h.calls.length, 0, "nothing was published before anyone answered");
 
     const gate = openGate(h);
     assert.equal(gate.runId, parked.runId);
@@ -177,11 +168,7 @@ describe("blocking human gates, end to end", () => {
       1,
       "the resumed run replaces its own waiting entry rather than appearing twice",
     );
-    assert.equal(
-      h.gates.list()[0]!.status,
-      "consumed",
-      "the answer is spent once",
-    );
+    assert.equal(h.gates.list()[0]!.status, "consumed", "the answer is spent once");
     assert.equal(h.gates.list()[0]!.answeredBy, "human:ops");
     assert.equal(h.runtime.allOpenQuestions().length, 0, "the question closed");
   });
@@ -250,10 +237,7 @@ describe("blocking human gates, end to end", () => {
     const finished = h.surface.runs().find((r) => r.runId === parked.runId);
     assert.equal(finished?.status, "completed");
     assert.equal(finished?.steps.at(-1)?.stepId, "memo");
-    assert.equal(
-      h.events.filter((e) => e.type === "HumanGateTimedOut").length,
-      1,
-    );
+    assert.equal(h.events.filter((e) => e.type === "HumanGateTimedOut").length, 1);
   });
 
   it("a gate with no timeout port stops the run instead of continuing", async () => {
@@ -266,12 +250,7 @@ describe("blocking human gates, end to end", () => {
         prompt: "Ship?",
         options: [{ id: "yes", port: "publish" }],
       })
-      .tool(
-        "publish",
-        "typefully.create_draft",
-        { content: "x" },
-        { next: null },
-      )
+      .tool("publish", "typefully.create_draft", { content: "x" }, { next: null })
       .build();
     await h.surface.save(strict);
     const parked = await h.surface.run({ id: "strict" });
@@ -283,10 +262,7 @@ describe("blocking human gates, end to end", () => {
     assert.equal(h.calls.length, 0);
     const finished = h.surface.runs().find((r) => r.runId === parked.runId);
     assert.equal(finished?.status, "error");
-    assert.match(
-      String(finished?.steps.at(-1)?.error),
-      /human_gate_timeout:signoff/,
-    );
+    assert.match(String(finished?.steps.at(-1)?.error), /human_gate_timeout:signoff/);
   });
 
   it("cancelling the run closes the gate, and a late answer resumes nothing", async () => {
@@ -301,11 +277,7 @@ describe("blocking human gates, end to end", () => {
     answer(h, gate, "yes");
     await h.gates.drain();
 
-    assert.equal(
-      h.calls.length,
-      0,
-      "a cancelled run cannot be restarted by an answer",
-    );
+    assert.equal(h.calls.length, 0, "a cancelled run cannot be restarted by an answer");
     const finished = h.surface.runs().find((r) => r.runId === parked.runId);
     assert.equal(finished?.status, "cancelled");
   });
@@ -319,11 +291,7 @@ describe("blocking human gates, end to end", () => {
     // What a boot-time recovery does: re-run the parked run from its state.
     const again = await h.surface.resume(parked.runId);
     assert.equal(again.status, "waiting");
-    assert.equal(
-      h.gates.list().length,
-      1,
-      "one question, however many times it is entered",
-    );
+    assert.equal(h.gates.list().length, 1, "one question, however many times it is entered");
     assert.equal(h.runtime.allOpenQuestions().length, 1);
   });
 
@@ -431,10 +399,7 @@ describe("blocking human gates, end to end", () => {
 
   it("the gate TTL is read from the environment, with a floor", () => {
     assert.equal(humanGateTtlMs({}), 24 * 60 * 60 * 1000);
-    assert.equal(
-      humanGateTtlMs({ LACREW_HUMAN_GATE_TTL_MS: "3600000" }),
-      3_600_000,
-    );
+    assert.equal(humanGateTtlMs({ LACREW_HUMAN_GATE_TTL_MS: "3600000" }), 3_600_000);
     assert.equal(
       humanGateTtlMs({ LACREW_HUMAN_GATE_TTL_MS: "5" }),
       24 * 60 * 60 * 1000,

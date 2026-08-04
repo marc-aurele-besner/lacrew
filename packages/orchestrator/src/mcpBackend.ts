@@ -69,8 +69,7 @@ export function createRuntimeMcpBackend(
         txHash,
       };
     },
-    checkPolicy: (input) =>
-      runtime.checkEffectivePolicy({ ...input, ceiling: actor.ceiling }),
+    checkPolicy: (input) => runtime.checkEffectivePolicy({ ...input, ceiling: actor.ceiling }),
     orgAction: (input) => runtime.orgAction({ ...input, ...actor }),
     setBudget: (input) => runtime.setBudget({ ...input, ...actor }),
     governance: (input) => runtime.governanceAction(input),

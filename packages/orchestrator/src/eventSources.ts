@@ -211,9 +211,7 @@ export function describeEventSources(): Array<{
       title: source.title,
       usesSecret: source.usesSecret,
       requiredConfig: [...source.requiredConfig],
-      ...(id === "lacrew" || id === "github"
-        ? { signatureHeader: SIGNATURE_HEADER[id] }
-        : {}),
+      ...(id === "lacrew" || id === "github" ? { signatureHeader: SIGNATURE_HEADER[id] } : {}),
       ...(id === "lacrew" ? { timestampHeader: TIMESTAMP_HEADER } : {}),
     };
   });
@@ -230,7 +228,10 @@ export function describeEventSources(): Array<{
  * GitHub-style dotted subtypes match on the prefix, so `pull_request` selects
  * `pull_request.opened` without the operator enumerating every action.
  */
-export function eventSelected(filter: string[] | undefined, eventType: string | undefined): boolean {
+export function eventSelected(
+  filter: string[] | undefined,
+  eventType: string | undefined,
+): boolean {
   if (!filter || filter.length === 0) return true;
   if (!eventType) return true;
   // Prefix only, never the reverse: a filter for `pull_request.opened` must not

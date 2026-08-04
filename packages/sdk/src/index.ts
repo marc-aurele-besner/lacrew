@@ -16,11 +16,7 @@ export {
   type OnchainClientOptions,
   type OnchainResolveResult,
 } from "./onchain.js";
-export {
-  checkClientPolicy,
-  defaultMockPolicy,
-  type ClientPolicyConfig,
-} from "./policy.js";
+export { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "./policy.js";
 export type { ResolveResult } from "./types.js";
 export {
   approveIntent,

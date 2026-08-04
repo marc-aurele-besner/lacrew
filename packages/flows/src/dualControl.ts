@@ -81,12 +81,14 @@ export function isDualControlMode(value: unknown): value is DualControlMode {
  *   crew.
  */
 export type DualControlReviewer =
-  | { kind: "manager" }
-  | { kind: "seat"; account: string }
-  | { kind: "human" }
-  | { kind: "peer" };
+  { kind: "manager" } | { kind: "seat"; account: string } | { kind: "human" } | { kind: "peer" };
 
-export const DUAL_CONTROL_REVIEWERS = ["manager", "seat:<address>", "role:human", "any_peer_in_crew"];
+export const DUAL_CONTROL_REVIEWERS = [
+  "manager",
+  "seat:<address>",
+  "role:human",
+  "any_peer_in_crew",
+];
 
 /** The wire form: `manager` | `seat:0x…` | `role:human` | `any_peer_in_crew`. */
 export function formatReviewer(reviewer: DualControlReviewer): string {
@@ -128,9 +130,7 @@ export type DualControlThreshold = {
 
 /** Where a rule applies — the same three levels connector modes and F2.31 use. */
 export type DualControlScope =
-  | { level: "workspace" }
-  | { level: "crew"; ref: string }
-  | { level: "agent"; ref: string };
+  { level: "workspace" } | { level: "crew"; ref: string } | { level: "agent"; ref: string };
 
 /**
  * How long a review waits before the effect fails closed.
@@ -304,7 +304,9 @@ export function resolveDualControl(
     if (hit) return settingsOf(hit);
   }
   const workspace = byKey.get("workspace");
-  return workspace ? settingsOf(workspace) : { ...DUAL_CONTROL_DEFAULT, source: { kind: "default" } };
+  return workspace
+    ? settingsOf(workspace)
+    : { ...DUAL_CONTROL_DEFAULT, source: { kind: "default" } };
 }
 
 /**
@@ -474,7 +476,10 @@ export function resolveReviewer(
     humansAbove.length > 0
       ? humansAbove
       : org
-          .filter((seat) => seat.kind === "human_root" && availableSeat(seat) && norm(seat.account) !== me)
+          .filter(
+            (seat) =>
+              seat.kind === "human_root" && availableSeat(seat) && norm(seat.account) !== me,
+          )
           .map((seat) => norm(seat.account));
   const humanOverride = true;
 
@@ -484,8 +489,13 @@ export function resolveReviewer(
    * would have answered anyway; what an empty list costs is the ability to
    * *name* who owes the answer, not the ability to ask for it.
    */
-  const escalate = (via: ReviewerTarget["via"]): ReviewerTarget =>
-    ({ via, accounts: humansAnywhere, human: true, escalated: true, humanOverride });
+  const escalate = (via: ReviewerTarget["via"]): ReviewerTarget => ({
+    via,
+    accounts: humansAnywhere,
+    human: true,
+    escalated: true,
+    humanOverride,
+  });
 
   if (reviewer.kind === "human") {
     return { via: "human", accounts: humansAnywhere, human: true, escalated: false, humanOverride };
@@ -562,7 +572,10 @@ export const DUAL_CONTROL_OPTIONS = ["concur", "reject"] as const;
  * open.
  */
 export function readReviewAnswer(body: string): "concurred" | "rejected" | null {
-  const normalized = body.trim().toLowerCase().replace(/[.!]+$/, "");
+  const normalized = body
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "");
   if (normalized === "concur" || normalized === "concurred") return "concurred";
   if (normalized === "reject" || normalized === "rejected") return "rejected";
   return null;

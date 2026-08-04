@@ -160,9 +160,7 @@ export function renderLayer(layer: BriefLayer): string {
     parts.push(`In your care:\n${lines.join("\n")}`);
   }
 
-  const skills = (layer.skills ?? []).filter(
-    (s) => trimmed(s.name) && trimmed(s.instructions),
-  );
+  const skills = (layer.skills ?? []).filter((s) => trimmed(s.name) && trimmed(s.instructions));
   if (skills.length > 0) {
     const blocks = skills.map((s) => {
       const when = trimmed(s.when);
@@ -229,10 +227,7 @@ export function normalizeLayers(layers: readonly BriefLayer[]): BriefLayer[] {
  * to act — a brief that could rewrite the identity line would let standing
  * instruction impersonate another seat.
  */
-export function composeSystemPrompt(
-  agent: string,
-  layers: readonly BriefLayer[] = [],
-): string {
+export function composeSystemPrompt(agent: string, layers: readonly BriefLayer[] = []): string {
   const identity = `You are agent ${agent} in a LaCrew organization.`;
   const applied = layers.map(renderLayer).filter(Boolean);
   return applied.length === 0 ? identity : `${identity}\n\n${applied.join("\n\n")}`;
@@ -297,7 +292,9 @@ export class AgentControls {
         if (record.paused && record.pausedAt) {
           this.paused.set(
             key,
-            record.pausedReason ? { at: record.pausedAt, reason: record.pausedReason } : { at: record.pausedAt },
+            record.pausedReason
+              ? { at: record.pausedAt, reason: record.pausedReason }
+              : { at: record.pausedAt },
           );
         }
         if (record.layers.length > 0) {

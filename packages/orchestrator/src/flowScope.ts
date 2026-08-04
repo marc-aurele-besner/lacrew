@@ -79,11 +79,7 @@ export function ancestorsOf(nodes: OrgNode[], agent: string): Set<string> {
  * no registry configured), so scoping cannot be evaluated and everything is
  * visible. Callers that need a hard boundary must supply a real tree.
  */
-export function visibleTo(
-  def: FlowDefinition,
-  agent: string,
-  nodes: OrgNode[],
-): boolean {
+export function visibleTo(def: FlowDefinition, agent: string, nodes: OrgNode[]): boolean {
   const scope = scopeOf(def);
   if (scope.level === "org") return true;
   if (!scope.ref) return true;

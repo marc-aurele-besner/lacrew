@@ -12,11 +12,7 @@
  * its own window, so testing a heartbeat never swallows the tick being tested.
  */
 
-import {
-  HEARTBEAT_PRESETS,
-  type CrewHeartbeat,
-  type HeartbeatItem,
-} from "@lacrew/flows";
+import { HEARTBEAT_PRESETS, type CrewHeartbeat, type HeartbeatItem } from "@lacrew/flows";
 
 type TickItem = {
   kind: string;
@@ -79,7 +75,10 @@ function checklistFrom(args: string[]): HeartbeatItem[] {
       if (args[i] !== flag) continue;
       const value = args[i + 1];
       if (!value || value.startsWith("-")) continue;
-      for (const id of value.split(",").map((s) => s.trim()).filter(Boolean)) {
+      for (const id of value
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)) {
         items.push({ kind, id });
       }
     }
@@ -155,7 +154,8 @@ export async function cmdHeartbeat(args: string[]): Promise<void> {
   }
 
   if (sub === "set") {
-    if (!crew) throw new Error("lacrew heartbeat set --crew <id> --schedule '*/30 * * * *' --flow <id>");
+    if (!crew)
+      throw new Error("lacrew heartbeat set --crew <id> --schedule '*/30 * * * *' --flow <id>");
     const schedule = flagValue(args, "--schedule");
     if (!schedule) {
       throw new Error(
@@ -182,7 +182,9 @@ export async function cmdHeartbeat(args: string[]): Promise<void> {
     });
     printHeartbeat(body.heartbeat);
     if (!body.heartbeat.enabled) {
-      console.log("\nStored but off. Turn it on:  lacrew heartbeat on --crew " + body.heartbeat.crewId);
+      console.log(
+        "\nStored but off. Turn it on:  lacrew heartbeat on --crew " + body.heartbeat.crewId,
+      );
     }
     return;
   }

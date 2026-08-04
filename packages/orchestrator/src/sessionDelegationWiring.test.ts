@@ -31,7 +31,11 @@ function fakeDelegation(sessionKey: `0x${string}`, deployed: boolean): SessionDe
     delegate: sessionKey,
     delegationManager: "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
     chainId: 8453,
-    budget: { kind: "erc20Total", token: "0x8335683Ba1a4dbcb2ea9b1dd2c260345b3062913", amount: "200000000" },
+    budget: {
+      kind: "erc20Total",
+      token: "0x8335683Ba1a4dbcb2ea9b1dd2c260345b3062913",
+      amount: "200000000",
+    },
     expiresAtSec: Math.floor(Date.now() / 1000) + 3600,
     salt: MOCK_WORKER,
     signed: { signature: "0xsigned" },
@@ -49,7 +53,10 @@ function sessionClient(log: string[]) {
         return 10n ** 18n; // funded: fundSessionKey stays a no-op
       },
     },
-    addresses: { chainId: ANVIL_CHAIN_ID, sessionRegistry: "0x00000000000000000000000000000000000000aa" },
+    addresses: {
+      chainId: ANVIL_CHAIN_ID,
+      sessionRegistry: "0x00000000000000000000000000000000000000aa",
+    },
     walletClient: { account: { address: ROOT } },
     async issueSession() {
       log.push("issueSession");
@@ -134,7 +141,11 @@ describe("session delegation wiring", () => {
       async issue(args) {
         return {
           delegation: fakeDelegation(args.sessionKey, false),
-          seatDeployTx: { to: "0xfac70000000000000000000000000000000000ff", data: "0xdeadbeef", value: 0n },
+          seatDeployTx: {
+            to: "0xfac70000000000000000000000000000000000ff",
+            data: "0xdeadbeef",
+            value: 0n,
+          },
         };
       },
       async buildRevokeTx() {

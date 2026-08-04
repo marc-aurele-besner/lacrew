@@ -86,10 +86,7 @@ test("server config is validated at registration, not at the first call", () => 
     validateExternalMcpServer({ id: "gh", transport: "http", url: "http://mcp.example.com" })[0]!,
     /must be https/,
   );
-  assert.match(
-    validateExternalMcpServer({ id: "gh", transport: "stdio" })[0]!,
-    /needs a command/,
-  );
+  assert.match(validateExternalMcpServer({ id: "gh", transport: "stdio" })[0]!, /needs a command/);
   assert.match(
     validateExternalMcpServer({
       id: "gh",
@@ -109,7 +106,12 @@ test("server config is validated at registration, not at the first call", () => 
 
 test("a wildcard rule may narrow but never admit", () => {
   assert.deepEqual(
-    validateExternalMcpRule({ scope: { level: "workspace" }, server: "gh", tool: "*", enabled: false }),
+    validateExternalMcpRule({
+      scope: { level: "workspace" },
+      server: "gh",
+      tool: "*",
+      enabled: false,
+    }),
     [],
   );
   assert.match(
@@ -548,7 +550,10 @@ test("records survive a restart through the store", async () => {
     loadExternalMcpTools: async () => [...saved],
     saveExternalMcpTool: async (record: ExternalMcpToolRecord) => {
       const at = saved.findIndex(
-        (r) => r.server === record.server && r.tool === record.tool && r.scope.level === record.scope.level,
+        (r) =>
+          r.server === record.server &&
+          r.tool === record.tool &&
+          r.scope.level === record.scope.level,
       );
       if (at >= 0) saved[at] = record;
       else saved.push(record);

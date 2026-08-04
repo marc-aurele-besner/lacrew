@@ -63,11 +63,7 @@ function hmacHex(secret: string, material: string): string {
 }
 
 /** Signature a `lacrew`-scheme producer must send. Exported for docs + tests. */
-export function signLacrewDelivery(
-  secret: string,
-  timestampSec: number,
-  rawBody: string,
-): string {
+export function signLacrewDelivery(secret: string, timestampSec: number, rawBody: string): string {
   return `sha256=${hmacHex(secret, `${timestampSec}.${rawBody}`)}`;
 }
 
@@ -112,7 +108,9 @@ export function verifyWebhookSignature(input: {
 
   if (input.scheme === "github") {
     const expected = digestOf(signGithubDelivery(input.secret, input.rawBody))!;
-    return digestsMatch(digest, expected) ? { ok: true } : { ok: false, reason: "signature_invalid" };
+    return digestsMatch(digest, expected)
+      ? { ok: true }
+      : { ok: false, reason: "signature_invalid" };
   }
 
   const rawTs = input.header(TIMESTAMP_HEADER)?.trim();

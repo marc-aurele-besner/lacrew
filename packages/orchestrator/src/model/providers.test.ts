@@ -166,6 +166,9 @@ describe("OpenAIModelProvider", () => {
   it("raises the status on a non-2xx", async () => {
     clearEnv();
     stubFetch({ error: "bad" }, 429);
-    await assert.rejects(new OpenAIModelProvider("sk-test").complete({ prompt: "…" }), /openai_429/);
+    await assert.rejects(
+      new OpenAIModelProvider("sk-test").complete({ prompt: "…" }),
+      /openai_429/,
+    );
   });
 });

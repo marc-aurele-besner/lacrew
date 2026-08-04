@@ -76,7 +76,9 @@ describe("lacrew heartbeat", () => {
   });
 
   it("prints a heartbeat with its cadence, zone, quiet window and checklist", async () => {
-    responder = () => ({ body: { heartbeats: [HEARTBEAT], minIntervalMinutes: 10, store: "postgres" } });
+    responder = () => ({
+      body: { heartbeats: [HEARTBEAT], minIntervalMinutes: 10, store: "postgres" },
+    });
     const out = await capture(["list"]);
     assert.match(out, /trading\s+on/);
     assert.match(out, /Europe\/Paris/);
@@ -127,7 +129,15 @@ describe("lacrew heartbeat", () => {
 
   it("says a stored heartbeat is still off, and how to turn it on", async () => {
     responder = () => ({ body: { heartbeat: { ...HEARTBEAT, enabled: false } } });
-    const out = await capture(["set", "--crew", "trading", "--schedule", "0 * * * *", "--flow", "d"]);
+    const out = await capture([
+      "set",
+      "--crew",
+      "trading",
+      "--schedule",
+      "0 * * * *",
+      "--flow",
+      "d",
+    ]);
     assert.match(out, /Stored but off/);
     assert.match(out, /heartbeat on --crew trading/);
   });

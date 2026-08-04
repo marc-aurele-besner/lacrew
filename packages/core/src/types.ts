@@ -318,10 +318,7 @@ export function policyForcesEscalation(
  * has reached `maxActions`. Both conditions have to be readable, and the window
  * has to have enough life left that it cannot lapse before the propose lands.
  */
-function rateLimitForcesEscalation(
-  module: PolicyModuleInfo,
-  ctx: EscalationProofContext,
-): boolean {
+function rateLimitForcesEscalation(module: PolicyModuleInfo, ctx: EscalationProofContext): boolean {
   const { maxActions, windowSeconds, windowStartSec, actionsUsed } = module;
   if (
     maxActions === undefined ||
@@ -468,10 +465,7 @@ export interface DelegationProvider {
    * EntryPoint.handleOps — permissionless, no bundler service). Broadcasting
    * is the caller's job; only a landed receipt makes `disabled` true.
    */
-  buildRevokeTx(
-    delegation: SessionDelegation,
-    beneficiary: `0x${string}`,
-  ): Promise<BuiltTx>;
+  buildRevokeTx(delegation: SessionDelegation, beneficiary: `0x${string}`): Promise<BuiltTx>;
 }
 
 /**
@@ -629,12 +623,7 @@ export interface WatchedChain {
  * and reports `unknown` — with the address, never a guess — when none answers.
  */
 export type PolicyModuleKind =
-  | "spend_cap"
-  | "whitelist"
-  | "rate_limit"
-  | "time_window"
-  | "stack"
-  | "unknown";
+  "spend_cap" | "whitelist" | "rate_limit" | "time_window" | "stack" | "unknown";
 
 /**
  * One policy module in a node's stack, with the parameters it enforces.

@@ -115,16 +115,14 @@ export function isFlowWaiting(
  * A non-JSON input yields empty for keyed refs; `{{input}}` still returns it
  * verbatim.
  */
-export function interpolate(
-  template: string,
-  ctx: { input?: string; steps: StepOutputs },
-): string {
+export function interpolate(template: string, ctx: { input?: string; steps: StepOutputs }): string {
   let inputFields: Record<string, unknown> | null | undefined;
   const field = (key: string): string => {
     if (inputFields === undefined) {
       try {
         const parsed: unknown = JSON.parse(ctx.input ?? "");
-        inputFields = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+        inputFields =
+          parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
       } catch {
         inputFields = null;
       }
@@ -180,11 +178,7 @@ function routeVerdict(
   verdict: Verdict,
 ): string | null {
   const edge =
-    verdict === "ALLOW"
-      ? step.onAllow
-      : verdict === "ESCALATE"
-        ? step.onEscalate
-        : step.onDeny;
+    verdict === "ALLOW" ? step.onAllow : verdict === "ESCALATE" ? step.onEscalate : step.onDeny;
   // ALLOW falls through by default; ESCALATE/DENY stop unless routed.
   return edge !== undefined ? edge : verdict === "ALLOW" ? fallThrough(def, step.id) : null;
 }
@@ -283,7 +277,8 @@ export async function runFlow(
   // A resumed run keeps the original start time: the wait is part of how long
   // the run took, and restamping it would report an hour-long pause as instant.
   const startedAt = opts.resume?.startedAt ?? new Date().toISOString();
-  const runId = opts.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const runId =
+    opts.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const steps: FlowStepTrace[] = [...(opts.resume?.steps ?? [])];
   const outputs: StepOutputs = { ...(opts.resume?.outputs ?? {}) };
   const input = opts.resume ? (opts.resume.input ?? opts.input) : opts.input;
@@ -453,8 +448,7 @@ export async function runFlow(
           else if (opts.principal) args.agent = opts.principal.agent;
           if (step.target) args.target = interpolate(step.target, ctx);
           const result = (await backend.callTool("lacrew_propose_intent", args)) as
-            | Record<string, unknown>
-            | undefined;
+            Record<string, unknown> | undefined;
           const verdict = recordVerdict(trace, outputs, step.id, result);
           trace.summary =
             verdict === "ALLOW"
@@ -489,12 +483,11 @@ export async function runFlow(
           outputs[step.id] = { text: String(result), json: JSON.stringify({ result, source }) };
           trace.output = { result, source: truncate(source, 120) };
           trace.summary = `${step.when.op} → ${result}`;
-          trace.next =
-            result
-              ? step.onTrue === undefined
-                ? fallThrough(def, step.id)
-                : step.onTrue
-              : (step.onFalse ?? null);
+          trace.next = result
+            ? step.onTrue === undefined
+              ? fallThrough(def, step.id)
+              : step.onTrue
+            : (step.onFalse ?? null);
           break;
         }
         case "switch": {
@@ -614,14 +607,14 @@ export async function runFlow(
             break;
           }
 
-          const optionId = String(result?.optionId ?? "").trim().toLowerCase();
+          const optionId = String(result?.optionId ?? "")
+            .trim()
+            .toLowerCase();
           const chosen = step.options.find((o) => o.id.trim().toLowerCase() === optionId);
           if (outcome !== "answered" || !chosen) {
             // An answer this step never offered routes nowhere. Guessing at the
             // nearest option would let a typo pick the branch that writes.
-            throw new Error(
-              `human_gate_unrecognized:${step.id}:${optionId || outcome || "empty"}`,
-            );
+            throw new Error(`human_gate_unrecognized:${step.id}:${optionId || outcome || "empty"}`);
           }
           outputs[step.id] = {
             text: chosen.id,
@@ -816,7 +809,11 @@ export function createMockFlowBackend(): FlowBackend {
           return { intentId: `mock-intent-${value}`, verdict, mocked: true };
         }
         case "lacrew_approve_intent":
-          return { intentId: String(args.intentId ?? ""), approved: Boolean(args.approved), mocked: true };
+          return {
+            intentId: String(args.intentId ?? ""),
+            approved: Boolean(args.approved),
+            mocked: true,
+          };
         case "lacrew_check_policy": {
           const value = BigInt(String(args.value ?? "0"));
           return { verdict: value > 100_000_000n ? "ESCALATE" : "ALLOW", mocked: true };

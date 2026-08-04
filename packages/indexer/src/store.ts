@@ -55,10 +55,6 @@ export function saveStore(path: string, store: IndexerStore): void {
   store.updatedAt = new Date().toISOString();
   writeFileSync(
     path,
-    `${JSON.stringify(
-      store,
-      (_k, v) => (typeof v === "bigint" ? v.toString() : v),
-      2,
-    )}\n`,
+    `${JSON.stringify(store, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2)}\n`,
   );
 }

@@ -25,11 +25,7 @@ export type RootAuthKind = "passkey" | "wallet";
  * consent. Approving a spend and refusing one are likewise opposites, and an
  * assertion collected for the second must never settle the first.
  */
-export type RootAuthAction =
-  | "session:revoke"
-  | "session:rotate"
-  | "intent:approve"
-  | "intent:deny";
+export type RootAuthAction = "session:revoke" | "session:rotate" | "intent:approve" | "intent:deny";
 
 /**
  * Every action a root proof can authorize. Exported so the layers that only

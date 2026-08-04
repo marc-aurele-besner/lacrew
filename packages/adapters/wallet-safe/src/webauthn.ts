@@ -16,8 +16,7 @@ import { p256 } from "@noble/curves/nist";
 import { sha256 } from "@noble/hashes/sha2";
 import { coseP256Coordinates } from "./passkey.js";
 
-export type AssertionVerification =
-  { verified: true } | { verified: false; error: string };
+export type AssertionVerification = { verified: true } | { verified: false; error: string };
 
 export interface WebAuthnAssertion {
   /** base64url `authenticatorData` from the assertion. */
@@ -67,9 +66,7 @@ const FLAG_USER_VERIFIED = 0x04;
  * wrong, the challenge stale, or the signature bad — three very different
  * situations, only one of which is an attack.
  */
-export function verifyWebAuthnAssertion(
-  input: VerifyAssertionInput,
-): AssertionVerification {
+export function verifyWebAuthnAssertion(input: VerifyAssertionInput): AssertionVerification {
   let coordinates: { x: `0x${string}`; y: `0x${string}` };
   try {
     coordinates = coseP256Coordinates(input.publicKey);
@@ -93,9 +90,7 @@ export function verifyWebAuthnAssertion(
 
   let clientData: { type?: unknown; challenge?: unknown; origin?: unknown };
   try {
-    clientData = JSON.parse(
-      new TextDecoder().decode(clientDataBytes),
-    ) as typeof clientData;
+    clientData = JSON.parse(new TextDecoder().decode(clientDataBytes)) as typeof clientData;
   } catch {
     return { verified: false, error: "client_data_not_json" };
   }
@@ -109,21 +104,12 @@ export function verifyWebAuthnAssertion(
   if (typeof clientData.challenge !== "string") {
     return { verified: false, error: "client_data_challenge_missing" };
   }
-  if (
-    !equalBytes(
-      fromBase64Url(clientData.challenge),
-      fromBase64Url(input.challenge),
-    )
-  ) {
+  if (!equalBytes(fromBase64Url(clientData.challenge), fromBase64Url(input.challenge))) {
     return { verified: false, error: "challenge_mismatch" };
   }
 
-  const origins =
-    typeof input.origin === "string" ? [input.origin] : [...input.origin];
-  if (
-    typeof clientData.origin !== "string" ||
-    !origins.includes(clientData.origin)
-  ) {
+  const origins = typeof input.origin === "string" ? [input.origin] : [...input.origin];
+  if (typeof clientData.origin !== "string" || !origins.includes(clientData.origin)) {
     return { verified: false, error: "origin_mismatch" };
   }
 

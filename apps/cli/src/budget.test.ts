@@ -204,7 +204,10 @@ describe("lacrew budget", () => {
   });
 
   it("surfaces the orchestrator's refusal verbatim", async () => {
-    responder = () => ({ status: 400, body: { error: "invalid_inference_budget: maxUsd must be a positive number" } });
+    responder = () => ({
+      status: 400,
+      body: { error: "invalid_inference_budget: maxUsd must be a positive number" },
+    });
     await assert.rejects(
       () => capture(["set", "--crew", "trading", "--usd", "-1", "--enable"]),
       /maxUsd must be a positive number/,

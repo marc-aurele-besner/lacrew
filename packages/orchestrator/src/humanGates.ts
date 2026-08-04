@@ -33,11 +33,7 @@
  * open for the whole window. The run is suspended to durable state instead.
  */
 
-import {
-  FlowWaitingError,
-  type FlowResumeState,
-  type HumanGateResolution,
-} from "@lacrew/flows";
+import { FlowWaitingError, type FlowResumeState, type HumanGateResolution } from "@lacrew/flows";
 import type { ProtocolEvent } from "@lacrew/core";
 import { createHash } from "node:crypto";
 import { threadIdOf, type Message } from "./conversation.js";
@@ -52,13 +48,9 @@ export const DEFAULT_HUMAN_GATE_TTL_MS = 24 * 60 * 60 * 1000;
 export const MIN_HUMAN_GATE_TTL_MS = 5 * 60 * 1000;
 
 /** `LACREW_HUMAN_GATE_TTL_MS`, or a day. */
-export function humanGateTtlMs(
-  env: Record<string, string | undefined> = process.env,
-): number {
+export function humanGateTtlMs(env: Record<string, string | undefined> = process.env): number {
   const raw = Number(env.LACREW_HUMAN_GATE_TTL_MS ?? "");
-  return Number.isFinite(raw) && raw >= MIN_HUMAN_GATE_TTL_MS
-    ? raw
-    : DEFAULT_HUMAN_GATE_TTL_MS;
+  return Number.isFinite(raw) && raw >= MIN_HUMAN_GATE_TTL_MS ? raw : DEFAULT_HUMAN_GATE_TTL_MS;
 }
 
 /**
@@ -66,8 +58,7 @@ export function humanGateTtlMs(
  * has already acted on this decision, which is what stops one answer from
  * releasing the same gate twice.
  */
-export type HumanGateStatus =
-  "pending" | "answered" | "timed_out" | "cancelled" | "consumed";
+export type HumanGateStatus = "pending" | "answered" | "timed_out" | "cancelled" | "consumed";
 
 export type HumanGateOptionView = { id: string; label: string };
 
@@ -144,10 +135,7 @@ function gateIdOf(request: HumanGateRequest): string {
  * wrong guess here publishes something nobody chose — so free text decides
  * nothing and the gate stays open.
  */
-export function readGateAnswer(
-  body: string,
-  options: HumanGateOptionView[],
-): string | null {
+export function readGateAnswer(body: string, options: HumanGateOptionView[]): string | null {
   const normalized = body
     .trim()
     .toLowerCase()
@@ -156,9 +144,7 @@ export function readGateAnswer(
   if (byId) return byId.id;
   // A rail that renders buttons sends the label back on some channels; it is
   // still an exact match against something this gate offered, not a guess.
-  const byLabel = options.find(
-    (o) => o.label.trim().toLowerCase() === normalized,
-  );
+  const byLabel = options.find((o) => o.label.trim().toLowerCase() === normalized);
   return byLabel ? byLabel.id : null;
 }
 
@@ -225,11 +211,7 @@ export function createHumanGates(opts: {
   };
 
   const audit = (
-    type:
-      | "HumanGateOpened"
-      | "HumanGateResolved"
-      | "HumanGateTimedOut"
-      | "HumanGateUnresolved",
+    type: "HumanGateOpened" | "HumanGateResolved" | "HumanGateTimedOut" | "HumanGateUnresolved",
     gate: HumanGateRecord,
     extra: Record<string, unknown> = {},
   ): void => {
@@ -254,8 +236,7 @@ export function createHumanGates(opts: {
   };
 
   const expireIfDue = (gate: HumanGateRecord, at: Date): boolean => {
-    if (gate.status !== "pending" || gate.expiresAt > at.toISOString())
-      return false;
+    if (gate.status !== "pending" || gate.expiresAt > at.toISOString()) return false;
     gate.status = "timed_out";
     gate.outcome = "timed_out";
     gate.resolvedAt = at.toISOString();
@@ -263,9 +244,7 @@ export function createHumanGates(opts: {
   };
 
   const questionBody = (request: HumanGateRequest): string => {
-    const choices = request.options
-      .map((o) => `  ${o.id} — ${o.label}`)
-      .join("\n");
+    const choices = request.options.map((o) => `  ${o.id} — ${o.label}`).join("\n");
     return [
       request.prompt.trim(),
       "",
@@ -347,9 +326,7 @@ export function createHumanGates(opts: {
 
       const ttl = Math.max(
         MIN_HUMAN_GATE_TTL_MS,
-        request.timeoutMs && Number.isFinite(request.timeoutMs)
-          ? request.timeoutMs
-          : defaultTtl,
+        request.timeoutMs && Number.isFinite(request.timeoutMs) ? request.timeoutMs : defaultTtl,
       );
       const gate: HumanGateRecord = {
         id,
@@ -386,8 +363,7 @@ export function createHumanGates(opts: {
       await persist(gate);
       // The answer may already be in: someone who replies before the run has
       // finished parking would otherwise leave it parked forever.
-      if (gate.status === "answered" || gate.status === "timed_out")
-        startResume(gate);
+      if (gate.status === "answered" || gate.status === "timed_out") startResume(gate);
     },
 
     observe: (message) => {

@@ -54,8 +54,7 @@ export type GoogleOidcFailure =
   | "jwks_unavailable";
 
 export type GoogleOidcCheck =
-  | { ok: true; claims: GoogleOidcClaims }
-  | { ok: false; reason: GoogleOidcFailure };
+  { ok: true; claims: GoogleOidcClaims } | { ok: false; reason: GoogleOidcFailure };
 
 export type GoogleOidcClaims = {
   iss: string;

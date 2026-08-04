@@ -46,8 +46,7 @@ function hasFlag(args: string[], flag: string): boolean {
 
 /** Reporting lines as an indented tree, managers first. */
 function printOrgTree(bp: CrewBlueprint): void {
-  const children = (parent: string): CrewRole[] =>
-    bp.roles.filter((r) => r.reportsTo === parent);
+  const children = (parent: string): CrewRole[] => bp.roles.filter((r) => r.reportsTo === parent);
   const walk = (parent: string, depth: number): void => {
     const seats = children(parent);
     seats.forEach((role, i) => {
@@ -207,9 +206,7 @@ function parseBindings(args: string[]): CrewBindings {
     const raw = args[i + 1];
     if (!raw || !raw.includes("=")) continue;
     const [key, value] = raw.split("=") as [string, string];
-    const [prefix, rest] = key.includes(":")
-      ? (key.split(":") as [string, string])
-      : ["crew", key];
+    const [prefix, rest] = key.includes(":") ? (key.split(":") as [string, string]) : ["crew", key];
     if (prefix === "target") bindings.targets![rest] = value;
     else if (prefix === "policy") bindings.policies![rest] = value;
     else bindings.roles![rest] = value;
@@ -318,7 +315,10 @@ async function probeFacts(
     probe<ConnectorProbe>(args, "/connectors"),
     probe<FlowsProbe>(args, "/flows"),
     probe<RunsProbe>(args, "/flows/runs"),
-    probe<MessagesProbe>(args, `/messages?limit=5&thread=${encodeURIComponent(threadOf(bp, args))}`),
+    probe<MessagesProbe>(
+      args,
+      `/messages?limit=5&thread=${encodeURIComponent(threadOf(bp, args))}`,
+    ),
     probe<OrgProbe>(args, "/org"),
   ]);
 
@@ -359,7 +359,9 @@ async function probeFacts(
                 "The orchestrator is running in mock mode, so a run returns fabricated data rather than reaching a chain.",
             }
         : null,
-      model: health ? { configured: Boolean(health.model?.provider && health.model.provider !== "memory") } : null,
+      model: health
+        ? { configured: Boolean(health.model?.provider && health.model.provider !== "memory") }
+        : null,
       connectors: connectors?.connectors
         ? connectors.connectors.map((c) => ({ id: c.id, ready: c.auth?.ready === true }))
         : null,
@@ -396,7 +398,13 @@ async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> 
   if (hasFlag(args, "--json")) {
     console.log(
       JSON.stringify(
-        { blueprint: bp.id, orchestrator: orchUrl(args), steps, blocker: blocker?.id ?? null, progress },
+        {
+          blueprint: bp.id,
+          orchestrator: orchUrl(args),
+          steps,
+          blocker: blocker?.id ?? null,
+          progress,
+        },
         null,
         2,
       ),
@@ -440,7 +448,9 @@ export async function cmdCrews(args: string[]): Promise<void> {
     case undefined:
     case "list": {
       for (const bp of crewBlueprints) {
-        console.log(`${bp.id}  (${bp.vertical} · ${bp.roles.length} seats · ${bp.flows.length} flows)`);
+        console.log(
+          `${bp.id}  (${bp.vertical} · ${bp.roles.length} seats · ${bp.flows.length} flows)`,
+        );
         console.log(`  ${bp.summary}`);
       }
       console.log(`\nInspect one:  lacrew crews show ${crewBlueprints[0]!.id}`);

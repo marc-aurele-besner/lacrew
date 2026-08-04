@@ -42,12 +42,12 @@ members in order: the first DENY returns immediately; otherwise any ESCALATE
 is sticky and returned; otherwise ALLOW. Standard modules shipped as
 reference:
 
-| Module | Behavior |
-| --- | --- |
-| `SpendCapPolicy` | Per-agent cap on `value`; over-cap → ESCALATE. Mutator `setAgentCap` is admin- or governor-gated. |
-| `WhitelistPolicy` | Unlisted `target` → DENY. Mutator `setAllowed` is admin- or governor-gated. |
-| `RateLimitPolicy` | Sliding-window action count per agent; over-rate → ESCALATE. The router records via `IRateRecorder.record(agent)` — into the node's own recorder when one is bound (`rateRecorderOf`), else the global one. Params are constructor immutables: a different limit is a different module. |
-| `TimeWindowPolicy` | Outside the configured UTC window → DENY. |
+| Module             | Behavior                                                                                                                                                                                                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SpendCapPolicy`   | Per-agent cap on `value`; over-cap → ESCALATE. Mutator `setAgentCap` is admin- or governor-gated.                                                                                                                                                                                       |
+| `WhitelistPolicy`  | Unlisted `target` → DENY. Mutator `setAllowed` is admin- or governor-gated.                                                                                                                                                                                                             |
+| `RateLimitPolicy`  | Sliding-window action count per agent; over-rate → ESCALATE. The router records via `IRateRecorder.record(agent)` — into the node's own recorder when one is bound (`rateRecorderOf`), else the global one. Params are constructor immutables: a different limit is a different module. |
+| `TimeWindowPolicy` | Outside the configured UTC window → DENY.                                                                                                                                                                                                                                               |
 
 Stacks bind per node through `EscalationRouter.setNodePolicy(node, module)`
 (governor-gated once a governor is set). A node whose stack carries its own
@@ -178,7 +178,7 @@ function keyLimits(address agent, address key) external view returns (bool, uint
 **Target scoping.** A session pins zero or more targets: empty means any
 target that still passes the node's policy stack; one or more restrict the
 key to exactly those. Enforcement uses `isTargetAllowed`. `keyLimits` reports
-only the *first* pinned target, never `address(0)`, so a consumer that checks
+only the _first_ pinned target, never `address(0)`, so a consumer that checks
 just `keyLimits` denies the extra targets instead of allowing everything —
 **fail-closed by construction**.
 
@@ -191,13 +191,13 @@ can always kill a session.
 Consumers index these families; the reference indexer streams them into
 Postgres (`orchestrator_audit_events`), which dashboards and monitors read.
 
-| Family | Events |
-| --- | --- |
-| Intents | `IntentCreated`, `IntentEscalated`, `IntentResolved`, `ActionExecuted` |
-| Payroll | `GrantUpdated`, `EpochRun` (surfaced as `AllowanceStreamed`) |
+| Family     | Events                                                                               |
+| ---------- | ------------------------------------------------------------------------------------ |
+| Intents    | `IntentCreated`, `IntentEscalated`, `IntentResolved`, `ActionExecuted`               |
+| Payroll    | `GrantUpdated`, `EpochRun` (surfaced as `AllowanceStreamed`)                         |
 | Governance | `ProposalCreated`, `Voted`, `ProposalExecuted`, `ProposalVetoed`, `ProposalDefeated` |
-| Sessions | `SessionIssued`, `SessionRevoked` |
-| Structure | `NodeAdded`, `NodeRemoved`, `NodeReparented`, `NodeActiveUpdated` |
+| Sessions   | `SessionIssued`, `SessionRevoked`                                                    |
+| Structure  | `NodeAdded`, `NodeRemoved`, `NodeReparented`, `NodeActiveUpdated`                    |
 
 ## 9. Conformance
 

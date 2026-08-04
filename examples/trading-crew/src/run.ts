@@ -9,15 +9,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOCK_WORKER, MOCK_MANAGER } from "@lacrew/core";
-import {
-  simulateIntentAction,
-} from "@lacrew/sdk";
+import { simulateIntentAction } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const policy = JSON.parse(
-  readFileSync(join(__dirname, "../policy.json"), "utf8"),
-) as {
+const policy = JSON.parse(readFileSync(join(__dirname, "../policy.json"), "utf8")) as {
   name: string;
   latencyBoundary: string;
   demoSpends: Array<{
@@ -112,7 +108,6 @@ async function runViaMock(): Promise<void> {
   );
 }
 
-
 async function runViaAnvil(): Promise<void> {
   const { createRuntimeFromEnv } = await import("@lacrew/orchestrator");
   const boot = await createRuntimeFromEnv();
@@ -128,10 +123,7 @@ async function runViaAnvil(): Promise<void> {
   console.log(`crew=${policy.name}`);
 
   const nodes = await runtime.getClient().getOrgTree();
-  console.log(
-    "org",
-    nodes.map((n) => `${n.kind}:${n.account.slice(0, 10)}…`).join("  "),
-  );
+  console.log("org", nodes.map((n) => `${n.kind}:${n.account.slice(0, 10)}…`).join("  "));
 
   for (const spend of policy.demoSpends) {
     const value = BigInt(spend.valueUsdc) * 10n ** 6n;

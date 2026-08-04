@@ -42,11 +42,7 @@ export interface McpToolBackend {
   orgAction?(input: OrgActionInput): Promise<unknown>;
   setBudget?(input: BudgetActionInput): Promise<unknown>;
   governance?(input: GovernanceActionInput): Promise<unknown>;
-  invokeAgent?(input: {
-    agent: `0x${string}`;
-    prompt?: string;
-    flowId?: string;
-  }): Promise<unknown>;
+  invokeAgent?(input: { agent: `0x${string}`; prompt?: string; flowId?: string }): Promise<unknown>;
   /** Conversation (F1.7). Posting is a claim, never an authority. */
   postMessage?(input: {
     thread: string;
@@ -342,16 +338,14 @@ export function createOrchHttpMcpBackend(baseUrl: string, token?: string): McpTo
 
   return {
     getOrgTree: () => call("lacrew_get_org_tree", {}),
-    listPendingIntents: async () =>
-      (await call("lacrew_list_pending_intents", {})) as unknown[],
+    listPendingIntents: async () => (await call("lacrew_list_pending_intents", {})) as unknown[],
     proposeIntent: (input) =>
       call("lacrew_propose_intent", {
         agent: input.agent,
         target: input.target,
         value: input.value.toString(),
       }),
-    resolveIntent: (intentId, approved) =>
-      call("lacrew_approve_intent", { intentId, approved }),
+    resolveIntent: (intentId, approved) => call("lacrew_approve_intent", { intentId, approved }),
     checkPolicy: async (input) =>
       (await call("lacrew_check_policy", {
         agent: input.agent,
@@ -543,9 +537,7 @@ type JsonRpcRequest = {
  * Minimal MCP stdio server: `initialize`, `tools/list`, `tools/call`.
  * Wire with: `node dist/stdio.js` or `pnpm --filter @lacrew/adapter-agents-mcp mcp`.
  */
-export async function startLacrewMcpStdioServer(
-  opts: RunMcpToolOptions = {},
-): Promise<void> {
+export async function startLacrewMcpStdioServer(opts: RunMcpToolOptions = {}): Promise<void> {
   const write = (msg: unknown) => {
     process.stdout.write(`${JSON.stringify(msg)}\n`);
   };

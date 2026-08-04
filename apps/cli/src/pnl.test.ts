@@ -14,15 +14,11 @@ let responder: (call: Call) => {
 
 /** Stands in for a running orchestrator: the CLI is what is under test. */
 function installFetch(): void {
-  globalThis.fetch = (async (
-    url: string | URL | Request,
-    init?: RequestInit,
-  ) => {
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const href = typeof url === "string" ? url : url.toString();
     const call: Call = {
       path: href.replace("http://127.0.0.1:8788", ""),
-      accept:
-        (init?.headers as Record<string, string> | undefined)?.accept ?? null,
+      accept: (init?.headers as Record<string, string> | undefined)?.accept ?? null,
     };
     calls.push(call);
     const { status = 200, body, text } = responder(call);
@@ -149,9 +145,7 @@ const REPORT = {
     inference: { available: true, complete: true, store: "postgres" },
     connectors: { available: true, complete: false, store: "memory" },
   },
-  notes: [
-    "1 model call(s) had no known price — the inference $ figure is a floor.",
-  ],
+  notes: ["1 model call(s) had no known price — the inference $ figure is a floor."],
 };
 
 beforeEach(() => {
@@ -179,10 +173,7 @@ describe("lacrew pnl", () => {
   });
 
   it("prints the three meters, and says which figures are floors", async () => {
-    const out = await capture([
-      "--crew",
-      "0x2222222222222222222222222222222222222222",
-    ]);
+    const out = await capture(["--crew", "0x2222222222222222222222222222222222222222"]);
     assert.match(out, /Onchain\s+50\.00 USDC spent/);
     assert.match(out, /Inference\s+\$0\.0045/);
     assert.match(out, /1 unpriced — this is a floor/);

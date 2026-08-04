@@ -7,7 +7,12 @@
 import { Hono, type Context } from "hono";
 import { listLacrewMcpTools, runMcpTool } from "@lacrew/adapter-agents-mcp";
 import type { FlowDefinition } from "@lacrew/flows";
-import { firstPartySkillPacks, getSkillPack, missingRequirements, type SkillPack } from "@lacrew/flows";
+import {
+  firstPartySkillPacks,
+  getSkillPack,
+  missingRequirements,
+  type SkillPack,
+} from "@lacrew/flows";
 import {
   HEARTBEAT_MAX_ITEMS,
   HEARTBEAT_MIN_INTERVAL_MINUTES,
@@ -62,10 +67,7 @@ import {
   validateModeRoute,
   type ConnectorModesSurface,
 } from "./connectorPolicy.js";
-import {
-  isPlanRequired,
-  type PlanRequirementsSurface,
-} from "./planRequired.js";
+import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
 import { isDualControlRefused, type DualControlSurface } from "./dualControl.js";
 import {
   DUAL_CONTROL_MODES,
@@ -235,11 +237,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // signature and rejects an unsigned one — it is not an unauthenticated
     // route, it is one authenticated by a different, narrower credential.
     const isHookDelivery = c.req.method === "POST" && c.req.path.startsWith("/hooks/");
-    if (
-      authToken &&
-      !isHookDelivery &&
-      !(c.req.method === "GET" && c.req.path === "/health")
-    ) {
+    if (authToken && !isHookDelivery && !(c.req.method === "GET" && c.req.path === "/health")) {
       if (!isAuthorized(c.req.header("authorization"), authToken)) {
         return jsonBig(c, { error: "unauthorized" }, 401);
       }
@@ -456,8 +454,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // An omitted scope is the workspace. A *malformed* one is a 400 rather than
     // the same default: silently widening a rule somebody meant for one seat
     // into one for the whole workspace is the wrong direction to fail in.
-    const scope = body.scope === undefined ? { level: "workspace" as const } : parseModeScope(body.scope);
-    if (!scope) return jsonBig(c, { error: "scope must be workspace, crew:<ref>, or agent:<ref>" }, 400);
+    const scope =
+      body.scope === undefined ? { level: "workspace" as const } : parseModeScope(body.scope);
+    if (!scope)
+      return jsonBig(c, { error: "scope must be workspace, crew:<ref>, or agent:<ref>" }, 400);
     const server = body.server?.trim() ?? "";
     const tool = body.tool?.trim() ?? "";
     if (!server || !tool) return jsonBig(c, { error: "server_and_tool_required" }, 400);
@@ -528,7 +528,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // read for the same reason: a crew rule applies through the reporting line,
     // so resolving without the ancestors would show a rule that does not exist.
     const as = c.req.query("as");
-    const registered = connectors?.describe(as ? { principal: as, managers: await managersOf(as) } : {}) ?? [];
+    const registered =
+      connectors?.describe(as ? { principal: as, managers: await managersOf(as) } : {}) ?? [];
     const live = new Set(registered.map((r) => r.id));
     return jsonBig(c, {
       connectors: registered,
@@ -606,11 +607,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       return jsonBig(c, { cleared, rules: connectorModes.list() });
     }
     if (!isConnectorWriteMode(body.mode)) {
-      return jsonBig(
-        c,
-        { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` },
-        400,
-      );
+      return jsonBig(c, { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` }, 400);
     }
     try {
       const rule = await connectorModes.set({ scope, route, mode: body.mode });
@@ -1110,7 +1107,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       const message = msgOf(err, "eval_failed");
       // A run already in flight is not a bad request and not a fault: the same
       // call succeeds once it finishes.
-      const status = message === "eval_already_running" ? 409 : message === "eval_timeout" ? 504 : 500;
+      const status =
+        message === "eval_already_running" ? 409 : message === "eval_timeout" ? 504 : 500;
       return jsonBig(c, { error: message }, status);
     }
   });
@@ -1232,7 +1230,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       );
     }
     if ("duplicate" in accepted) {
-      return jsonBig(c, { accepted: true, duplicate: true, deliveryKey: accepted.deliveryKey }, 200);
+      return jsonBig(
+        c,
+        { accepted: true, duplicate: true, deliveryKey: accepted.deliveryKey },
+        200,
+      );
     }
     return jsonBig(
       c,
@@ -1485,9 +1487,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         ...(c.req.query("from") ? { from: c.req.query("from")! } : {}),
         ...(c.req.query("to") ? { to: c.req.query("to")! } : {}),
         ...(epochSeconds ? { epochSeconds: Number(epochSeconds) } : {}),
-        ...(c.req.query("epochAnchorAt")
-          ? { epochAnchorAt: c.req.query("epochAnchorAt")! }
-          : {}),
+        ...(c.req.query("epochAnchorAt") ? { epochAnchorAt: c.req.query("epochAnchorAt")! } : {}),
       });
       if (c.req.query("format") === "csv") {
         return c.newResponse(pnlToCsv(report), 200, {
@@ -1543,13 +1543,26 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (body.window !== undefined) {
       const { start, end } = body.window;
       if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start || end > 86400) {
-        return jsonBig(c, { error: "invalid_window: need integers 0 <= start < end <= 86400" }, 400);
+        return jsonBig(
+          c,
+          { error: "invalid_window: need integers 0 <= start < end <= 86400" },
+          400,
+        );
       }
     }
     if (body.rate !== undefined) {
       const { maxProposals, ratePeriod } = body.rate;
-      if (!Number.isInteger(maxProposals) || !Number.isInteger(ratePeriod) || maxProposals <= 0 || ratePeriod <= 0) {
-        return jsonBig(c, { error: "invalid_rate: need positive integers maxProposals and ratePeriod" }, 400);
+      if (
+        !Number.isInteger(maxProposals) ||
+        !Number.isInteger(ratePeriod) ||
+        maxProposals <= 0 ||
+        ratePeriod <= 0
+      ) {
+        return jsonBig(
+          c,
+          { error: "invalid_rate: need positive integers maxProposals and ratePeriod" },
+          400,
+        );
       }
     }
 
@@ -1605,11 +1618,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const body = await bodyOf<{ action?: string; subject?: string }>(c);
     const action = body.action as RootAuthAction | undefined;
     if (!action || !ROOT_AUTH_ACTIONS.includes(action)) {
-      return jsonBig(
-        c,
-        { error: `action_must_be_one_of: ${ROOT_AUTH_ACTIONS.join(", ")}` },
-        400,
-      );
+      return jsonBig(c, { error: `action_must_be_one_of: ${ROOT_AUTH_ACTIONS.join(", ")}` }, 400);
     }
     if (!body.subject) return jsonBig(c, { error: "subject_required" }, 400);
     if (!rootAuth?.required) {
@@ -1865,7 +1874,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           skills: pack.skills.map((s) => ({ id: s.id, name: s.name, trigger: s.trigger })),
           requires: pack.requires ?? {},
           missing,
-          installable: missing.flows.length + missing.connectors.length + missing.mcpTools.length === 0,
+          installable:
+            missing.flows.length + missing.connectors.length + missing.mcpTools.length === 0,
         };
       }),
       available,
@@ -1896,7 +1906,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * blow its rendered ceiling is 413.
    */
   app.post("/agents/skills/install", async (c) => {
-    const body = await bodyOf<{ agent?: string; packId?: string; pack?: unknown; label?: string }>(c);
+    const body = await bodyOf<{ agent?: string; packId?: string; pack?: unknown; label?: string }>(
+      c,
+    );
     if (!body.agent) return jsonBig(c, { error: "agent_required" }, 400);
 
     let pack: SkillPack | undefined;
@@ -2159,10 +2171,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!buyers.every((b) => /^0x[0-9a-fA-F]{40}$/.test(b))) {
       return jsonBig(c, { error: "buyers_must_be_addresses" }, 400);
     }
-    const result = await runtime.marketplaceEntitlements(
-      catalogId,
-      buyers as `0x${string}`[],
-    );
+    const result = await runtime.marketplaceEntitlements(catalogId, buyers as `0x${string}`[]);
     return jsonBig(c, { catalogId, ...result, mode: runtime.mode, chainId: runtime.chainId });
   });
 
@@ -2223,7 +2232,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     } catch (err) {
       const message = err instanceof Error ? err.message : "purchase_failed";
       // A chainless runtime cannot settle, and saying so beats a fake receipt.
-      return jsonBig(c, { error: message }, message === "marketplace_purchase_requires_chain" ? 409 : 400);
+      return jsonBig(
+        c,
+        { error: message },
+        message === "marketplace_purchase_requires_chain" ? 409 : 400,
+      );
     }
   });
 
@@ -2326,11 +2339,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // non-primary asset in mock mode, which cannot resolve a stack) is a 400,
       // not the generic 500 the primary path keeps for chain/config failures.
       if (body.asset) {
-        return jsonBig(
-          c,
-          { error: err instanceof Error ? err.message : "propose_failed" },
-          400,
-        );
+        return jsonBig(c, { error: err instanceof Error ? err.message : "propose_failed" }, 400);
       }
       throw err;
     }
@@ -2353,7 +2362,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
     const entries = raw.map((e) => ({ account: e.account!, amount: BigInt(e.amount!) }));
     try {
-      const result = await runtime.proposeSetGrants({ entries, tier: body.tier, asset: body.asset });
+      const result = await runtime.proposeSetGrants({
+        entries,
+        tier: body.tier,
+        asset: body.asset,
+      });
       return jsonBig(c, { ...result, mode: runtime.mode, asset: body.asset });
     } catch (err) {
       if (body.asset) {
@@ -2510,11 +2523,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // The asset selector is operator input — an unknown asset is a 400,
       // not the generic 500 the primary path keeps for chain/config failures.
       if (body.asset) {
-        return jsonBig(
-          c,
-          { error: err instanceof Error ? err.message : "propose_failed" },
-          400,
-        );
+        return jsonBig(c, { error: err instanceof Error ? err.message : "propose_failed" }, 400);
       }
       throw err;
     }
@@ -2666,11 +2675,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       const grants = await runtime.getGrants(asset);
       return jsonBig(c, { grants, asset, mode: runtime.mode });
     } catch (err) {
-      return jsonBig(
-        c,
-        { error: err instanceof Error ? err.message : "grants_read_failed" },
-        400,
-      );
+      return jsonBig(c, { error: err instanceof Error ? err.message : "grants_read_failed" }, 400);
     }
   });
 
@@ -2690,11 +2695,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
     } catch (err) {
       if (asset) {
-        return jsonBig(
-          c,
-          { error: err instanceof Error ? err.message : "epoch_read_failed" },
-          400,
-        );
+        return jsonBig(c, { error: err instanceof Error ? err.message : "epoch_read_failed" }, 400);
       }
       throw err;
     }
@@ -2736,8 +2737,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // setting owned by the cloud; it pushes the chosen cron here, and the
     // durable queue persists it so the schedule survives restart.
     const body = await bodyOf<{ cron?: string }>(c);
-    const cron =
-      typeof body.cron === "string" ? body.cron.trim().replace(/\s+/g, " ") : "";
+    const cron = typeof body.cron === "string" ? body.cron.trim().replace(/\s+/g, " ") : "";
     if (!isValidCron(cron)) {
       return jsonBig(
         c,
@@ -2748,11 +2748,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     try {
       await queue.scheduleEpoch(cron);
     } catch (err) {
-      return jsonBig(
-        c,
-        { error: err instanceof Error ? err.message : "reschedule_failed" },
-        400,
-      );
+      return jsonBig(c, { error: err instanceof Error ? err.message : "reschedule_failed" }, 400);
     }
     const q = queue.status();
     return jsonBig(c, {

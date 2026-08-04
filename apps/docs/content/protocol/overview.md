@@ -14,13 +14,13 @@ Human root(s)
 
 ## Components
 
-| Contract | Role |
-| --- | --- |
-| OrgRegistry | Tree of nodes and reporting edges |
-| Treasury | Holds funds; streams allowances downward |
-| IPolicyModule | `check → ALLOW \| ESCALATE \| DENY` |
-| EscalationRouter | Pending intents climb the tree |
-| GovernanceModule | Constitutional changes only |
+| Contract         | Role                                     |
+| ---------------- | ---------------------------------------- |
+| OrgRegistry      | Tree of nodes and reporting edges        |
+| Treasury         | Holds funds; streams allowances downward |
+| IPolicyModule    | `check → ALLOW \| ESCALATE \| DENY`      |
+| EscalationRouter | Pending intents climb the tree           |
+| GovernanceModule | Constitutional changes only              |
 
 Operational spend never votes. Constitutional changes (hire/fire, budgets, policy upgrades) go through governance with risk-tiered execution.
 

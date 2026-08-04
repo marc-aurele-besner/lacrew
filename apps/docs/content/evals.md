@@ -61,14 +61,7 @@ const scenario: FlowEvalScenario = {
 
   expect: {
     status: "completed",
-    ran: [
-      "pr",
-      "classify",
-      "route",
-      "merge-check",
-      "may-merge",
-      "merge-blocked",
-    ],
+    ran: ["pr", "classify", "route", "merge-check", "may-merge", "merge-blocked"],
     notRan: ["merge"],
     port: { "may-merge": "merge-blocked" },
     called: { "github.get_pull_request": 1 },
@@ -181,7 +174,7 @@ decoration.
 ## Running them from a workspace
 
 CI answers "did anyone break this on the way in". An operator has a different
-question — *my* desk, the blueprint I installed, right now — and reading a badge
+question — _my_ desk, the blueprint I installed, right now — and reading a badge
 on someone else's repository is not an answer to it. So the orchestrator serves
 the same suite:
 

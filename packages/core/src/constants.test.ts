@@ -42,9 +42,7 @@ describe("getAddresses", () => {
         process.env[envVar] = override;
       }
       const addrs = getAddresses(ANVIL_CHAIN_ID);
-      for (const field of Object.keys(ADDRESS_ENV_VARS) as Array<
-        keyof typeof ADDRESS_ENV_VARS
-      >) {
+      for (const field of Object.keys(ADDRESS_ENV_VARS) as Array<keyof typeof ADDRESS_ENV_VARS>) {
         assert.equal(addrs[field], override, `field ${field} should be overridable`);
       }
     } finally {

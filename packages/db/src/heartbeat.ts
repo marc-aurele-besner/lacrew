@@ -47,10 +47,7 @@ function rowToHeartbeat(row: typeof crewHeartbeats.$inferSelect): CrewHeartbeatR
   };
 }
 
-export async function upsertCrewHeartbeat(
-  handle: DbHandle,
-  row: CrewHeartbeatRow,
-): Promise<void> {
+export async function upsertCrewHeartbeat(handle: DbHandle, row: CrewHeartbeatRow): Promise<void> {
   const values = {
     crewId: row.crewId,
     schedule: row.schedule,
@@ -149,10 +146,7 @@ export async function recentCrewHeartbeatTicks(
   crewId?: string,
 ): Promise<CrewHeartbeatTickRow[]> {
   const base = handle.db.select().from(crewHeartbeatTicks);
-  const rows = await (crewId
-    ? base.where(eq(crewHeartbeatTicks.crewId, crewId))
-    : base
-  )
+  const rows = await (crewId ? base.where(eq(crewHeartbeatTicks.crewId, crewId)) : base)
     .orderBy(desc(crewHeartbeatTicks.startedAt))
     .limit(limit);
   return rows.map((row) => ({

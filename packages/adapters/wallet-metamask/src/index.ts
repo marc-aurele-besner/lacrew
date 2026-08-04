@@ -10,12 +10,13 @@
  * an adapter without a `PolicyReader` refuses to produce a verdict.
  */
 
-import type { AdapterCheckInput, PolicyReader, WalletAdapter } from "@lacrew/adapter-wallet-agentkit";
+import type {
+  AdapterCheckInput,
+  PolicyReader,
+  WalletAdapter,
+} from "@lacrew/adapter-wallet-agentkit";
 
-import {
-  createMetaMaskWallet,
-  type CreateMetaMaskWalletOptions,
-} from "./account.js";
+import { createMetaMaskWallet, type CreateMetaMaskWalletOptions } from "./account.js";
 
 export * from "./account.js";
 export * from "./delegation.js";
@@ -34,9 +35,7 @@ export type MetaMaskWalletAdapterOptions = Omit<CreateMetaMaskWalletOptions, "sa
  * `createWallet()` becomes the account salt, so each seat maps to a stable
  * address.
  */
-export function createMetaMaskWalletAdapter(
-  opts: MetaMaskWalletAdapterOptions,
-): WalletAdapter {
+export function createMetaMaskWalletAdapter(opts: MetaMaskWalletAdapterOptions): WalletAdapter {
   return {
     provider: "metamask",
     async createWallet(label?: string) {

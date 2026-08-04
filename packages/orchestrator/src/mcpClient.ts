@@ -227,10 +227,7 @@ export function createHttpMcpClient(opts: HttpMcpClientOptions): McpClient {
         return null;
       }
       const text = await readCapped(res, cap, opts.serverId);
-      return rpcResult(
-        parseRpcBody(text, res.headers.get("content-type") ?? ""),
-        opts.serverId,
-      );
+      return rpcResult(parseRpcBody(text, res.headers.get("content-type") ?? ""), opts.serverId);
     } finally {
       clearTimeout(timer);
     }

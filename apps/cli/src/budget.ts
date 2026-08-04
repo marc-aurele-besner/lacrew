@@ -113,7 +113,10 @@ function printBudget(view: BudgetView): void {
       `  Note        ${status.usage.unpricedCalls} call(s) had no known price — the $ figure is a floor`,
     );
   }
-  if (budget.cheapModel) console.log(`  Past ${pct(INFERENCE_BUDGET_WARN_RATIO)}       fall back to ${budget.cheapModel}`);
+  if (budget.cheapModel)
+    console.log(
+      `  Past ${pct(INFERENCE_BUDGET_WARN_RATIO)}       fall back to ${budget.cheapModel}`,
+    );
   if (budget.policy === "hard") {
     console.log(
       `  On breach   refuse model calls${budget.pauseHeartbeatOnBreach ? " and hold the heartbeat" : ""}`,
@@ -153,7 +156,8 @@ export async function cmdBudget(args: string[]): Promise<void> {
   }
 
   if (sub === "set") {
-    if (!crew) throw new Error("lacrew budget set --crew <id> [--usd 200] [--in-tokens n] [--out-tokens n]");
+    if (!crew)
+      throw new Error("lacrew budget set --crew <id> [--usd 200] [--in-tokens n] [--out-tokens n]");
     const budget = {
       crewId: crew,
       ...(agent ? { agentId: agent } : {}),
@@ -180,7 +184,9 @@ export async function cmdBudget(args: string[]): Promise<void> {
       method: "POST",
       body: JSON.stringify({ budget }),
     });
-    console.log(`Saved ${body.budget.crewId}${body.budget.agentId ? `/${body.budget.agentId}` : ""}.`);
+    console.log(
+      `Saved ${body.budget.crewId}${body.budget.agentId ? `/${body.budget.agentId}` : ""}.`,
+    );
     if (!body.budget.enabled) {
       console.log(`Stored but off. Turn it on:  lacrew budget on --crew ${body.budget.crewId}`);
     } else if (body.budget.policy === "soft") {

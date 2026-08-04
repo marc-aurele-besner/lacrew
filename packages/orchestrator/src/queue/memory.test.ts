@@ -31,7 +31,11 @@ describe("InMemoryQueue", () => {
   it("runs enqueued epoch handler after start", async () => {
     let epochs = 0;
     const q = new InMemoryQueue();
-    await q.start({ onEpoch: async () => { epochs += 1; } });
+    await q.start({
+      onEpoch: async () => {
+        epochs += 1;
+      },
+    });
     const id = await q.enqueue("epoch");
     assert.ok(id?.startsWith("mem_epoch_"));
     assert.equal(epochs, 1);
@@ -51,7 +55,11 @@ describe("InMemoryQueue", () => {
     let epochs = 0;
     const q = new InMemoryQueue();
     try {
-      await q.start({ onEpoch: async () => { epochs += 1; } });
+      await q.start({
+        onEpoch: async () => {
+          epochs += 1;
+        },
+      });
       await q.scheduleEpoch("0 * * * *");
       assert.equal(q.status().epochSchedule, "interval:20");
       await waitForCount(() => epochs, 2, "epoch ticks");
@@ -70,7 +78,11 @@ describe("InMemoryQueue", () => {
     let sweeps = 0;
     const q = new InMemoryQueue();
     try {
-      await q.start({ onFlowCron: async () => { sweeps += 1; } });
+      await q.start({
+        onFlowCron: async () => {
+          sweeps += 1;
+        },
+      });
       await q.scheduleFlowCron("* * * * *");
       assert.equal(q.status().flowCronSchedule, "interval:20");
       await waitForCount(() => sweeps, 2, "cron sweeps");
@@ -119,7 +131,11 @@ describe("InMemoryQueue", () => {
     let sweeps = 0;
     const q = new InMemoryQueue();
     try {
-      await q.start({ onFlowCron: async () => { sweeps += 1; } });
+      await q.start({
+        onFlowCron: async () => {
+          sweeps += 1;
+        },
+      });
       await q.scheduleFlowCron("* * * * *");
       // Wait for sweeping to actually start, so "it stopped" is a real claim.
       // A fixed sleep here could observe zero sweeps on a slow machine and then

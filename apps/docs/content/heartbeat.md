@@ -1,8 +1,8 @@
 # Crew heartbeat
 
 A crew runs when you press Run, when an epoch fires, when a cron expression on a
-flow matches, and when a signed webhook arrives. None of those is *"every half
-hour, work through this desk's list and tell me what needs a person."*
+flow matches, and when a signed webhook arrives. None of those is _"every half
+hour, work through this desk's list and tell me what needs a person."_
 
 That is a heartbeat: a cadence, a **standing checklist**, and one summary in the
 crew thread.
@@ -27,7 +27,7 @@ step where a model picks work for itself. The consequence is the whole design:
   heartbeat-triggered flow still escalates; a heartbeat never auto-approves.
 - **A skill item has no tools.** The skill's body is put to the model as a single
   `model` step, so it can read and reason and report — it cannot call anything.
-  If you want the crew to *act*, put the flow that acts on the checklist.
+  If you want the crew to _act_, put the flow that acts on the checklist.
 - **Unknown ids are refused at save time.** A checklist naming a flow this
   orchestrator does not have, or a skill the seat's directive does not carry, is
   a 400. A typo you find out about at 03:00 is a typo you find out about from a
@@ -37,16 +37,16 @@ step where a model picks work for itself. The consequence is the whole design:
 
 Both fire on a schedule. They answer different questions.
 
-| | Per-flow `trigger: "cron"` | Crew heartbeat |
-| --- | --- | --- |
-| Lives on | one flow definition | the crew |
-| Runs | that flow | an ordered list of flows **and** skills |
-| Timezone | UTC only | any IANA zone, with quiet hours |
-| Reports | a run trace | one thread summary per tick, with run refs |
-| Answers | "run this thing regularly" | "is anything wrong, and who needs to look?" |
+|          | Per-flow `trigger: "cron"` | Crew heartbeat                              |
+| -------- | -------------------------- | ------------------------------------------- |
+| Lives on | one flow definition        | the crew                                    |
+| Runs     | that flow                  | an ordered list of flows **and** skills     |
+| Timezone | UTC only                   | any IANA zone, with quiet hours             |
+| Reports  | a run trace                | one thread summary per tick, with run refs  |
+| Answers  | "run this thing regularly" | "is anything wrong, and who needs to look?" |
 
 Use a per-flow cron when a flow is its own reason to exist. Use a heartbeat when
-what you want back is a *supervision report* — several checks, one legible
+what you want back is a _supervision report_ — several checks, one legible
 answer, in the crew's thread.
 
 ## Cadence, timezone, quiet hours
@@ -121,14 +121,14 @@ third of that for a desk that only matters in working hours.
 
 ## Routes
 
-| Route | What it does |
-| --- | --- |
-| `GET /heartbeats` | Every heartbeat, plus the presets and the cadence floor |
-| `POST /heartbeats` | Save one (body `{ heartbeat }`); unknown ids are refused |
-| `POST /heartbeats/enabled` | Enable / disable (body `{ crewId, enabled }`) |
-| `POST /heartbeats/delete` | Remove (body `{ crewId }`) |
-| `POST /heartbeats/run` | Work the checklist now, off-schedule |
-| `GET /heartbeats/ticks` | The tick ledger (`?crewId=`, `?limit=`) |
+| Route                      | What it does                                             |
+| -------------------------- | -------------------------------------------------------- |
+| `GET /heartbeats`          | Every heartbeat, plus the presets and the cadence floor  |
+| `POST /heartbeats`         | Save one (body `{ heartbeat }`); unknown ids are refused |
+| `POST /heartbeats/enabled` | Enable / disable (body `{ crewId, enabled }`)            |
+| `POST /heartbeats/delete`  | Remove (body `{ crewId }`)                               |
+| `POST /heartbeats/run`     | Work the checklist now, off-schedule                     |
+| `GET /heartbeats/ticks`    | The tick ledger (`?crewId=`, `?limit=`)                  |
 
 `POST /heartbeats/run` takes its own window key, so testing a config never
 swallows the scheduled tick you were testing.
@@ -145,7 +145,7 @@ Two event types, distinct from the `FlowRun` rows the items produce:
   disabled or removed. A heartbeat is standing authority to start funded work on
   a timer, so putting a flow on the list is attributable.
 - `CrewHeartbeat` — one tick finished: how many items ran, how many need a
-  human, which runs it caused. This is also the row that makes an *absent*
+  human, which runs it caused. This is also the row that makes an _absent_
   heartbeat visible: a crew whose last tick is three days old is not a quiet
   crew, it is a stopped one.
 

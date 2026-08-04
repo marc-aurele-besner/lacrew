@@ -80,14 +80,7 @@ const scenarios: FlowEvalScenario[] = [
     },
     expect: {
       status: "completed",
-      ran: [
-        "pr",
-        "classify",
-        "route",
-        "merge-check",
-        "may-merge",
-        "merge-blocked",
-      ],
+      ran: ["pr", "classify", "route", "merge-check", "may-merge", "merge-blocked"],
       notRan: ["merge", "merge-note"],
       port: { "may-merge": "merge-blocked" },
       called: { "github.get_pull_request": 1, lacrew_check_policy: 1 },
@@ -141,11 +134,7 @@ const scenarios: FlowEvalScenario[] = [
       status: "completed",
       ran: ["pr", "classify", "route", "reject-note"],
       notRan: ["merge-check", "merge"],
-      notCalled: [
-        "github.merge_pull_request",
-        "lacrew_check_policy",
-        "lacrew_propose_intent",
-      ],
+      notCalled: ["github.merge_pull_request", "lacrew_check_policy", "lacrew_propose_intent"],
     },
   },
   {
@@ -240,11 +229,7 @@ const scenarios: FlowEvalScenario[] = [
       port: { "may-execute": "handoff" },
       called: { "uniswap.query": 1 },
       // The assertion the blueprint's summary is making: advice, not a trade.
-      notCalled: [
-        "lacrew_propose_intent",
-        "lacrew_set_budget",
-        "lacrew_org_action",
-      ],
+      notCalled: ["lacrew_propose_intent", "lacrew_set_budget", "lacrew_org_action"],
     },
   },
   {
@@ -287,18 +272,10 @@ const scenarios: FlowEvalScenario[] = [
     flow: "content-weekly-brief",
     blueprint: "content-studio",
     asAgent: "editor-manager",
-    input:
-      "Account: LaCrew org blog. Voice: plain, technical, no hype. Themes: agent treasuries.",
+    input: "Account: LaCrew org blog. Voice: plain, technical, no hype. Themes: agent treasuries.",
     expect: {
       status: "completed",
-      ran: [
-        "ideate",
-        "image-budget",
-        "image-pack",
-        "publish-check",
-        "publish-allowed",
-        "signoff",
-      ],
+      ran: ["ideate", "image-budget", "image-pack", "publish-check", "publish-allowed", "signoff"],
       notRan: ["publish", "published"],
       port: { "publish-allowed": "signoff" },
       // The image budget is an admitted service; publication is not.

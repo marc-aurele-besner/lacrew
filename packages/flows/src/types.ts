@@ -501,12 +501,7 @@ export type FlowResumeState = {
  * never resumes — that is the whole point of the status, and the surface that
  * owns run state is what enforces it.
  */
-export type FlowRunStatus =
-  | "completed"
-  | "error"
-  | "max_steps"
-  | "waiting"
-  | "cancelled";
+export type FlowRunStatus = "completed" | "error" | "max_steps" | "waiting" | "cancelled";
 
 /**
  * What a caller may do to a run between two steps.

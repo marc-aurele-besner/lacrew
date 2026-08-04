@@ -6,13 +6,27 @@ import { validateFlow } from "./validate.js";
 
 describe("cron matcher", () => {
   it("validates well-formed expressions", () => {
-    for (const expr of ["* * * * *", "*/5 * * * *", "0 9-17 * * 1-5", "30 8 1,15 * *", "0 0 * * 7"]) {
+    for (const expr of [
+      "* * * * *",
+      "*/5 * * * *",
+      "0 9-17 * * 1-5",
+      "30 8 1,15 * *",
+      "0 0 * * 7",
+    ]) {
       assert.ok(isValidCron(expr), expr);
     }
   });
 
   it("rejects malformed expressions", () => {
-    for (const expr of ["", "* * * *", "60 * * * *", "* 24 * * *", "a * * * *", "*/0 * * * *", "5-2 * * * *"]) {
+    for (const expr of [
+      "",
+      "* * * *",
+      "60 * * * *",
+      "* 24 * * *",
+      "a * * * *",
+      "*/0 * * * *",
+      "5-2 * * * *",
+    ]) {
       assert.ok(!isValidCron(expr), expr);
     }
   });

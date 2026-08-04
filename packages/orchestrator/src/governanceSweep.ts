@@ -31,11 +31,7 @@ export type SweepDecision =
   | {
       execute: false;
       reason:
-        | "not_active"
-        | "quorum_not_met"
-        | "timelock_pending"
-        | "would_defeat"
-        | "config_unreadable";
+        "not_active" | "quorum_not_met" | "timelock_pending" | "would_defeat" | "config_unreadable";
     };
 
 export function decideAutoExecute(
@@ -65,7 +61,10 @@ export function decideAutoExecute(
     if (nowSeconds < p.eta && !unanimous) {
       return { execute: false, reason: "timelock_pending" };
     }
-    return { execute: true, via: unanimous && nowSeconds < p.eta ? "unanimity" : "timelock_elapsed" };
+    return {
+      execute: true,
+      via: unanimous && nowSeconds < p.eta ? "unanimity" : "timelock_elapsed",
+    };
   }
 
   if (config.effectiveQuorumYes === undefined) {

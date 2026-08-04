@@ -437,10 +437,7 @@ export class EventWatcher {
   }
 
   /** Decode, apply store side effects, and fan out to JSON + Postgres sinks. */
-  private async processLog(
-    log: DecodedLog,
-    opts: { skipJsonAudit?: boolean } = {},
-  ): Promise<void> {
+  private async processLog(log: DecodedLog, opts: { skipJsonAudit?: boolean } = {}): Promise<void> {
     const eventName = log.eventName;
     const args = log.args;
     if (!eventName || !args) return;

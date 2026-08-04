@@ -40,10 +40,10 @@ describe("correlation tokens", () => {
   it("round-trips a target", () => {
     const check = verifyCorrelation(token(), SECRET, NOW);
     assert.equal(check.ok, true);
-    assert.deepEqual(
-      check.ok ? { thread: check.thread, message: check.message } : null,
-      { thread: THREAD, message: QUESTION },
-    );
+    assert.deepEqual(check.ok ? { thread: check.thread, message: check.message } : null, {
+      thread: THREAD,
+      message: QUESTION,
+    });
   });
 
   it("refuses a token this deployment did not sign", () => {
@@ -78,7 +78,10 @@ describe("correlation tokens", () => {
     const old = token({ now: NOW - CORRELATION_TTL_MS - 1000 });
     assert.deepEqual(verifyCorrelation(old, SECRET, NOW), { ok: false, reason: "expired" });
     // Still good a day inside the window.
-    assert.equal(verifyCorrelation(token({ now: NOW - CORRELATION_TTL_MS + 86_400_000 }), SECRET, NOW).ok, true);
+    assert.equal(
+      verifyCorrelation(token({ now: NOW - CORRELATION_TTL_MS + 86_400_000 }), SECRET, NOW).ok,
+      true,
+    );
   });
 
   it("is found wherever the platform put it", () => {
@@ -99,7 +102,10 @@ describe("readInboundCommand", () => {
   it("reads the explicit command grammar", () => {
     assert.equal(readInboundCommand("/note keep an eye on gas", SECRET, NOW).command, "note");
     assert.equal(readInboundCommand("answer: yes", SECRET, NOW).command, "answer");
-    assert.equal(readInboundCommand("/note keep an eye on gas", SECRET, NOW).body, "keep an eye on gas");
+    assert.equal(
+      readInboundCommand("/note keep an eye on gas", SECRET, NOW).body,
+      "keep an eye on gas",
+    );
   });
 
   it("reports a bad token rather than silently ignoring it", () => {
@@ -176,8 +182,15 @@ describe("resolveInbound", () => {
   });
 
   it("refuses an expired ref with its own reason", () => {
-    const stale = readInboundCommand(`yes ref ${token({ now: NOW - CORRELATION_TTL_MS - 1 })}`, SECRET, NOW);
-    assert.deepEqual(resolveInbound({ parsed: stale }), { ok: false, reason: "expired_correlation" });
+    const stale = readInboundCommand(
+      `yes ref ${token({ now: NOW - CORRELATION_TTL_MS - 1 })}`,
+      SECRET,
+      NOW,
+    );
+    assert.deepEqual(resolveInbound({ parsed: stale }), {
+      ok: false,
+      reason: "expired_correlation",
+    });
   });
 
   it("refuses a target the caller could not find in the named thread", () => {
@@ -199,18 +212,24 @@ describe("resolveInbound", () => {
 
   it("refuses a target whose id is not the one the token named", () => {
     assert.deepEqual(
-      resolveInbound({ parsed: parse(`yes ref ${token()}`), target: question({ id: "msg_other" }) }),
+      resolveInbound({
+        parsed: parse(`yes ref ${token()}`),
+        target: question({ id: "msg_other" }),
+      }),
       { ok: false, reason: "unknown_target" },
     );
   });
 
   it("refuses an explicit /answer with nothing to answer", () => {
+    assert.deepEqual(resolveInbound({ parsed: parse("/answer yes"), boundThread: THREAD }), {
+      ok: false,
+      reason: "no_correlation",
+    });
     assert.deepEqual(
-      resolveInbound({ parsed: parse("/answer yes"), boundThread: THREAD }),
-      { ok: false, reason: "no_correlation" },
-    );
-    assert.deepEqual(
-      resolveInbound({ parsed: parse(`/answer yes ref ${token()}`), target: question({ kind: "note" }) }),
+      resolveInbound({
+        parsed: parse(`/answer yes ref ${token()}`),
+        target: question({ kind: "note" }),
+      }),
       { ok: false, reason: "not_a_question" },
     );
   });
@@ -244,7 +263,10 @@ describe("sender-facing text", () => {
   it("acknowledges what landed without implying an outcome", () => {
     const ack = acknowledgement({ ok: true, kind: "answer", thread: THREAD, body: "yes" });
     assert.equal(ack, "Posted your answer on crew trading.");
-    assert.match(acknowledgement({ ok: true, kind: "note", thread: "org", body: "hi" }), /note on the org thread/);
+    assert.match(
+      acknowledgement({ ok: true, kind: "note", thread: "org", body: "hi" }),
+      /note on the org thread/,
+    );
   });
 
   it("labels threads a human can name", () => {

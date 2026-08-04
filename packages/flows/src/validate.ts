@@ -70,11 +70,7 @@ function isInterpolated(value: string | undefined): boolean {
   return typeof value === "string" && value.includes("{{");
 }
 
-function requireAddress(
-  errors: string[],
-  value: string | undefined,
-  what: string,
-): void {
+function requireAddress(errors: string[], value: string | undefined, what: string): void {
   if (!value?.trim()) {
     errors.push(`${what} is required`);
   } else if (!isInterpolated(value) && !looksLikeAddress(value)) {
@@ -126,9 +122,7 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     errors.push(`unknown trigger "${def.trigger}" (${FLOW_TRIGGERS.join(" | ")})`);
   }
   if (def.trigger === "cron" && !isValidCron(def.schedule ?? "")) {
-    errors.push(
-      `cron trigger needs a valid 5-field schedule (got "${def.schedule ?? ""}")`,
-    );
+    errors.push(`cron trigger needs a valid 5-field schedule (got "${def.schedule ?? ""}")`);
   }
   if (def.scope) {
     const level = def.scope.level;
@@ -153,7 +147,12 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     }
     const r = def.scope.rate;
     if (r !== undefined) {
-      if (!Number.isInteger(r.maxProposals) || !Number.isInteger(r.ratePeriod) || r.maxProposals <= 0 || r.ratePeriod <= 0) {
+      if (
+        !Number.isInteger(r.maxProposals) ||
+        !Number.isInteger(r.ratePeriod) ||
+        r.maxProposals <= 0 ||
+        r.ratePeriod <= 0
+      ) {
         errors.push("scope.rate needs positive integers maxProposals and ratePeriod");
       }
     }
@@ -161,7 +160,11 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     if (s !== undefined) {
       // Shape only — the session-scope vocabulary lives in @lacrew/core and is
       // checked by the orchestrator, so this package stays chain-free.
-      if (!Array.isArray(s) || s.length === 0 || s.some((x) => typeof x !== "string" || !x.trim())) {
+      if (
+        !Array.isArray(s) ||
+        s.length === 0 ||
+        s.some((x) => typeof x !== "string" || !x.trim())
+      ) {
         errors.push("scope.scopes must be a non-empty array of scope strings");
       }
     }
@@ -173,9 +176,7 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
     else if (ids.has(step.id)) errors.push(`duplicate step id "${step.id}"`);
     else ids.add(step.id);
     if (!STEP_KINDS.includes(step.kind as (typeof STEP_KINDS)[number])) {
-      errors.push(
-        `step "${step.id}" has unknown kind "${step.kind}" (${STEP_KINDS.join(" | ")})`,
-      );
+      errors.push(`step "${step.id}" has unknown kind "${step.kind}" (${STEP_KINDS.join(" | ")})`);
     }
     if (step.kind === "model" && !step.prompt?.trim()) {
       errors.push(`model step "${step.id}" needs a prompt`);
@@ -226,9 +227,7 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
         if (!og.label?.trim()) errors.push(`org step "${step.id}" needs a label to hire`);
         requireAddress(errors, og.parent, `org step "${step.id}" parent`);
         if (og.nodeKind !== "manager_agent" && og.nodeKind !== "worker_agent") {
-          errors.push(
-            `org step "${step.id}" needs nodeKind manager_agent | worker_agent to hire`,
-          );
+          errors.push(`org step "${step.id}" needs nodeKind manager_agent | worker_agent to hire`);
         }
       } else {
         requireAddress(errors, og.node, `org step "${step.id}" node`);

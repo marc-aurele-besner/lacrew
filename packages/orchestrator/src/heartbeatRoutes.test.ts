@@ -48,11 +48,7 @@ type Listing = {
   store: string;
 };
 
-const post = (
-  app: Awaited<ReturnType<typeof buildApp>>["app"],
-  path: string,
-  body: unknown,
-) =>
+const post = (app: Awaited<ReturnType<typeof buildApp>>["app"], path: string, body: unknown) =>
   app.request(path, {
     method: "POST",
     body: JSON.stringify(body),

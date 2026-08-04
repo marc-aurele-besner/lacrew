@@ -46,16 +46,16 @@ await client.proposeHire({ label: "Researcher", kind: "worker_agent" });
 
 ## Surface map
 
-| Area | Methods |
-| --- | --- |
-| Org | `getOrgTree`, `getAllowances` |
-| Policies | `getNodePolicies` (per-node stacks + module params, `asset`-selectable), `readNodeRateRecorder` |
-| Policy deploys | `deployRateLimitPolicy`, `deployTimeWindowPolicy`, `deployPolicyStack` (inert until governance binds them) |
-| Intents | `proposeIntent`, `getPendingIntents`, `resolveIntent` |
-| Simulation | `simulateResolveApproval`, `simulateApprovalStateDiffs` (eth_simulateV1 measured movements), `traceApprovalCalls` (callTracer) |
-| Governance | `proposeHire` / `Fire` / `Reparent` / `SetGrant(s)` / `SetNodePolicy` / `SetNodeRateRecorder` / policy mutators (`asset`-selectable), `vote`, `veto`, `execute` |
-| Sessions | `getSessions`, `issueSession`, `revokeSession` |
-| Payroll | `runEpoch`, `getCurrentEpoch`, `getGrants`, `getTreasuryBalances` |
+| Area           | Methods                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Org            | `getOrgTree`, `getAllowances`                                                                                                                                   |
+| Policies       | `getNodePolicies` (per-node stacks + module params, `asset`-selectable), `readNodeRateRecorder`                                                                 |
+| Policy deploys | `deployRateLimitPolicy`, `deployTimeWindowPolicy`, `deployPolicyStack` (inert until governance binds them)                                                      |
+| Intents        | `proposeIntent`, `getPendingIntents`, `resolveIntent`                                                                                                           |
+| Simulation     | `simulateResolveApproval`, `simulateApprovalStateDiffs` (eth_simulateV1 measured movements), `traceApprovalCalls` (callTracer)                                  |
+| Governance     | `proposeHire` / `Fire` / `Reparent` / `SetGrant(s)` / `SetNodePolicy` / `SetNodeRateRecorder` / policy mutators (`asset`-selectable), `vote`, `veto`, `execute` |
+| Sessions       | `getSessions`, `issueSession`, `revokeSession`                                                                                                                  |
+| Payroll        | `runEpoch`, `getCurrentEpoch`, `getGrants`, `getTreasuryBalances`                                                                                               |
 
 ## Related
 

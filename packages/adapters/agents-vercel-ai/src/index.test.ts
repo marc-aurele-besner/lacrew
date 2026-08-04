@@ -33,19 +33,19 @@ test("routes execute through an injected backend", async () => {
 });
 
 test("constructs executable AI SDK tools over the mock backend", async () => {
-    const { toAiSdkTools } = await import("./index.js");
-    const tools = (await toAiSdkTools({ useMock: true })) as Record<
-      string,
-      { description?: string; execute?: (args: unknown, opts: unknown) => Promise<unknown> }
-    >;
-    const orgTool = tools.lacrew_get_org_tree;
-    assert.ok(orgTool);
-    assert.ok(orgTool.description && orgTool.description.length > 0);
-    assert.ok(typeof orgTool.execute === "function");
+  const { toAiSdkTools } = await import("./index.js");
+  const tools = (await toAiSdkTools({ useMock: true })) as Record<
+    string,
+    { description?: string; execute?: (args: unknown, opts: unknown) => Promise<unknown> }
+  >;
+  const orgTool = tools.lacrew_get_org_tree;
+  assert.ok(orgTool);
+  assert.ok(orgTool.description && orgTool.description.length > 0);
+  assert.ok(typeof orgTool.execute === "function");
 
-    const result = (await orgTool.execute!({}, { toolCallId: "t1", messages: [] })) as {
-      nodes?: unknown[];
-    };
-    const nodes = Array.isArray(result) ? result : result.nodes;
-    assert.ok(Array.isArray(nodes) && nodes.length >= 1);
-  });
+  const result = (await orgTool.execute!({}, { toolCallId: "t1", messages: [] })) as {
+    nodes?: unknown[];
+  };
+  const nodes = Array.isArray(result) ? result : result.nodes;
+  assert.ok(Array.isArray(nodes) && nodes.length >= 1);
+});

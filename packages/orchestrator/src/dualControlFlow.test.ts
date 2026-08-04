@@ -113,13 +113,22 @@ function harness(opts: { now?: () => Date } = {}) {
     .tool("read", "github.get_pull_request", { owner: "acme", repo: "site", number: "7" })
     .build();
 
-  const smallSpend = flow("desk-small", "Small clip")
-    .gate("pay", { value: "500000" })
-    .build();
+  const smallSpend = flow("desk-small", "Small clip").gate("pay", { value: "500000" }).build();
 
   const bigSpend = flow("desk-big", "Big clip").gate("pay", { value: "5000000" }).build();
 
-  return { runtime, surface, dualControl, calls, events, worker, merge, read, smallSpend, bigSpend };
+  return {
+    runtime,
+    surface,
+    dualControl,
+    calls,
+    events,
+    worker,
+    merge,
+    read,
+    smallSpend,
+    bigSpend,
+  };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -337,7 +346,13 @@ describe("dual control, end to end", () => {
         }),
       orgSeats: () => [
         { account: HUMAN, kind: "human_root" as const, parent: null, active: true },
-        { account: MANAGER, kind: "manager_agent" as const, parent: HUMAN, active: true, paused: true },
+        {
+          account: MANAGER,
+          kind: "manager_agent" as const,
+          parent: HUMAN,
+          active: true,
+          paused: true,
+        },
         { account: worker, kind: "worker_agent" as const, parent: MANAGER, active: true },
       ],
     });

@@ -148,13 +148,8 @@ export type RootSafeVerification = {
 };
 
 /** Exactly one owner, and it is the expected signer. Addresses compare case-insensitively. */
-export function rootSafeOwnersMatch(
-  owners: readonly string[],
-  expectedOwner: string,
-): boolean {
-  return (
-    owners.length === 1 && owners[0]!.toLowerCase() === expectedOwner.toLowerCase()
-  );
+export function rootSafeOwnersMatch(owners: readonly string[], expectedOwner: string): boolean {
+  return owners.length === 1 && owners[0]!.toLowerCase() === expectedOwner.toLowerCase();
 }
 
 /**
@@ -183,8 +178,16 @@ export async function verifyRootSafeDeployed(opts: {
   let threshold: number;
   try {
     const [read, thr] = await Promise.all([
-      client.readContract({ address: opts.safeAddress, abi: SAFE_READ_ABI, functionName: "getOwners" }),
-      client.readContract({ address: opts.safeAddress, abi: SAFE_READ_ABI, functionName: "getThreshold" }),
+      client.readContract({
+        address: opts.safeAddress,
+        abi: SAFE_READ_ABI,
+        functionName: "getOwners",
+      }),
+      client.readContract({
+        address: opts.safeAddress,
+        abi: SAFE_READ_ABI,
+        functionName: "getThreshold",
+      }),
     ]);
     owners = [...read] as `0x${string}`[];
     threshold = Number(thr);
@@ -227,10 +230,7 @@ export function assertRelayAllowlist(allowChainIds: readonly number[]): void {
   }
 }
 
-export function assertRelayableChain(
-  chainId: number,
-  allowChainIds: readonly number[],
-): void {
+export function assertRelayableChain(chainId: number, allowChainIds: readonly number[]): void {
   assertRelayAllowlist(allowChainIds);
   if (!allowChainIds.includes(chainId)) {
     throw new Error(

@@ -21,11 +21,7 @@
  * completion against a call that takes hundreds of milliseconds.
  */
 
-import {
-  parseModelPrices,
-  priceCompletion,
-  type ModelPrice,
-} from "@lacrew/flows";
+import { parseModelPrices, priceCompletion, type ModelPrice } from "@lacrew/flows";
 import type { BudgetSubject, InferenceBudgetsSurface } from "../inferenceBudgets.js";
 import type { ModelCompleteInput, ModelCompleteResult, ModelProvider } from "./types.js";
 

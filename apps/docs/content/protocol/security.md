@@ -6,12 +6,12 @@ Users do not buy composability. They buy **"my agents cannot rug me."**
 
 ## Threat → intended bound
 
-| Threat | Intended blast radius | Code today |
-| --- | --- | --- |
-| Compromised agent | Remaining streamed allowance on whitelisted targets; escalations climb | Policy + router + treasury spend path |
-| Compromised orchestrator | Scoped expiring session keys only | `SessionRegistry` + ephemeral EOAs; `propose` gated by `isKeyValid` + `maxValue` + optional `allowedTarget`; AA still TODO |
-| Compromised quorum | High-tier timelock + human veto | Timelock + `veto` on `GovernanceModule` |
-| Compromised root | Out of protocol scope | Multi-human roots first-class (design) |
+| Threat                   | Intended blast radius                                                  | Code today                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Compromised agent        | Remaining streamed allowance on whitelisted targets; escalations climb | Policy + router + treasury spend path                                                                                      |
+| Compromised orchestrator | Scoped expiring session keys only                                      | `SessionRegistry` + ephemeral EOAs; `propose` gated by `isKeyValid` + `maxValue` + optional `allowedTarget`; AA still TODO |
+| Compromised quorum       | High-tier timelock + human veto                                        | Timelock + `veto` on `GovernanceModule`                                                                                    |
+| Compromised root         | Out of protocol scope                                                  | Multi-human roots first-class (design)                                                                                     |
 
 ## Non-custodial cloud
 

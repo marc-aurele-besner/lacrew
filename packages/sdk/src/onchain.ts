@@ -226,10 +226,7 @@ export class OnchainLacrewClient {
       nodes.push({
         account: node.account,
         kind: KIND_MAP[Number(node.kind)] ?? "worker_agent",
-        parent:
-          node.parent === "0x0000000000000000000000000000000000000000"
-            ? null
-            : node.parent,
+        parent: node.parent === "0x0000000000000000000000000000000000000000" ? null : node.parent,
         active: node.active,
       });
 
@@ -346,10 +343,7 @@ export class OnchainLacrewClient {
   async getTreasuryBalances(): Promise<TreasuryBalance[]> {
     const out: TreasuryBalance[] = [];
     for (const stack of listAssetStacks(this.addresses)) {
-      if (
-        !stack.treasury ||
-        stack.treasury === "0x0000000000000000000000000000000000000000"
-      ) {
+      if (!stack.treasury || stack.treasury === "0x0000000000000000000000000000000000000000") {
         continue;
       }
       const [total, liquid, reserved] = await Promise.all([
@@ -412,9 +406,7 @@ export class OnchainLacrewClient {
    */
   private assetStreamer(asset?: string): `0x${string}` | undefined {
     const addr = resolveAssetStack(this.addresses, asset).epochStreamer;
-    return addr && addr !== "0x0000000000000000000000000000000000000000"
-      ? addr
-      : undefined;
+    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
   }
 
   /**
@@ -425,9 +417,7 @@ export class OnchainLacrewClient {
    */
   private assetSpendCap(asset?: string): `0x${string}` | undefined {
     const addr = resolveAssetStack(this.addresses, asset).spendCapPolicy;
-    return addr && addr !== "0x0000000000000000000000000000000000000000"
-      ? addr
-      : undefined;
+    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
   }
 
   /**
@@ -473,7 +463,8 @@ export class OnchainLacrewClient {
     data?: Hex;
     policyModule?: `0x${string}`;
   }): Promise<Verdict> {
-    const module = input.policyModule ?? this.addresses.policyStack ?? this.addresses.spendCapPolicy;
+    const module =
+      input.policyModule ?? this.addresses.policyStack ?? this.addresses.spendCapPolicy;
     if (!module || module === "0x0000000000000000000000000000000000000000") {
       throw new Error(
         `No policy module configured for chain ${this.chainId}: set addresses.policyStack or pass policyModule`,
@@ -847,9 +838,7 @@ export class OnchainLacrewClient {
    * Dry-run an approval (viem eth_call through router.resolve → finalize →
    * the agent's actual target call) without signing. PRD F1.16.
    */
-  async simulateResolveApproval(
-    intentId: string,
-  ): Promise<{ ok: boolean; reason?: string }> {
+  async simulateResolveApproval(intentId: string): Promise<{ ok: boolean; reason?: string }> {
     const sender = await this.simulationSender(intentId);
     if (!sender) {
       throw new Error(
@@ -885,16 +874,13 @@ export class OnchainLacrewClient {
    * Null when the node does not support eth_simulateV1 or the resolve itself
    * reverts — "not measured" must stay distinct from "no movement".
    */
-  async simulateApprovalStateDiffs(intentId: string): Promise<
-    | Array<{
-        account: `0x${string}`;
-        label: "treasury" | "agent" | "target" | "router";
-        asset: string;
-        delta: string;
-        decimals: number;
-      }>
-    | null
-  > {
+  async simulateApprovalStateDiffs(intentId: string): Promise<Array<{
+    account: `0x${string}`;
+    label: "treasury" | "agent" | "target" | "router";
+    asset: string;
+    delta: string;
+    decimals: number;
+  }> | null> {
     let intent: Intent;
     try {
       intent = await this.readIntent(BigInt(intentId));
@@ -911,7 +897,10 @@ export class OnchainLacrewClient {
     );
     if (stacks.length === 0) return null;
 
-    const parties: Array<{ account: `0x${string}`; label: "treasury" | "agent" | "target" | "router" }> = [];
+    const parties: Array<{
+      account: `0x${string}`;
+      label: "treasury" | "agent" | "target" | "router";
+    }> = [];
     const seen = new Set<string>();
     const addParty = (
       account: `0x${string}` | undefined,
@@ -1004,18 +993,15 @@ export class OnchainLacrewClient {
    * the node has no tracer or the trace fails — "not traced" stays distinct
    * from "no calls".
    */
-  async traceApprovalCalls(intentId: string): Promise<
-    | Array<{
-        depth: number;
-        type: string;
-        from: `0x${string}`;
-        to: `0x${string}`;
-        value: string;
-        gasUsed?: string;
-        error?: string;
-      }>
-    | null
-  > {
+  async traceApprovalCalls(intentId: string): Promise<Array<{
+    depth: number;
+    type: string;
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: string;
+    gasUsed?: string;
+    error?: string;
+  }> | null> {
     const sender = await this.simulationSender(intentId);
     if (!sender) return null;
     type Frame = {
@@ -1152,8 +1138,18 @@ export class OnchainLacrewClient {
           number,
           number,
         ];
-        const [, key, expiresAtRaw, scopeMask, maxValue, allowedTarget, revoked, exists, windowStart, windowEnd] =
-          row;
+        const [
+          ,
+          key,
+          expiresAtRaw,
+          scopeMask,
+          maxValue,
+          allowedTarget,
+          revoked,
+          exists,
+          windowStart,
+          windowEnd,
+        ] = row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
         // Rate lives in its own mapping, not the Session struct — one more read.
@@ -1366,11 +1362,7 @@ export class OnchainLacrewClient {
     const data = encodeFunctionData({
       abi: marketplacePaymentsAbi,
       functionName: "purchaseFor",
-      args: [
-        OnchainLacrewClient.listingId(input.catalogId),
-        buyer,
-        input.maxPrice ?? gross,
-      ],
+      args: [OnchainLacrewClient.listingId(input.catalogId), buyer, input.maxPrice ?? gross],
     });
     const result = await this.proposeIntent({
       agent: input.agent,
@@ -1407,10 +1399,7 @@ export class OnchainLacrewClient {
   }
 
   /** Send ETH from the root wallet (Phase 0 gas sponsorship for session keys). */
-  async fundEth(
-    to: `0x${string}`,
-    value: bigint,
-  ): Promise<{ txHash: `0x${string}` }> {
+  async fundEth(to: `0x${string}`, value: bigint): Promise<{ txHash: `0x${string}` }> {
     const wallet = this.requireWallet();
     const hash = await wallet.sendTransaction({
       to,
@@ -1476,8 +1465,7 @@ export class OnchainLacrewClient {
     if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
     const wallet = this.requireIssuerWallet();
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
-    const allowedTarget =
-      input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
+    const allowedTarget = input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
     const targets =
       input.allowedTargets && input.allowedTargets.length > 0
         ? input.allowedTargets
@@ -2328,15 +2316,7 @@ export class OnchainLacrewClient {
       abi: escalationRouterAbi,
       functionName: "intents",
       args: [id],
-    })) as readonly [
-      `0x${string}`,
-      `0x${string}`,
-      bigint,
-      Hex,
-      `0x${string}`,
-      boolean,
-      boolean,
-    ];
+    })) as readonly [`0x${string}`, `0x${string}`, bigint, Hex, `0x${string}`, boolean, boolean];
 
     const [agent, target, value, data, awaitingApprover, resolved, approved] = row;
 
@@ -2347,9 +2327,7 @@ export class OnchainLacrewClient {
       value,
       data,
       awaitingApprover:
-        awaitingApprover === "0x0000000000000000000000000000000000000000"
-          ? null
-          : awaitingApprover,
+        awaitingApprover === "0x0000000000000000000000000000000000000000" ? null : awaitingApprover,
       resolved,
       approved: resolved ? approved : null,
       verdict: resolved ? (approved ? "ALLOW" : "DENY") : "ESCALATE",

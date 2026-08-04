@@ -115,7 +115,9 @@ function printServers(servers: ServerView[]): void {
       const state = tool.enabled ? "allowed" : "blocked";
       const mode = tool.effect === "write" ? ` ${tool.mode}` : "";
       const gone = tool.present ? "" : "  (no longer on the server)";
-      console.log(`  ${tool.enabled ? "●" : "○"} ${tool.name}  ${tool.effect}${mode}  ${state}${gone}`);
+      console.log(
+        `  ${tool.enabled ? "●" : "○"} ${tool.name}  ${tool.effect}${mode}  ${state}${gone}`,
+      );
       if (tool.description) console.log(`      ${tool.description}`);
     }
     if (server.blockedCount > 0) {

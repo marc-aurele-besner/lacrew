@@ -250,9 +250,7 @@ export function normalizeInferenceBudget(
   const rawLimits = input.limits ?? {};
   const limits: InferenceBudgetLimits = {
     ...(rawLimits.maxUsd !== undefined ? { maxUsd: rawLimits.maxUsd } : {}),
-    ...(rawLimits.maxInputTokens !== undefined
-      ? { maxInputTokens: rawLimits.maxInputTokens }
-      : {}),
+    ...(rawLimits.maxInputTokens !== undefined ? { maxInputTokens: rawLimits.maxInputTokens } : {}),
     ...(rawLimits.maxOutputTokens !== undefined
       ? { maxOutputTokens: rawLimits.maxOutputTokens }
       : {}),

@@ -133,9 +133,7 @@ test(
       issued.delegation.signed as Delegation,
       nativeTransferExecution(sessionKey.address, parseEther("0.3")),
     );
-    await assert.rejects(() =>
-      sw.sendTransaction({ to: over.to, data: over.data, value: 0n }),
-    );
+    await assert.rejects(() => sw.sendTransaction({ to: over.to, data: over.data, value: 0n }));
 
     // Revoke: one plain root transaction (self-bundled handleOps), then the
     // remaining budget is unreachable.
@@ -149,8 +147,6 @@ test(
       issued.delegation.signed as Delegation,
       nativeTransferExecution(sessionKey.address, parseEther("0.1")),
     );
-    await assert.rejects(() =>
-      sw.sendTransaction({ to: after.to, data: after.data, value: 0n }),
-    );
+    await assert.rejects(() => sw.sendTransaction({ to: after.to, data: after.data, value: 0n }));
   },
 );

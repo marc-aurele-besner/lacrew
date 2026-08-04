@@ -52,16 +52,16 @@ describe("runMcpTool with injected backend", () => {
   });
 
   it("rejects unknown tools", async () => {
-    await assert.rejects(runMcpTool("lacrew_nope", {}, { backend: stubBackend([]) }), /Unknown MCP tool/);
+    await assert.rejects(
+      runMcpTool("lacrew_nope", {}, { backend: stubBackend([]) }),
+      /Unknown MCP tool/,
+    );
   });
 
   it("refuses to answer without a backend", async () => {
     // This used to serve the sample org tree. A model asking "who is in my
     // org?" got Human Root / Manager A / Worker 1 with no marker saying so.
-    await assert.rejects(
-      runMcpTool("lacrew_get_org_tree", {}),
-      /No LaCrew backend configured/,
-    );
+    await assert.rejects(runMcpTool("lacrew_get_org_tree", {}), /No LaCrew backend configured/);
   });
 
   it("serves the demo client only when it is asked for", async () => {
@@ -128,10 +128,18 @@ describe("runMcpTool with injected backend", () => {
       },
     };
 
-    await runMcpTool("lacrew_say", { thread: "crew:trading", body: "shipping it", kind: "result" }, { backend });
+    await runMcpTool(
+      "lacrew_say",
+      { thread: "crew:trading", body: "shipping it", kind: "result" },
+      { backend },
+    );
     // An agent must not be able to ask a question that files itself as a note
     // and therefore never shows up as awaiting an answer.
-    await runMcpTool("lacrew_ask", { thread: "crew:trading", body: "merge?", kind: "note", options: ["y", "n"] }, { backend });
+    await runMcpTool(
+      "lacrew_ask",
+      { thread: "crew:trading", body: "merge?", kind: "note", options: ["y", "n"] },
+      { backend },
+    );
 
     assert.equal(posted[0]?.kind, "result");
     assert.equal(posted[1]?.kind, "question");
@@ -177,10 +185,7 @@ describe("runMcpTool with injected backend", () => {
     );
     await runMcpTool("lacrew_set_budget", { action: "set-grant", amount: "7" }, { backend });
 
-    assert.deepEqual(calls[0], [
-      "checkPolicy",
-      { agent: "0xa", target: "0xb", value: 42n },
-    ]);
+    assert.deepEqual(calls[0], ["checkPolicy", { agent: "0xa", target: "0xb", value: 42n }]);
     assert.deepEqual(calls[1], ["setBudget", { action: "set-grant", amount: 7n }]);
   });
 });

@@ -112,7 +112,12 @@ describe("lacrew connectors", () => {
   });
 
   it("refuses an address that is not one", async () => {
-    const { err, code } = await capture(["config", "github", "--policy-target", "merge_pull_request=0xzz"]);
+    const { err, code } = await capture([
+      "config",
+      "github",
+      "--policy-target",
+      "merge_pull_request=0xzz",
+    ]);
     assert.match(err, /is not a 0x address/);
     assert.equal(code, 1);
   });

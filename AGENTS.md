@@ -6,25 +6,25 @@ Sibling private repo: `lacrew.xyz` (hosted cloud). Anything users must trust to 
 
 ## Stack
 
-| Layer | Tech |
-| --- | --- |
-| Contracts | Solidity 0.8.x, Foundry, OpenZeppelin; Ethereum Sepolia → Base mainnet |
-| Packages | TypeScript, pnpm workspaces, Turborepo |
-| Chain | viem |
-| Data | Neon or Docker Postgres + Drizzle (`@lacrew/db`) |
-| Orchestrator | Node 22+, Hono/Fastify, QueueProvider + pg-boss (BullMQ later) |
-| Docs | Fumadocs (planned) |
+| Layer        | Tech                                                                   |
+| ------------ | ---------------------------------------------------------------------- |
+| Contracts    | Solidity 0.8.x, Foundry, OpenZeppelin; Ethereum Sepolia → Base mainnet |
+| Packages     | TypeScript, pnpm workspaces, Turborepo                                 |
+| Chain        | viem                                                                   |
+| Data         | Neon or Docker Postgres + Drizzle (`@lacrew/db`)                       |
+| Orchestrator | Node 22+, Hono/Fastify, QueueProvider + pg-boss (BullMQ later)         |
+| Docs         | Fumadocs (planned)                                                     |
 
 ## Commands
 
-| Task | Command |
-| --- | --- |
-| Install | `pnpm install` |
-| Build all | `pnpm build` |
-| Test (TS) | `pnpm test` |
+| Task            | Command                       |
+| --------------- | ----------------------------- |
+| Install         | `pnpm install`                |
+| Build all       | `pnpm build`                  |
+| Test (TS)       | `pnpm test`                   |
 | Contracts build | `cd contracts && forge build` |
-| Contracts test | `cd contracts && forge test` |
-| Format | `pnpm format` |
+| Contracts test  | `cd contracts && forge test`  |
+| Format          | `pnpm format`                 |
 
 ## Architecture (enforcement path)
 

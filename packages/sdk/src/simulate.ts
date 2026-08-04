@@ -28,7 +28,8 @@ function formatUsdc(value: bigint): string {
   const abs = neg ? -value : value;
   const whole = abs / 10n ** 6n;
   const frac = abs % 10n ** 6n;
-  const fracStr = frac === 0n ? "00" : frac.toString().padStart(6, "0").replace(/0+$/, "").padEnd(2, "0");
+  const fracStr =
+    frac === 0n ? "00" : frac.toString().padStart(6, "0").replace(/0+$/, "").padEnd(2, "0");
   return `${neg ? "-" : ""}${whole}.${fracStr}`;
 }
 

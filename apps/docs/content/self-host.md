@@ -322,7 +322,7 @@ The reply carries `approver` (the seat that signed, read off the chain) and `aut
 ```ts
 import { approveIntent } from "@lacrew/sdk";
 
-await approveIntent({ intentId: "12", rootAccount });     // wallet root, signs locally
+await approveIntent({ intentId: "12", rootAccount }); // wallet root, signs locally
 await approveIntent({ intentId: "12", proof: assertion }); // passkey root, signed at the authenticator
 ```
 

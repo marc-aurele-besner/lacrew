@@ -62,10 +62,7 @@ const ERC20 = parseAbi([
 
 test("resolves the pinned AllowanceModule on Base", () => {
   assert.equal(ALLOWANCE_MODULE_VERSION, "0.1.1");
-  assert.equal(
-    getAllowanceModuleAddress(BASE),
-    "0xAA46724893dedD72658219405185Fb0Fc91e091C",
-  );
+  assert.equal(getAllowanceModuleAddress(BASE), "0xAA46724893dedD72658219405185Fb0Fc91e091C");
 });
 
 test("an unsupported chain reports plainly instead of returning a bad address", () => {
@@ -74,10 +71,7 @@ test("an unsupported chain reports plainly instead of returning a bad address", 
 
 test("amounts beyond uint96 are rejected rather than truncated", () => {
   const delegate = "0x1111111111111111111111111111111111111111" as const;
-  assert.throws(
-    () => buildSetAllowanceTx(BASE, { delegate, amount: 1n << 96n }),
-    /exceeds uint96/,
-  );
+  assert.throws(() => buildSetAllowanceTx(BASE, { delegate, amount: 1n << 96n }), /exceeds uint96/);
   // The boundary itself is allowed.
   assert.ok(buildSetAllowanceTx(BASE, { delegate, amount: (1n << 96n) - 1n }));
 });
@@ -132,10 +126,7 @@ test(
         data: deployment.data,
         value: deployment.value,
       });
-      assert.equal(
-        (await publicClient.waitForTransactionReceipt({ hash })).status,
-        "success",
-      );
+      assert.equal((await publicClient.waitForTransactionReceipt({ hash })).status, "success");
     }
     const safeAddress = predicted.address;
 
@@ -174,12 +165,7 @@ test(
       "delegate should be registered on the Safe",
     );
 
-    const granted = await readAllowance(
-      publicClient,
-      chainId,
-      safeAddress,
-      delegate.address,
-    );
+    const granted = await readAllowance(publicClient, chainId, safeAddress, delegate.address);
     assert.equal(granted.amount, budget);
     assert.equal(granted.spent, 0n);
     assert.equal(granted.remaining, budget);
@@ -212,12 +198,7 @@ test(
       `payee should hold ${formatEther(spend)} ETH from the Safe`,
     );
 
-    const afterSpend = await readAllowance(
-      publicClient,
-      chainId,
-      safeAddress,
-      delegate.address,
-    );
+    const afterSpend = await readAllowance(publicClient, chainId, safeAddress, delegate.address);
     assert.equal(afterSpend.spent, spend);
     assert.equal(afterSpend.remaining, budget - spend);
 
@@ -244,9 +225,7 @@ test(
     );
 
     // 5. Revoking the delegate closes the seat.
-    await executeSafeTransactions(exec, [
-      buildRemoveDelegateTx(chainId, delegate.address),
-    ]);
+    await executeSafeTransactions(exec, [buildRemoveDelegateTx(chainId, delegate.address)]);
     const revoked = await buildAllowanceTransferTx(chainId, {
       safe: safeAddress,
       to: payee.address,
@@ -321,8 +300,7 @@ test(
       delegate: intruder.address,
     });
     await assert.rejects(
-      () =>
-        intruderWallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value }),
+      () => intruderWallet.sendTransaction({ to: tx.to, data: tx.data, value: tx.value }),
       "an unregistered delegate must not spend",
     );
 
@@ -410,13 +388,7 @@ test(
       }),
     );
 
-    const granted = await readAllowance(
-      publicClient,
-      chainId,
-      safeAddress,
-      delegate.address,
-      USDC,
-    );
+    const granted = await readAllowance(publicClient, chainId, safeAddress, delegate.address, USDC);
     assert.equal(granted.amount, perPeriod);
     assert.equal(granted.resetTimeMin, 1, "budget should refill every minute");
 

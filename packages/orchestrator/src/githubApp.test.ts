@@ -96,7 +96,8 @@ test("a private key mangled by an env var still loads", () => {
 test("a key that is not a key fails as a key, not as a 401 later", () => {
   assert.throws(() => normalizePrivateKey("hunter2"), /github_app_private_key_unreadable/);
   assert.throws(
-    () => signAppJwt("1", "-----BEGIN RSA PRIVATE KEY-----\nnope\n-----END RSA PRIVATE KEY-----", 0),
+    () =>
+      signAppJwt("1", "-----BEGIN RSA PRIVATE KEY-----\nnope\n-----END RSA PRIVATE KEY-----", 0),
     /github_app_private_key_invalid/,
   );
 });
@@ -270,7 +271,10 @@ test("a bearer connector does not re-mint on a 401 — there is nothing to re-mi
   const stub = githubStub({ apiStatus: [401, 200] });
   const registry = createConnectorRegistry({
     connectors: [
-      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request", "create_issue_comment"] }),
+      buildConnectorPreset("github", {
+        authMode: "token",
+        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+      }),
     ],
     env: { GH_TOKEN: "ghp_x" },
     fetchImpl: stub.impl,
@@ -324,7 +328,12 @@ test("describe() reports wiring without a credential anywhere in it", async () =
 
 test("describe() says not-ready when the env vars are absent", () => {
   const registry = createConnectorRegistry({
-    connectors: [buildConnectorPreset("github", { authMode: "github-app", omitRoutes: ["merge_pull_request", "create_issue_comment"] })],
+    connectors: [
+      buildConnectorPreset("github", {
+        authMode: "github-app",
+        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+      }),
+    ],
     env: { GITHUB_APP_ID: "1" },
   });
   assert.equal(registry.describe()[0]!.auth.ready, false);

@@ -92,10 +92,7 @@ test("seats with no account at all are missing, not bound to nothing", () => {
   const pending = bp.roles.map((role) => ({ label: role.label, roleId: role.id }));
   const out = resolveCrewSeats(bp, pending);
   assert.deepEqual(out.roles, {});
-  assert.deepEqual(
-    out.missing,
-    bp.roles.map((r) => r.id).sort(),
-  );
+  assert.deepEqual(out.missing, bp.roles.map((r) => r.id).sort());
 });
 
 test("seatRoleMap is what a surface should persist", () => {

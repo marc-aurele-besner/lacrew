@@ -41,7 +41,9 @@ async function waitForRpc(url: string): Promise<void> {
 
   console.log(`[@lacrew/indexer] waiting for RPC at ${url}`);
   console.log(`[@lacrew/indexer] start Anvil in another terminal: anvil`);
-  console.log(`[@lacrew/indexer] then deploy: pnpm --filter @lacrew/cli exec tsx src/index.ts deploy --anvil`);
+  console.log(
+    `[@lacrew/indexer] then deploy: pnpm --filter @lacrew/cli exec tsx src/index.ts deploy --anvil`,
+  );
 
   for (;;) {
     await new Promise((r) => setTimeout(r, pollMs));

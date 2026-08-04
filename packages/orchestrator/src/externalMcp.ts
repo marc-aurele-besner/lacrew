@@ -160,9 +160,7 @@ export type ExternalMcpToolResolution = {
   effect: "read" | "write";
   mode: ConnectorWriteMode;
   /** What decided it, so an inherited value is legible in a UI. */
-  source:
-    | { kind: "default-deny" }
-    | { kind: "rule"; scope: ExternalMcpScope; tool: string };
+  source: { kind: "default-deny" } | { kind: "rule"; scope: ExternalMcpScope; tool: string };
 };
 
 /** A tool as it is safe to publish: policy and shape, never a credential. */
@@ -238,7 +236,9 @@ export type ExternalMcpRegistry = {
   /** Re-read tool lists; new tools are recorded blocked. Omit id for all servers. */
   refresh(serverId?: string): Promise<ExternalMcpRefreshResult[]>;
   /** Reachability check for a setup drawer: does it answer, and with how many tools. */
-  ping(serverId: string): Promise<{ server: string; ok: boolean; ms: number; tools?: number; error?: string }>;
+  ping(
+    serverId: string,
+  ): Promise<{ server: string; ok: boolean; ms: number; tools?: number; error?: string }>;
   rules(): ExternalMcpToolRecord[];
   setTool(rule: ExternalMcpToolRule): Promise<ExternalMcpToolRecord>;
   clearTool(scope: ExternalMcpScope, server: string, tool: string): Promise<boolean>;
@@ -327,7 +327,9 @@ export function validateExternalMcpServer(server: ExternalMcpServer): string[] {
       errors.push(`mcp server "${server.id}" url is not a URL`);
     }
     if (url && url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url))) {
-      errors.push(`mcp server "${server.id}" url must be https (http is allowed only for loopback)`);
+      errors.push(
+        `mcp server "${server.id}" url must be https (http is allowed only for loopback)`,
+      );
     }
     if (server.command) {
       errors.push(`mcp server "${server.id}" is http and cannot carry a command`);
@@ -529,9 +531,7 @@ function defaultClientFor(
   });
 }
 
-export function createExternalMcpRegistry(
-  opts: ExternalMcpRegistryOptions,
-): ExternalMcpRegistry {
+export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): ExternalMcpRegistry {
   const env = opts.env ?? process.env;
   const now = opts.now ?? (() => new Date());
   const byId = new Map<string, ExternalMcpServer>();
@@ -554,10 +554,7 @@ export function createExternalMcpRegistry(
   const recordKey = (scope: ExternalMcpScope, server: string, tool: string): string =>
     `${externalMcpScopeKey(scope)}|${norm(server)}|${tool}`;
   /** Last discovery per server: what the server offers, and how it went. */
-  const discovery = new Map<
-    string,
-    { tools: McpDiscoveredTool[]; at: string; error?: string }
-  >();
+  const discovery = new Map<string, { tools: McpDiscoveredTool[]; at: string; error?: string }>();
 
   const audit = (type: ProtocolEvent["type"], payload: Record<string, unknown>): void => {
     opts.onEvent?.({ type, at: now().toISOString(), payload });

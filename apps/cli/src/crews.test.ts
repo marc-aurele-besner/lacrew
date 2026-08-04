@@ -234,7 +234,10 @@ describe("lacrew crews checklist", () => {
   });
 
   it("exits non-zero when the connector is registered without a credential", async () => {
-    const routes = { ...wired(), "/connectors": { connectors: [{ id: "github", auth: { ready: false } }] } };
+    const routes = {
+      ...wired(),
+      "/connectors": { connectors: [{ id: "github", auth: { ready: false } }] },
+    };
     await withOrch(routes, async (url) => {
       const { out, code } = await captureAsync(["checklist", "github-experts", "--url", url]);
       assert.match(out, /credential is not set/);
@@ -303,7 +306,10 @@ describe("lacrew crews checklist", () => {
   });
 
   it("blocks on a mock-mode runtime", async () => {
-    const routes = { ...wired(), "/health": { mode: "mock", mocked: true, model: { provider: "memory" } } };
+    const routes = {
+      ...wired(),
+      "/health": { mode: "mock", mocked: true, model: { provider: "memory" } },
+    };
     await withOrch(routes, async (url) => {
       const { out, code } = await captureAsync(["checklist", "github-experts", "--url", url]);
       assert.match(out, /running in mock mode/);

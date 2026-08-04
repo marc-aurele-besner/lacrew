@@ -5,11 +5,7 @@ import { createFlowsSurface } from "./flows.js";
 import { InMemoryQueue } from "./queue/index.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { createOrchestratorApp } from "./httpApp.js";
-import {
-  buildConnectorPreset,
-  createConnectorRegistry,
-  type ConnectorRegistry,
-} from "./index.js";
+import { buildConnectorPreset, createConnectorRegistry, type ConnectorRegistry } from "./index.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import { BRIEF_MAX_CHARS } from "./agentControls.js";
 import { createConnectorModes } from "./connectorPolicy.js";
@@ -109,7 +105,10 @@ describe("orchestrator Hono app", () => {
 
     // A version pin is part of the connector, so a catalog must be able to see
     // it without registering one.
-    assert.equal(body.available.find((p) => p.id === "notion")!.headers?.["Notion-Version"], "2022-06-28");
+    assert.equal(
+      body.available.find((p) => p.id === "notion")!.headers?.["Notion-Version"],
+      "2022-06-28",
+    );
   });
 
   it("reports a registered connector's wiring without any credential in it", async () => {
@@ -224,7 +223,10 @@ describe("orchestrator Hono app", () => {
     const res = await buildApp().request("/marketplace/purchase", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ catalogId: "flow-x", agent: "0x0000000000000000000000000000000000000001" }),
+      body: JSON.stringify({
+        catalogId: "flow-x",
+        agent: "0x0000000000000000000000000000000000000001",
+      }),
     });
     assert.equal(res.status, 409);
     assert.deepEqual(await res.json(), { error: "marketplace_purchase_requires_chain" });
@@ -437,7 +439,9 @@ describe("orchestrator Hono app", () => {
   it("refuses a malformed watchlist rather than storing half of it", async () => {
     const res = await buildApp().request("/wallets/watchlist", {
       method: "POST",
-      body: JSON.stringify({ watchlist: [{ chainId: 1, tokens: [{ symbol: "X", address: "0xnope", decimals: 6 }] }] }),
+      body: JSON.stringify({
+        watchlist: [{ chainId: 1, tokens: [{ symbol: "X", address: "0xnope", decimals: 6 }] }],
+      }),
     });
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error: string };
@@ -448,10 +452,7 @@ describe("orchestrator Hono app", () => {
     const app = buildApp();
     // Operator input errors are 400 and never leave the machine.
     assert.equal((await app.request("/wallets/token?chainId=0&address=0x1")).status, 400);
-    assert.equal(
-      (await app.request("/wallets/token?chainId=8453&address=nope")).status,
-      400,
-    );
+    assert.equal((await app.request("/wallets/token?chainId=8453&address=nope")).status, 400);
     // A chain with no endpoint and no public default cannot be asked. That is
     // 503 "could not ask", never 404 "this is not a token" — telling an
     // operator their correct address is wrong sends them to fix nothing.
@@ -663,10 +664,7 @@ describe("orchestrator Hono app", () => {
   it("grants the full vocabulary when the caller does not narrow it", async () => {
     const { res, body } = await boot(buildApp(), {});
     assert.equal(res.status, 200);
-    assert.deepEqual(body.session.scopes.slice().sort(), [
-      "propose:intent",
-      "spend:whitelist",
-    ]);
+    assert.deepEqual(body.session.scopes.slice().sort(), ["propose:intent", "spend:whitelist"]);
   });
 
   it("issues a narrowed session when scopes are requested", async () => {
@@ -779,7 +777,9 @@ describe("POST /governance/propose-set-grants", () => {
   it("rejects an entry missing its amount", async () => {
     const res = await buildApp().request("/governance/propose-set-grants", {
       method: "POST",
-      body: JSON.stringify({ entries: [{ account: "0x2222222222222222222222222222222222222222" }] }),
+      body: JSON.stringify({
+        entries: [{ account: "0x2222222222222222222222222222222222222222" }],
+      }),
     });
     assert.equal(res.status, 400);
   });

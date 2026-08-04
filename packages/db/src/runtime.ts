@@ -172,10 +172,7 @@ export interface AgentControlRow {
  * rather than merged — a partial update would let a caller that omitted
  * `layers` silently keep a directive it believed it had cleared.
  */
-export async function upsertAgentControlRow(
-  handle: DbHandle,
-  row: AgentControlRow,
-): Promise<void> {
+export async function upsertAgentControlRow(handle: DbHandle, row: AgentControlRow): Promise<void> {
   const values = {
     agent: row.agent,
     paused: row.paused,
@@ -248,10 +245,7 @@ export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promi
 }
 
 /** Most recent messages, returned oldest → newest so a reader follows them forward. */
-export async function recentMessageRows(
-  handle: DbHandle,
-  limit: number,
-): Promise<MessageRow[]> {
+export async function recentMessageRows(handle: DbHandle, limit: number): Promise<MessageRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeMessages)

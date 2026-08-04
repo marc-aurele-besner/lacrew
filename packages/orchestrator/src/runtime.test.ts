@@ -195,7 +195,11 @@ describe("session ceilings", () => {
     const run = await runtime.boot(A, { scopes: ["propose:intent"], persistScopePolicy: false });
     assert.deepEqual(run.scopes, ["propose:intent"]);
     const later = await runtime.boot(A, {});
-    assert.equal(later.scopes.length, 2, "a later boot gets the full default, not the narrowed set");
+    assert.equal(
+      later.scopes.length,
+      2,
+      "a later boot gets the full default, not the narrowed set",
+    );
     assert.notEqual(run.keyId, later.keyId);
   });
 
@@ -599,9 +603,7 @@ describe("no demo address stands in for a real seat", () => {
 
     const events = (await runtime.audit()).filter((e) => e.type === "AgentDirectiveChanged");
     assert.equal(events.length, 2);
-    const second = events.find(
-      (e) => (e.payload as { layers: string[] }).layers.length === 2,
-    )!;
+    const second = events.find((e) => (e.payload as { layers: string[] }).layers.length === 2)!;
     assert.deepEqual((second.payload as { previousLayers: string[] }).previousLayers, ["agent"]);
   });
 

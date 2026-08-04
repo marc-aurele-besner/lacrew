@@ -25,7 +25,10 @@ describe("resolveWorkspacePath", () => {
     // packages/indexer and the orchestrator reads it from packages/orchestrator.
     // Resolving against each process's cwd produced two different files, so the
     // audit trail read empty with no error anywhere.
-    const fromIndexer = resolveWorkspacePath(".lacrew/indexer.json", resolve(ROOT, "packages/indexer"));
+    const fromIndexer = resolveWorkspacePath(
+      ".lacrew/indexer.json",
+      resolve(ROOT, "packages/indexer"),
+    );
     const fromOrchestrator = resolveWorkspacePath(
       ".lacrew/indexer.json",
       resolve(ROOT, "packages/orchestrator"),
@@ -40,8 +43,14 @@ describe("resolveWorkspacePath", () => {
 
   it("passes URLs through untouched", () => {
     // The same env var also accepts a remote indexer.
-    assert.equal(resolveWorkspacePath("https://idx.example/store.json"), "https://idx.example/store.json");
-    assert.equal(resolveWorkspacePath("http://127.0.0.1:9000/x.json"), "http://127.0.0.1:9000/x.json");
+    assert.equal(
+      resolveWorkspacePath("https://idx.example/store.json"),
+      "https://idx.example/store.json",
+    );
+    assert.equal(
+      resolveWorkspacePath("http://127.0.0.1:9000/x.json"),
+      "http://127.0.0.1:9000/x.json",
+    );
   });
 });
 

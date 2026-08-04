@@ -65,7 +65,6 @@ test("overdraft beyond allowance balance marks revert", () => {
   assert.ok(sim.warnings.some((w) => w.includes("cannot cover")));
 });
 
-
 test("reports no gas estimate, because nothing estimated gas", () => {
   // A figure derived from the spend amount is not a measurement, and it sat
   // beside a status and warnings that do come from real allowance and policy

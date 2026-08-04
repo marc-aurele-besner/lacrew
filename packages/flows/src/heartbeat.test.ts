@@ -143,8 +143,12 @@ describe("quiet hours", () => {
     });
     // 04:00Z is 00:00 in New York — quiet there, working hours in UTC.
     assert.ok(inQuietHours(config, new Date("2026-07-30T04:00:00Z")));
-    assert.ok(!inQuietHours(base({ quietHours: { start: "22:00", end: "07:00" } }),
-      new Date("2026-07-30T12:00:00Z")));
+    assert.ok(
+      !inQuietHours(
+        base({ quietHours: { start: "22:00", end: "07:00" } }),
+        new Date("2026-07-30T12:00:00Z"),
+      ),
+    );
   });
 
   it("treats an empty window as no window, never as a permanent mute", () => {
@@ -165,10 +169,10 @@ describe("heartbeatDue", () => {
       due: false,
       reason: "disabled",
     });
-    assert.deepEqual(
-      heartbeatDue({ ...base(), checklist: [] }, at),
-      { due: false, reason: "empty" },
-    );
+    assert.deepEqual(heartbeatDue({ ...base(), checklist: [] }, at), {
+      due: false,
+      reason: "empty",
+    });
     assert.deepEqual(heartbeatDue(base(), new Date("2026-07-30T14:31:00Z")), {
       due: false,
       reason: "not-scheduled",

@@ -40,13 +40,7 @@
 export type CrewCheckState = "done" | "blocked" | "optional" | "unknown";
 
 export type CrewCheckId =
-  | "seats"
-  | "orchestrator"
-  | "model"
-  | "connector"
-  | "flows"
-  | "run"
-  | "thread";
+  "seats" | "orchestrator" | "model" | "connector" | "flows" | "run" | "thread";
 
 export type CrewCheck = {
   id: CrewCheckId;

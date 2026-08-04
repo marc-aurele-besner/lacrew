@@ -53,8 +53,7 @@ function coseKey(x: Uint8Array, y: Uint8Array): string {
 
 function credential() {
   const privateKey = p256.utils.randomPrivateKey();
-  const point =
-    p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
   return {
     privateKey,
     publicKey: coseKey(point.slice(1, 33), point.slice(33, 65)),
@@ -70,12 +69,7 @@ function assertFor(cred: ReturnType<typeof credential>, challenge: string) {
   authData.set(new Uint8Array(createHash("sha256").update(RP_ID).digest()), 0);
   authData[32] = 0x05;
   const digest = createHash("sha256")
-    .update(
-      Buffer.concat([
-        authData,
-        createHash("sha256").update(clientData).digest(),
-      ]),
-    )
+    .update(Buffer.concat([authData, createHash("sha256").update(clientData).digest()]))
     .digest();
   return {
     kind: "passkey" as const,
@@ -112,10 +106,7 @@ function sessionClient(state: {
     rate?: { maxProposals: number; ratePeriod: number };
   };
 }) {
-  const base = createLacrewClient({ useMock: true }) as unknown as Record<
-    string,
-    unknown
-  >;
+  const base = createLacrewClient({ useMock: true }) as unknown as Record<string, unknown>;
   let seq = 0;
   return {
     ...base,
@@ -154,9 +145,7 @@ function sessionClient(state: {
           scopes: state.live.scopes,
           maxValue: state.live.maxValue,
           allowedTarget: state.live.allowedTarget,
-          ...(state.live.allowedTargets
-            ? { allowedTargets: state.live.allowedTargets }
-            : {}),
+          ...(state.live.allowedTargets ? { allowedTargets: state.live.allowedTargets } : {}),
           ...(state.live.window ? { window: state.live.window } : {}),
           ...(state.live.rate ? { rate: state.live.rate } : {}),
           revoked: false,
@@ -202,11 +191,7 @@ function buildApp(opts: {
   return { app, state, runtime };
 }
 
-const post = (
-  app: ReturnType<typeof buildApp>["app"],
-  path: string,
-  body: unknown,
-) =>
+const post = (app: ReturnType<typeof buildApp>["app"], path: string, body: unknown) =>
   app.request(path, {
     method: "POST",
     body: JSON.stringify(body),
@@ -230,10 +215,7 @@ describe("POST /sessions/revoke", () => {
     const { app, state } = buildApp({ rootAuth: passkeyAuth(credential()) });
     const res = await post(app, "/sessions/revoke", { sessionId: "7" });
     assert.equal(res.status, 401);
-    assert.equal(
-      ((await res.json()) as { error: string }).error,
-      "root_proof_required",
-    );
+    assert.equal(((await res.json()) as { error: string }).error, "root_proof_required");
     // The whole claim: holding the orchestrator's own credential is not enough.
     assert.deepEqual(state.revoked, []);
   });
@@ -252,10 +234,7 @@ describe("POST /sessions/revoke", () => {
       },
     });
     assert.equal(res.status, 401);
-    assert.equal(
-      ((await res.json()) as { error: string }).error,
-      "signature_invalid",
-    );
+    assert.equal(((await res.json()) as { error: string }).error, "signature_invalid");
     assert.deepEqual(state.revoked, []);
   });
 
@@ -285,10 +264,7 @@ describe("POST /sessions/revoke", () => {
     assert.equal(res.status, 200);
     // Audited as containment, never as a root: a guardian lockdown removes
     // authority and is worth keeping, but it did not ask the human.
-    assert.equal(
-      ((await res.json()) as { authorizedBy: string }).authorizedBy,
-      "containment",
-    );
+    assert.equal(((await res.json()) as { authorizedBy: string }).authorizedBy, "containment");
     assert.deepEqual(state.revoked, ["7"]);
   });
 
@@ -296,10 +272,7 @@ describe("POST /sessions/revoke", () => {
     const { app, state } = buildApp({});
     const res = await post(app, "/sessions/revoke", { sessionId: "7" });
     assert.equal(res.status, 200);
-    assert.equal(
-      ((await res.json()) as { authorizedBy: string }).authorizedBy,
-      "unauthenticated",
-    );
+    assert.equal(((await res.json()) as { authorizedBy: string }).authorizedBy, "unauthenticated");
     assert.deepEqual(state.revoked, ["7"]);
   });
 });

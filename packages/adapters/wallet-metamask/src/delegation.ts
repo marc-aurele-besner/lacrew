@@ -106,9 +106,7 @@ export type BuildDelegationOptions = {
  * An expiry is worth setting even when a cap exists: the cap bounds how much a
  * leaked key can take, while the expiry bounds for how long.
  */
-export async function buildAgentDelegation(
-  opts: BuildDelegationOptions,
-): Promise<Delegation> {
+export async function buildAgentDelegation(opts: BuildDelegationOptions): Promise<Delegation> {
   if (opts.expiresAt !== undefined && opts.expiresAt <= Math.floor(Date.now() / 1000)) {
     throw new Error("Delegation expiry is already in the past.");
   }
@@ -221,11 +219,7 @@ export async function readRemainingBudget(opts: {
   const params = { delegation: opts.delegation } as never;
 
   if (opts.budget.kind === "erc20Period") {
-    const r = await actions.getErc20PeriodTransferEnforcerAvailableAmount(
-      client,
-      env,
-      params,
-    );
+    const r = await actions.getErc20PeriodTransferEnforcerAvailableAmount(client, env, params);
     return r.availableAmount;
   }
   if (opts.budget.kind === "nativePeriod") {
@@ -236,9 +230,7 @@ export async function readRemainingBudget(opts: {
     );
     return r.availableAmount;
   }
-  throw new Error(
-    `readRemainingBudget() only applies to period budgets, not ${opts.budget.kind}.`,
-  );
+  throw new Error(`readRemainingBudget() only applies to period budgets, not ${opts.budget.kind}.`);
 }
 
 /**

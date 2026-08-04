@@ -55,12 +55,7 @@ export function connectorAskTtlMs(env: Record<string, string | undefined> = proc
 }
 
 export type ConnectorAskStatus =
-  | "pending"
-  | "approved"
-  | "declined"
-  | "expired"
-  | "cancelled"
-  | "consumed";
+  "pending" | "approved" | "declined" | "expired" | "cancelled" | "consumed";
 
 /**
  * What the human said, once. `consumed` is separate from the outcome on
@@ -164,7 +159,10 @@ export const ASK_OPTIONS = ["yes", "no"] as const;
  * nobody authorised — so free text resolves nothing and the question stays open.
  */
 export function readAskAnswer(body: string): "approved" | "declined" | null {
-  const normalized = body.trim().toLowerCase().replace(/[.!]+$/, "");
+  const normalized = body
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "");
   if (normalized === "yes") return "approved";
   if (normalized === "no") return "declined";
   return null;
@@ -354,7 +352,9 @@ export function createConnectorAsks(opts: {
       const principal = request.principal ?? "";
       const threadId =
         request.threadId ??
-        (principal ? threadIdOf({ kind: "agent", account: principal }) : threadIdOf({ kind: "org" }));
+        (principal
+          ? threadIdOf({ kind: "agent", account: principal })
+          : threadIdOf({ kind: "org" }));
       const question = opts.postQuestion({
         threadId,
         author: principal || "orchestrator",

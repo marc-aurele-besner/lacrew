@@ -37,11 +37,11 @@ first. The first is what you get if you do not choose.
 For GitHub that is a **GitHub App installation**, and the difference is not
 stylistic:
 
-| | Personal access token | App installation |
-| --- | --- | --- |
-| Reach | whatever its owner can reach | only the repos the App was installed on |
-| Attribution | every crew action is a person's | the App's own identity in GitHub's audit log |
-| Revocation | takes away that person's access too | uninstall, nobody else affected |
+|             | Personal access token               | App installation                             |
+| ----------- | ----------------------------------- | -------------------------------------------- |
+| Reach       | whatever its owner can reach        | only the repos the App was installed on      |
+| Attribution | every crew action is a person's     | the App's own identity in GitHub's audit log |
+| Revocation  | takes away that person's access too | uninstall, nobody else affected              |
 
 An App credential is not a static string. You hold an app id and an RSA private
 key; the API wants an installation token that expires hourly. The registry does
@@ -89,23 +89,23 @@ preset can be registered read-only with `--omit`. `lacrew connectors show <id>`
 prints the routes, the args each takes, the credential modes it supports, and
 what is still unbound.
 
-| Preset | What a crew uses it for | Writes (need an address) | Credential modes |
-| --- | --- | --- | --- |
-| `github` | Pull requests, files, combined status, check runs | `merge_pull_request`, `create_issue_comment` | `github-app` (default) · `token` → `GH_TOKEN` |
-| `gitlab` | Merge requests, diffs, pipelines — gitlab.com or self-hosted | `merge_merge_request` | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`) |
-| `npm` | Published versions, dist-tags, deprecations | — | `none` |
-| `pypi` | Release history, requires-python, yanked releases | — | `none` |
-| `twitter` | Search, timelines, one post | `create_tweet` | `token` → `TWITTER_BEARER_TOKEN` |
-| `typefully` | Draft queue and scheduling | `schedule_draft` (`create_draft` files a draft and needs none) | `token` → `TYPEFULLY_API_KEY` |
-| `ghost` | The site's posts; files new ones | `create_post`, `update_post` | `token` → `GHOST_ADMIN_TOKEN` |
-| `medium` | Alternate publish surface | `create_post` | `token` → `MEDIUM_INTEGRATION_TOKEN` |
-| `notion` | Brand voice docs and past posts, read-only | — | `token` → `NOTION_TOKEN` |
-| `uniswap` | Pool state and liquidity via the v3 subgraph | — | `token` → `GRAPH_API_KEY` |
-| `tenderly` | Dry-run a call before proposing it | — | `token` → `TENDERLY_ACCESS_KEY` |
-| `coingecko` | Prices and market context | — | `token` → `COINGECKO_API_KEY` |
-| `defillama` | Protocol and chain TVL — money leaving before a headline says so | — | `none` |
-| `defillama-yields` | Pool-level APY and its history | — | `none` |
-| `aave` | Aave v3 reserve data: supply and borrow rates, liquidity, caps | — | `none` |
+| Preset             | What a crew uses it for                                          | Writes (need an address)                                       | Credential modes                              |
+| ------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| `github`           | Pull requests, files, combined status, check runs                | `merge_pull_request`, `create_issue_comment`                   | `github-app` (default) · `token` → `GH_TOKEN` |
+| `gitlab`           | Merge requests, diffs, pipelines — gitlab.com or self-hosted     | `merge_merge_request`                                          | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`)    |
+| `npm`              | Published versions, dist-tags, deprecations                      | —                                                              | `none`                                        |
+| `pypi`             | Release history, requires-python, yanked releases                | —                                                              | `none`                                        |
+| `twitter`          | Search, timelines, one post                                      | `create_tweet`                                                 | `token` → `TWITTER_BEARER_TOKEN`              |
+| `typefully`        | Draft queue and scheduling                                       | `schedule_draft` (`create_draft` files a draft and needs none) | `token` → `TYPEFULLY_API_KEY`                 |
+| `ghost`            | The site's posts; files new ones                                 | `create_post`, `update_post`                                   | `token` → `GHOST_ADMIN_TOKEN`                 |
+| `medium`           | Alternate publish surface                                        | `create_post`                                                  | `token` → `MEDIUM_INTEGRATION_TOKEN`          |
+| `notion`           | Brand voice docs and past posts, read-only                       | —                                                              | `token` → `NOTION_TOKEN`                      |
+| `uniswap`          | Pool state and liquidity via the v3 subgraph                     | —                                                              | `token` → `GRAPH_API_KEY`                     |
+| `tenderly`         | Dry-run a call before proposing it                               | —                                                              | `token` → `TENDERLY_ACCESS_KEY`               |
+| `coingecko`        | Prices and market context                                        | —                                                              | `token` → `COINGECKO_API_KEY`                 |
+| `defillama`        | Protocol and chain TVL — money leaving before a headline says so | —                                                              | `none`                                        |
+| `defillama-yields` | Pool-level APY and its history                                   | —                                                              | `none`                                        |
+| `aave`             | Aave v3 reserve data: supply and borrow rates, liquidity, caps   | —                                                              | `none`                                        |
 
 GitHub is the only one that offers an App today, and it is the only one whose
 service supports the shape. Where a service has something closer to it than a
@@ -192,12 +192,11 @@ inline JSON or a path to a JSON file, and the two forms mix in one array:
 A flow then calls it like any other tool:
 
 ```ts
-flow("bot-pr-triage")
-  .tool("pr", "github.get_pull_request", {
-    owner: "{{input.owner}}",
-    repo: "{{input.repo}}",
-    number: "{{input.number}}",
-  })
+flow("bot-pr-triage").tool("pr", "github.get_pull_request", {
+  owner: "{{input.owner}}",
+  repo: "{{input.repo}}",
+  number: "{{input.number}}",
+});
 ```
 
 `{{input.<key>}}` reads a field of a JSON run input, so a route gets its args
@@ -208,14 +207,14 @@ without a model being asked to re-extract each one from a blob it already has.
 Flow definitions arrive as untrusted JSON — from the visual builder, from a
 marketplace listing. The registry is built on that assumption:
 
-| | |
-| --- | --- |
-| **Routes are an allowlist, not a URL** | A flow names a route the operator wrote down. It cannot compose a URL, change the method, or reach a host nobody admitted. |
-| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment. |
-| **Undeclared args are dropped** | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described. |
-| **Credentials never enter the flow** | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one. |
-| **`http://` is refused** | Except for loopback, so a local tool server still works in development. |
-| **Responses have a ceiling** | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit). |
+|                                           |                                                                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Routes are an allowlist, not a URL**    | A flow names a route the operator wrote down. It cannot compose a URL, change the method, or reach a host nobody admitted.                             |
+| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment.                                                                   |
+| **Undeclared args are dropped**           | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described. |
+| **Credentials never enter the flow**      | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one.                        |
+| **`http://` is refused**                  | Except for loopback, so a local tool server still works in development.                                                                                |
+| **Responses have a ceiling**              | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit).                              |
 
 An invalid connector is rejected at registration, and the orchestrator refuses
 to boot with one — a silently dropped connector reads to a flow author as "the
@@ -248,10 +247,10 @@ Where the size is a property of the endpoint rather than the deployment, the
 route says so. The bulk DefiLlama routes ship with their own raised ceilings,
 because reading every pool once to build a watch list is what they are for:
 
-| Route | Limit |
-| --- | --- |
-| `defillama.list_protocols` | 16 MB |
-| `defillama.get_protocol` | 64 MB |
+| Route                         | Limit |
+| ----------------------------- | ----- |
+| `defillama.list_protocols`    | 16 MB |
+| `defillama.get_protocol`      | 64 MB |
 | `defillama-yields.list_pools` | 16 MB |
 
 `lacrew connectors show <id>` prints the default and any route that raises it.
@@ -264,7 +263,7 @@ wins over the default:
   "id": "reports",
   "baseUrl": "https://reports.example",
   "auth": { "kind": "bearer", "tokenEnv": "REPORTS_TOKEN" },
-  "maxResponseBytes": 262144,          // everything here, unless a route says otherwise
+  "maxResponseBytes": 262144, // everything here, unless a route says otherwise
   "routes": [
     { "name": "get_summary", "method": "GET", "path": "/summary/{id}", "effect": "read" },
     {
@@ -272,9 +271,9 @@ wins over the default:
       "method": "GET",
       "path": "/export",
       "effect": "read",
-      "maxResponseBytes": 33554432     // the bulk one, raised deliberately
-    }
-  ]
+      "maxResponseBytes": 33554432, // the bulk one, raised deliberately
+    },
+  ],
 }
 ```
 
@@ -329,11 +328,11 @@ answer the question operators ask constantly, which is "policy allows the merge,
 and I still want to see it first". So every write route also has a **mode**, and
 the vocabulary is the onchain one turned outward:
 
-| Onchain verdict | Write mode | What happens |
-| --- | --- | --- |
-| `ALLOW` | `auto` | admitted, and called without asking |
-| `ESCALATE` | `ask` | admitted, and a human confirms in-thread before the call |
-| `DENY` | `deny` | never called, and the network is never reached |
+| Onchain verdict | Write mode | What happens                                             |
+| --------------- | ---------- | -------------------------------------------------------- |
+| `ALLOW`         | `auto`     | admitted, and called without asking                      |
+| `ESCALATE`      | `ask`      | admitted, and a human confirms in-thread before the call |
+| `DENY`          | `deny`     | never called, and the network is never reached           |
 
 The parallel is deliberate. An operator who has learned what ESCALATE means for
 a spend already knows what `ask` means for a publish.
@@ -348,12 +347,12 @@ gates nothing teaches people to click through the ones that matter.
 The three refusals are distinct codes, because they send an operator to
 different places:
 
-| Code | Cause | Where the fix is |
-| --- | --- | --- |
-| `connector_mode_denied` | mode is `deny` | the mode rule |
-| `connector_denied` | policy stack said DENY / ESCALATE | governance |
-| `connector_ask_declined` | a human answered `no` | nowhere — it worked |
-| `connector_ask_timeout` | nobody answered in time | the question, still in the thread |
+| Code                     | Cause                             | Where the fix is                  |
+| ------------------------ | --------------------------------- | --------------------------------- |
+| `connector_mode_denied`  | mode is `deny`                    | the mode rule                     |
+| `connector_denied`       | policy stack said DENY / ESCALATE | governance                        |
+| `connector_ask_declined` | a human answered `no`             | nowhere — it worked               |
+| `connector_ask_timeout`  | nobody answered in time           | the question, still in the thread |
 
 ### What `ask` actually does
 
@@ -450,13 +449,23 @@ curl -s localhost:8788/connectors | jq .
       "auth": { "kind": "bearer", "envVars": ["GH_TOKEN"], "ready": true },
       "routes": [
         {
-          "name": "get_pull_request", "method": "GET", "effect": "read",
-          "policyTarget": null, "mode": null, "effectiveMode": null
+          "name": "get_pull_request",
+          "method": "GET",
+          "effect": "read",
+          "policyTarget": null,
+          "mode": null,
+          "effectiveMode": null
         },
         {
-          "name": "merge_pull_request", "method": "PUT", "effect": "write",
-          "policyTarget": "0x…", "mode": "ask",
-          "effectiveMode": { "mode": "deny", "source": { "kind": "rule", "scope": { "level": "workspace" }, "route": "github.*" } }
+          "name": "merge_pull_request",
+          "method": "PUT",
+          "effect": "write",
+          "policyTarget": "0x…",
+          "mode": "ask",
+          "effectiveMode": {
+            "mode": "deny",
+            "source": { "kind": "rule", "scope": { "level": "workspace" }, "route": "github.*" }
+          }
         }
       ]
     }

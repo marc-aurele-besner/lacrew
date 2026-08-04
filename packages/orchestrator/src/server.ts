@@ -65,9 +65,7 @@ async function main(): Promise<void> {
   if (!boot.ok) {
     // Listen anyway. A process that refuses to start is indistinguishable from
     // one that crashed, and the caller needs to know *which* thing is missing.
-    console.error(
-      `[@lacrew/orchestrator] no chain (${boot.reason}): ${boot.detail}`,
-    );
+    console.error(`[@lacrew/orchestrator] no chain (${boot.reason}): ${boot.detail}`);
     const server = createServer(
       getRequestListener(
         createUnavailableApp({
@@ -91,9 +89,7 @@ async function main(): Promise<void> {
   const mcpBackend = mcpUseMock ? undefined : createRuntimeMcpBackend(runtime);
   // A bad connector config stops the boot rather than starting an orchestrator
   // whose crews silently cannot reach the world they were configured for.
-  const connectorDefs = loadConnectorsFromEnv(process.env, (path) =>
-    readFileSync(path, "utf8"),
-  );
+  const connectorDefs = loadConnectorsFromEnv(process.env, (path) => readFileSync(path, "utf8"));
   // Write policy (F2.24) is built whether or not connectors are registered:
   // the rules outlive any one config, and an operator who narrows a route
   // before wiring the connector should not find the rule gone afterwards.
@@ -138,8 +134,7 @@ async function main(): Promise<void> {
     store: runtime.store,
     // Read live from the conversation: a plan posted a second ago by the run
     // being checked has to count.
-    messagesIn: (threadId) =>
-      runtime.thread(scopeOfThread(threadId) ?? { kind: "org" }, 200),
+    messagesIn: (threadId) => runtime.thread(scopeOfThread(threadId) ?? { kind: "org" }, 200),
     seed: [planRequiredFromEnv() ?? []].flat(),
     onEvent: (event) => runtime.recordAudit(event),
   });
@@ -197,8 +192,7 @@ async function main(): Promise<void> {
           // Write routes are admitted by the same policy stack that admits a
           // spend, asked as the crew worker.
           checkPolicy: async (target) =>
-            (await runtime.checkPolicy({ agent: runtime.defaultAgent, target, value: 0n }))
-              .verdict,
+            (await runtime.checkPolicy({ agent: runtime.defaultAgent, target, value: 0n })).verdict,
           resolveMode: (route, id, subject) => connectorModes.resolve(route, id, subject),
           asks: connectorAsks,
         })
@@ -306,8 +300,7 @@ async function main(): Promise<void> {
   const heartbeats = createHeartbeatSurface({
     runtime,
     flows,
-    budgetBlock: async (principal) =>
-      budgets.heartbeatBlock(await budgetSubjectFor(principal)),
+    budgetBlock: async (principal) => budgets.heartbeatBlock(await budgetSubjectFor(principal)),
   });
 
   // Root authorization for revoke/rotate (F0.7) and root-depth approvals
@@ -450,9 +443,7 @@ async function main(): Promise<void> {
     try {
       const requirements = await planRequired.hydrate();
       if (requirements > 0) {
-        console.log(
-          `[@lacrew/orchestrator] plan-required: ${requirements} rule(s) restored`,
-        );
+        console.log(`[@lacrew/orchestrator] plan-required: ${requirements} rule(s) restored`);
       }
     } catch (err) {
       console.error(

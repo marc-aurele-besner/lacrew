@@ -119,7 +119,9 @@ export function coverage(rule: {
   if (rule.mode === "off") return "nothing";
   const parts: string[] = [];
   if (rule.mode === "spends_and_writes") {
-    parts.push(rule.threshold.minSpend === "0" ? "every spend" : `spends ≥ ${rule.threshold.minSpend}`);
+    parts.push(
+      rule.threshold.minSpend === "0" ? "every spend" : `spends ≥ ${rule.threshold.minSpend}`,
+    );
   }
   if (rule.threshold.connectorWrites) parts.push("connector + MCP writes");
   if (rule.threshold.orgMutators) parts.push("org/budget/governance");

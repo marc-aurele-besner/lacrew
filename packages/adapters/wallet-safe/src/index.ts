@@ -38,9 +38,7 @@ export interface MockSafeWallet {
 }
 
 /** Mocked Safe handle — fixed address, no chain access. Demos and tests only. */
-export async function createMockSafeWallet(
-  owners: `0x${string}`[] = [],
-): Promise<MockSafeWallet> {
+export async function createMockSafeWallet(owners: `0x${string}`[] = []): Promise<MockSafeWallet> {
   void owners;
   return {
     address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -66,7 +64,7 @@ export function createMockSafeWalletAdapter(reader: PolicyReader): WalletAdapter
 
 export type SafeWalletAdapterOptions = (
   | ConnectSafeWalletOptions
-  | Omit<PredictSafeWalletOptions, "owners"> & { owners: `0x${string}`[] }
+  | (Omit<PredictSafeWalletOptions, "owners"> & { owners: `0x${string}`[] })
 ) & {
   /** Live policy module; without one `checkPolicy` refuses rather than guessing. */
   reader?: PolicyReader;

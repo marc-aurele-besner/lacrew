@@ -138,7 +138,10 @@ export function resolveCrewSeats(
     }
   }
 
-  const missing = bp.roles.filter((r) => !roles[r.id]).map((r) => r.id).sort();
+  const missing = bp.roles
+    .filter((r) => !roles[r.id])
+    .map((r) => r.id)
+    .sort();
   return { roles, bindings, missing, ambiguous: ambiguous.sort(), renamed };
 }
 

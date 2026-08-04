@@ -45,9 +45,7 @@ async function makeSurface(
     store: createMemoryFlowStore(),
   });
   const id = opts.flowId ?? "pr-triage";
-  const def = flow(id, "PR triage")
-    .model("summarize", { prompt: "{{input}}" })
-    .build();
+  const def = flow(id, "PR triage").model("summarize", { prompt: "{{input}}" }).build();
   await flows.save({ ...def, trigger: opts.trigger ?? "webhook" });
 
   const jobs: WebhookJob[] = [];
@@ -78,12 +76,7 @@ function signed(
   return (name) => map[name.toLowerCase()];
 }
 
-function deliver(
-  webhooks: WebhookSurface,
-  triggerId: string,
-  secret: string,
-  body = BODY,
-) {
+function deliver(webhooks: WebhookSurface, triggerId: string, secret: string, body = BODY) {
   return webhooks.accept({
     triggerId,
     rawBody: body,
@@ -157,10 +150,7 @@ describe("webhook input mapping", () => {
   });
 
   it("passes the whole body through when no mapping is declared", () => {
-    assert.deepEqual(
-      JSON.parse(mapWebhookInput(JSON.parse(BODY), undefined)),
-      JSON.parse(BODY),
-    );
+    assert.deepEqual(JSON.parse(mapWebhookInput(JSON.parse(BODY), undefined)), JSON.parse(BODY));
   });
 
   it("builds a flat object from a field map so {{input.x}} resolves", () => {
@@ -171,14 +161,8 @@ describe("webhook input mapping", () => {
   });
 
   it("lifts a single value with path, and renders a missing one as empty", () => {
-    assert.equal(
-      mapWebhookInput(JSON.parse(BODY), { path: "pull_request.title" }),
-      "Add hooks",
-    );
-    assert.equal(
-      mapWebhookInput(JSON.parse(BODY), { path: "nope.at.all" }),
-      "",
-    );
+    assert.equal(mapWebhookInput(JSON.parse(BODY), { path: "pull_request.title" }), "Add hooks");
+    assert.equal(mapWebhookInput(JSON.parse(BODY), { path: "nope.at.all" }), "");
   });
 });
 
@@ -202,10 +186,7 @@ describe("webhook triggers", () => {
       () => webhooks.create({ flowId: "pr-triage" }),
       /flow_not_webhook_triggered/,
     );
-    await assert.rejects(
-      () => webhooks.create({ flowId: "nope" }),
-      /flow_not_found/,
-    );
+    await assert.rejects(() => webhooks.create({ flowId: "nope" }), /flow_not_found/);
   });
 
   it("accepts a signed delivery and enqueues exactly one job", async () => {
@@ -216,10 +197,7 @@ describe("webhook triggers", () => {
     assert.equal(accepted.ok, true);
     assert.equal(accepted.status, 202);
     assert.equal(jobs.length, 1);
-    assert.equal(
-      jobs[0]?.runId,
-      accepted.ok && accepted.status === 202 ? accepted.runId : "",
-    );
+    assert.equal(jobs[0]?.runId, accepted.ok && accepted.status === 202 ? accepted.runId : "");
     assert.deepEqual(JSON.parse(jobs[0]!.input), JSON.parse(BODY));
   });
 
@@ -364,11 +342,7 @@ describe("webhook triggers", () => {
       status: 403,
       error: "webhook_principal_paused",
     });
-    assert.equal(
-      jobs.length,
-      0,
-      "a paused principal must not have work queued for it",
-    );
+    assert.equal(jobs.length, 0, "a paused principal must not have work queued for it");
 
     runtime.resumeAgent(principal);
     assert.equal((await deliver(webhooks, trigger.id, secret)).ok, true);
@@ -442,10 +416,7 @@ describe("webhook triggers", () => {
 
     const log = await webhooks.deliveries();
     assert.equal(log.filter((d) => d.result === "rejected").length, 1);
-    assert.equal(
-      log.find((d) => d.result === "rejected")?.reason,
-      "webhook_signature_invalid",
-    );
+    assert.equal(log.find((d) => d.result === "rejected")?.reason, "webhook_signature_invalid");
   });
 
   it("resolves a trigger another replica minted, and its rotation", async () => {
@@ -482,11 +453,7 @@ describe("webhook triggers", () => {
       const { trigger, secret } = await createSigned(replicaA, {
         flowId: "pr-triage",
       });
-      assert.equal(
-        replicaB.list().length,
-        0,
-        "B's boot-time map cannot know it",
-      );
+      assert.equal(replicaB.list().length, 0, "B's boot-time map cannot know it");
 
       const onB = await deliver(replicaB, trigger.id, secret);
       assert.equal(onB.ok && onB.status, 202);
@@ -595,7 +562,9 @@ describe("webhook triggers", () => {
 
     const body = JSON.stringify({
       message: {
-        data: Buffer.from(JSON.stringify({ emailAddress: "ops@example.com", historyId: 42 })).toString("base64"),
+        data: Buffer.from(
+          JSON.stringify({ emailAddress: "ops@example.com", historyId: 42 }),
+        ).toString("base64"),
         messageId: "pubsub-msg-1",
       },
       subscription: "projects/p/subscriptions/s",

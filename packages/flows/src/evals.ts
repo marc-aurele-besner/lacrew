@@ -31,11 +31,7 @@
  */
 
 import { crewBlueprints, getCrewBlueprint } from "./crewBlueprints.js";
-import {
-  bindCrewFlow,
-  type CrewBindings,
-  type CrewBlueprint,
-} from "./crews.js";
+import { bindCrewFlow, type CrewBindings, type CrewBlueprint } from "./crews.js";
 import { createMockFlowBackend, FlowWaitingError, runFlow } from "./run.js";
 import { flowTemplates, getFlowTemplate } from "./templates.js";
 import type {
@@ -247,11 +243,9 @@ export function evalCrewBindings(bp: CrewBlueprint): Required<CrewBindings> {
   const policies: Record<string, string> = {};
   for (const role of bp.roles) {
     roles[role.id] = evalAddress(`${bp.id}:crew:${role.id}`);
-    if (role.dedicatedPolicy)
-      policies[role.id] = evalAddress(`${bp.id}:policy:${role.id}`);
+    if (role.dedicatedPolicy) policies[role.id] = evalAddress(`${bp.id}:policy:${role.id}`);
   }
-  for (const target of bp.targets)
-    targets[target.id] = evalAddress(`${bp.id}:target:${target.id}`);
+  for (const target of bp.targets) targets[target.id] = evalAddress(`${bp.id}:target:${target.id}`);
   return { roles, targets, policies };
 }
 
@@ -337,8 +331,7 @@ function createEvalBackend(
       const mock = mocks.tools?.[name];
       if (mock) {
         if (mock.error) throw new Error(mock.error);
-        if (mock.results && seen <= mock.results.length)
-          return mock.results[seen - 1];
+        if (mock.results && seen <= mock.results.length) return mock.results[seen - 1];
         if (mock.results && mock.result === undefined) {
           throw new Error(`eval_mock_exhausted:${name}:call ${seen}`);
         }
@@ -471,9 +464,7 @@ type Prepared = {
 
 function prepare(scenario: FlowEvalScenario): Prepared {
   const setupFailures: FlowEvalFailure[] = [];
-  const bp = scenario.blueprint
-    ? getCrewBlueprint(scenario.blueprint)
-    : undefined;
+  const bp = scenario.blueprint ? getCrewBlueprint(scenario.blueprint) : undefined;
   if (scenario.blueprint && !bp) {
     setupFailures.push({
       assertion: "setup",
@@ -482,8 +473,7 @@ function prepare(scenario: FlowEvalScenario): Prepared {
   }
 
   let def =
-    scenario.definition ??
-    (scenario.flow ? getFlowTemplate(scenario.flow)?.definition : undefined);
+    scenario.definition ?? (scenario.flow ? getFlowTemplate(scenario.flow)?.definition : undefined);
   if (!def) {
     setupFailures.push({
       assertion: "setup",
@@ -496,9 +486,7 @@ function prepare(scenario: FlowEvalScenario): Prepared {
     };
   }
 
-  const derived = bp
-    ? evalCrewBindings(bp)
-    : { roles: {}, targets: {}, policies: {} };
+  const derived = bp ? evalCrewBindings(bp) : { roles: {}, targets: {}, policies: {} };
   const bindings: CrewBindings = {
     roles: { ...derived.roles, ...scenario.bindings?.roles },
     targets: { ...derived.targets, ...scenario.bindings?.targets },
@@ -516,20 +504,14 @@ function prepare(scenario: FlowEvalScenario): Prepared {
   // Address → blueprint target id, so a scenario names targets the way the
   // blueprint does and a failure prints `target.dex-router`, not 0xe3c9….
   const targetNames = new Map<string, string>();
-  for (const [id, address] of Object.entries(bindings.targets ?? {}))
-    targetNames.set(address, id);
+  for (const [id, address] of Object.entries(bindings.targets ?? {})) targetNames.set(address, id);
 
   const stub = scenario.mocks?.policy;
   const admitted = new Set(stub?.admitsUnadmitted ?? []);
   for (const [key, verdict] of Object.entries(stub?.targets ?? {})) {
     const id = targetNames.get(key) ?? key;
     const target = bp?.targets.find((t) => t.id === id);
-    if (
-      verdict === "ALLOW" &&
-      target &&
-      !target.whitelisted &&
-      !admitted.has(id)
-    ) {
+    if (verdict === "ALLOW" && target && !target.whitelisted && !admitted.has(id)) {
       setupFailures.push({
         assertion: "mock_contradicts_blueprint",
         detail:
@@ -618,10 +600,7 @@ function traceText(steps: FlowStepTrace[]): string {
 }
 
 /** Ordered-subsequence check: `ran` names milestones, not every step. */
-function containsInOrder(
-  actual: string[],
-  wanted: string[],
-): string | undefined {
+function containsInOrder(actual: string[], wanted: string[]): string | undefined {
   let i = 0;
   for (const step of actual) {
     if (step === wanted[i]) i += 1;
@@ -640,8 +619,7 @@ function assertRun(
   const ranIds = run.steps.map((s) => s.stepId);
   const lastTrace = (id: string): FlowStepTrace | undefined =>
     [...run.steps].reverse().find((s) => s.stepId === id);
-  const countOf = (name: string): number =>
-    calls.filter((c) => c.name === name).length;
+  const countOf = (name: string): number => calls.filter((c) => c.name === name).length;
 
   if (expect.status && run.status !== expect.status) {
     const why = run.steps.find((s) => s.status === "error")?.error;
@@ -662,10 +640,7 @@ function assertRun(
         actual: null,
       });
     } else {
-      if (
-        expect.waiting.reason &&
-        run.waiting.reason !== expect.waiting.reason
-      ) {
+      if (expect.waiting.reason && run.waiting.reason !== expect.waiting.reason) {
         failures.push({
           assertion: "waiting",
           detail: `parked on "${run.waiting.reason}", expected "${expect.waiting.reason}"`,
@@ -673,10 +648,7 @@ function assertRun(
           actual: run.waiting.reason,
         });
       }
-      if (
-        expect.waiting.stepId &&
-        run.waiting.stepId !== expect.waiting.stepId
-      ) {
+      if (expect.waiting.stepId && run.waiting.stepId !== expect.waiting.stepId) {
         failures.push({
           assertion: "waiting",
           detail: `parked at "${run.waiting.stepId}", expected "${expect.waiting.stepId}"`,
@@ -822,9 +794,7 @@ function assertRun(
  * ------------------------------------------------------------------------- */
 
 /** Run one scenario. Never throws: a broken scenario is a failing eval. */
-export async function runFlowEval(
-  scenario: FlowEvalScenario,
-): Promise<FlowEvalResult> {
+export async function runFlowEval(scenario: FlowEvalScenario): Promise<FlowEvalResult> {
   const prepared = prepare(scenario);
   const state: EvalBackendState = {
     calls: [],
@@ -844,11 +814,7 @@ export async function runFlowEval(
     };
   }
 
-  const backend = createEvalBackend(
-    scenario.mocks ?? {},
-    prepared.policy,
-    state,
-  );
+  const backend = createEvalBackend(scenario.mocks ?? {}, prepared.policy, state);
   let run: FlowRunResult;
   let attempts: string[];
   try {
@@ -880,9 +846,7 @@ export async function runFlowEval(
     };
   }
 
-  const gatesOpen = [...state.gatesOpen].filter(
-    (id) => !state.gatesAnswered.has(id),
-  );
+  const gatesOpen = [...state.gatesOpen].filter((id) => !state.gatesAnswered.has(id));
   const failures = assertRun(scenario.expect, run, state.calls, gatesOpen);
   for (const url of attempts) {
     failures.unshift({
@@ -935,15 +899,11 @@ export type FlowEvalCoverage = {
  * on the day someone adds a template, and the first fix for that is to delete
  * the check. Naming the gap is what makes adding a scenario the obvious move.
  */
-export function evalCoverage(
-  scenarios: readonly FlowEvalScenario[],
-): FlowEvalCoverage {
+export function evalCoverage(scenarios: readonly FlowEvalScenario[]): FlowEvalCoverage {
   const byFlow: Record<string, number> = {};
   for (const t of flowTemplates) byFlow[t.definition.id] = 0;
   for (const s of scenarios) {
-    const id =
-      s.definition?.id ??
-      (s.flow ? getFlowTemplate(s.flow)?.definition.id : undefined);
+    const id = s.definition?.id ?? (s.flow ? getFlowTemplate(s.flow)?.definition.id : undefined);
     if (!id) continue;
     byFlow[id] = (byFlow[id] ?? 0) + 1;
   }
@@ -953,9 +913,7 @@ export function evalCoverage(
       .map(([id]) => id),
   );
   const blueprintsWithoutEvals = crewBlueprints
-    .filter(
-      (bp) => bp.flows.length > 0 && !bp.flows.some((f) => covered.has(f)),
-    )
+    .filter((bp) => bp.flows.length > 0 && !bp.flows.some((f) => covered.has(f)))
     .map((bp) => bp.id);
   return {
     flowsWithoutEvals: Object.entries(byFlow)
@@ -972,10 +930,7 @@ export function evalCoverage(
  * ------------------------------------------------------------------------- */
 
 /** The report a CI log and a terminal both read: one line per scenario, then the diffs. */
-export function formatEvalReport(
-  suite: FlowEvalSuiteResult,
-  coverage?: FlowEvalCoverage,
-): string {
+export function formatEvalReport(suite: FlowEvalSuiteResult, coverage?: FlowEvalCoverage): string {
   const lines: string[] = [];
   for (const result of suite.results) {
     lines.push(
@@ -999,9 +954,7 @@ export function formatEvalReport(
     );
   }
   if (coverage && coverage.blueprintsWithoutEvals.length > 0) {
-    lines.push(
-      `⚠ blueprints with no eval at all: ${coverage.blueprintsWithoutEvals.join(", ")}`,
-    );
+    lines.push(`⚠ blueprints with no eval at all: ${coverage.blueprintsWithoutEvals.join(", ")}`);
   }
   return lines.join("\n");
 }

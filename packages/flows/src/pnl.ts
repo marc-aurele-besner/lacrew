@@ -23,19 +23,11 @@
  *     absorbed into a seat that did not incur it.
  */
 
-import type {
-  InferenceBudgetStatus,
-  InferenceUsage,
-} from "./inferenceBudget.js";
+import type { InferenceBudgetStatus, InferenceUsage } from "./inferenceBudget.js";
 
 /* ------------------------------------------------------------------ period */
 
-export const PNL_PERIOD_KINDS = [
-  "calendar_month",
-  "calendar_week",
-  "epoch",
-  "custom",
-] as const;
+export const PNL_PERIOD_KINDS = ["calendar_month", "calendar_week", "epoch", "custom"] as const;
 
 export type PnlPeriodKind = (typeof PNL_PERIOD_KINDS)[number];
 
@@ -80,11 +72,7 @@ export type PnlPeriodInput = {
 function isoWeekKey(d: Date): string {
   // ISO-8601 week: Thursday of the current week decides the year.
   const thursday = new Date(
-    Date.UTC(
-      d.getUTCFullYear(),
-      d.getUTCMonth(),
-      d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3,
-    ),
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3),
   );
   const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
   const week =
@@ -111,8 +99,7 @@ export function resolvePnlPeriod(input: PnlPeriodInput, now: Date): PnlPeriod {
     if (!Number.isFinite(fromMs)) throw new Error("invalid_from");
     if (!Number.isFinite(toMs)) throw new Error("invalid_to");
     if (toMs <= fromMs) throw new Error("empty_period");
-    if (toMs - fromMs > PNL_MAX_RANGE_DAYS * DAY_MS)
-      throw new Error("period_too_long");
+    if (toMs - fromMs > PNL_MAX_RANGE_DAYS * DAY_MS) throw new Error("period_too_long");
     const from = new Date(fromMs).toISOString();
     const to = new Date(toMs).toISOString();
     return { kind: "custom", key: `${from}/${to}`, from, to, timezone: "UTC" };
@@ -120,12 +107,8 @@ export function resolvePnlPeriod(input: PnlPeriodInput, now: Date): PnlPeriod {
 
   const period = (input.period ?? "calendar_month") as PnlPeriodKind;
   if (period === "calendar_month") {
-    const start = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-    );
-    const end = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-    );
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
     return {
       kind: period,
       key: `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`,
@@ -138,11 +121,7 @@ export function resolvePnlPeriod(input: PnlPeriodInput, now: Date): PnlPeriod {
     // Monday-anchored, matching ISO-8601 — the week an accountant means.
     const dayOffset = (now.getUTCDay() + 6) % 7;
     const start = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() - dayOffset,
-      ),
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - dayOffset),
     );
     const end = new Date(start.getTime() + 7 * DAY_MS);
     return {
@@ -154,8 +133,7 @@ export function resolvePnlPeriod(input: PnlPeriodInput, now: Date): PnlPeriod {
     };
   }
   if (period === "epoch") {
-    const lengthMs =
-      Math.max(1, input.epochSeconds ?? EPOCH_SECONDS_DEFAULT) * 1_000;
+    const lengthMs = Math.max(1, input.epochSeconds ?? EPOCH_SECONDS_DEFAULT) * 1_000;
     const anchor = Date.parse(input.epochAnchorAt ?? EPOCH_ANCHOR_DEFAULT);
     if (!Number.isFinite(anchor)) throw new Error("invalid_epoch_anchor");
     const index = Math.floor((now.getTime() - anchor) / lengthMs);
@@ -367,14 +345,11 @@ export const ZERO_PNL_CONNECTORS: PnlConnectors = {
  */
 export type ConnectorPrices = Record<string, number>;
 
-export function parseConnectorPrices(
-  json: string | undefined,
-): ConnectorPrices | null {
+export function parseConnectorPrices(json: string | undefined): ConnectorPrices | null {
   if (!json?.trim()) return null;
   try {
     const parsed = JSON.parse(json) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const out: ConnectorPrices = {};
     for (const [key, value] of Object.entries(parsed)) {
       const usd = typeof value === "number" ? value : Number(value);
@@ -608,9 +583,7 @@ function foldOnchain(
         value: value.toString(),
         asset,
         ...(txHash ? { txHash } : {}),
-        ...(str(e.payload.intentId)
-          ? { intentId: str(e.payload.intentId)! }
-          : {}),
+        ...(str(e.payload.intentId) ? { intentId: str(e.payload.intentId)! } : {}),
         ...(e.payload.callOk === false ? { callOk: false } : {}),
       });
       bump(asset, "spent", value);
@@ -663,9 +636,7 @@ function foldOnchain(
         agent: norm(e.payload.agent),
         catalogId: str(e.payload.catalogId) ?? "",
         gross: gross.toString(),
-        ...(e.payload.fee != null
-          ? { fee: bigOr0(e.payload.fee).toString() }
-          : {}),
+        ...(e.payload.fee != null ? { fee: bigOr0(e.payload.fee).toString() } : {}),
         asset,
         ...(txHash ? { txHash } : {}),
       });
@@ -679,9 +650,7 @@ function foldOnchain(
     grants: out.grants.length,
     marketplace: out.marketplace.length,
   };
-  const byValueDesc = <
-    T extends { value?: string; amount?: string; gross?: string },
-  >(
+  const byValueDesc = <T extends { value?: string; amount?: string; gross?: string }>(
     a: T,
     b: T,
   ) => {
@@ -709,11 +678,7 @@ function foldInference(rows: PnlUsageRow[], rowLimit: number): PnlInference {
   const out: PnlInference = { ...ZERO_PNL_INFERENCE, byFlow: [], byModel: [] };
   const byFlow = new Map<string, PnlInferenceBreakdown>();
   const byModel = new Map<string, PnlInferenceBreakdown>();
-  const into = (
-    map: Map<string, PnlInferenceBreakdown>,
-    key: string,
-    row: PnlUsageRow,
-  ) => {
+  const into = (map: Map<string, PnlInferenceBreakdown>, key: string, row: PnlUsageRow) => {
     const entry = map.get(key) ?? {
       key,
       calls: 0,
@@ -767,11 +732,7 @@ function foldConnectors(
     const route = str(e.payload.route) ?? "unknown";
     const rawEffect = norm(e.payload.effect);
     const effect: PnlConnectorRoute["effect"] =
-      rawEffect === "write"
-        ? "write"
-        : rawEffect === "read"
-          ? "read"
-          : "unknown";
+      rawEffect === "write" ? "write" : rawEffect === "read" ? "read" : "unknown";
     const ok = e.payload.ok !== false;
     const key = `${connector}.${route}`;
     const usd = lookupConnectorPrice(prices, connector, route);
@@ -802,9 +763,7 @@ function foldConnectors(
   }
 
   out.routes = [...routes.values()]
-    .sort(
-      (a, b) => (b.usdMicros ?? 0) - (a.usdMicros ?? 0) || b.calls - a.calls,
-    )
+    .sort((a, b) => (b.usdMicros ?? 0) - (a.usdMicros ?? 0) || b.calls - a.calls)
     .slice(0, rowLimit);
   // Null rather than 0 when nothing here is priced: "$0.00 of connector spend"
   // is a claim about the vendor's invoice this report has no way to make.
@@ -813,10 +772,7 @@ function foldConnectors(
 }
 
 /** Events whose subject is one of `accounts` (empty set → everything). */
-function eventsForAccounts(
-  events: PnlAuditEvent[],
-  accounts: Set<string> | null,
-): PnlAuditEvent[] {
+function eventsForAccounts(events: PnlAuditEvent[], accounts: Set<string> | null): PnlAuditEvent[] {
   if (!accounts) return events;
   return events.filter((e) => {
     const subject =
@@ -833,11 +789,7 @@ function eventsForAccounts(
  * charged for directly. A `ToolCalled` names its crew, so a connector call made
  * by a flow run stays in the crew total even when the run named no seat.
  */
-function crewEvents(
-  events: PnlAuditEvent[],
-  crewId: string,
-  seats: Set<string>,
-): PnlAuditEvent[] {
+function crewEvents(events: PnlAuditEvent[], crewId: string, seats: Set<string>): PnlAuditEvent[] {
   return events.filter((e) => {
     // A resolution names the intent, not the agent, so it has no subject to
     // match on. Kept regardless: it is what closes an escalation, and dropping
@@ -849,8 +801,7 @@ function crewEvents(
       const agent = norm(e.payload.agentId);
       return agent ? seats.has(agent) : false;
     }
-    const subject =
-      norm(e.payload.agent) || norm(e.payload.node) || norm(e.payload.buyer);
+    const subject = norm(e.payload.agent) || norm(e.payload.node) || norm(e.payload.buyer);
     return subject ? seats.has(subject) : false;
   });
 }
@@ -859,8 +810,7 @@ function seatEvents(events: PnlAuditEvent[], seat: string): PnlAuditEvent[] {
   return events.filter((e) => {
     if (e.type === "IntentResolved") return true;
     if (e.type === "ToolCalled") return norm(e.payload.agentId) === seat;
-    const subject =
-      norm(e.payload.agent) || norm(e.payload.node) || norm(e.payload.buyer);
+    const subject = norm(e.payload.agent) || norm(e.payload.node) || norm(e.payload.buyer);
     return subject === seat;
   });
 }
@@ -893,9 +843,7 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
   const rowLimit = input.rowLimit ?? DEFAULT_ROW_LIMIT;
   const primaryAsset = input.primaryAsset ?? "USDC";
   const crewId = norm(input.scope.crewId);
-  const agentScope = input.scope.agentId
-    ? norm(input.scope.agentId)
-    : undefined;
+  const agentScope = input.scope.agentId ? norm(input.scope.agentId) : undefined;
   const seatAccounts = input.seats
     .map((s) => ({ ...s, account: norm(s.account) }))
     .filter((s) => s.account);
@@ -904,17 +852,13 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
   const inRange = input.events.filter((e) => {
     const t = Date.parse(e.at);
     return (
-      Number.isFinite(t) &&
-      t >= Date.parse(input.period.from) &&
-      t < Date.parse(input.period.to)
+      Number.isFinite(t) && t >= Date.parse(input.period.from) && t < Date.parse(input.period.to)
     );
   });
   const usageInRange = input.usage.filter((r) => {
     const t = Date.parse(r.at);
     return (
-      Number.isFinite(t) &&
-      t >= Date.parse(input.period.from) &&
-      t < Date.parse(input.period.to)
+      Number.isFinite(t) && t >= Date.parse(input.period.from) && t < Date.parse(input.period.to)
     );
   });
 
@@ -975,10 +919,7 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
     }),
     { calls: 0, usdMicros: 0, unpricedCalls: 0 },
   );
-  const seatConnectorCalls = seatRows.reduce(
-    (acc, s) => acc + s.connectors.calls,
-    0,
-  );
+  const seatConnectorCalls = seatRows.reduce((acc, s) => acc + s.connectors.calls, 0);
 
   const notes: string[] = [];
   if (!input.sources.onchain.available) {
@@ -1013,8 +954,7 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
       `${totals.connectors.unpricedCalls} connector call(s) are unpriced — the connector $ figure covers ${totals.connectors.pricedCalls} call(s).`,
     );
   }
-  const unattributedInferenceCalls =
-    totals.inference.calls - seatInference.calls;
+  const unattributedInferenceCalls = totals.inference.calls - seatInference.calls;
   if (!agentScope && unattributedInferenceCalls > 0) {
     notes.push(
       `${unattributedInferenceCalls} model call(s) were charged to the crew without naming a seat, so the seat rows do not sum to the crew total.`,
@@ -1028,9 +968,7 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
 
   const headroom: PnlHeadroom = {
     onchain: (input.allowances ?? [])
-      .filter((a) =>
-        agentScope ? norm(a.node) === agentScope : seatSet.has(norm(a.node)),
-      )
+      .filter((a) => (agentScope ? norm(a.node) === agentScope : seatSet.has(norm(a.node))))
       .map((a) => ({
         node: norm(a.node),
         asset: a.asset,
@@ -1080,14 +1018,8 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
     unattributed: {
       inference: {
         calls: Math.max(0, unattributedInferenceCalls),
-        usdMicros: Math.max(
-          0,
-          totals.inference.usdMicros - seatInference.usdMicros,
-        ),
-        unpricedCalls: Math.max(
-          0,
-          totals.inference.unpricedCalls - seatInference.unpricedCalls,
-        ),
+        usdMicros: Math.max(0, totals.inference.usdMicros - seatInference.usdMicros),
+        unpricedCalls: Math.max(0, totals.inference.unpricedCalls - seatInference.unpricedCalls),
       },
       connectors: {
         calls: Math.max(0, totals.connectors.calls - seatConnectorCalls),
@@ -1115,19 +1047,9 @@ const csvCell = (value: unknown): string => {
  */
 export function pnlToCsv(report: PnlReport): string {
   const rows: string[][] = [
-    [
-      "scope",
-      "seat",
-      "meter",
-      "unit",
-      "quantity",
-      "usd",
-      "price_known",
-      "detail",
-    ],
+    ["scope", "seat", "meter", "unit", "quantity", "usd", "price_known", "detail"],
   ];
-  const scopeLabel =
-    report.scope.kind === "agent" ? report.scope.agentId! : report.scope.crewId;
+  const scopeLabel = report.scope.kind === "agent" ? report.scope.agentId! : report.scope.crewId;
 
   const meterRows = (
     seat: string,
@@ -1207,9 +1129,7 @@ export function pnlToCsv(report: PnlReport): string {
       "connectors",
       "calls",
       String(connectors.calls),
-      connectors.usdMicros === null
-        ? ""
-        : (connectors.usdMicros / 1_000_000).toFixed(6),
+      connectors.usdMicros === null ? "" : (connectors.usdMicros / 1_000_000).toFixed(6),
       connectors.usdMicros === null
         ? connectors.calls === 0
           ? "n/a"
@@ -1221,12 +1141,7 @@ export function pnlToCsv(report: PnlReport): string {
     ]);
   };
 
-  meterRows(
-    "*",
-    report.totals.onchain,
-    report.totals.inference,
-    report.totals.connectors,
-  );
+  meterRows("*", report.totals.onchain, report.totals.inference, report.totals.connectors);
   for (const seat of report.seats) {
     meterRows(
       seat.label ? `${seat.label} (${seat.agentId})` : seat.agentId,

@@ -164,8 +164,21 @@ describe("lacrew flows triggers", () => {
     responder = () => ({
       body: {
         deliveries: [
-          { triggerId: "wht_abc", deliveryKey: "d1", result: "run_started", runId: "run-wh-1", at: "2026-07-30T10:00:00Z", bytes: 80 },
-          { triggerId: "wht_abc", deliveryKey: "d2", result: "rejected", reason: "webhook_signature_invalid", at: "2026-07-30T09:00:00Z" },
+          {
+            triggerId: "wht_abc",
+            deliveryKey: "d1",
+            result: "run_started",
+            runId: "run-wh-1",
+            at: "2026-07-30T10:00:00Z",
+            bytes: 80,
+          },
+          {
+            triggerId: "wht_abc",
+            deliveryKey: "d2",
+            result: "rejected",
+            reason: "webhook_signature_invalid",
+            at: "2026-07-30T09:00:00Z",
+          },
         ],
       },
     });

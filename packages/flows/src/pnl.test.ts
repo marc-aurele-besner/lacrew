@@ -89,30 +89,16 @@ describe("period resolution", () => {
 
   it("refuses a range it cannot measure rather than falling back to this month", () => {
     const now = new Date("2026-07-15T00:00:00.000Z");
+    assert.throws(() => resolvePnlPeriod({ from: "not-a-date" }, now), /invalid_from/);
     assert.throws(
-      () => resolvePnlPeriod({ from: "not-a-date" }, now),
-      /invalid_from/,
-    );
-    assert.throws(
-      () =>
-        resolvePnlPeriod(
-          { from: "2026-07-02T00:00:00Z", to: "2026-07-01T00:00:00Z" },
-          now,
-        ),
+      () => resolvePnlPeriod({ from: "2026-07-02T00:00:00Z", to: "2026-07-01T00:00:00Z" }, now),
       /empty_period/,
     );
     assert.throws(
-      () =>
-        resolvePnlPeriod(
-          { from: "2020-01-01T00:00:00Z", to: "2026-01-01T00:00:00Z" },
-          now,
-        ),
+      () => resolvePnlPeriod({ from: "2020-01-01T00:00:00Z", to: "2026-01-01T00:00:00Z" }, now),
       /period_too_long/,
     );
-    assert.throws(
-      () => resolvePnlPeriod({ period: "yearly" }, now),
-      /invalid_period/,
-    );
+    assert.throws(() => resolvePnlPeriod({ period: "yearly" }, now), /invalid_period/);
     assert.ok(PNL_MAX_RANGE_DAYS >= 365);
   });
 });
@@ -223,18 +209,10 @@ describe("onchain lines", () => {
     const report = build({ events });
     const seatA = report.seats.find((s) => s.agentId === SEAT_A)!;
     const seatB = report.seats.find((s) => s.agentId === SEAT_B)!;
-    assert.equal(
-      seatA.onchain.assets.find((a) => a.asset === "USDC")!.spent,
-      "50000000",
-    );
-    assert.equal(
-      seatB.onchain.assets.find((a) => a.asset === "USDC")!.pending,
-      "120000000",
-    );
+    assert.equal(seatA.onchain.assets.find((a) => a.asset === "USDC")!.spent, "50000000");
+    assert.equal(seatB.onchain.assets.find((a) => a.asset === "USDC")!.pending, "120000000");
     const seatSpend = report.seats.reduce(
-      (sum, s) =>
-        sum +
-        BigInt(s.onchain.assets.find((a) => a.asset === "USDC")?.spent ?? "0"),
+      (sum, s) => sum + BigInt(s.onchain.assets.find((a) => a.asset === "USDC")?.spent ?? "0"),
       0n,
     );
     assert.equal(
@@ -425,9 +403,7 @@ describe("connector lines", () => {
 
 describe("price table", () => {
   it("prefers the route over the connector and drops nonsense entries", () => {
-    const prices = parseConnectorPrices(
-      '{"github":0.001,"github.merge_pr":0.01,"bad":-3}',
-    )!;
+    const prices = parseConnectorPrices('{"github":0.001,"github.merge_pr":0.01,"bad":-3}')!;
     assert.equal(lookupConnectorPrice(prices, "github", "merge_pr"), 0.01);
     assert.equal(lookupConnectorPrice(prices, "github", "list_prs"), 0.001);
     assert.equal(lookupConnectorPrice(prices, "bad", "x"), null);
@@ -562,10 +538,7 @@ describe("agent scope", () => {
     });
     assert.equal(report.scope.kind, "agent");
     assert.equal(report.seats.length, 0);
-    assert.equal(
-      report.totals.onchain.assets.find((a) => a.asset === "USDC")!.spent,
-      "50000000",
-    );
+    assert.equal(report.totals.onchain.assets.find((a) => a.asset === "USDC")!.spent, "50000000");
   });
 });
 
@@ -610,13 +583,8 @@ describe("csv export", () => {
     });
     const csv = pnlToCsv(report);
     const header = csv.split("\n").find((l) => l.startsWith("scope,"))!;
-    assert.equal(
-      header,
-      "scope,seat,meter,unit,quantity,usd,price_known,detail",
-    );
-    const connectorRow = csv
-      .split("\n")
-      .find((l) => l.includes(",connectors,"))!;
+    assert.equal(header, "scope,seat,meter,unit,quantity,usd,price_known,detail");
+    const connectorRow = csv.split("\n").find((l) => l.includes(",connectors,"))!;
     assert.match(connectorRow, /,connectors,calls,1,,no,/);
     assert.ok(csv.includes("# lacrew P&L"));
     assert.ok(csv.includes("asOf 2026-07-15T12:00:00.000Z"));

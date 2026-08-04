@@ -40,9 +40,7 @@ import { normalizeBlocks, refsOfBlocks, type MessageBlock } from "./messageBlock
 
 /** Where a conversation happens. Crews are cloud-side labels, so ids are opaque. */
 export type ThreadScope =
-  | { kind: "crew"; id: string }
-  | { kind: "agent"; account: string }
-  | { kind: "org" };
+  { kind: "crew"; id: string } | { kind: "agent"; account: string } | { kind: "org" };
 
 /**
  * What a message is doing.
@@ -177,11 +175,7 @@ function normalizeVia(raw: string | undefined): string | undefined {
  * Validate and normalize a post. Throws rather than silently correcting: a
  * message stored under a kind nobody asked for would misrepresent its author.
  */
-export function normalizeMessage(
-  input: PostInput,
-  id: string,
-  at: string,
-): Message {
+export function normalizeMessage(input: PostInput, id: string, at: string): Message {
   const body = input.body.trim();
   if (!body) throw new Error("message_body_required");
   if (body.length > MESSAGE_MAX_CHARS) throw new MessageTooLongError(body.length);

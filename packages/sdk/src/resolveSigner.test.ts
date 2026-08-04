@@ -13,12 +13,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  custom,
-  encodeAbiParameters,
-  recoverTransactionAddress,
-  type Hex,
-} from "viem";
+import { custom, encodeAbiParameters, recoverTransactionAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { ANVIL_CHAIN_ID, getAddresses } from "@lacrew/core";
 import { createOnchainClient } from "./onchain.js";
@@ -147,10 +142,7 @@ describe("resolveIntent signs as the seat the chain is waiting on", () => {
 
   it("refuses by name when it holds no key for the approver, and broadcasts nothing", async () => {
     const { client, sent } = clientFor(STRANGER);
-    await assert.rejects(
-      client.resolveIntent("7", true, STRANGER),
-      /no_signer_for_approver/,
-    );
+    await assert.rejects(client.resolveIntent("7", true, STRANGER), /no_signer_for_approver/);
     // A passkey or Safe root signs elsewhere; sending a transaction that the
     // chain will reject tells the approver nothing about why.
     assert.deepEqual(sent, []);

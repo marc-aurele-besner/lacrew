@@ -5,7 +5,7 @@
 > you read nothing else, read [The two budgets](#the-two-budgets).
 
 A crew's onchain spending is bounded by a streamed allowance and a policy stack.
-Its *model* spending is bounded by nothing — and a heartbeat on a frontier
+Its _model_ spending is bounded by nothing — and a heartbeat on a frontier
 model, a flow that loops, or one badly-scoped delegate can cost more than the
 desk's clip size while every onchain number still reads healthy.
 
@@ -20,13 +20,13 @@ lacrew budget set --crew trading \
 
 ## The two budgets
 
-| | Onchain budget | Inference budget |
-| --- | --- | --- |
-| Bounds | funds leaving the treasury | what model calls cost you |
-| Enforced by | `SpendCapPolicy`, whitelist, allowance, session key — on the chain | the orchestrator, at `ModelProvider.complete` |
-| Denominated in | USDC (or any stack asset) | tokens, and best-effort USD |
-| Raised by | a governance proposal | an operator setting, audited |
-| When exhausted | the chain refuses the transfer | the orchestrator refuses the completion |
+|                | Onchain budget                                                     | Inference budget                              |
+| -------------- | ------------------------------------------------------------------ | --------------------------------------------- |
+| Bounds         | funds leaving the treasury                                         | what model calls cost you                     |
+| Enforced by    | `SpendCapPolicy`, whitelist, allowance, session key — on the chain | the orchestrator, at `ModelProvider.complete` |
+| Denominated in | USDC (or any stack asset)                                          | tokens, and best-effort USD                   |
+| Raised by      | a governance proposal                                              | an operator setting, audited                  |
+| When exhausted | the chain refuses the transfer                                     | the orchestrator refuses the completion       |
 
 The invariants that keep them apart are worth stating plainly:
 
@@ -43,23 +43,23 @@ The invariants that keep them apart are worth stating plainly:
 
 Any subset of three limits, per period:
 
-| Limit | Unit |
-| --- | --- |
-| `--usd` | dollars, best-effort (see [Pricing](#pricing-and-honest-dollars)) |
-| `--in-tokens` | input tokens |
-| `--out-tokens` | output tokens |
+| Limit          | Unit                                                              |
+| -------------- | ----------------------------------------------------------------- |
+| `--usd`        | dollars, best-effort (see [Pricing](#pricing-and-honest-dollars)) |
+| `--in-tokens`  | input tokens                                                      |
+| `--out-tokens` | output tokens                                                     |
 
 An **enabled** budget with no limit is refused: it would read as protection on
-every surface and bound nothing. A *disabled* one is fine — that is a form you
+every surface and bound nothing. A _disabled_ one is fine — that is a form you
 are still filling in.
 
 ### Periods
 
-| `--period` | Window |
-| --- | --- |
-| `calendar_month` (default) | the UTC calendar month — what a card statement looks like |
-| `epoch` | `--window-days`/`--anchor`-aligned to your payroll epoch, so inference and allowances roll over together |
-| `window` | a **tumbling** window of `--window-days`, counted from `--anchor` |
+| `--period`                 | Window                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `calendar_month` (default) | the UTC calendar month — what a card statement looks like                                                |
+| `epoch`                    | `--window-days`/`--anchor`-aligned to your payroll epoch, so inference and allowances roll over together |
+| `window`                   | a **tumbling** window of `--window-days`, counted from `--anchor`                                        |
 
 `window` is deliberately not a trailing "last 30 days". The enforced number is a
 counter per period, and a trailing window would make the figure you are looking
@@ -72,10 +72,10 @@ is compared against did.
 
 ## Soft and hard
 
-| `policy` | At the line |
-| --- | --- |
-| `soft` (default) | warn: a note in the crew thread, an `InferenceBudgetExceeded` audit event. Nothing is blocked. |
-| `hard` (`--hard`) | refuse further completions with `inference_budget_exceeded` |
+| `policy`          | At the line                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `soft` (default)  | warn: a note in the crew thread, an `InferenceBudgetExceeded` audit event. Nothing is blocked. |
+| `hard` (`--hard`) | refuse further completions with `inference_budget_exceeded`                                    |
 
 An alert also fires at **80%**, while there is still room to act. Both alerts
 fire **once per crossing per period** — a crew at 81% of its budget produces a
@@ -131,6 +131,7 @@ Three sources, in order:
 
    A table that does not parse falls back to the built-in one **whole** —
    honouring three of five overrides would enforce a number nobody wrote.
+
 3. **Nothing.** A call neither the provider nor the table can price is counted as
    **unpriced**, never as free. Its tokens still count against token limits, and
    every surface that shows the dollar figure says how many calls it omits:
@@ -168,25 +169,29 @@ lacrew budget usage --crew trading       # the calls behind the number
 ```
 
 `usage` is the breakdown: model id, tokens, estimated USD, and the run each call
-belonged to — so *"why is this crew at 90%?"* is answerable without opening a
+belonged to — so _"why is this crew at 90%?"_ is answerable without opening a
 provider's console.
 
 Over HTTP:
 
-| Route | |
-| --- | --- |
-| `GET /budgets` | every budget with its standing |
-| `GET /budgets/one?crewId=&agentId=` | one, narrowed |
-| `POST /budgets` | save (audited as `InferenceBudgetChanged`) |
-| `POST /budgets/enabled` | toggle |
-| `POST /budgets/delete` | remove |
-| `GET /budgets/usage?crewId=&limit=` | the per-call breakdown |
+| Route                               |                                            |
+| ----------------------------------- | ------------------------------------------ |
+| `GET /budgets`                      | every budget with its standing             |
+| `GET /budgets/one?crewId=&agentId=` | one, narrowed                              |
+| `POST /budgets`                     | save (audited as `InferenceBudgetChanged`) |
+| `POST /budgets/enabled`             | toggle                                     |
+| `POST /budgets/delete`              | remove                                     |
+| `GET /budgets/usage?crewId=&limit=` | the per-call breakdown                     |
 
 A refused completion answers `429` with the stable code:
 
 ```json
-{ "error": "inference_budget_exceeded", "scopeKey": "crew:trading",
-  "dimension": "usd", "periodKey": "2026-07" }
+{
+  "error": "inference_budget_exceeded",
+  "scopeKey": "crew:trading",
+  "dimension": "usd",
+  "periodKey": "2026-07"
+}
 ```
 
 Inside a flow, the same code surfaces on the failing `model` step, so a flow

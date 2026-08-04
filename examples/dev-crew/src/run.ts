@@ -8,18 +8,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  createPublicClient,
-  createWalletClient,
-  defineChain,
-  http,
-  parseAbi,
-} from "viem";
+import { createPublicClient, createWalletClient, defineChain, http, parseAbi } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { MOCK_WORKER, MOCK_MANAGER, getAddresses } from "@lacrew/core";
-import {
-  simulateIntentAction,
-} from "@lacrew/sdk";
+import { simulateIntentAction } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import {
   USDC,
@@ -40,9 +32,7 @@ import {
 } from "@lacrew/x402";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const policy = JSON.parse(
-  readFileSync(join(__dirname, "../policy.json"), "utf8"),
-) as {
+const policy = JSON.parse(readFileSync(join(__dirname, "../policy.json"), "utf8")) as {
   name: string;
   latencyBoundary: string;
   demoSpends: Array<{
@@ -121,11 +111,7 @@ async function offlineX402Receipt(valueUsdc: number, payTo: `0x${string}`) {
  * MockUSDC, no facilitator. This is the seat-pays-its-own-way rail, distinct
  * from the treasury allowance rail the proposes above exercise.
  */
-async function anvilX402Receipt(opts: {
-  rpc: string;
-  chainId: number;
-  valueUsdc: number;
-}) {
+async function anvilX402Receipt(opts: { rpc: string; chainId: number; valueUsdc: number }) {
   const addresses = getAddresses(opts.chainId);
   const token = addresses.mockUSDC;
   const payTo = addresses.x402Target;
@@ -316,7 +302,6 @@ async function runViaMock(): Promise<void> {
   );
 }
 
-
 async function runViaAnvil(): Promise<void> {
   const { createRuntimeFromEnv } = await import("@lacrew/orchestrator");
   const boot = await createRuntimeFromEnv();
@@ -332,10 +317,7 @@ async function runViaAnvil(): Promise<void> {
   console.log(`crew=${policy.name}`);
 
   const nodes = await runtime.getClient().getOrgTree();
-  console.log(
-    "org",
-    nodes.map((n) => `${n.kind}:${n.account.slice(0, 10)}…`).join("  "),
-  );
+  console.log("org", nodes.map((n) => `${n.kind}:${n.account.slice(0, 10)}…`).join("  "));
 
   for (const spend of policy.demoSpends) {
     const value = BigInt(spend.valueUsdc) * 10n ** 6n;
