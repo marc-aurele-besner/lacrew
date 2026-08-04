@@ -54,7 +54,13 @@ export function connectorAskTtlMs(env: Record<string, string | undefined> = proc
   return Number.isFinite(raw) && raw >= 60_000 ? raw : DEFAULT_ASK_TTL_MS;
 }
 
-export type ConnectorAskStatus = "pending" | "approved" | "declined" | "expired" | "consumed";
+export type ConnectorAskStatus =
+  | "pending"
+  | "approved"
+  | "declined"
+  | "expired"
+  | "cancelled"
+  | "consumed";
 
 /**
  * What the human said, once. `consumed` is separate from the outcome on
@@ -80,7 +86,7 @@ export type ConnectorAskRecord = {
   runId?: string;
   status: ConnectorAskStatus;
   /** How it ended, kept after `consumed` overwrites `status`. */
-  outcome?: "approved" | "declined" | "expired";
+  outcome?: "approved" | "declined" | "expired" | "cancelled";
   createdAt: string;
   expiresAt: string;
   resolvedAt?: string;
@@ -176,6 +182,14 @@ export type ConnectorAsksSurface = {
   attachResume(id: string, resume: FlowResumeState): Promise<void>;
   /** Feed a conversation message in; resolves the ask it answers, if any. */
   observe(message: Message): void;
+  /**
+   * Close every question a run left open, because that run has ended.
+   *
+   * Deliberately without a resume: the run is over. A cancelled ask exists so a
+   * late "yes" lands on a closed question instead of restarting a run — and so
+   * a delegated run cancelled with its parent leaves nothing runnable.
+   */
+  cancelRun(runId: string, reason?: string): Promise<ConnectorAskRecord[]>;
   /** Expire asks past their deadline and let their runs fail closed. */
   sweep(now?: Date): Promise<ConnectorAskRecord[]>;
   /** Set by the flows surface; resuming needs to run a flow. */
@@ -317,6 +331,14 @@ export function createConnectorAsks(opts: {
           await persist(existing);
           throw new Error(`connector_ask_timeout:${request.connector}.${request.route}`);
         }
+        if (existing.status === "cancelled") {
+          // The run this question belonged to was ended. Re-entering the step
+          // is not a second chance at the write — the confirmation died with
+          // the run, and a fresh run asks its own question.
+          existing.status = "consumed";
+          await persist(existing);
+          throw new Error(`connector_ask_cancelled:${request.connector}.${request.route}`);
+        }
         if (existing.status === "pending") {
           throw new FlowWaitingError({
             reason: "connector_ask",
@@ -414,6 +436,25 @@ export function createConnectorAsks(opts: {
       // A run that has not attached its resume state yet is still suspending;
       // `attachResume` picks the resolution up when it lands.
       if (ask.resume) startResume(ask);
+    },
+
+    cancelRun: async (runId, reason) => {
+      const closed: ConnectorAskRecord[] = [];
+      for (const ask of asks.values()) {
+        if (ask.runId !== runId || ask.status !== "pending") continue;
+        ask.status = "cancelled";
+        ask.outcome = "cancelled";
+        ask.resolvedAt = now().toISOString();
+        await persist(ask);
+        audit("ConnectorAskResolved", ask, {
+          outcome: "cancelled",
+          ...(reason ? { reason } : {}),
+        });
+        closed.push(ask);
+        // Not resumed, on purpose: the run is over, and the only thing this
+        // record still does is refuse a late answer.
+      }
+      return closed;
     },
 
     sweep: async (at = now()) => {

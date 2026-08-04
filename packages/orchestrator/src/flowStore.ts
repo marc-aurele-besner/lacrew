@@ -6,13 +6,16 @@
  */
 
 import {
+  claimWaitingFlowRun,
   createDb,
   deleteFlowDefinition,
+  getChildFlowRunState,
   getDatabaseUrl,
   getFlowDefinition,
   getFlowRun,
   getFlowRunState,
   insertFlowRun,
+  listChildFlowRunStates,
   listFlowCheckpoints,
   listFlowDefinitions,
   listFlowRunStates,
@@ -60,6 +63,12 @@ export type FlowRunState = {
   pause?: FlowWaiting | null;
   /** Non-null only while a side-effecting step is in flight. */
   attempt?: FlowAttempt | null;
+  /**
+   * The run whose `agent` step delegated this one, and the step it came from
+   * (F2.24 / F2.27). Null on every run a person, a trigger or a webhook began.
+   */
+  parentRunId?: string | null;
+  parentStepId?: string | null;
   startedAt: string;
   updatedAt: string;
 };
@@ -91,6 +100,9 @@ export interface FlowStore {
     principal?: string;
     trigger?: string;
     startedAt: string;
+    /** Set once, when an `agent` step delegates this run; never on a resume. */
+    parentRunId?: string;
+    parentStepId?: string;
   }): Promise<void>;
   /**
    * Persist one completed step. Unlike everything above, this throws on
@@ -105,6 +117,23 @@ export interface FlowStore {
   runState(runId: string): Promise<FlowRunState | null>;
   /** Every run in one of the given lifecycle states, oldest first. */
   listRunStates(statuses: FlowRunLifecycle[]): Promise<FlowRunState[]>;
+  /**
+   * The run one `agent` step already delegated, if any. A resumed parent asks
+   * this before delegating: a child that exists is the one this step started,
+   * and re-running it would be the second delegation.
+   */
+  childRun(parentRunId: string, parentStepId: string): Promise<FlowRunState | null>;
+  /** Every run a parent delegated — what the cancel cascade walks. */
+  childRuns(parentRunId: string): Promise<FlowRunState[]>;
+  /**
+   * Take a parked run out of `waiting`, atomically, for exactly one caller.
+   *
+   * More than one thing can decide to wake a run at the same moment — a
+   * delegated child ending in one replica, an operator pressing Resume in
+   * another — and both would read `waiting`. Whoever's transition lands gets
+   * the state back; everyone else gets null and leaves it alone.
+   */
+  claimWaiting(runId: string): Promise<FlowRunState | null>;
   /** The checkpoint trail of one run, oldest → newest. */
   checkpointsOf(runId: string): Promise<FlowCheckpoint[]>;
   close(): Promise<void>;
@@ -156,6 +185,10 @@ export function createMemoryFlowStore(): FlowStore {
         // A resume clears the request it is honouring, not one raised since.
         request: existing?.request ?? null,
         attempt: null,
+        // Who delegated a run is settled when it starts. A resume passes no
+        // parent and must not be read as saying it has none.
+        parentRunId: existing?.parentRunId ?? run.parentRunId ?? null,
+        parentStepId: existing?.parentStepId ?? run.parentStepId ?? null,
         startedAt: existing?.startedAt ?? run.startedAt,
         updatedAt: new Date().toISOString(),
       });
@@ -173,6 +206,8 @@ export function createMemoryFlowStore(): FlowStore {
         principal: existing?.principal ?? null,
         trigger: existing?.trigger ?? null,
         request: existing?.request ?? null,
+        parentRunId: existing?.parentRunId ?? null,
+        parentStepId: existing?.parentStepId ?? null,
         startedAt: existing?.startedAt ?? cp.at,
         status: cp.status === "paused" ? "waiting" : "running",
         cursor: cp.nextStepId,
@@ -205,6 +240,33 @@ export function createMemoryFlowStore(): FlowStore {
         .filter((s) => statuses.includes(s.status))
         .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
         .map(clone),
+    childRun: async (parentRunId, parentStepId) => {
+      for (const state of states.values()) {
+        if (state.parentRunId === parentRunId && state.parentStepId === parentStepId) {
+          return clone(state);
+        }
+      }
+      return null;
+    },
+    childRuns: async (parentRunId) =>
+      [...states.values()]
+        .filter((s) => s.parentRunId === parentRunId)
+        .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+        .map(clone),
+    claimWaiting: async (runId) => {
+      // One synchronous read-and-write, which is the whole claim in a runtime
+      // that never interleaves them.
+      const existing = states.get(runId);
+      if (!existing || existing.status !== "waiting") return null;
+      const claimed: FlowRunState = {
+        ...existing,
+        status: "running",
+        request: null,
+        updatedAt: new Date().toISOString(),
+      };
+      states.set(runId, claimed);
+      return clone(claimed);
+    },
     checkpointsOf: async (runId) => (checkpoints.get(runId) ?? []).map(clone),
     close: async () => {},
   };
@@ -227,6 +289,8 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
     state?: FlowResumeState | null;
     pause?: FlowWaiting | null;
     attempt?: FlowAttempt | null;
+    parentRunId?: string | null;
+    parentStepId?: string | null;
     startedAt: string;
   }) => ({
     runId: input.runId,
@@ -238,6 +302,8 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
     state: (input.state ?? null) as Record<string, unknown> | null,
     pause: (input.pause ?? null) as Record<string, unknown> | null,
     attempt: (input.attempt ?? null) as Record<string, unknown> | null,
+    parentRunId: input.parentRunId ?? null,
+    parentStepId: input.parentStepId ?? null,
     startedAt: input.startedAt,
   });
 
@@ -252,6 +318,8 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
     state?: Record<string, unknown> | null;
     pause?: Record<string, unknown> | null;
     attempt?: Record<string, unknown> | null;
+    parentRunId?: string | null;
+    parentStepId?: string | null;
     startedAt: string;
     updatedAt: string;
   }): FlowRunState => ({
@@ -265,6 +333,8 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
     state: (row.state ?? null) as FlowResumeState | null,
     pause: (row.pause ?? null) as FlowWaiting | null,
     attempt: (row.attempt ?? null) as FlowAttempt | null,
+    parentRunId: row.parentRunId ?? null,
+    parentStepId: row.parentStepId ?? null,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,
   });
@@ -431,6 +501,34 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
       } catch (err) {
         warn("run states list", err);
         return [];
+      }
+    },
+    childRun: async (parentRunId, parentStepId) => {
+      // Unlike the reads above this one rethrows: a resumed parent uses the
+      // answer to decide whether to delegate, and an unreadable "no child" is
+      // indistinguishable from a real one — which would start the delegate a
+      // second time. The step fails instead.
+      const row = await getChildFlowRunState(db(), parentRunId, parentStepId);
+      return row ? toState(row) : null;
+    },
+    childRuns: async (parentRunId) => {
+      try {
+        const rows = await listChildFlowRunStates(db(), parentRunId);
+        return rows.map(toState);
+      } catch (err) {
+        warn("child runs list", err);
+        return [];
+      }
+    },
+    claimWaiting: async (runId) => {
+      try {
+        const row = await claimWaitingFlowRun(db(), runId);
+        return row ? toState(row) : null;
+      } catch (err) {
+        // An unclaimed run stays parked and is picked up by the next boot or an
+        // operator. Guessing that the claim landed would resume it twice.
+        warn("run claim", err);
+        return null;
       }
     },
     checkpointsOf: async (runId) => {
