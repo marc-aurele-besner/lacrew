@@ -480,6 +480,99 @@ export function installedSkillPacks(layers: readonly BriefLayer[]): InstalledSki
   return [...out.values()];
 }
 
+/** What an install would do to one of a pack's skills. */
+export type SkillPackDiffStatus = "added" | "removed" | "changed" | "unchanged";
+
+export type SkillPackDiffEntry = {
+  /** The skill's id within the pack — the thing an update matches on. */
+  skill: string;
+  /** The name to show: the incoming one, or the installed one for a removal. */
+  name: string;
+  status: SkillPackDiffStatus;
+  /** Which fields differ. Empty unless `changed`. */
+  fields: Array<"name" | "trigger" | "body">;
+};
+
+export type SkillPackDiff = {
+  pack: string;
+  /** The installed version, or null when this pack is not on the directive. */
+  from: string | null;
+  to: string;
+  entries: SkillPackDiffEntry[];
+  added: number;
+  removed: number;
+  changed: number;
+  unchanged: number;
+};
+
+/**
+ * What installing this pack would change on a directive that may already carry
+ * an earlier version of it.
+ *
+ * An install reports how many skills it replaced, which answers "did something
+ * happen" and not "what did it say" — and a pack body is instruction reaching a
+ * model's system prompt, so an operator taking an update should be able to read
+ * the change before it lands rather than after.
+ *
+ * Matched on `source.skill`, never on name: an update that renames a skill is
+ * still that skill, and two hand-written skills sharing a name are not this
+ * pack's. A skill the installed version had and the new one does not is
+ * `removed`, because installing writes the new pack's skills and clears the
+ * rest of the old one's — the count of what disappears is part of the change.
+ */
+export function diffSkillPack(layers: readonly BriefLayer[], pack: SkillPack): SkillPackDiff {
+  const installed = new Map<string, LayerSkill>();
+  let from: string | null = null;
+  for (const layer of layers) {
+    for (const skill of layer.skills ?? []) {
+      if (skill.source?.pack !== pack.id) continue;
+      if (from === null) from = skill.source.version;
+      // First occurrence wins, mirroring `installedSkillPacks`: a directive
+      // carrying the same pack on two layers is a state to report, not one to
+      // resolve by picking a second copy of the same skill.
+      if (!installed.has(skill.source.skill)) installed.set(skill.source.skill, skill);
+    }
+  }
+
+  const entries: SkillPackDiffEntry[] = [];
+  for (const skill of pack.skills) {
+    const before = installed.get(skill.id);
+    if (!before) {
+      entries.push({ skill: skill.id, name: skill.name, status: "added", fields: [] });
+      continue;
+    }
+    const fields: SkillPackDiffEntry["fields"] = [];
+    if (before.name !== skill.name) fields.push("name");
+    if ((before.when ?? "") !== skill.trigger) fields.push("trigger");
+    if (before.instructions !== skill.body) fields.push("body");
+    entries.push({
+      skill: skill.id,
+      name: skill.name,
+      status: fields.length > 0 ? "changed" : "unchanged",
+      fields,
+    });
+  }
+
+  const incoming = new Set(pack.skills.map((s) => s.id));
+  for (const [id, skill] of installed) {
+    if (incoming.has(id)) continue;
+    entries.push({ skill: id, name: skill.name, status: "removed", fields: [] });
+  }
+
+  const count = (status: SkillPackDiffStatus): number =>
+    entries.filter((e) => e.status === status).length;
+  return {
+    pack: pack.id,
+    from,
+    to: pack.version,
+    entries,
+    added: count("added"),
+    removed: count("removed"),
+    changed: count("changed"),
+    unchanged: count("unchanged"),
+  };
+}
+
 /**
  * Lift a layer's skills back out as a pack, for backup or for sharing.
  *

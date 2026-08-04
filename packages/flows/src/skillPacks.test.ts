@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   describeMissing,
+  diffSkillPack,
   exportSkillPack,
   hasMissingRequirements,
   installSkillPack,
@@ -245,6 +246,67 @@ test("export names a missing trigger instead of dropping the skill", () => {
     },
   );
   assert.ok(exported.skills[0]!.trigger.startsWith("TODO"));
+});
+
+/* ——— diff before an update ——— */
+
+const packV2: SkillPack = {
+  ...pack,
+  version: "2.0.0",
+  skills: [
+    { id: "first", name: "First", trigger: "When one.", body: "Do one, carefully." },
+    { id: "third", name: "Third", trigger: "When three.", body: "Do three." },
+  ],
+};
+
+test("a diff against a directive that has never seen the pack is all additions", () => {
+  const diff = diffSkillPack([{ label: "agent", text: "House rules." }], pack);
+  assert.equal(diff.from, null);
+  assert.equal(diff.added, 2);
+  assert.equal(diff.changed + diff.removed + diff.unchanged, 0);
+});
+
+test("a diff names what changed, what is new, and what would disappear", () => {
+  const layers = installSkillPack([{ label: "agent" }], pack).layers;
+  const diff = diffSkillPack(layers, packV2);
+  assert.equal(diff.from, "1.0.0");
+  assert.equal(diff.to, "2.0.0");
+  assert.deepEqual(
+    diff.entries.map((e) => [e.skill, e.status]),
+    [
+      ["first", "changed"],
+      ["third", "added"],
+      ["second", "removed"],
+    ],
+  );
+  assert.deepEqual(diff.entries[0]!.fields, ["body"]);
+});
+
+test("a diff matches on the skill id, so a rename is not a replacement", () => {
+  const layers = installSkillPack([{ label: "agent" }], pack).layers;
+  const renamed: SkillPack = {
+    ...pack,
+    version: "1.1.0",
+    skills: [
+      { id: "first", name: "First, renamed", trigger: "When one.", body: "Do one." },
+      pack.skills[1]!,
+    ],
+  };
+  const diff = diffSkillPack(layers, renamed);
+  assert.equal(diff.added, 0);
+  assert.equal(diff.removed, 0);
+  assert.deepEqual(diff.entries[0]!.fields, ["name"]);
+  assert.equal(diff.entries[1]!.status, "unchanged");
+});
+
+test("a diff ignores hand-written skills, whatever they are called", () => {
+  const layers = installSkillPack(
+    [{ label: "agent", skills: [{ name: "First", when: "Mine.", instructions: "Mine." }] }],
+    pack,
+  ).layers;
+  const diff = diffSkillPack(layers, pack);
+  assert.equal(diff.entries.length, 2);
+  assert.equal(diff.added + diff.changed + diff.removed, 0);
 });
 
 /* ——— the packs that ship ——— */

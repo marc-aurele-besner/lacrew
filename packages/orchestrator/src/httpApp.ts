@@ -1865,6 +1865,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * The readiness is computed rather than stored: a connector registered after
    * this list was last read must not leave a pack showing as uninstallable, and
    * a credential unset since must not leave one showing as ready.
+   *
+   * Bodies are served, not withheld. A pack is instruction that lands in a
+   * model's system prompt, and "reviewable before install" is the reason it is
+   * data rather than prose typed into a dialog — a catalog that shows only the
+   * triggers would leave every consumer of this route asking an operator to
+   * approve text nobody can read here.
    */
   app.get("/skills/packs", async (c) => {
     const available = await skillPacks.availability();
@@ -1877,7 +1883,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           name: pack.name,
           summary: pack.summary,
           scope: pack.scope,
-          skills: pack.skills.map((s) => ({ id: s.id, name: s.name, trigger: s.trigger })),
+          skills: pack.skills.map((s) => ({
+            id: s.id,
+            name: s.name,
+            trigger: s.trigger,
+            body: s.body,
+          })),
           requires: pack.requires ?? {},
           missing,
           installable:

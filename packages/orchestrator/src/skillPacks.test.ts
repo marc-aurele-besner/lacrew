@@ -100,7 +100,7 @@ describe("skill packs (F2.23)", () => {
         id: string;
         installable: boolean;
         missing: { flows: string[]; connectors: string[] };
-        skills: Array<{ id: string; trigger: string }>;
+        skills: Array<{ id: string; trigger: string; body: string }>;
       }>;
     };
     const pack = body.packs.find((p) => p.id === "github-pr-triage")!;
@@ -111,8 +111,10 @@ describe("skill packs (F2.23)", () => {
       "github.merge_pull_request",
     ]);
     // The trigger is part of the listing: it is what an operator reads to
-    // decide whether a skill belongs on this seat.
-    assert.ok(pack.skills.every((s) => s.trigger.length > 0));
+    // decide whether a skill belongs on this seat. So is the body — a catalog
+    // that showed only triggers would ask an operator to approve instruction
+    // reaching a model's prompt without letting them read it first.
+    assert.ok(pack.skills.every((s) => s.trigger.length > 0 && s.body.length > 0));
   });
 
   it("refuses an install whose connector is not registered, and takes it once it is", async () => {

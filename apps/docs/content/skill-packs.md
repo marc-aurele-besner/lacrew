@@ -87,11 +87,29 @@ lacrew skills show github-pr-triage
 
 # against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN)
 lacrew skills list --url http://127.0.0.1:8788   # adds what this deployment is missing
+lacrew skills diff github-pr-triage --agent 0xSEAT      # what installing would change
 lacrew skills install github-pr-triage --agent 0xSEAT
 lacrew skills install --file ./my-pack.json --agent 0xSEAT
 lacrew skills installed --agent 0xSEAT
 lacrew skills remove github-pr-triage --agent 0xSEAT
 lacrew skills export --agent 0xSEAT --id my-pack > my-pack.json
+```
+
+`diff` is the read before the write. An install reports how many skills it
+replaced, which answers _did something happen_ and not _what does it say now_ —
+and a pack body is instruction that lands in a model's system prompt. Each
+skill is matched on its id, so a rename reads as a change rather than as a
+removal plus an addition, and a skill the new version dropped is listed as one
+the install will take away.
+
+```
+github-pr-triage: 0.9.0 → 1.0.0 on 0xSEAT
+
+  ~ Triage a dependency-bot PR  [triage-a-bot-pr]  (body)
+  + Repair a red dependency PR  [repair-a-red-pr]
+  - A skill this version dropped  [retired]
+
+1 added · 1 changed · 1 removed · 1 unchanged
 ```
 
 `export` lifts a seat's skills back out as a pack — hand-written ones included,
@@ -102,7 +120,7 @@ with no trigger is exported with the gap named in the field rather than dropped.
 
 | Route                          | Does                                                                                                                               |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /skills/packs`            | The packs that ship, each with what this deployment is missing and whether it is installable                                       |
+| `GET /skills/packs`            | The packs that ship, each with its skills (trigger and body), what this deployment is missing, and whether it is installable       |
 | `GET /agents/skills?agent=0x…` | Which packs a seat's directive carries, and the directive itself                                                                   |
 | `POST /agents/skills/install`  | `{agent, packId}` for a shipped pack, or `{agent, pack}` with the pack inline. `label` picks the directive layer (default `agent`) |
 | `POST /agents/skills/remove`   | `{agent, packId}`                                                                                                                  |
@@ -119,6 +137,13 @@ different places:
 Both outcomes are audited: `SkillPackInstalled` and `SkillPackRemoved` carry the
 pack id, version and counts — never the skill bodies, which the directive itself
 serves in full.
+
+There is deliberately no install-onto-a-crew route. The orchestrator holds
+per-agent layers with opaque labels and keeps no roster: which seats make up a
+crew is the caller's answer, and a route that took a crew id would have to guess
+at one. So a crew-wide install is a fan-out the caller performs seat by seat —
+which is also the only shape that can report that four seats took the pack and
+the fifth was unreachable, instead of one status for five different outcomes.
 
 ## What ships
 

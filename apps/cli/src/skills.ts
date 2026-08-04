@@ -15,6 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import {
+  diffSkillPack,
   exportSkillPack,
   firstPartySkillPacks,
   getSkillPack,
@@ -160,6 +161,46 @@ async function printInstalled(args: string[], agent: string): Promise<void> {
   }
 }
 
+/**
+ * What an install would change on a seat that may already carry the pack.
+ *
+ * Read before the write, which is the only order in which the answer is worth
+ * anything: `install` reports a replaced count, and a count does not tell an
+ * operator that the merge procedure they rely on now says something else.
+ */
+async function printDiff(args: string[], agent: string, pack: SkillPack): Promise<void> {
+  const body = await orchFetch<{ brief: { layers: BriefLayer[] } | null }>(
+    args,
+    `/agents/skills?agent=${agent}`,
+  );
+  const diff = diffSkillPack(body.brief?.layers ?? [], pack);
+  if (diff.from === null) {
+    console.log(
+      `${pack.id} is not installed on ${agent}. Installing adds ${pack.skills.length} skills:\n`,
+    );
+  } else if (diff.from === diff.to) {
+    console.log(
+      `${pack.id} ${diff.from} is installed on ${agent}; re-installing the same version.\n`,
+    );
+  } else {
+    console.log(`${pack.id}: ${diff.from} → ${diff.to} on ${agent}\n`);
+  }
+  const mark = { added: "+", removed: "-", changed: "~", unchanged: " " } as const;
+  for (const entry of diff.entries) {
+    const detail = entry.fields.length > 0 ? `  (${entry.fields.join(", ")})` : "";
+    console.log(`  ${mark[entry.status]} ${entry.name}  [${entry.skill}]${detail}`);
+  }
+  console.log(
+    `\n${diff.added} added · ${diff.changed} changed · ${diff.removed} removed · ${diff.unchanged} unchanged`,
+  );
+  // Named because it is the one an operator does not expect: installing writes
+  // this pack's skills and clears what the old version left, so a skill dropped
+  // between versions leaves the directive without anything asking.
+  if (diff.removed > 0) {
+    console.log("Removed skills go away on install. Hand-written skills are untouched.");
+  }
+}
+
 export async function cmdSkills(args: string[]): Promise<void> {
   const [sub = "help", ...rest] = args;
   const agent = flagValue(args, "--agent");
@@ -178,6 +219,12 @@ export async function cmdSkills(args: string[]): Promise<void> {
   if (sub === "installed") {
     if (!agent) throw new Error("lacrew skills installed --agent 0x…");
     await printInstalled(args, agent);
+    return;
+  }
+
+  if (sub === "diff") {
+    if (!agent) throw new Error("lacrew skills diff <id|--file pack.json> --agent 0x…");
+    await printDiff(args, agent, resolvePack(rest[0]?.startsWith("-") ? undefined : rest[0], args));
     return;
   }
 
@@ -255,6 +302,7 @@ Offline:
 Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
   list                      Adds what this deployment is missing per pack
   installed --agent 0x…     Packs currently on a seat's directive
+  diff <id> --agent 0x…     What installing it would add, change and remove
   install <id> --agent 0x…  Install a shipped pack
   install --file p.json --agent 0x…   Install a pack from a file
   remove <id> --agent 0x…   Remove that pack's skills, keeping hand-written ones
