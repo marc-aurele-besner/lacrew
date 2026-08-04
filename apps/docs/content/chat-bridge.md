@@ -89,19 +89,39 @@ exactly as before.
 2. **Register it with the platform.** For Telegram, pass the secret as `secret_token` to
    `setWebhook`. For Slack, the URL is the Events request URL and the proof is the app's
    signing secret, stored with the other channel credentials.
-3. **Pair your account** — send `pair <code>` to the bot from the account you want to speak
+3. **Store a bot credential**, so the bot can answer in the room rather than only in the
+   HTTP response nobody in the room reads. Telegram: the bot token. Slack: a bot token
+   (`xoxb-…`) with `chat:write` — **not** the incoming webhook the alerts go out on, which
+   posts to the one channel it was minted for and so cannot answer the room that wrote.
+   Invite that bot to any channel it should answer in.
+4. **Pair your account** — send `pair <code>` to the bot from the account you want to speak
    from. The code binds to your seat, expires in ten minutes, and works once.
-4. **Set a channel signing key** on the control plane: `LACREW_CHANNEL_SECRET`, or
+5. **Set a channel signing key** on the control plane: `LACREW_CHANNEL_SECRET`, or
    `LACREW_SESSION_KEY` (from which one is derived). Without it there is no verifiable
    reply target and the bridge stays off rather than trusting.
-5. **Optionally bind a room to a crew**, so messages nobody was asked for have a home.
+6. **Optionally bind a room to a crew**, so messages nobody was asked for have a home.
+
+## Acknowledgement
+
+`acknowledgement` in `@lacrew/orchestrator` is the text the bot sends back — it names the
+kind and the thread and stops there, because anything warmer would let a sender read a
+thread post as an outcome. Where that text appears depends on the credential:
+
+| Stored                       | Where the sender sees it                                           |
+| ---------------------------- | ------------------------------------------------------------------ |
+| A bot token for the platform | In the room they wrote from — in the thread, on Slack in a channel |
+| Nothing                      | The endpoint's HTTP response only, which nobody in the room reads  |
+
+**A failed acknowledgement never undoes the thread post.** The claim has already landed;
+losing the receipt is the smaller failure, and re-posting it because the platform retried
+the delivery would be the larger one. The endpoint's response reports the delivery and the
+platform's own reason for refusing it — `not_in_channel` most often, which means the bot
+was never invited to the channel it is answering in.
 
 ## Known limits
 
-- **Telegram is the certified channel.** Slack messages resolve and post, but the bot
-  cannot acknowledge in-channel: Slack incoming webhooks post to the one channel they were
-  minted for, so "reply to the room that wrote" could land somewhere else. The
-  acknowledgement text still comes back in the endpoint's response.
+- **Telegram is the certified channel**, in the sense that its whole path has been driven
+  live end to end. Slack's inbound path is route-tested against a mocked Web API.
 - **Discord is out**, as in F2.20: its bots receive over a gateway connection, not an HTTP
   webhook, so there is no URL to point at a control plane.
 - Rate limits on the inbound path are per replica, not distributed.
