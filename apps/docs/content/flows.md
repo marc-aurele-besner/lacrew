@@ -115,6 +115,44 @@ deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
 fails also fails the delegating step, rather than returning the failure as data
 for the parent to ignore.
 
+### Delegation and ask / gate
+
+A delegated flow can stop on the same things any flow stops on: an ask-mode
+connector write waiting on a confirmation, or a blocking `human` gate. When it
+does, the **delegating run parks too** — status `waiting`, pause reason
+`awaiting_child`, and the child's run id as the pause token. Nothing below the
+`agent` step runs, and no second question is asked: the child's question is
+raised and answered where the write actually is, and the parent shows up in the
+stalled-run list pointing at it.
+
+What holds it together:
+
+- **The link is durable, both ways.** The child's run state records the parent
+  run and the step it was delegated from; the parent's pause records the child.
+  A restart hydrates both, and neither is picked up by boot recovery — a parked
+  run is waiting on something, not stalled.
+- **The child ending is what releases the parent**, whether it completed,
+  failed, or was cancelled. The wake is a claim on the parent's `waiting`
+  state, so a child ending in one replica and an operator pressing Resume in
+  another cannot both continue the same run.
+- **A resumed parent re-enters the `agent` step and finds the run it already
+  delegated** rather than starting a second one — the delegate is not re-run,
+  and the write behind the confirmation goes out exactly once. One child per
+  (run, step) is a uniqueness constraint in the durable state, not a convention.
+- **The delegate's outcome is the step's outcome.** A completed child returns
+  its last summary as the step's text (branch on it like any other output); a
+  child that failed fails the step with `flow_delegate_failed`; a cancelled one
+  fails it with `flow_delegate_cancelled`. A rejected human gate inside the
+  child is not a failure — the child takes the gate's reject port, finishes, and
+  the parent continues from what it decided.
+- **Cancelling a parent cancels its delegates**, recursively, and closes their
+  asks and gates. The policy is cancel, not abandon: a delegated run left
+  runnable behind a cancelled parent is a pipeline that spends on work nobody is
+  waiting for.
+
+Nesting still stops at four levels, and every level parks — a question three
+deep parks the whole chain and one answer releases it back up.
+
 ## Triggers
 
 `trigger: "manual"` (default) runs from the UI, SDK, or CLI. `trigger:
@@ -151,11 +189,13 @@ therefore stop and be picked back up later, by a different replica.
 | `error`     | Failed                                                        |
 | `cancelled` | Ended by an operator; **never** resumable                     |
 
-A run pauses in four ways: a `wait` step it declared, a `human` gate holding it
+A run pauses in five ways: a `wait` step it declared, a `human` gate holding it
 until someone decides, an `ask`-mode connector write waiting on a human
-([connectors](./connectors.md)), or an operator asking for a pause.
-`waiting.reason` says which — `awaiting_human`, `awaiting_webhook`,
-`human_gate`, `connector_ask`, or `operator`.
+([connectors](./connectors.md)), a delegated flow that parked on any of those
+(see [Delegation and ask / gate](#delegation-and-ask--gate)), or an operator
+asking for a pause. `waiting.reason` says which — `awaiting_human`,
+`awaiting_webhook`, `human_gate`, `connector_ask`, `awaiting_child`, or
+`operator`.
 
 ```ts
 const flows = createFlowsClient({ baseUrl, token });
