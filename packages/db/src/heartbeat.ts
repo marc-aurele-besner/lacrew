@@ -24,6 +24,8 @@ export interface CrewHeartbeatTickRow {
   status: string;
   items?: unknown[] | null;
   messageId?: string | null;
+  /** Metered model spend for this tick's runs; null when nothing metered it. */
+  usage?: Record<string, unknown> | null;
   startedAt: string;
   finishedAt?: string | null;
 }
@@ -122,6 +124,7 @@ export async function settleCrewHeartbeatTick(
     status: string;
     items?: unknown[] | null;
     messageId?: string | null;
+    usage?: Record<string, unknown> | null;
   },
 ): Promise<void> {
   await handle.db
@@ -130,6 +133,7 @@ export async function settleCrewHeartbeatTick(
       status: row.status,
       items: row.items ?? null,
       messageId: row.messageId ?? null,
+      usage: row.usage ?? null,
       finishedAt: new Date(),
     })
     .where(
@@ -155,6 +159,7 @@ export async function recentCrewHeartbeatTicks(
     status: row.status,
     items: row.items,
     messageId: row.messageId,
+    usage: row.usage,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
   }));

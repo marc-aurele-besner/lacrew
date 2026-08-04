@@ -24,7 +24,7 @@ import {
   type CrewHeartbeatTickRow,
   type DbHandle,
 } from "@lacrew/db";
-import type { CrewHeartbeat } from "@lacrew/flows";
+import type { CrewHeartbeat, InferenceUsage } from "@lacrew/flows";
 
 export type { CrewHeartbeatTickRow };
 
@@ -46,6 +46,16 @@ export type HeartbeatTick = {
   status: "running" | "ok" | "attention" | "failed" | "skipped";
   items: HeartbeatItemResult[];
   messageId?: string;
+  /**
+   * What the runs this tick started were metered at (F2.28 counters).
+   *
+   * Absent means unmeasured, not free: a process with no metering wired, or a
+   * meter that could not be read. `unpricedCalls` inside it says the `$` figure
+   * is a floor. Both distinctions are carried rather than flattened, because a
+   * cost surface that renders "unknown" as `$0.00` is the one an operator stops
+   * believing the first time a bill disagrees with it.
+   */
+  usage?: InferenceUsage;
   startedAt: string;
   finishedAt?: string;
 };
@@ -72,6 +82,7 @@ export interface HeartbeatStore {
     status: HeartbeatTick["status"];
     items: HeartbeatItemResult[];
     messageId?: string;
+    usage?: InferenceUsage;
   }): Promise<void>;
   recentTicks(limit: number, crewId?: string): Promise<HeartbeatTick[]>;
   /** Drop ticks past the retention window (called on boot). */
@@ -123,6 +134,7 @@ function tickFromRow(row: CrewHeartbeatTickRow): HeartbeatTick {
     status: row.status as HeartbeatTick["status"],
     items: (row.items ?? []) as HeartbeatItemResult[],
     ...(row.messageId ? { messageId: row.messageId } : {}),
+    ...(row.usage ? { usage: row.usage as unknown as InferenceUsage } : {}),
     startedAt: row.startedAt,
     ...(row.finishedAt ? { finishedAt: row.finishedAt } : {}),
   };
@@ -164,6 +176,7 @@ export function createMemoryHeartbeatStore(): HeartbeatStore {
         found.status = row.status;
         found.items = row.items;
         if (row.messageId) found.messageId = row.messageId;
+        if (row.usage) found.usage = row.usage;
         found.finishedAt = new Date().toISOString();
       }
     },
@@ -219,7 +232,10 @@ export function createPgHeartbeatStore(url = getDatabaseUrl()): HeartbeatStore {
     },
     settleTick: async (row) => {
       try {
-        await settleCrewHeartbeatTick(db(), row);
+        await settleCrewHeartbeatTick(db(), {
+          ...row,
+          usage: (row.usage as unknown as Record<string, unknown>) ?? null,
+        });
       } catch (err) {
         warn("tick settle", err);
       }

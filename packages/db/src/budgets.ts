@@ -1,6 +1,6 @@
 /** Query helpers for inference budgets (keeps Drizzle inside @lacrew/db). */
 
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, notLike, sql } from "drizzle-orm";
 import { inferenceBudgets, inferenceUsage, inferenceUsageEvents } from "./schema/budgets.js";
 import type { DbHandle } from "./client.js";
 
@@ -293,6 +293,50 @@ export async function inferenceUsageEventsBetween(
         inArray(inferenceUsageEvents.scopeKey, [...scopeKeys]),
         gte(inferenceUsageEvents.at, new Date(fromIso)),
         lt(inferenceUsageEvents.at, new Date(toIso)),
+      ),
+    )
+    .orderBy(desc(inferenceUsageEvents.at))
+    .limit(limit);
+  return rows.map((row) => ({
+    scopeKey: row.scopeKey,
+    periodKey: row.periodKey,
+    model: row.model,
+    provider: row.provider,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    usdMicros: row.usdMicros,
+    priceSource: row.priceSource,
+    tokensEstimated: row.tokensEstimated,
+    runId: row.runId,
+    flowId: row.flowId,
+    at: row.at.toISOString(),
+  }));
+}
+
+/**
+ * Metered calls belonging to a named set of runs — what a heartbeat tick's
+ * spend rollup (F2.21) folds.
+ *
+ * Rows are filtered to crew-level scope keys here rather than by the caller: an
+ * attributed call writes one row under `crew:<id>` and a second under
+ * `crew:<id>/agent:<0x…>`, and a rollup that summed both would report a tick at
+ * twice what it cost. Every metered call has a crew row — a call that named no
+ * crew lands in the `unattributed` bucket — so dropping the agent rows loses
+ * nothing.
+ */
+export async function inferenceUsageEventsForRuns(
+  handle: DbHandle,
+  runIds: readonly string[],
+  limit: number,
+): Promise<InferenceUsageEventRow[]> {
+  if (runIds.length === 0) return [];
+  const rows = await handle.db
+    .select()
+    .from(inferenceUsageEvents)
+    .where(
+      and(
+        inArray(inferenceUsageEvents.runId, [...runIds]),
+        notLike(inferenceUsageEvents.scopeKey, "%/agent:%"),
       ),
     )
     .orderBy(desc(inferenceUsageEvents.at))

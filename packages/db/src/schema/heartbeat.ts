@@ -46,6 +46,16 @@ export const crewHeartbeatTicks = pgTable(
     items: jsonb("items").$type<unknown[]>(),
     /** Thread message this tick posted, when it posted one. */
     messageId: text("message_id"),
+    /**
+     * Model spend the tick's own runs were metered at: `InferenceUsage`
+     * counters, or null when nothing metered them.
+     *
+     * Null and zero are different answers. A tick whose runs made no model call
+     * costs nothing; a tick on a process with no metering costs an unknown
+     * amount, and rendering the second as `$0.00` is the decorative figure the
+     * cost work exists to refuse.
+     */
+    usage: jsonb("usage").$type<Record<string, unknown>>(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },

@@ -77,6 +77,7 @@ export {
   getInferenceUsage,
   claimInferenceAlert,
   inferenceUsageEventsBetween,
+  inferenceUsageEventsForRuns,
   insertInferenceUsageEvent,
   recentInferenceUsageEvents,
   pruneInferenceUsageEvents,

@@ -1,0 +1,1 @@
+ALTER TABLE "orchestrator_crew_heartbeat_ticks" ADD COLUMN "usage" jsonb;

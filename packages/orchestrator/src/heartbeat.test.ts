@@ -1,13 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { flow, type CrewHeartbeat } from "@lacrew/flows";
+import { ZERO_USAGE, flow, type CrewHeartbeat, type InferenceUsage } from "@lacrew/flows";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import { CrewRuntime } from "./runtime.js";
 import { createFlowsSurface } from "./flows.js";
 import { createMemoryFlowStore } from "./flowStore.js";
-import { createHeartbeatSurface } from "./heartbeat.js";
-import { createMemoryHeartbeatStore } from "./heartbeatStore.js";
+import { createHeartbeatSurface, heartbeatThreadId } from "./heartbeat.js";
+import { createMemoryHeartbeatStore, type HeartbeatStore } from "./heartbeatStore.js";
+import { threadIdOf } from "./conversation.js";
 import type { ModelCompleteInput, ModelCompleteResult, ModelProvider } from "./model/index.js";
 
 const CREW = "trading";
@@ -39,7 +40,14 @@ const mcpBackend: McpToolBackend = {
   resolveIntent: async () => ({ ok: true }),
 };
 
-async function makeSurface() {
+async function makeSurface(
+  over: {
+    store?: HeartbeatStore;
+    usageForRuns?: (runIds: string[]) => Promise<InferenceUsage>;
+    /** Extra flow ids to save, for tests that need more than the default two. */
+    flowIds?: string[];
+  } = {},
+) {
   const runtime = new CrewRuntime({
     client: createLacrewClient({ useMock: true }),
     workerAgent: WORKER,
@@ -55,10 +63,14 @@ async function makeSurface() {
     flow("desk-risk-sweep", "Risk sweep").model("look", { prompt: "{{input}}" }).build(),
   );
   await flows.save(flow("desk-digest", "Digest").model("write", { prompt: "summarize" }).build());
+  for (const id of over.flowIds ?? []) {
+    await flows.save(flow(id, id).model("look", { prompt: "{{input}}" }).build());
+  }
   const heartbeats = createHeartbeatSurface({
     runtime,
     flows,
-    store: createMemoryHeartbeatStore(),
+    store: over.store ?? createMemoryHeartbeatStore(),
+    ...(over.usageForRuns ? { usageForRuns: over.usageForRuns } : {}),
   });
   return { runtime, flows, model, heartbeats };
 }
@@ -333,6 +345,155 @@ describe("heartbeat — the trail", () => {
     assert.equal(ticks.length, 2);
     assert.ok(ticks[0]!.startedAt >= ticks[1]!.startedAt);
     assert.ok(ticks.every((t) => t.status === "ok" && t.finishedAt));
+  });
+});
+
+describe("heartbeat — two tenants on one orchestrator", () => {
+  /**
+   * A pooled orchestrator holds every workspace's heartbeats in one store, so
+   * the only thing keeping two of them apart is the crew id each was saved
+   * under. A control plane that scopes those ids gets isolation; one that
+   * passes a bare display name gets two workspaces editing one row, which is
+   * the failure this covers.
+   */
+  const A = "t.acme.trading";
+  const B = "t.globex.trading";
+
+  it("keeps each tenant's checklist and thread to itself", async () => {
+    const { runtime, heartbeats } = await makeSurface({
+      flowIds: ["t.acme.sweep", "t.globex.sweep"],
+    });
+    await heartbeats.save(config({ crewId: A, checklist: [{ kind: "flow", id: "t.acme.sweep" }] }));
+    await heartbeats.save(
+      config({ crewId: B, checklist: [{ kind: "flow", id: "t.globex.sweep" }] }),
+    );
+
+    // Editing one leaves the other exactly as its own operator left it.
+    await heartbeats.save(config({ crewId: B, checklist: [{ kind: "flow", id: "desk-digest" }] }));
+    assert.equal(heartbeats.get(A)!.checklist[0]!.id, "t.acme.sweep");
+    assert.equal(heartbeats.get(B)!.checklist[0]!.id, "desk-digest");
+
+    await heartbeats.sweep(DUE);
+
+    // Each summary lands in its own crew's thread, and neither thread carries
+    // the other's — the property a workspace's Thread tab depends on.
+    const acme = runtime.thread({ kind: "crew", id: A }, 50);
+    const globex = runtime.thread({ kind: "crew", id: B }, 50);
+    assert.equal(acme.length, 1);
+    assert.equal(globex.length, 1);
+    assert.equal(acme[0]!.threadId, heartbeatThreadId(A));
+    assert.equal(globex[0]!.threadId, heartbeatThreadId(B));
+
+    // And disabling one does not stop the other.
+    await heartbeats.setEnabled(A, false);
+    assert.equal(heartbeats.get(B)!.enabled, true);
+    assert.deepEqual(
+      (await heartbeats.sweep(new Date("2026-07-30T15:00:00Z"))).map((t) => t.crewId),
+      [B],
+    );
+  });
+
+  it("removes only the tenant that asked", async () => {
+    const { heartbeats } = await makeSurface();
+    await heartbeats.save(config({ crewId: A }));
+    await heartbeats.save(config({ crewId: B }));
+    assert.equal(await heartbeats.remove(A), true);
+    assert.deepEqual(
+      heartbeats.list().map((h) => h.crewId),
+      [B],
+    );
+  });
+
+  it("addresses the thread with the id it was saved under", async () => {
+    // The agreement the cloud honours: one crew namespace, not two. A control
+    // plane can compute the thread key from the crew id it saved, with no
+    // second mapping to drift.
+    assert.equal(heartbeatThreadId(A), threadIdOf({ kind: "crew", id: A }));
+    assert.equal(heartbeatThreadId("Trading"), "crew:trading");
+  });
+});
+
+describe("heartbeat — what a tick cost", () => {
+  const usage = (over: Partial<InferenceUsage> = {}): InferenceUsage => ({
+    ...ZERO_USAGE,
+    inputTokens: 1_200,
+    outputTokens: 300,
+    usdMicros: 21_000,
+    calls: 2,
+    ...over,
+  });
+
+  it("attaches the metered spend to the tick and reports it in the thread", async () => {
+    const asked: string[][] = [];
+    const { runtime, heartbeats } = await makeSurface({
+      usageForRuns: async (runIds) => {
+        asked.push(runIds);
+        return usage();
+      },
+    });
+    await heartbeats.save(config());
+    const [tick] = await heartbeats.sweep(DUE);
+
+    // Only the runs this tick actually started are folded.
+    assert.deepEqual(asked, [[tick!.items[0]!.runId]]);
+    assert.equal(tick!.usage!.usdMicros, 21_000);
+    assert.equal(tick!.usage!.calls, 2);
+
+    const posted = thread(runtime)[0]!;
+    assert.match(posted.body, /Spend: \$0\.02 over 2 model call\(s\)/);
+    assert.match(posted.body, /1200 in \/ 300 out/);
+
+    // And it survives the ledger, so a card reading last-tick sees the figure.
+    const [stored] = await heartbeats.ticks(1, CREW);
+    assert.equal(stored!.usage!.usdMicros, 21_000);
+  });
+
+  it("labels a figure that omits unpriced calls rather than presenting it as a total", async () => {
+    const { runtime, heartbeats } = await makeSurface({
+      usageForRuns: async () => usage({ unpricedCalls: 1, calls: 3 }),
+    });
+    await heartbeats.save(config());
+    await heartbeats.sweep(DUE);
+    assert.match(thread(runtime)[0]!.body, /1 unpriced/);
+  });
+
+  it("reports no spend rather than $0.00 when nothing metered the tick", async () => {
+    // The distinction the whole cost surface rests on: unmeasured is not free,
+    // and a zero an operator budgets against is worse than an absent line.
+    const { runtime, heartbeats } = await makeSurface();
+    await heartbeats.save(config());
+    const [tick] = await heartbeats.sweep(DUE);
+    assert.equal(tick!.usage, undefined);
+    assert.doesNotMatch(thread(runtime)[0]!.body, /Spend:/);
+  });
+
+  it("still records the tick when the meter cannot be read", async () => {
+    const { heartbeats } = await makeSurface({
+      usageForRuns: async () => {
+        throw new Error("meter_unreachable");
+      },
+    });
+    await heartbeats.save(config());
+    const [tick] = await heartbeats.sweep(DUE);
+    assert.equal(tick!.status, "ok");
+    assert.equal(tick!.usage, undefined);
+  });
+});
+
+describe("heartbeat — last run status", () => {
+  it("answers with one tick per crew, the most recent", async () => {
+    const { heartbeats } = await makeSurface();
+    await heartbeats.save(config());
+    await heartbeats.save(config({ crewId: "research", schedule: "0 * * * *" }));
+    await heartbeats.sweep(DUE);
+    const second = await heartbeats.sweep(new Date("2026-07-30T15:00:00Z"));
+
+    const last = await heartbeats.lastTicks();
+    assert.equal(Object.keys(last).length, 2);
+    assert.equal(last[CREW]!.windowKey, second.find((t) => t.crewId === CREW)!.windowKey);
+    // A crew that has never ticked is absent rather than reported as ok.
+    await heartbeats.save(config({ crewId: "quiet", enabled: false }));
+    assert.equal((await heartbeats.lastTicks()).quiet, undefined);
   });
 });
 
