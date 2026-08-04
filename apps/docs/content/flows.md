@@ -155,14 +155,28 @@ deep parks the whole chain and one answer releases it back up.
 
 ## Triggers
 
-`trigger: "manual"` (default) runs from the UI, SDK, or CLI. `trigger:
-"webhook"` makes the flow startable by a signed HTTP delivery (see
-[Webhook triggers](#webhook-triggers)). `trigger:
-"epoch"` turns the pipeline into an automation: the orchestrator fires it on
-every payroll epoch, right after allowances stream (both the queue schedule
-and `POST /epoch` do this, and the run is tagged `trigger: "epoch"` in the
-trace and audit trail). The shipped `treasury-pulse` template is
-epoch-triggered out of the box.
+Flows fire four ways, declared on the definition:
+
+- `manual` (default) — run from the UI, SDK, or CLI.
+- `epoch` — the orchestrator fires it on every payroll epoch, right after
+  allowances stream (both the queue schedule and `POST /epoch` do this, in mock
+  mode too), and the run is tagged `trigger: "epoch"` in the trace and the audit
+  trail. The shipped `treasury-pulse` template is epoch-triggered out of the box.
+- `cron` — a 5-field UTC `schedule` expression (`*/5 * * * *` style), minute
+  resolution, fired at most once per matching minute by the orchestrator's
+  provider-agnostic scheduler.
+- `webhook` — a signed HTTP delivery from outside the org, see
+  [Webhook triggers](#webhook-triggers).
+
+```json
+{ "trigger": "cron", "schedule": "0 9 * * 1-5" }
+```
+
+A flow can also be run by a **crew heartbeat** without declaring anything: a
+heartbeat works through a checklist an operator wrote, so the flow's own trigger
+is irrelevant to it and a definition cannot opt into being on one. Those runs are
+tagged `trigger: "heartbeat"` — see [Crew heartbeat](./heartbeat.md) for when to
+reach for one instead of a per-flow cron.
 
 ## Persistence
 
@@ -181,13 +195,13 @@ principal and input — to `orchestrator_flow_checkpoints`, and moves the run's
 cursor in `orchestrator_flow_run_state`, both in one transaction. A run can
 therefore stop and be picked back up later, by a different replica.
 
-| Status      | Meaning                                                       |
-| ----------- | ------------------------------------------------------------- |
-| `running`   | In flight                                                     |
-| `waiting`   | **Paused** — parked and resumable                             |
-| `completed` | Finished                                                      |
-| `error`     | Failed                                                        |
-| `cancelled` | Ended by an operator; **never** resumable                     |
+| Status      | Meaning                                   |
+| ----------- | ----------------------------------------- |
+| `running`   | In flight                                 |
+| `waiting`   | **Paused** — parked and resumable         |
+| `completed` | Finished                                  |
+| `error`     | Failed                                    |
+| `cancelled` | Ended by an operator; **never** resumable |
 
 A run pauses in five ways: a `wait` step it declared, a `human` gate holding it
 until someone decides, an `ask`-mode connector write waiting on a human
@@ -324,8 +338,7 @@ const budgetGuardedSpend = flow("budget-guarded-spend", "Budget-guarded spend")
     next: null,
   })
   .model("po-note", {
-    prompt:
-      "Spend escalated: {{steps.spend.json}}. Draft the purchase-order note.",
+    prompt: "Spend escalated: {{steps.spend.json}}. Draft the purchase-order note.",
     next: null,
   })
   .build();
@@ -380,9 +393,9 @@ lacrew flows code tpl-content-daily     # print the code-first snippet
 | `GET /flows/runs`                | Recent run traces (newest first)                                                   |
 | `GET /flows/runs/open`           | Runs still in flight or paused (the stalled-run list)                              |
 | `GET /flows/runs/state`          | One run's state + checkpoint trail (`?runId=`)                                     |
-| `POST /flows/runs/pause`         | Ask a run to stop at its next step (body `{ runId, reason? }`)                      |
-| `POST /flows/runs/resume`        | Continue a paused run (body `{ runId }`); `409` if cancelled                        |
-| `POST /flows/runs/cancel`        | End a run for good (body `{ runId, reason? }`)                                      |
+| `POST /flows/runs/pause`         | Ask a run to stop at its next step (body `{ runId, reason? }`)                     |
+| `POST /flows/runs/resume`        | Continue a paused run (body `{ runId }`); `409` if cancelled                       |
+| `POST /flows/runs/cancel`        | End a run for good (body `{ runId, reason? }`)                                     |
 | `GET /flows/templates`           | First-party template catalog                                                       |
 | `GET /flows/triggers`            | Registered webhook triggers (never the secret)                                     |
 | `POST /flows/triggers`           | Mint one (body `{ flowId, principal?, scheme?, input? }`); returns the secret once |
@@ -423,89 +436,6 @@ import { runFlow } from "@lacrew/flows";
 const backend = createLangChainFlowBackend({ runnable: myChain });
 const result = await runFlow(budgetGuardedSpend, backend);
 ```
-
-## Scope
-
-A flow carries a `scope` that decides who can see and invoke it:
-
-| Level           | Visible to                                              |
-| --------------- | ------------------------------------------------------- |
-| `org` (default) | every node in the org                                   |
-| `team`          | the node at `scope.ref` and everyone reporting under it |
-| `agent`         | the agent at `scope.ref`, plus its managers             |
-
-Scope is also a **policy ceiling**. A run always executes as its invoking
-principal — never as the scope — so effective authority is
-`min(principal, scope)`: both policy stacks are read and the stricter verdict
-wins. An org-scoped flow invoked by a junior agent still only gets that agent's
-authority, and an agent-scoped flow invoked by a manager is capped at the
-scoped agent's limits.
-
-> The ceiling is enforced by the orchestrator. The chain independently enforces
-> the invoking principal's own policy stack, which is the guarantee that
-> actually protects the treasury: a compromised orchestrator can ignore a
-> flow's scope cap, but never the principal's policy.
-
-## Constitutional steps
-
-`org` and `budget` steps do not write directly. Org structure and treasury
-grants are constitutional, and the orchestrator holds short-lived session keys
-only — letting it rewrite the org chart would be exactly the custody LaCrew
-refuses. So these steps always raise a **governance proposal**, and the policy
-verdict picks the tier:
-
-| Verdict    | Result                                               |
-| ---------- | ---------------------------------------------------- |
-| `ALLOW`    | low-tier proposal — executes on quorum, no timelock  |
-| `ESCALATE` | high-tier proposal — timelock plus human veto window |
-| `DENY`     | nothing is raised; the step routes to `onDeny`       |
-
-Authority is read from `SpendCapPolicy` rather than the full stack: the target
-of an org action is a node, not a payee, so consulting `WhitelistPolicy` would
-deny every such action for a reason unrelated to authority.
-
-`budget: run-epoch` is the exception and writes directly — the orchestrator is
-the `EpochStreamer` operator by design.
-
-`org` distinguishes removal from suspension, because they are not the same
-decision:
-
-- `fire` → `OrgRegistry.removeNode`. Permanent, and the node's children are
-  rewired to its parent.
-- `deactivate` / `activate` → `OrgRegistry.setActive`. Reversible; the node
-  keeps its place in the chart and its reporting line.
-
-## Delegation
-
-An `agent` step can hand work to another agent — a prompt, or a whole flow via
-`flowId`. The nested run gets its own principal, so the delegate acts under its
-_own_ policy stack: a flow cannot borrow authority by invoking a more
-privileged agent.
-
-Delegation is bounded. `validateFlow` rejects cycles between a flow's own
-edges, but a `flowId` is not an edge, so the runtime tracks the chain of flows
-on the stack: revisiting one fails with `flow_delegation_cycle`, and a chain
-deeper than four levels fails with `flow_delegation_too_deep`. A delegate that
-fails also fails the delegating step, rather than returning the failure as data
-for the parent to ignore.
-
-## Triggers
-
-Flows fire four ways: `manual` (default), `epoch` (after every payroll
-stream, even in mock mode), `cron` with a 5-field UTC `schedule`
-expression (`*/5 * * * *` style — minute resolution, fired at most once per
-matching minute by the orchestrator's provider-agnostic scheduler), or
-`webhook` — a signed HTTP delivery from outside the org:
-
-```json
-{ "trigger": "cron", "schedule": "0 9 * * 1-5" }
-```
-
-A flow can also be run by a **crew heartbeat** without declaring anything: a
-heartbeat works through a checklist an operator wrote, so the flow's own trigger
-is irrelevant to it and a definition cannot opt into being on one. Those runs are
-tagged `trigger: "heartbeat"` — see [Crew heartbeat](./heartbeat.md) for when to
-reach for one instead of a per-flow cron.
 
 ## Webhook triggers
 
@@ -557,12 +487,11 @@ a cleartext secret to Postgres.
 `scheme` picks how a delivery proves it is genuine, which delivery it is, what
 happened, and where the payload lives. Providers differ on all four:
 
-| Source | Authenticates with | Idempotency key | Event type |
-| --- | --- | --- | --- |
-| `lacrew` (default) | HMAC over `<unix-seconds>.<body>` | `Idempotency-Key` | — |
-| `github` | HMAC over the body | `X-GitHub-Delivery` | `X-GitHub-Event` + body `action` |
-| `google-pubsub` | Google-signed OIDC token — **no shared secret** | Pub/Sub `messageId` | `message.attributes.eventType` |
-
+| Source             | Authenticates with                              | Idempotency key     | Event type                       |
+| ------------------ | ----------------------------------------------- | ------------------- | -------------------------------- |
+| `lacrew` (default) | HMAC over `<unix-seconds>.<body>`               | `Idempotency-Key`   | —                                |
+| `github`           | HMAC over the body                              | `X-GitHub-Delivery` | `X-GitHub-Event` + body `action` |
+| `google-pubsub`    | Google-signed OIDC token — **no shared secret** | Pub/Sub `messageId` | `message.attributes.eventType`   |
 
 ### Signing a delivery
 
@@ -607,7 +536,7 @@ A trigger with no `events` runs on every delivery. Naming them subscribes:
 
 Matching is by dotted prefix, so `pull_request` covers `pull_request.opened`
 without listing each action — but only in that direction: a filter for
-`pull_request.opened` is *not* satisfied by a bare `pull_request`.
+`pull_request.opened` is _not_ satisfied by a bare `pull_request`.
 
 An unsubscribed delivery answers `200 { "skipped": "event_not_selected" }`, not
 a 4xx. GitHub disables a hook that keeps erroring, and "not interested" is not a
@@ -627,7 +556,7 @@ its redeliveries answer `200 duplicate` rather than starting a second run.
 
 ### Google Pub/Sub push (Gmail, Calendar, Drive)
 
-Pub/Sub push does not sign the body — it authenticates the *sender*, with a
+Pub/Sub push does not sign the body — it authenticates the _sender_, with a
 Google-signed OIDC token in `Authorization: Bearer`. There is no shared secret,
 so the trigger binds to what it will accept instead:
 
@@ -655,14 +584,13 @@ configured plus the service account you expect are the binding.
 
 The envelope is unwrapped before mapping. Pub/Sub delivers
 `{ "message": { "data": "<base64>", "messageId": "…" } }` and the flow's input
-mapping sees the *decoded* message — mapping `emailAddress` against the envelope
+mapping sees the _decoded_ message — mapping `emailAddress` against the envelope
 would read nothing and look like a typo rather than an unreachable path.
 `messageId` becomes the idempotency key.
 
 Google's signing keys come from their JWKS endpoint and are cached. An
 unreachable key set answers `503` (retrying helps); a key absent from a current
 key set answers `401` (it will not).
-
 
 ### Input mapping
 
@@ -692,7 +620,6 @@ lacrew flows triggers deliveries <triggerId>
 lacrew flows triggers rotate <triggerId>
 ```
 
-
 ### What a hook does not grant
 
 A webhook decides _who may start_ a flow. It never widens what the flow may
@@ -703,19 +630,19 @@ to Approvals exactly as it would otherwise.
 
 ### Failure modes
 
-| Condition                                    | Status | Error                                                     |
-| -------------------------------------------- | ------ | --------------------------------------------------------- |
-| Unknown trigger id                           | 404    | `webhook_trigger_not_found`                               |
-| Missing / malformed / wrong signature        | 401    | `webhook_signature_missing` \| `_malformed` \| `_invalid` |
-| Timestamp outside the tolerance window       | 401    | `webhook_timestamp_stale`                                 |
-| Trigger disabled                             | 403    | `webhook_trigger_disabled`                                |
-| Principal paused                             | 403    | `webhook_principal_paused`                                |
-| Body over 1 MiB (`LACREW_WEBHOOK_MAX_BYTES`) | 413    | `webhook_body_too_large`                                  |
-| Body is not JSON                             | 400    | `webhook_body_invalid`                                    |
-| Delivery key already seen                    | 200    | `{ "duplicate": true }`                                   |
-| Event type not subscribed | 200 | `{ "skipped": "event_not_selected" }` |
-| Pub/Sub token for another audience or service account | 401 | `webhook_token_audience_invalid` \| `_email_invalid` |
-| Google's key set unreachable | 503 | `webhook_jwks_unavailable` |
+| Condition                                             | Status | Error                                                     |
+| ----------------------------------------------------- | ------ | --------------------------------------------------------- |
+| Unknown trigger id                                    | 404    | `webhook_trigger_not_found`                               |
+| Missing / malformed / wrong signature                 | 401    | `webhook_signature_missing` \| `_malformed` \| `_invalid` |
+| Timestamp outside the tolerance window                | 401    | `webhook_timestamp_stale`                                 |
+| Trigger disabled                                      | 403    | `webhook_trigger_disabled`                                |
+| Principal paused                                      | 403    | `webhook_principal_paused`                                |
+| Body over 1 MiB (`LACREW_WEBHOOK_MAX_BYTES`)          | 413    | `webhook_body_too_large`                                  |
+| Body is not JSON                                      | 400    | `webhook_body_invalid`                                    |
+| Delivery key already seen                             | 200    | `{ "duplicate": true }`                                   |
+| Event type not subscribed                             | 200    | `{ "skipped": "event_not_selected" }`                     |
+| Pub/Sub token for another audience or service account | 401    | `webhook_token_audience_invalid` \| `_email_invalid`      |
+| Google's key set unreachable                          | 503    | `webhook_jwks_unavailable`                                |
 
 A paused principal is _rejected_ rather than skipped: a webhook producer
 retries, and a silent skip would let a paused agent's events vanish behind a
