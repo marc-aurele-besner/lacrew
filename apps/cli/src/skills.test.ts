@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getSkillPack } from "@lacrew/flows";
 import { cmdSkills } from "./skills.js";
 
 const AGENT = "0x00000000000000000000000000000000000000a1";
@@ -169,6 +170,63 @@ describe("lacrew skills, against an orchestrator", () => {
       ]);
       assert.match(error ?? "", /requirements_unmet/);
       assert.match(error ?? "", /missing connectors: github/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("diffs an installed pack against the one about to replace it", async () => {
+    const shipped = getSkillPack("github-pr-triage")!;
+    const stub = stubFetch({
+      "/agents/skills": {
+        body: {
+          brief: {
+            layers: [
+              {
+                label: "agent",
+                skills: [
+                  {
+                    name: "Triage a dependency-bot PR",
+                    when: shipped.skills[0]!.trigger,
+                    // An older body: the one field an operator has to be able
+                    // to read before it replaces what a seat is told.
+                    instructions: "Older wording.",
+                    source: { pack: shipped.id, version: "0.9.0", skill: "triage-a-bot-pr" },
+                  },
+                  {
+                    name: "A skill this version dropped",
+                    when: "When it applied.",
+                    instructions: "What it said.",
+                    source: { pack: shipped.id, version: "0.9.0", skill: "retired" },
+                  },
+                  {
+                    name: "Mine",
+                    when: "When I say.",
+                    instructions: "Hand-written, no pack behind it.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    try {
+      const { out } = await capture([
+        "diff",
+        "github-pr-triage",
+        "--agent",
+        AGENT,
+        "--url",
+        "http://orch.test",
+      ]);
+      assert.match(out, /github-pr-triage: 0\.9\.0 → 1\.0\.0/);
+      assert.match(out, /~ Triage a dependency-bot PR\s+\[triage-a-bot-pr\]\s+\(body\)/);
+      assert.match(out, /- A skill this version dropped\s+\[retired\]/);
+      assert.match(out, /\+ Repair a red dependency PR/);
+      assert.match(out, /Removed skills go away on install/);
+      // The hand-written one is not this pack's and must not appear as a change.
+      assert.doesNotMatch(out, /Mine/);
     } finally {
       stub.restore();
     }

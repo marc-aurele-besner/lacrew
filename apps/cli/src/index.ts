@@ -776,7 +776,8 @@ Commands:
                             (JSON for LACREW_CONNECTORS); write policy —
                             modes, mode <route> <auto|ask|deny>, asks, answer
   skills <sub>              Installable directive skills — list, show <id>,
-                            install <id> --agent 0x…, installed, remove, export
+                            diff <id> --agent 0x…, install <id> --agent 0x…,
+                            installed, remove, export
   mcp <sub>                 Attached MCP servers — servers, refresh, ping,
                             allow/deny/clear <server>.<tool> (every tool is
                             blocked until allowed; see: lacrew mcp help)

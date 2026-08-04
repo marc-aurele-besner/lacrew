@@ -1851,10 +1851,24 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   const skillPacks = createSkillPacksSurface({
     runtime,
     listFlowIds: async () => (await flows.list()).map((f) => f.id),
-    listConnectors: () => ({
-      ids: connectors?.list().map((conn) => conn.id) ?? [],
-      tools: connectors?.toolNames() ?? [],
-    }),
+    /**
+     * Registered **and** credentialed.
+     *
+     * `list()` answers "is this connector configured", which is not the
+     * question a pack's `requires` is asking. A GitHub connector registered
+     * with no token is a connector every call through fails on, so a merge
+     * procedure installed against it is a procedure that fails at the step
+     * that matters — the same defect an unregistered connector causes, and the
+     * one `requires` exists to refuse. Readiness is presence of the env vars,
+     * never a value, so nothing here reads a credential.
+     */
+    listConnectors: () => {
+      const ready = (connectors?.describe() ?? []).filter((conn) => conn.auth.ready);
+      return {
+        ids: ready.map((conn) => conn.id),
+        tools: ready.flatMap((conn) => conn.routes.map((route) => `${conn.id}.${route.name}`)),
+      };
+    },
     listMcpTools: () => listLacrewMcpTools().map((tool) => tool.name),
   });
 
@@ -1865,6 +1879,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * The readiness is computed rather than stored: a connector registered after
    * this list was last read must not leave a pack showing as uninstallable, and
    * a credential unset since must not leave one showing as ready.
+   *
+   * Bodies are served, not withheld. A pack is instruction that lands in a
+   * model's system prompt, and "reviewable before install" is the reason it is
+   * data rather than prose typed into a dialog — a catalog that shows only the
+   * triggers would leave every consumer of this route asking an operator to
+   * approve text nobody can read here.
    */
   app.get("/skills/packs", async (c) => {
     const available = await skillPacks.availability();
@@ -1877,7 +1897,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           name: pack.name,
           summary: pack.summary,
           scope: pack.scope,
-          skills: pack.skills.map((s) => ({ id: s.id, name: s.name, trigger: s.trigger })),
+          skills: pack.skills.map((s) => ({
+            id: s.id,
+            name: s.name,
+            trigger: s.trigger,
+            body: s.body,
+          })),
           requires: pack.requires ?? {},
           missing,
           installable:
