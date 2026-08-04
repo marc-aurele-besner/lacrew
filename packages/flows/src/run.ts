@@ -521,6 +521,10 @@ export async function runFlow(
         case "agent": {
           const agent = interpolate(step.agent, ctx);
           const result = (await backend.callTool("lacrew_invoke_agent", {
+            // Named like a gate's, and for the same reason: a delegated flow
+            // that parks holds a run of its own, and the resume that re-enters
+            // this step has to find that run rather than start a second one.
+            stepId: step.id,
             agent,
             ...(step.prompt ? { prompt: interpolate(step.prompt, ctx) } : {}),
             ...(step.flowId ? { flowId: step.flowId } : {}),

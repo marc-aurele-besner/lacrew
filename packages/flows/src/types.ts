@@ -436,21 +436,29 @@ export type FlowStepTrace = {
  * `connector_ask` is an ask-mode write waiting on a human (F2.24);
  * `human_gate` is a `human` step holding the run until someone picks (F2.27);
  * `awaiting_human` and `awaiting_webhook` are declared by a `wait` step;
- * `operator` is a person pausing a run that was mid-flight. A backend may still
- * suspend with a reason of its own — `FlowWaiting.reason` stays a string, since
- * an integration knows things this package does not.
+ * `awaiting_child` is an `agent` step whose delegated flow parked on one of the
+ * codes above; `operator` is a person pausing a run that was mid-flight. A
+ * backend may still suspend with a reason of its own — `FlowWaiting.reason`
+ * stays a string, since an integration knows things this package does not.
  *
  * `human_gate` is its own code rather than a flavour of `awaiting_human`
  * because the two are answered differently: a gate has an open question with
  * options and resumes itself when one is picked, while a `wait` is released by
  * whoever is watching. A queue that showed them as one thing would tell an
  * operator to go and do something about a run that is already being asked about.
+ *
+ * `awaiting_child` is the same argument one level up: there is no question to
+ * answer on the parent, and the only thing that releases it is the child run
+ * ending. An operator sent to the parent would find nothing to decide, so the
+ * code carries the child's run id in `FlowWaiting.token` and the surface points
+ * at the run that does have the question.
  */
 export type FlowPauseReason =
   | "connector_ask"
   | "human_gate"
   | "awaiting_human"
   | "awaiting_webhook"
+  | "awaiting_child"
   | "operator";
 
 /**
