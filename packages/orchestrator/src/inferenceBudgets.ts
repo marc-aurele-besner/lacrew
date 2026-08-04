@@ -68,6 +68,16 @@ import {
  */
 export const UNATTRIBUTED_CREW_ID = "unattributed";
 
+/**
+ * How many metered calls one rollup reads.
+ *
+ * A checklist is capped at 20 items, and a run that made more than this many
+ * model calls has a problem the tick's dollar figure is not the place to
+ * report. The cap bounds the read; it never silently truncates a total, because
+ * a tick past it would be a run past every budget it sits under first.
+ */
+const RUN_USAGE_MAX_CALLS = 2_000;
+
 /** Who a completion is for. Everything is optional; nothing goes uncounted. */
 export type BudgetSubject = {
   crewId?: string;
@@ -142,6 +152,17 @@ export type InferenceBudgetsSurface = {
     toIso: string;
     limit?: number;
   }): Promise<{ events: InferenceUsageEvent[]; complete: boolean }>;
+  /**
+   * What a named set of runs was metered at — the read a heartbeat tick folds
+   * into "what did this cost" (F2.21).
+   *
+   * Keyed by run id rather than by subject: a tick's items run as whichever
+   * seats the checklist named, so the calls it caused are spread over as many
+   * budget scopes as it has principals, and there is no one subject to ask.
+   * `unpricedCalls` rides along so a caller can label the `$` figure a floor
+   * instead of presenting a partial total as a total.
+   */
+  usageForRuns(runIds: readonly string[]): Promise<InferenceUsage>;
   hydrate(): Promise<number>;
   prune(): Promise<void>;
   storeName: string;
@@ -441,6 +462,22 @@ export function createInferenceBudgets(opts: {
 
     usageBetween: async ({ scopeKeys, fromIso, toIso, limit = 20_000 }) =>
       store.eventsBetween({ scopeKeys, fromIso, toIso, limit }),
+
+    usageForRuns: async (runIds) => {
+      const wanted = [...new Set(runIds.filter(Boolean))];
+      if (wanted.length === 0) return ZERO_USAGE;
+      const events = await store.eventsForRuns(wanted, RUN_USAGE_MAX_CALLS);
+      return events.reduce<InferenceUsage>(
+        (usage, event) => ({
+          inputTokens: usage.inputTokens + event.inputTokens,
+          outputTokens: usage.outputTokens + event.outputTokens,
+          usdMicros: usage.usdMicros + (event.usdMicros ?? 0),
+          calls: usage.calls + 1,
+          unpricedCalls: usage.unpricedCalls + (event.usdMicros === null ? 1 : 0),
+        }),
+        ZERO_USAGE,
+      );
+    },
 
     hydrate: async () => (await store.list()).length,
 

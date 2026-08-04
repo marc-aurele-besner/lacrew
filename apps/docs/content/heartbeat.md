@@ -109,6 +109,31 @@ dispatched by the queue to exactly one worker, and the window claim is a unique
 row. Either alone would be enough in the common case; both are what make
 double-firing a funded checklist not happen.
 
+## Addressing: self-host and cloud
+
+**A heartbeat's `crewId` is its thread key.** There is one crew namespace, not
+two: the summaries for `crewId: "trading"` land in `crew:trading`, which is the
+thread any surface listing that crew already reads. `heartbeatThreadId(crewId)`
+in `@lacrew/orchestrator` is that agreement in one function, so a caller never
+has to reconstruct the format.
+
+Self-hosting, this needs no thought: your orchestrator serves one organization,
+and `trading` means your trading desk.
+
+A **shared** orchestrator is different, and it is the one thing to get right
+before pointing several workspaces at one process. Crew ids are display names
+there, and two customers both naming a desk `trading` would otherwise share one
+heartbeat row and one thread. So a control plane in front of a pooled
+orchestrator must qualify the crew id per tenant — `t.<tenant>.trading` — and it
+must do so for the **thread and the heartbeat together**, using the same string
+for both. Scoping only one of them is the failure worth naming: a heartbeat
+saved under a qualified id whose summaries are read from an unqualified thread
+posts into a thread nobody opens, and every tick looks like silence.
+
+The orchestrator does not do this qualifying for you. It has no notion of a
+tenant — that is exactly the sort of multi-tenant plumbing that stays out of the
+open core — and it treats whatever id it is handed as opaque.
+
 ## Cost
 
 A heartbeat is the most frequent thing a crew does, and usually the least likely
@@ -119,16 +144,34 @@ The arithmetic is worth doing before you enable one: a 5-item checklist on a
 30-minute cadence is 240 items a day, 7,200 a month. Quiet hours cut roughly a
 third of that for a desk that only matters in working hours.
 
+### What a tick actually cost
+
+When inference metering is wired ([inference budgets](./inference-budgets.md)),
+a finished tick carries a `usage` rollup of the model calls its runs made:
+tokens each way, micro-dollars, and how many calls could not be priced. It is
+the same counter the budget guard enforces against — the figure you read is the
+figure that refuses a call — and it is reported in the tick's thread summary as
+a `Spend:` line.
+
+Two absences mean different things and are kept apart:
+
+- **No `usage` at all** — nothing metered this tick. Unmeasured, not free.
+- **`unpricedCalls > 0`** — some calls had no known price, so the `$` figure is
+  a floor rather than a total, and the summary says so.
+
+A tick that made no model call reports no spend line rather than `$0.00`, so the
+line stays worth reading.
+
 ## Routes
 
-| Route                      | What it does                                             |
-| -------------------------- | -------------------------------------------------------- |
-| `GET /heartbeats`          | Every heartbeat, plus the presets and the cadence floor  |
-| `POST /heartbeats`         | Save one (body `{ heartbeat }`); unknown ids are refused |
-| `POST /heartbeats/enabled` | Enable / disable (body `{ crewId, enabled }`)            |
-| `POST /heartbeats/delete`  | Remove (body `{ crewId }`)                               |
-| `POST /heartbeats/run`     | Work the checklist now, off-schedule                     |
-| `GET /heartbeats/ticks`    | The tick ledger (`?crewId=`, `?limit=`)                  |
+| Route                      | What it does                                              |
+| -------------------------- | --------------------------------------------------------- |
+| `GET /heartbeats`          | Every heartbeat, its last tick, the presets and the floor |
+| `POST /heartbeats`         | Save one (body `{ heartbeat }`); unknown ids are refused  |
+| `POST /heartbeats/enabled` | Enable / disable (body `{ crewId, enabled }`)             |
+| `POST /heartbeats/delete`  | Remove (body `{ crewId }`)                                |
+| `POST /heartbeats/run`     | Work the checklist now, off-schedule                      |
+| `GET /heartbeats/ticks`    | The tick ledger (`?crewId=`, `?limit=`)                   |
 
 `POST /heartbeats/run` takes its own window key, so testing a config never
 swallows the scheduled tick you were testing.

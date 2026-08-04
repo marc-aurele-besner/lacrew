@@ -23,12 +23,22 @@ type TickItem = {
   detail?: string;
 };
 
+type TickUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  usdMicros: number;
+  calls: number;
+  unpricedCalls: number;
+};
+
 type Tick = {
   crewId: string;
   windowKey: string;
   status: string;
   items: TickItem[];
   messageId?: string;
+  /** Absent when nothing metered the tick — unmeasured, not free. */
+  usage?: TickUsage;
   startedAt: string;
   finishedAt?: string;
 };
@@ -108,6 +118,17 @@ function printTick(tick: Tick): void {
     const detail = item.detail ? ` — ${item.detail}` : "";
     const run = item.runId ? `  [${item.runId}]` : "";
     console.log(`  ${item.status.padEnd(9)} ${item.kind} ${item.id}${run}${detail}`);
+  }
+  // Printed only when a meter saw the tick. A `$0.00` on a run nothing measured
+  // is a number an operator would budget against and then be billed past.
+  if (tick.usage && tick.usage.calls > 0) {
+    const usd = tick.usage.usdMicros / 1_000_000;
+    const floor = tick.usage.unpricedCalls > 0 ? `, ${tick.usage.unpricedCalls} unpriced` : "";
+    console.log(
+      `  spend     $${usd >= 0.01 ? usd.toFixed(2) : usd.toFixed(4)} over ` +
+        `${tick.usage.calls} model call(s) ` +
+        `(${tick.usage.inputTokens} in / ${tick.usage.outputTokens} out${floor})`,
+    );
   }
 }
 

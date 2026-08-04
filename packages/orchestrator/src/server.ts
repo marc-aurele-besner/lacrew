@@ -301,6 +301,10 @@ async function main(): Promise<void> {
     runtime,
     flows,
     budgetBlock: async (principal) => budgets.heartbeatBlock(await budgetSubjectFor(principal)),
+    // What the tick cost, from the same counters the guard above reads. The
+    // figure a thread reports and the figure a budget enforces are one number,
+    // which is the only version of it worth showing an operator.
+    usageForRuns: (runIds) => budgets.usageForRuns(runIds),
   });
 
   // Root authorization for revoke/rotate (F0.7) and root-depth approvals

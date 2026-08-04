@@ -302,6 +302,57 @@ describe("the guard at ModelProvider.complete", () => {
   });
 });
 
+describe("what a set of runs cost", () => {
+  /** One metered call through the guard, tagged with the run that made it. */
+  async function meter(
+    budgets: ReturnType<typeof budgetsSurface>,
+    runId: string,
+    meta: { crewId: string; agentId?: string },
+  ) {
+    const guarded = withInferenceBudget(
+      countingProvider({ promptTokens: 100, completionTokens: 50 }),
+      budgets,
+      { prices: PRICES },
+    );
+    await guarded.complete({
+      prompt: "a",
+      model: "test-model",
+      meta: { ...meta, runId },
+    });
+  }
+
+  it("counts an attributed call once, not once per scope it is charged to", async () => {
+    // A seat's call writes a crew row *and* an agent row. A rollup that summed
+    // both would report a tick at twice what it cost.
+    const budgets = budgetsSurface();
+    await meter(budgets, "run-1", { crewId: "trading", agentId: "0xaa" });
+    const usage = await budgets.usageForRuns(["run-1"]);
+    assert.equal(usage.calls, 1);
+    assert.equal(usage.inputTokens, 100);
+    assert.equal(usage.outputTokens, 50);
+    assert.equal(usage.usdMicros, 150);
+  });
+
+  it("folds only the runs it was asked about", async () => {
+    const budgets = budgetsSurface();
+    await meter(budgets, "run-1", { crewId: "trading" });
+    await meter(budgets, "run-2", { crewId: "trading" });
+    await meter(budgets, "run-3", { crewId: "research" });
+
+    const usage = await budgets.usageForRuns(["run-1", "run-3"]);
+    assert.equal(usage.calls, 2);
+    // Across crews on purpose: a checklist's items run as the seats they name,
+    // so one tick's runs are charged to more than one budget scope.
+    assert.equal(usage.usdMicros, 300);
+  });
+
+  it("answers zero counters for no runs rather than reading the whole ledger", async () => {
+    const budgets = budgetsSurface();
+    await meter(budgets, "run-1", { crewId: "trading" });
+    assert.equal((await budgets.usageForRuns([])).calls, 0);
+  });
+});
+
 describe("crew attribution", () => {
   it("charges a seat to its nearest manager, or to itself when it has none", () => {
     assert.equal(crewIdForSeat("0xWORKER", ["0xMANAGER", "0xROOT"]), "0xmanager");

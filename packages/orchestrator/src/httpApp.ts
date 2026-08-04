@@ -1253,6 +1253,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
     return jsonBig(c, {
       heartbeats: heartbeats.list(),
+      // Beside the configs rather than behind a second call: "when did this
+      // last run, and did it work" is the question a heartbeat surface opens
+      // with, and a config alone cannot distinguish a quiet crew from a stopped
+      // one. Each tick carries its items' statuses and details — what failed,
+      // what was skipped and why — and its metered spend when a meter saw it.
+      lastTicks: await heartbeats.lastTicks(),
       presets: HEARTBEAT_PRESETS,
       minIntervalMinutes: HEARTBEAT_MIN_INTERVAL_MINUTES,
       maxItems: HEARTBEAT_MAX_ITEMS,

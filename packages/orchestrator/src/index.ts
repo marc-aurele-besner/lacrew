@@ -254,7 +254,7 @@ export {
   type SignatureFailure,
   type WebhookScheme,
 } from "./webhookSignature.js";
-export { createHeartbeatSurface, type HeartbeatSurface } from "./heartbeat.js";
+export { createHeartbeatSurface, heartbeatThreadId, type HeartbeatSurface } from "./heartbeat.js";
 export {
   createHeartbeatStoreFromEnv,
   createMemoryHeartbeatStore,

@@ -51,8 +51,9 @@ import {
   type FlowDefinition,
   type FlowRunResult,
   type HeartbeatItem,
+  type InferenceUsage,
 } from "@lacrew/flows";
-import type { Message, MessageRef } from "./conversation.js";
+import { threadIdOf, type Message, type MessageRef } from "./conversation.js";
 import type { FlowsSurface } from "./flows.js";
 import {
   createHeartbeatStoreFromEnv,
@@ -71,8 +72,57 @@ import type { CrewRuntime } from "./runtime.js";
  */
 const STALE_TICK_MS = 30 * 60_000;
 
+/**
+ * How far back `lastTicks` reads for one tick per crew.
+ *
+ * Deep enough that a crew beating hourly beside one beating every 15 minutes
+ * still has its last tick in the window, and bounded so the read stays one
+ * query rather than one per crew. A crew silent for longer than this reports no
+ * last tick — which is the state an operator needs to see anyway.
+ */
+const LAST_TICK_SCAN = 200;
+
 /** How much of a run's own reporting is carried into the thread summary. */
 const DETAIL_MAX_CHARS = 240;
+
+/**
+ * The thread a crew's heartbeat summaries land in.
+ *
+ * There is exactly one crew namespace, and this is it: a heartbeat's `crewId`
+ * *is* the thread key, so a caller that can list a crew's thread can address
+ * its heartbeat with the same string and needs no second mapping to keep in
+ * sync. A control plane that scopes crew ids per tenant must therefore scope
+ * both together — the same id it lists the thread under is the one it saves the
+ * heartbeat under — or the summaries land in a thread its UI never reads.
+ *
+ * Exported because that agreement is the cloud's to honour, and a shared helper
+ * is the only version of it that cannot drift.
+ */
+export function heartbeatThreadId(crewId: string): string {
+  return threadIdOf({ kind: "crew", id: crewId });
+}
+
+/** Micro-dollars → the short `$` figure a thread line carries. */
+function usdOf(usdMicros: number): string {
+  const usd = usdMicros / 1_000_000;
+  return usd >= 0.01 || usd === 0 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(4)}`;
+}
+
+/**
+ * What a tick cost, said the way a thread can carry it — or nothing at all.
+ *
+ * A tick that made no metered call says nothing rather than `$0.00`: the line
+ * exists to report spend, and a zero on every quiet tick trains an operator to
+ * skip the one line that would have told them a heartbeat got expensive.
+ */
+function spendLine(usage: InferenceUsage | undefined): string {
+  if (!usage || usage.calls === 0) return "";
+  const floor = usage.unpricedCalls > 0 ? `, ${usage.unpricedCalls} unpriced` : "";
+  return (
+    `\nSpend: ${usdOf(usage.usdMicros)} over ${usage.calls} model call(s)` +
+    ` (${usage.inputTokens} in / ${usage.outputTokens} out${floor}).`
+  );
+}
 
 export type HeartbeatSurface = {
   list(): CrewHeartbeat[];
@@ -85,6 +135,14 @@ export type HeartbeatSurface = {
   save(input: Partial<CrewHeartbeat> & { crewId: string }): Promise<CrewHeartbeat>;
   setEnabled(crewId: string, enabled: boolean): Promise<CrewHeartbeat>;
   remove(crewId: string): Promise<boolean>;
+  /**
+   * The most recent tick per configured crew.
+   *
+   * One read for the whole list, because the surface that needs it — a card per
+   * crew showing "last run" — would otherwise make one call per crew and get a
+   * different moment's answer for each.
+   */
+  lastTicks(): Promise<Record<string, HeartbeatTick>>;
   /** Fire every heartbeat due at `now`; returns the ticks that actually ran. */
   sweep(now?: Date): Promise<HeartbeatTick[]>;
   /** Run one crew's checklist regardless of schedule (an operator pressed it). */
@@ -108,6 +166,17 @@ export function createHeartbeatSurface(opts: {
    * on. Absent, heartbeats run as they always did.
    */
   budgetBlock?: (principal: string) => Promise<{ scopeKey: string; dimension: string } | null>;
+  /**
+   * What the runs a tick started were metered at (F2.28).
+   *
+   * Read after the checklist rather than accumulated during it: the items run
+   * as whichever seats they name, so their calls are charged across as many
+   * budget scopes as the tick has principals, and there is no single subject to
+   * total. Absent, a tick reports no spend at all — which is the honest answer
+   * for a process that meters nothing, and the reason this is a dependency
+   * rather than a zero.
+   */
+  usageForRuns?: (runIds: string[]) => Promise<InferenceUsage>;
 }): HeartbeatSurface {
   const store = opts.store ?? createHeartbeatStoreFromEnv();
   const configs = new Map<string, CrewHeartbeat>();
@@ -257,7 +326,11 @@ export function createHeartbeatSurface(opts: {
   };
 
   /** What the crew's thread is told, and whether it is told anything at all. */
-  const postSummary = (config: CrewHeartbeat, items: HeartbeatItemResult[]): Message | null => {
+  const postSummary = (
+    config: CrewHeartbeat,
+    items: HeartbeatItemResult[],
+    usage?: InferenceUsage,
+  ): Message | null => {
     const attention = items.filter((i) => i.status !== "ok");
     const refs: MessageRef[] = items
       .filter((i) => i.runId)
@@ -272,7 +345,8 @@ export function createHeartbeatSurface(opts: {
         kind: "note",
         body:
           `HEARTBEAT_OK — ${items.length} checklist item(s) ran, nothing needs you.\n` +
-          items.map((i) => `- ${i.kind} ${i.id}: ok`).join("\n"),
+          items.map((i) => `- ${i.kind} ${i.id}: ok`).join("\n") +
+          spendLine(usage),
         ...(refs.length > 0 ? { refs } : {}),
       });
     }
@@ -292,7 +366,9 @@ export function createHeartbeatSurface(opts: {
       authorKind: "agent",
       kind: "result",
       body:
-        `Heartbeat — ${attention.length} of ${items.length} item(s) need you.\n` + lines.join("\n"),
+        `Heartbeat — ${attention.length} of ${items.length} item(s) need you.\n` +
+        lines.join("\n") +
+        spendLine(usage),
       ...(refs.length > 0 ? { refs } : {}),
     });
   };
@@ -327,6 +403,27 @@ export function createHeartbeatSurface(opts: {
     }
   };
 
+  /**
+   * What this tick's runs cost, or undefined when nobody can say.
+   *
+   * A failed read is undefined rather than zero, for the reason the whole cost
+   * feature exists: a figure that quietly omits the calls it could not read is
+   * one an operator budgets against and then gets a bill for. It never fails
+   * the tick — the work already happened, and refusing to record it because the
+   * price was unreadable would lose the part that mattered.
+   */
+  const usageOf = async (items: HeartbeatItemResult[]): Promise<InferenceUsage | undefined> => {
+    if (!opts.usageForRuns) return undefined;
+    const runIds = items.map((i) => i.runId).filter((id): id is string => Boolean(id));
+    if (runIds.length === 0) return undefined;
+    try {
+      return await opts.usageForRuns(runIds);
+    } catch (err) {
+      console.error("[@lacrew/orchestrator] heartbeat usage rollup failed:", err);
+      return undefined;
+    }
+  };
+
   /** True when another tick for this crew is still running somewhere. */
   const busy = async (crewId: string): Promise<boolean> => {
     if (inFlight.has(crewId)) return true;
@@ -354,7 +451,8 @@ export function createHeartbeatSurface(opts: {
       inFlight.delete(config.crewId);
     }
 
-    const message = postSummary(config, items);
+    const usage = await usageOf(items);
+    const message = postSummary(config, items, usage);
     const status = tickStatus(items);
     await store.settleTick({
       crewId: config.crewId,
@@ -362,6 +460,7 @@ export function createHeartbeatSurface(opts: {
       status,
       items,
       ...(message ? { messageId: message.id } : {}),
+      ...(usage ? { usage } : {}),
     });
     opts.runtime.recordAudit({
       type: "CrewHeartbeat",
@@ -376,6 +475,9 @@ export function createHeartbeatSurface(opts: {
         skipped: items.filter((i) => i.status === "skipped").length,
         runs: items.filter((i) => i.runId).map((i) => i.runId),
         ...(message ? { messageId: message.id } : {}),
+        // Counters, never a prompt: what the tick cost is an operational fact,
+        // and the audit trail is not where model input belongs.
+        ...(usage ? { usdMicros: usage.usdMicros, modelCalls: usage.calls } : {}),
         durationMs: Date.now() - Date.parse(startedAt),
       },
     });
@@ -385,6 +487,7 @@ export function createHeartbeatSurface(opts: {
       status,
       items,
       ...(message ? { messageId: message.id } : {}),
+      ...(usage ? { usage } : {}),
       startedAt,
       finishedAt: new Date().toISOString(),
     };
@@ -519,6 +622,16 @@ export function createHeartbeatSurface(opts: {
     },
     ticks: async (limit = 20, crewId) =>
       store.recentTicks(limit, crewId ? crewId.trim().toLowerCase() : undefined),
+    lastTicks: async () => {
+      const latest: Record<string, HeartbeatTick> = {};
+      // Newest first, so the first tick seen for a crew is its last one. Read
+      // in one pass over the ledger rather than per crew: a caller rendering a
+      // list wants one moment's answer, not one per row.
+      for (const tick of await store.recentTicks(LAST_TICK_SCAN)) {
+        latest[tick.crewId] ??= tick;
+      }
+      return latest;
+    },
     hydrate: async () => {
       for (const config of await store.list()) configs.set(config.crewId, config);
       await store.prune();
