@@ -1,0 +1,28 @@
+# Prettier does not read .gitignore, so build output has to be named here or
+# `pnpm format` spends its time rewriting artifacts nobody reviews.
+node_modules/
+dist/
+build/
+out/
+coverage/
+.turbo/
+.pnpm-store/
+
+# Foundry artifacts
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+contracts/lib/
+
+# Generated, and owned by the tool that generates it. Reformatting a drizzle
+# snapshot puts the checked-in file out of step with what `db:generate` writes
+# next, which turns the following migration into a diff nobody can read.
+packages/db/drizzle/
+
+# typedoc output, regenerated on every docs build
+apps/docs/content/reference/
+
+# Vendored skill documents — not this repo's prose to restyle
+.claude/
+
+pnpm-lock.yaml
