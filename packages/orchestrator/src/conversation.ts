@@ -75,6 +75,14 @@ export type Message = {
   at: string;
   /** Agent address, or an opaque human identifier the caller supplies. */
   author: string;
+  /**
+   * Stable id of the seat the posting surface authenticated, when it has one —
+   * the cloud's seat id behind a display name. Attribution, not authority: it
+   * is set server-side by whatever posted the message, exactly like
+   * `authorKind`, and is what an assigned human gate (F2.27) is matched
+   * against, since a name can be renamed out from under a gate.
+   */
+  authorId?: string;
   authorKind: "agent" | "human";
   kind: MessageKind;
   body: string;
@@ -105,6 +113,9 @@ export type Message = {
 };
 
 export const MESSAGE_MAX_CHARS = 4_000;
+
+/** Ceiling on `authorId`; a seat id is an identifier, not a payload. */
+export const MESSAGE_AUTHOR_ID_MAX_CHARS = 128;
 
 export class MessageTooLongError extends Error {
   constructor(readonly chars: number) {
@@ -147,6 +158,8 @@ export function scopeOfThread(threadId: string): ThreadScope | null {
 export type PostInput = {
   scope: ThreadScope;
   author: string;
+  /** Stable seat id behind `author`, when the posting surface knows one. */
+  authorId?: string;
   authorKind: "agent" | "human";
   kind?: string;
   body: string;
@@ -199,6 +212,11 @@ export function normalizeMessage(input: PostInput, id: string, at: string): Mess
     threadId: threadIdOf(input.scope),
     at,
     author: input.authorKind === "agent" ? author.toLowerCase() : author,
+    // Bounded like any other identifier that reaches storage; an id longer than
+    // this is not a seat id, and a gate would never match it anyway.
+    ...(input.authorId?.trim()
+      ? { authorId: input.authorId.trim().slice(0, MESSAGE_AUTHOR_ID_MAX_CHARS) }
+      : {}),
     authorKind: input.authorKind,
     kind,
     body,

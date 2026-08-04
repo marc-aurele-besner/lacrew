@@ -293,6 +293,14 @@ The rules the step enforces:
 - **Only a human answers.** The author is resolved server-side when the message
   is posted; an agent replying `yes` in its own thread leaves the gate open and
   lands on the audit trail (`HumanGateUnresolved`).
+- **Only the assignee, when the step names one.** `assignee` is enforced, not
+  decoration: another person's answer leaves the gate open and lands on the
+  trail as `assignee_mismatch`, and the route that carried it answers `403
+gate_assignee_mismatch` rather than storing a reply that decides nothing. The
+  question is deliberately _not_ re-posted — it is still open and still theirs.
+  **Left empty, any human seat with access answers**, which is what gates have
+  always done. Assigning still grants nothing: it can only narrow who releases
+  this run, never hand anyone access to the crew.
 - **A timeout fails closed.** With a `timeoutPort` the run takes that branch;
   without one it stops. Nobody answering is never read as a yes. The deadline
   comes from `timeoutMs` (minimum 5 minutes) or `LACREW_HUMAN_GATE_TTL_MS`
@@ -313,8 +321,16 @@ gates`), and answered in the thread:
 
 ```
 POST /messages {"thread":"agent:0x…","replyTo":"<questionId>","kind":"answer",
-                "authorKind":"human","body":"yes"}
+                "authorKind":"human","author":"Ada Lovelace","authorId":"seat_42",
+                "body":"yes"}
 ```
+
+`authorId` is the stable id of the seat the posting surface authenticated, when
+it has one — a hosted control plane passes its seat id here. An assigned gate is
+matched against it first and against `author` second, because a display name is
+renameable and a control that hinged on one would move with a rename. Both are
+set server-side by whatever posts the message, exactly like `authorKind`;
+nothing a message claims about itself is consulted.
 
 There is deliberately no route that resolves a gate directly: a second way in
 would be one the conversation never gets to attribute to a seat. Every gate

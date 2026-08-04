@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { flow } from "./builder.js";
 import { flowToCode } from "./codegen.js";
+import { gateAssigneeMatches } from "./humanGate.js";
 import { createMockFlowBackend, FlowWaitingError, runFlow } from "./run.js";
 import { stepEdges, validateFlow } from "./validate.js";
 import type { FlowBackend, FlowDefinition, HumanGateResolution } from "./types.js";
@@ -275,4 +276,38 @@ test("the builder and codegen round-trip a gate", () => {
   const code = flowToCode(built);
   assert.match(code, /\.human\("gate", \{[^}]*prompt: "Ship it\?"/);
   assert.match(code, /timeoutMs: 1800000/);
+});
+
+/* ——— who may answer an assigned gate (F2.27) ——— */
+
+test("an empty assignee is any human, not nobody", () => {
+  // The behaviour every gate shipped with. Reading a blank field as a lock
+  // would stop the ones already running.
+  assert.equal(gateAssigneeMatches(undefined, { author: "Ada" }), true);
+  assert.equal(gateAssigneeMatches("", { author: "Ada" }), true);
+  assert.equal(gateAssigneeMatches("   ", { author: "Ada" }), true);
+});
+
+test("a named assignee matches the seat id or the name the thread recorded", () => {
+  assert.equal(
+    gateAssigneeMatches("seat_42", { author: "Ada Lovelace", authorId: "seat_42" }),
+    true,
+  );
+  assert.equal(gateAssigneeMatches("Ada Lovelace", { author: "ada lovelace" }), true);
+  assert.equal(gateAssigneeMatches("0xF00D", { author: "0xf00d", authorId: undefined }), true);
+  // `seat:` is how the dual-control reviewer spec names one; an operator who
+  // wrote it here meant the same seat.
+  assert.equal(gateAssigneeMatches("seat:seat_42", { author: "x", authorId: "seat_42" }), true);
+});
+
+test("anyone else does not match, and a blank identity never stands in for one", () => {
+  assert.equal(
+    gateAssigneeMatches("seat_42", { author: "Grace Hopper", authorId: "seat_7" }),
+    false,
+  );
+  assert.equal(gateAssigneeMatches("seat_42", { author: "" }), false);
+  // A seat id nobody supplied must not match an assignee that is also blank
+  // after normalization — that pairing is checked above and returns true only
+  // because the *gate* named nobody, never because the author is anonymous.
+  assert.equal(gateAssigneeMatches("seat_42", { author: "  ", authorId: "  " }), false);
 });
