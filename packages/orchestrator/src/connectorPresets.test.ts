@@ -11,6 +11,13 @@ import {
 import { createConnectorRegistry, loadConnectorsFromEnv, validateConnector } from "./connectors.js";
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa" as const;
+const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb" as const;
+
+/** Both of the github preset's writes bound, which is what building it takes. */
+const GITHUB_TARGETS = {
+  merge_pull_request: MERGE_AUTHORITY,
+  create_issue_comment: COMMENT_AUTHORITY,
+} as const;
 
 /** A stand-in host for the presets that ship none, because the site is the operator's. */
 const OWN_HOST = "https://blog.example/ghost/api/admin";
@@ -37,14 +44,13 @@ test("every shipped preset builds into a connector the registry accepts", () => 
 });
 
 test("the github preset serves the routes the github-experts blueprint declares", () => {
-  const connector = buildConnectorPreset("github", {
-    policyTargets: { merge_pull_request: MERGE_AUTHORITY },
-  });
+  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
   const names = connector.routes.map((r) => r.name);
-  // The two the shipped `bot-pr-triage` flow actually calls. If these drift,
+  // The three the shipped `bot-pr-triage` flow actually calls. If these drift,
   // the crew's tools resolve to nothing at run time.
   assert.ok(names.includes("get_pull_request"));
   assert.ok(names.includes("merge_pull_request"));
+  assert.ok(names.includes("create_issue_comment"));
   assert.equal(connector.baseUrl, "https://api.github.com");
 
   const merge = connector.routes.find((r) => r.name === "merge_pull_request")!;
@@ -52,6 +58,36 @@ test("the github preset serves the routes the github-experts blueprint declares"
   assert.equal(merge.path, "/repos/{owner}/{repo}/pulls/{number}/merge");
   assert.equal(merge.effect, "write");
   assert.equal(merge.policyTarget, MERGE_AUTHORITY);
+
+  const comment = connector.routes.find((r) => r.name === "create_issue_comment")!;
+  assert.equal(comment.method, "POST");
+  // `issues`, not `pulls`: the `pulls` comment endpoint is for review comments
+  // and needs a diff position. Getting this wrong is a 422 mid-run.
+  assert.equal(comment.path, "/repos/{owner}/{repo}/issues/{number}/comments");
+  assert.equal(comment.effect, "write");
+  assert.deepEqual(comment.params, ["body"]);
+});
+
+test("the comment write is gated by its own address, not the merge authority", () => {
+  // The whole reason it is a separate target: the fix-note runs on the path
+  // where merging did not happen. One address for both would mean revoking
+  // merge rights also silences the explanation of why a PR is stuck.
+  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
+  const comment = connector.routes.find((r) => r.name === "create_issue_comment")!;
+  assert.equal(comment.policyTarget, COMMENT_AUTHORITY);
+  assert.notEqual(comment.policyTarget, MERGE_AUTHORITY);
+});
+
+test("commenting can be registered without granting the merge", () => {
+  // A crew that reports and never merges is a real configuration, and it must
+  // not have to bind a merge authority it will never use to get there.
+  const connector = buildConnectorPreset("github", {
+    omitRoutes: ["merge_pull_request"],
+    policyTargets: { create_issue_comment: COMMENT_AUTHORITY },
+  });
+  assert.ok(connector.routes.some((r) => r.name === "create_issue_comment"));
+  assert.ok(!connector.routes.some((r) => r.name === "merge_pull_request"));
+  assert.deepEqual(validateConnector(connector), []);
 });
 
 test("the default credential mode is the App, and the PAT is an explicit opt-in", () => {
@@ -60,7 +96,7 @@ test("the default credential mode is the App, and the PAT is an explicit opt-in"
   // is what an operator who does not choose ends up running.
   assert.equal(getConnectorPreset("github")!.auth[0]!.mode, "github-app");
   assert.deepEqual(
-    buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }).auth,
+    buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }).auth,
     {
       kind: "github-app",
       appIdEnv: "GITHUB_APP_ID",
@@ -71,7 +107,7 @@ test("the default credential mode is the App, and the PAT is an explicit opt-in"
   assert.deepEqual(
     buildConnectorPreset("github", {
       authMode: "token",
-      policyTargets: { merge_pull_request: MERGE_AUTHORITY },
+      policyTargets: GITHUB_TARGETS,
     }).auth,
     { kind: "bearer", tokenEnv: "GH_TOKEN" },
   );
@@ -84,27 +120,33 @@ test("an unsupported auth mode names the ones that exist", () => {
   );
 });
 
-test("only the merge route is a write — a preset does not widen what a token can do", () => {
-  const connector = buildConnectorPreset("github", {
-    policyTargets: { merge_pull_request: MERGE_AUTHORITY },
-  });
+test("the merge and the comment are the only writes — a preset does not widen what a token can do", () => {
+  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
   assert.deepEqual(
     connector.routes.filter((r) => r.effect === "write").map((r) => r.name),
-    ["merge_pull_request"],
+    ["create_issue_comment", "merge_pull_request"],
   );
 });
 
 test("a write with no policy target is refused rather than registered unadmitted", () => {
   assert.throws(
     () => buildConnectorPreset("github"),
-    /connector_preset_unbound_policy_target:github\.merge_pull_request/,
+    /connector_preset_unbound_policy_target:github\.(create_issue_comment|merge_pull_request)/,
+  );
+  // Binding one write does not carry the other in with it.
+  assert.throws(
+    () => buildConnectorPreset("github", { policyTargets: { merge_pull_request: MERGE_AUTHORITY } }),
+    /connector_preset_unbound_policy_target:github\.create_issue_comment/,
   );
 });
 
-test("omitting the write builds a read-only connector without any binding", () => {
-  const connector = buildConnectorPreset("github", { omitRoutes: ["merge_pull_request"] });
+test("omitting the writes builds a read-only connector without any binding", () => {
+  const connector = buildConnectorPreset("github", {
+    omitRoutes: ["merge_pull_request", "create_issue_comment"],
+  });
   assert.ok(connector.routes.every((r) => r.effect === "read"));
   assert.ok(!connector.routes.some((r) => r.name === "merge_pull_request"));
+  assert.ok(!connector.routes.some((r) => r.name === "create_issue_comment"));
   assert.deepEqual(validateConnector(connector), []);
 });
 
@@ -123,7 +165,7 @@ test("binding a policy target onto a read is refused", () => {
   assert.throws(
     () =>
       buildConnectorPreset("github", {
-        policyTargets: { get_pull_request: MERGE_AUTHORITY, merge_pull_request: MERGE_AUTHORITY },
+        policyTargets: { ...GITHUB_TARGETS, get_pull_request: MERGE_AUTHORITY },
       }),
     /connector_preset_route_takes_no_policy_target:github\.get_pull_request/,
   );
@@ -162,7 +204,7 @@ test("overrides cover a self-hosted instance and a renamed credential", () => {
     baseUrl: "https://github.acme.example/api/v3",
     tokenEnv: "GHE_TOKEN",
     timeoutMs: 5_000,
-    policyTargets: { merge_pull_request: MERGE_AUTHORITY },
+    policyTargets: GITHUB_TARGETS,
   });
   assert.equal(connector.id, "ghe");
   assert.equal(connector.baseUrl, "https://github.acme.example/api/v3");
@@ -182,7 +224,7 @@ test("omitting every route is an error rather than an empty connector", () => {
 test("LACREW_CONNECTORS accepts a preset reference alongside a hand-written one", () => {
   const connectors = loadConnectorsFromEnv({
     LACREW_CONNECTORS: JSON.stringify([
-      { preset: "github", policyTargets: { merge_pull_request: MERGE_AUTHORITY } },
+      { preset: "github", policyTargets: GITHUB_TARGETS },
       {
         id: "cms",
         baseUrl: "https://cms.example",
@@ -450,7 +492,10 @@ test("a preset route calls the URL the preset wrote down", async () => {
 
   const registry = createConnectorRegistry({
     connectors: [
-      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+      buildConnectorPreset("github", {
+        authMode: "token",
+        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+      }),
     ],
     env: { GH_TOKEN: "ghp_secret" },
     fetchImpl,

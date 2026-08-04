@@ -378,7 +378,7 @@ test("the runner blocks the network for the duration of a run", async () => {
 
 test("coverage names the flows and blueprints no scenario touches", () => {
   const coverage = evalCoverage(firstPartyEvals);
-  assert.equal(coverage.byFlow["bot-pr-triage"], 3);
+  assert.equal(coverage.byFlow["bot-pr-triage"], 5);
   assert.ok(coverage.flowsWithoutEvals.includes("treasury-pulse"));
   assert.ok(!coverage.flowsWithoutEvals.includes("bot-pr-triage"));
   assert.ok(!coverage.blueprintsWithoutEvals.includes("github-experts"));

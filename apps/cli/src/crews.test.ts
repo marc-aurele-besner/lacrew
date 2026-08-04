@@ -86,6 +86,7 @@ describe("lacrew crews", () => {
       ["target:ci-minutes", "0x0000000000000000000000000000000000000009"],
       ["target:sandbox-runner", "0x000000000000000000000000000000000000000a"],
       ["target:merge-authority", "0x000000000000000000000000000000000000000b"],
+      ["target:comment-authority", "0x000000000000000000000000000000000000000c"],
     ] as const) {
       args.push("--bind", `${role}=${addr}`);
     }

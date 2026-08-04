@@ -4,6 +4,15 @@ import type { Connector } from "@lacrew/orchestrator";
 import { cmdConnectors } from "./connectors.js";
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa";
+const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb";
+
+/** Both github writes bound, as `config` requires before it will emit anything. */
+const BIND_GITHUB_WRITES = [
+  "--policy-target",
+  `merge_pull_request=${MERGE_AUTHORITY}`,
+  "--policy-target",
+  `create_issue_comment=${COMMENT_AUTHORITY}`,
+];
 
 /** Run a command with stdout captured, so assertions read what a user reads. */
 async function capture(
@@ -54,31 +63,22 @@ describe("lacrew connectors", () => {
   });
 
   it("emits config a registry can take", async () => {
-    const { out, code } = await capture([
-      "config",
-      "github",
-      "--policy-target",
-      `merge_pull_request=${MERGE_AUTHORITY}`,
-    ]);
+    const { out, code } = await capture(["config", "github", ...BIND_GITHUB_WRITES]);
     assert.equal(code, undefined);
     const parsed = JSON.parse(out) as Connector[];
     assert.equal(parsed.length, 1);
     assert.equal(parsed[0]!.id, "github");
     const merge = parsed[0]!.routes.find((r) => r.name === "merge_pull_request")!;
     assert.equal(merge.policyTarget, MERGE_AUTHORITY);
+    // Each write carries its own address — binding one does not admit the other.
+    const comment = parsed[0]!.routes.find((r) => r.name === "create_issue_comment")!;
+    assert.equal(comment.policyTarget, COMMENT_AUTHORITY);
     // Default mode, so an operator who does not choose gets the App.
     assert.equal(parsed[0]!.auth.kind, "github-app");
   });
 
   it("emits the PAT form only when it is asked for", async () => {
-    const { out } = await capture([
-      "config",
-      "github",
-      "--auth",
-      "token",
-      "--policy-target",
-      `merge_pull_request=${MERGE_AUTHORITY}`,
-    ]);
+    const { out } = await capture(["config", "github", "--auth", "token", ...BIND_GITHUB_WRITES]);
     const parsed = JSON.parse(out) as Connector[];
     assert.deepEqual(parsed[0]!.auth, { kind: "bearer", tokenEnv: "GH_TOKEN" });
   });
@@ -89,10 +89,25 @@ describe("lacrew connectors", () => {
     assert.equal(code, 1);
   });
 
-  it("refuses to emit a merge route nothing admits", async () => {
+  it("refuses to emit a write route nothing admits", async () => {
     const { out, err, code } = await capture(["config", "github"]);
     assert.equal(out, "");
-    assert.match(err, /connector_preset_unbound_policy_target:github\.merge_pull_request/);
+    assert.match(
+      err,
+      /connector_preset_unbound_policy_target:github\.(create_issue_comment|merge_pull_request)/,
+    );
+    assert.equal(code, 1);
+  });
+
+  it("binding one write does not admit the other", async () => {
+    const { out, err, code } = await capture([
+      "config",
+      "github",
+      "--policy-target",
+      `merge_pull_request=${MERGE_AUTHORITY}`,
+    ]);
+    assert.equal(out, "");
+    assert.match(err, /connector_preset_unbound_policy_target:github\.create_issue_comment/);
     assert.equal(code, 1);
   });
 
@@ -102,8 +117,15 @@ describe("lacrew connectors", () => {
     assert.equal(code, 1);
   });
 
-  it("emits a read-only connector when the write is left out", async () => {
-    const { out, code } = await capture(["config", "github", "--omit", "merge_pull_request"]);
+  it("emits a read-only connector when the writes are left out", async () => {
+    const { out, code } = await capture([
+      "config",
+      "github",
+      "--omit",
+      "merge_pull_request",
+      "--omit",
+      "create_issue_comment",
+    ]);
     assert.equal(code, undefined);
     const parsed = JSON.parse(out) as Connector[];
     assert.ok(parsed[0]!.routes.every((r) => r.effect === "read"));

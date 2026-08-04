@@ -13,6 +13,7 @@ export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
   connectorEnvVars,
   createConnectorRegistry,
+  DEFAULT_MAX_RESPONSE_BYTES,
   loadConnectorsFromEnv,
   validateConnector,
   type Connector,

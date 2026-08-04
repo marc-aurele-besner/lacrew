@@ -214,7 +214,7 @@ test("status reports whether a token is held, never the token", async () => {
 function appConnector() {
   return buildConnectorPreset("github", {
     authMode: "github-app",
-    omitRoutes: ["merge_pull_request"],
+    omitRoutes: ["merge_pull_request", "create_issue_comment"],
   });
 }
 
@@ -270,7 +270,7 @@ test("a bearer connector does not re-mint on a 401 — there is nothing to re-mi
   const stub = githubStub({ apiStatus: [401, 200] });
   const registry = createConnectorRegistry({
     connectors: [
-      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request"] }),
+      buildConnectorPreset("github", { authMode: "token", omitRoutes: ["merge_pull_request", "create_issue_comment"] }),
     ],
     env: { GH_TOKEN: "ghp_x" },
     fetchImpl: stub.impl,
@@ -286,7 +286,10 @@ test("describe() reports wiring without a credential anywhere in it", async () =
     connectors: [
       buildConnectorPreset("github", {
         authMode: "github-app",
-        policyTargets: { merge_pull_request: "0x00000000000000000000000000000000000000aa" },
+        policyTargets: {
+          merge_pull_request: "0x00000000000000000000000000000000000000aa",
+          create_issue_comment: "0x00000000000000000000000000000000000000bb",
+        },
       }),
     ],
     env: ENV,
@@ -321,7 +324,7 @@ test("describe() reports wiring without a credential anywhere in it", async () =
 
 test("describe() says not-ready when the env vars are absent", () => {
   const registry = createConnectorRegistry({
-    connectors: [buildConnectorPreset("github", { authMode: "github-app", omitRoutes: ["merge_pull_request"] })],
+    connectors: [buildConnectorPreset("github", { authMode: "github-app", omitRoutes: ["merge_pull_request", "create_issue_comment"] })],
     env: { GITHUB_APP_ID: "1" },
   });
   assert.equal(registry.describe()[0]!.auth.ready, false);

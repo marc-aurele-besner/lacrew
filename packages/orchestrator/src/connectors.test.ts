@@ -605,3 +605,240 @@ test("a read that declares a mode is refused at registration", () => {
     /is a read and cannot carry a mode/,
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * Response size caps (F2.13)
+ *
+ * A body is stringified into `{{steps.<id>.json}}` and handed to whatever
+ * reads it next, which is usually a model prompt. These pin the ceiling and,
+ * more importantly, pin that crossing it *refuses* rather than truncating: a
+ * half-object reasons like data and answers like noise.
+ * ------------------------------------------------------------------ */
+
+/** A JSON body of a known encoded size, so a limit can be set either side of it. */
+function bodyOfBytes(bytes: number): string {
+  const wrapper = '{"pad":""}'.length;
+  return JSON.stringify({ pad: "x".repeat(Math.max(0, bytes - wrapper)) });
+}
+
+/** Streams `text` back in small chunks, so the counting path is the one tested. */
+function streamingFetch(text: string, opts: { contentLength?: boolean } = {}) {
+  const impl = (async () => {
+    const bytes = Buffer.from(text, "utf8");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < bytes.length; i += 1024) {
+          controller.enqueue(new Uint8Array(bytes.subarray(i, i + 1024)));
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        ...(opts.contentLength ? { "content-length": String(bytes.byteLength) } : {}),
+      },
+    });
+  }) as unknown as typeof fetch;
+  return impl;
+}
+
+test("a response over the cap is refused with a stable code, not truncated", async () => {
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: streamingFetch(bodyOfBytes(40_000)),
+    maxResponseBytes: 10_000,
+  });
+
+  await assert.rejects(
+    registry.call("github.get_pull_request", { owner: "a", repo: "b", number: 1 }),
+    /^Error: connector_response_too_large:github\.get_pull_request:10000$/,
+  );
+});
+
+test("a refused body never comes back as a partial result", async () => {
+  // The acceptance criterion behind the cap: the step fails, so there is no
+  // `body` for the runtime to stringify into a prompt. A truncated string that
+  // still parsed would be the failure this prevents.
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: streamingFetch(bodyOfBytes(40_000)),
+    maxResponseBytes: 10_000,
+  });
+
+  const result = await registry
+    .call("github.get_pull_request", { owner: "a", repo: "b", number: 1 })
+    .catch((err: Error) => err);
+  assert.ok(result instanceof Error);
+  assert.ok(!("body" in result));
+});
+
+test("a body under the cap is returned untouched", async () => {
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: streamingFetch(JSON.stringify({ number: 7, title: "Bump lodash" })),
+    maxResponseBytes: 10_000,
+  });
+
+  const result = await registry.call("github.get_pull_request", {
+    owner: "a",
+    repo: "b",
+    number: 7,
+  });
+  assert.deepEqual(result.body, { number: 7, title: "Bump lodash" });
+});
+
+test("a declared content-length over the cap is refused before the body is read", async () => {
+  // Proven by consequence: the body here is a few bytes, so counting it would
+  // pass. Only the header can be what refused, which is the point — an
+  // oversized response is turned away without being pulled down first.
+  const impl = (async () =>
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json", "content-length": "40000" },
+    })) as unknown as typeof fetch;
+
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    maxResponseBytes: 10_000,
+  });
+
+  await assert.rejects(
+    registry.call("github.get_pull_request", { owner: "a", repo: "b", number: 1 }),
+    /connector_response_too_large/,
+  );
+});
+
+test("a route's own cap wins over the connector's, which wins over the default", async () => {
+  const connector = githubConnector({
+    maxResponseBytes: 5_000,
+    routes: [
+      {
+        name: "get_pull_request",
+        method: "GET",
+        path: "/repos/{owner}/{repo}/pulls/{number}",
+        effect: "read",
+      },
+      {
+        name: "list_pull_requests",
+        method: "GET",
+        path: "/repos/{owner}/{repo}/pulls",
+        effect: "read",
+        // The bulk route on this connector, raised deliberately.
+        maxResponseBytes: 60_000,
+      },
+    ],
+  });
+  const registry = createConnectorRegistry({
+    connectors: [connector],
+    env: TOKEN_ENV,
+    fetchImpl: streamingFetch(bodyOfBytes(40_000)),
+    maxResponseBytes: 100,
+  });
+
+  // Inherits the connector's 5_000 and refuses.
+  await assert.rejects(
+    registry.call("github.get_pull_request", { owner: "a", repo: "b", number: 1 }),
+    /connector_response_too_large:github\.get_pull_request:5000/,
+  );
+  // Declares 60_000 and passes, despite a lower connector and registry limit.
+  const ok = await registry.call("github.list_pull_requests", { owner: "a", repo: "b" });
+  assert.equal(ok.ok, true);
+});
+
+test("the resolved cap is reported to operator surfaces", () => {
+  const registry = createConnectorRegistry({
+    connectors: [
+      githubConnector({
+        maxResponseBytes: 5_000,
+        routes: [
+          {
+            name: "get_pull_request",
+            method: "GET",
+            path: "/repos/{owner}/{repo}/pulls/{number}",
+            effect: "read",
+          },
+          {
+            name: "list_pull_requests",
+            method: "GET",
+            path: "/repos/{owner}/{repo}/pulls",
+            effect: "read",
+            maxResponseBytes: 60_000,
+          },
+        ],
+      }),
+    ],
+    env: TOKEN_ENV,
+    maxResponseBytes: 100,
+  });
+
+  const [view] = registry.describe();
+  assert.equal(view!.maxResponseBytes, 5_000);
+  // Already resolved: an operator asking why a step failed needs the limit that
+  // applied, not the level it happened to be written at.
+  assert.equal(view!.routes.find((r) => r.name === "get_pull_request")!.maxResponseBytes, 5_000);
+  assert.equal(view!.routes.find((r) => r.name === "list_pull_requests")!.maxResponseBytes, 60_000);
+});
+
+test("a refusal lands on the audit trail rather than vanishing", async () => {
+  const events: ProtocolEvent[] = [];
+  const registry = createConnectorRegistry({
+    connectors: [githubConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: streamingFetch(bodyOfBytes(40_000)),
+    maxResponseBytes: 10_000,
+    onEvent: (event) => events.push(event),
+  });
+
+  await assert.rejects(
+    registry.call("github.get_pull_request", { owner: "a", repo: "b", number: 1 }),
+    /connector_response_too_large/,
+  );
+
+  assert.equal(events.length, 1);
+  const payload = events[0]!.payload as Record<string, unknown>;
+  assert.equal(events[0]!.type, "ToolCalled");
+  assert.equal(payload.route, "get_pull_request");
+  assert.equal(payload.ok, false);
+  assert.equal(payload.refused, "response_too_large");
+  assert.equal(payload.maxResponseBytes, 10_000);
+  // Still no body on the trail — the reason for refusing it does not become a
+  // reason to record it.
+  assert.ok(!JSON.stringify(payload).includes("xxxx"));
+});
+
+test("a cap that would refuse every call is rejected at registration", () => {
+  for (const bad of [0, -1, 1.5]) {
+    assert.throws(
+      () =>
+        createConnectorRegistry({
+          connectors: [githubConnector({ maxResponseBytes: bad })],
+          env: TOKEN_ENV,
+        }),
+      /maxResponseBytes must be a positive integer/,
+      `${bad} must be refused`,
+    );
+  }
+  assert.deepEqual(
+    validateConnector(
+      githubConnector({
+        routes: [
+          {
+            name: "get_pull_request",
+            method: "GET",
+            path: "/repos/{owner}/{repo}/pulls/{number}",
+            effect: "read",
+            maxResponseBytes: 0,
+          },
+        ],
+      }),
+    ).filter((e) => e.includes("maxResponseBytes")).length,
+    1,
+  );
+});

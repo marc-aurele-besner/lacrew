@@ -23,6 +23,7 @@ import {
   buildConnectorPreset,
   connectorPresets,
   getConnectorPreset,
+  DEFAULT_MAX_RESPONSE_BYTES,
   type ConnectorPreset,
   type ConnectorPresetAuthMode,
   type ConnectorPresetOptions,
@@ -48,6 +49,13 @@ function routeLine(preset: ConnectorPreset, name: string): string {
   const route = preset.routes.find((r) => r.name === name)!;
   const gate = route.policyTarget?.required ? "  ⚠ needs a policy target" : "";
   return `  ${route.effect === "write" ? "write" : "read "}  ${preset.id}.${route.name}  ${route.method} ${route.path}${gate}`;
+}
+
+/** Bytes as an operator writes them: "1 MB", not "1048576". */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} bytes`;
 }
 
 /** The env vars one credential mode reads — none, for a public API. */
@@ -110,7 +118,17 @@ function printShow(id: string): void {
     if (route.description) console.log(`         ${route.description}`);
     if (route.params?.length) console.log(`         args: ${route.params.join(", ")}`);
     if (route.policyTarget) console.log(`         target: ${route.policyTarget.note}`);
+    if (route.maxResponseBytes) {
+      console.log(
+        `         max response: ${formatBytes(route.maxResponseBytes)} (raised for this route)`,
+      );
+    }
   }
+
+  console.log(
+    `\nResponses over ${formatBytes(DEFAULT_MAX_RESPONSE_BYTES)} are refused with` +
+      ` connector_response_too_large, unless a route above raises its own limit.`,
+  );
 
   const gated = preset.routes.filter((r) => r.policyTarget?.required);
   const needsBaseUrl = preset.baseUrl === undefined;

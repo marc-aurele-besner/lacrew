@@ -148,6 +148,64 @@ const scenarios: FlowEvalScenario[] = [
       ],
     },
   },
+  {
+    id: "github-experts/comment-refused",
+    describe:
+      "A PR routed to the fixer on a crew whose comment authority is not admitted: the note is written, policy answers DENY, and the comment route is never called.",
+    flow: "bot-pr-triage",
+    blueprint: "github-experts",
+    asAgent: "reviewer",
+    input: { owner: "marc-aurele-besner", repo: "lacrew", number: 94 },
+    mocks: {
+      tools: {
+        "github.get_pull_request": { result: botPullRequest },
+        lacrew_invoke_agent: { result: { text: "Pinned viem to 2.31.7 and reran the suite." } },
+      },
+      model: [{ when: "MERGE (safe, CI green", reply: "FIX" }],
+      // The fix budget is admitted; speaking on the PR is not. Separating the
+      // two is the point of a second address — this is the state that proves
+      // the connector, not the flow, is what refuses.
+      policy: { targets: { "comment-authority": "DENY" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["fix-note", "comment-check", "may-comment", "comment-blocked"],
+      notRan: ["post-fix-note"],
+      port: { "may-comment": "comment-blocked" },
+      notCalled: ["github.create_issue_comment"],
+    },
+  },
+  {
+    id: "github-experts/comment-admitted",
+    describe:
+      "The same fix path once comment authority is admitted: the note is posted back on the PR, exactly once.",
+    flow: "bot-pr-triage",
+    blueprint: "github-experts",
+    asAgent: "reviewer",
+    input: { owner: "marc-aurele-besner", repo: "lacrew", number: 94 },
+    mocks: {
+      tools: {
+        "github.get_pull_request": { result: botPullRequest },
+        lacrew_invoke_agent: { result: { text: "Pinned viem to 2.31.7 and reran the suite." } },
+        "github.create_issue_comment": {
+          result: { ok: true, status: 201, body: { id: 55, html_url: "https://github.com/x" } },
+        },
+      },
+      model: [{ when: "MERGE (safe, CI green", reply: "FIX" }],
+      policy: { targets: { "comment-authority": "ALLOW" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["fix-note", "comment-check", "may-comment", "post-fix-note"],
+      notRan: ["comment-blocked", "merge"],
+      port: { "may-comment": "post-fix-note" },
+      // Once. The loop this closes is a comment, and two of them on every fix
+      // is how a crew becomes something a maintainer mutes.
+      called: { "github.create_issue_comment": 1 },
+      // The fix path never merges, whatever the merge authority says.
+      notCalled: ["github.merge_pull_request"],
+    },
+  },
 
   /* --------------------------------------------------------------- *
    * LP advisor — a crew whose whole claim is that it cannot trade.
