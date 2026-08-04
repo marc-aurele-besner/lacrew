@@ -265,6 +265,14 @@ export async function cmdFlows(args: string[]): Promise<void> {
           `  options: ${gate.options.map((o) => o.id).join(" | ")} · ` +
             (gate.status === "pending" ? `expires ${gate.expiresAt}` : `since ${gate.createdAt}`),
         );
+        // Who may answer, said explicitly in both directions: an operator
+        // reading only "assigned to …" on some rows would take the blank ones
+        // for unowned rather than for anyone's.
+        console.log(
+          gate.assignee
+            ? `  assigned to ${gate.assignee} — nobody else's answer resolves it`
+            : "  anyone: no assignee, so any human seat with access may answer",
+        );
         if (gate.status === "pending") {
           // No `lacrew answer` command on purpose: the answer has to come from
           // a human seat in the thread, and a CLI subcommand would be a second

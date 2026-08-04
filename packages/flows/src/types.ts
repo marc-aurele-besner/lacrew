@@ -311,9 +311,14 @@ export type HumanGateStep = FlowStepBase & {
   /** The choices offered — at least one, ids unique within the step. */
   options: HumanGateOption[];
   /**
-   * Who the question is for: a human seat, a role, or an agent address whose
-   * thread it belongs in. Interpolated. Advisory — the backend resolves who may
-   * actually answer, since a step definition cannot be trusted to grant access.
+   * The one seat this decision is for: a human seat id, a seat's name, or an
+   * agent address whose thread it belongs in. Interpolated.
+   *
+   * Enforced, not advisory: an answer the conversation attributed to anyone
+   * else leaves the gate open. Left empty, any human seat with access may
+   * answer — the behaviour gates shipped with, and what a blank field has to
+   * keep meaning. It still grants nothing: a step definition cannot hand a
+   * person access to a crew, it can only narrow who releases this run.
    */
   assignee?: string;
   /** How long to wait before the gate times out, in milliseconds. */

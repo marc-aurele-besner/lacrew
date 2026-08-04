@@ -853,7 +853,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       gates: all,
       // Answering happens through the thread, not here: a route that resolved a
       // gate directly would be a second way to release a paused pipeline, and
-      // one that never sees whether the answer came from a human seat.
+      // one that never sees whether the answer came from a human seat. A gate
+      // carrying an `assignee` takes that seat's answer only — anyone else is
+      // refused `gate_assignee_mismatch` and the gate stays open.
       answerVia:
         "POST /messages with kind=answer, replyTo=<questionId>, body=<option id>, as a human seat",
     });
@@ -2025,6 +2027,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const body = await bodyOf<{
       thread?: string;
       author?: string;
+      authorId?: string;
       authorKind?: string;
       kind?: string;
       body?: string;
@@ -2040,11 +2043,38 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!body.body) return jsonBig(c, { error: "body_required" }, 400);
     const scope = scopeOfThread(body.thread);
     if (!scope) return jsonBig(c, { error: "unknown_thread" }, 400);
+    const authorKind = body.authorKind === "human" ? "human" : "agent";
+    // An assigned gate (F2.27) refuses before the message is stored, so the
+    // person is told their answer decided nothing rather than watching it land
+    // in the thread and change nothing. The gate stays open for its assignee;
+    // a non-assignee who wants to say something posts a note, not an answer.
+    const refusal =
+      body.kind === "answer"
+        ? humanGates?.assigneeRefusal({
+            author: body.author,
+            authorKind,
+            ...(body.authorId ? { authorId: body.authorId } : {}),
+            ...(body.replyTo ? { replyTo: body.replyTo } : {}),
+          })
+        : null;
+    if (refusal) {
+      return jsonBig(
+        c,
+        {
+          error: "gate_assignee_mismatch",
+          gateId: refusal.gateId,
+          stepId: refusal.stepId,
+          assignee: refusal.assignee,
+        },
+        403,
+      );
+    }
     try {
       const message = runtime.postMessage({
         scope,
         author: body.author,
-        authorKind: body.authorKind === "human" ? "human" : "agent",
+        ...(body.authorId ? { authorId: body.authorId } : {}),
+        authorKind,
         kind: body.kind,
         body: body.body,
         options: body.options,

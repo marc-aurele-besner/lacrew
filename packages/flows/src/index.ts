@@ -22,6 +22,7 @@ export {
   isFlowWaiting,
   type RunFlowOptions,
 } from "./run.js";
+export { gateAssigneeMatches, type GateAnswerAuthor } from "./humanGate.js";
 export { flow, FlowBuilder } from "./builder.js";
 export { flowToCode, flowRunSnippet } from "./codegen.js";
 export { flowTemplates, getFlowTemplate } from "./templates.js";

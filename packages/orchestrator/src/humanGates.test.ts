@@ -23,6 +23,8 @@ import {
   type HumanGateRecord,
 } from "./humanGates.js";
 import { createConnectorRegistry, type Connector } from "./connectors.js";
+import { createOrchestratorApp } from "./httpApp.js";
+import { InMemoryQueue } from "./queue/index.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { CrewRuntime } from "./runtime.js";
 import type { ProtocolEvent } from "@lacrew/core";
@@ -44,7 +46,7 @@ const typefully: Connector = {
   ],
 };
 
-function harness(opts: { ttlMs?: number; now?: () => Date } = {}) {
+function harness(opts: { ttlMs?: number; now?: () => Date; assignee?: string } = {}) {
   const runtime = new CrewRuntime({
     client: createLacrewClient({ useMock: true }),
   });
@@ -104,6 +106,7 @@ function harness(opts: { ttlMs?: number; now?: () => Date } = {}) {
         { id: "yes", label: "Publish", port: "publish" },
         { id: "no", label: "Skip", port: "memo" },
       ],
+      ...(opts.assignee ? { assignee: opts.assignee } : {}),
       timeoutPort: "memo",
     })
     .tool("publish", "typefully.create_draft", { content: "{{steps.draft.text}}" }, { next: null })
@@ -125,10 +128,12 @@ function answer(
   gate: { threadId: string; questionId: string },
   body: string,
   authorKind: "human" | "agent" = "human",
+  who: { author?: string; authorId?: string } = {},
 ) {
   h.runtime.postMessage({
     scope: scopeOfThread(gate.threadId)!,
-    author: authorKind === "human" ? "human:ops" : "0xWORKER",
+    author: who.author ?? (authorKind === "human" ? "human:ops" : "0xWORKER"),
+    ...(who.authorId ? { authorId: who.authorId } : {}),
     authorKind,
     kind: "answer",
     body,
@@ -202,6 +207,102 @@ describe("blocking human gates, end to end", () => {
       h.events.filter((e) => e.type === "HumanGateUnresolved").length,
       1,
       "the attempt is on the trail rather than swallowed",
+    );
+  });
+
+  it("an assigned gate ignores another human's answer and stays open", async () => {
+    const h = harness({ assignee: "seat_42" });
+    await h.surface.save(h.def);
+    await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+    assert.equal(gate.assignee, "seat_42");
+    const asked = gate.questionId;
+
+    answer(h, gate, "yes", "human", { author: "Grace Hopper", authorId: "seat_7" });
+    await h.gates.drain();
+
+    assert.equal(h.calls.length, 0, "somebody else's yes publishes nothing");
+    const still = h.gates.list()[0]!;
+    assert.equal(still.status, "pending");
+    assert.equal(
+      still.questionId,
+      asked,
+      "the question is not re-posted: it is still open, and still theirs to answer",
+    );
+    const refused = h.events.find(
+      (e) =>
+        e.type === "HumanGateUnresolved" &&
+        (e.payload as { reason?: string }).reason === "assignee_mismatch",
+    );
+    assert.ok(refused, "the attempt is on the trail rather than swallowed");
+    assert.equal((refused!.payload as { answeredById?: string }).answeredById, "seat_7");
+  });
+
+  it("the assignee's own answer resumes the run", async () => {
+    const h = harness({ assignee: "seat_42" });
+    await h.surface.save(h.def);
+    const parked = await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+
+    // Matched on the seat id the surface authenticated, not the rendered name:
+    // a rename must not move who may release a run.
+    answer(h, gate, "yes", "human", { author: "Ada Lovelace", authorId: "seat_42" });
+    await h.gates.drain();
+
+    assert.equal(h.calls.length, 1, "the assignee's yes is what publishes");
+    const finished = h.surface.runs().find((r) => r.runId === parked.runId);
+    assert.equal(finished?.status, "completed");
+    assert.equal(h.gates.list()[0]!.answeredBy, "Ada Lovelace");
+  });
+
+  it("with no assignee, any human seat may still answer", async () => {
+    const h = harness();
+    await h.surface.save(h.def);
+    const parked = await h.surface.run({ id: "shortlist" });
+
+    answer(h, openGate(h), "yes", "human", { author: "Whoever Is Around" });
+    await h.gates.drain();
+
+    assert.equal(h.calls.length, 1, "an empty assignee is anyone, not nobody");
+    assert.equal(h.surface.runs().find((r) => r.runId === parked.runId)?.status, "completed");
+  });
+
+  it("names the gate a non-assignee's answer would be refused by, before it is posted", async () => {
+    const h = harness({ assignee: "seat_42" });
+    await h.surface.save(h.def);
+    await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+
+    const refusal = h.gates.assigneeRefusal({
+      replyTo: gate.questionId,
+      author: "Grace Hopper",
+      authorId: "seat_7",
+      authorKind: "human",
+    });
+    assert.deepEqual(refusal, {
+      gateId: gate.id,
+      stepId: "signoff",
+      assignee: "seat_42",
+    });
+
+    assert.equal(
+      h.gates.assigneeRefusal({
+        replyTo: gate.questionId,
+        author: "Ada",
+        authorId: "seat_42",
+        authorKind: "human",
+      }),
+      null,
+      "the assignee is not refused",
+    );
+    assert.equal(
+      h.gates.assigneeRefusal({
+        replyTo: gate.questionId,
+        author: "0xWORKER",
+        authorKind: "agent",
+      }),
+      null,
+      "an agent's message is ordinary traffic here; it simply resolves nothing",
     );
   });
 
@@ -405,5 +506,113 @@ describe("blocking human gates, end to end", () => {
       24 * 60 * 60 * 1000,
       "a deadline that fires on people rather than on neglect is refused",
     );
+  });
+});
+
+describe("POST /messages and an assigned gate", () => {
+  /** The app a control plane (or a chat bridge) actually posts through. */
+  function app(assignee?: string) {
+    const h = harness(assignee ? { assignee } : {});
+    return {
+      h,
+      http: createOrchestratorApp({
+        runtime: h.runtime,
+        queue: new InMemoryQueue(),
+        model: new MemoryModelProvider(),
+        flows: h.surface,
+        humanGates: h.gates,
+        mcpUseMock: true,
+        isDbReady: () => false,
+        isDbConfigured: () => false,
+      }),
+    };
+  }
+
+  const post = (http: ReturnType<typeof app>["http"], body: Record<string, unknown>) =>
+    http.request("/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("refuses a non-assignee with 403 rather than storing an answer that decides nothing", async () => {
+    const { h, http } = app("seat_42");
+    await h.surface.save(h.def);
+    await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+
+    const res = await post(http, {
+      thread: gate.threadId,
+      author: "Grace Hopper",
+      authorId: "seat_7",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: gate.questionId,
+      body: "yes",
+    });
+
+    assert.equal(res.status, 403);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.equal(body.error, "gate_assignee_mismatch");
+    assert.equal(body.assignee, "seat_42");
+    assert.equal(body.stepId, "signoff");
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.gates.list()[0]!.status, "pending");
+    assert.equal(
+      h.runtime.thread(scopeOfThread(gate.threadId)!, 50).filter((m) => m.kind === "answer").length,
+      0,
+      "the refused answer never reached the thread",
+    );
+  });
+
+  it("takes the assignee's answer, and lets anyone else still say something that is not an answer", async () => {
+    const { h, http } = app("seat_42");
+    await h.surface.save(h.def);
+    await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+
+    const aside = await post(http, {
+      thread: gate.threadId,
+      author: "Grace Hopper",
+      authorId: "seat_7",
+      authorKind: "human",
+      kind: "note",
+      replyTo: gate.questionId,
+      body: "I'd lean yes, but it's Ada's call.",
+    });
+    assert.equal(aside.status, 200, "a note is not an answer and is not refused");
+    assert.equal(h.gates.list()[0]!.status, "pending");
+
+    const res = await post(http, {
+      thread: gate.threadId,
+      author: "Ada Lovelace",
+      authorId: "seat_42",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: gate.questionId,
+      body: "yes",
+    });
+    assert.equal(res.status, 200);
+    await h.gates.drain();
+    assert.equal(h.calls.length, 1);
+  });
+
+  it("an unassigned gate takes any human seat's answer through the route", async () => {
+    const { h, http } = app();
+    await h.surface.save(h.def);
+    await h.surface.run({ id: "shortlist" });
+    const gate = openGate(h);
+
+    const res = await post(http, {
+      thread: gate.threadId,
+      author: "Whoever Is Around",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: gate.questionId,
+      body: "yes",
+    });
+    assert.equal(res.status, 200);
+    await h.gates.drain();
+    assert.equal(h.calls.length, 1);
   });
 });

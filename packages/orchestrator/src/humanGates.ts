@@ -26,6 +26,16 @@
  * that attribution is made server-side when the message is posted, never by the
  * message claiming it.
  *
+ * ## Why the assignee is enforced
+ *
+ * A step that names an assignee is saying "only this person decides", and a
+ * field shown next to a question that anyone could answer says that without
+ * meaning it — worse than not offering it, for the desks that reach for one.
+ * So a named assignee is checked against the same server-side attribution
+ * (`gateAssigneeMatches`), and someone else's answer leaves the gate open and
+ * lands on the trail. Named nobody, any human seat with access answers, which
+ * is what gates have always done and what a blank field has to keep meaning.
+ *
  * ## Why the run stops instead of waiting
  *
  * People answer in minutes or hours. A run that blocked for that would pin a
@@ -33,7 +43,12 @@
  * open for the whole window. The run is suspended to durable state instead.
  */
 
-import { FlowWaitingError, type FlowResumeState, type HumanGateResolution } from "@lacrew/flows";
+import {
+  FlowWaitingError,
+  gateAssigneeMatches,
+  type FlowResumeState,
+  type HumanGateResolution,
+} from "@lacrew/flows";
 import type { ProtocolEvent } from "@lacrew/core";
 import { createHash } from "node:crypto";
 import { threadIdOf, type Message } from "./conversation.js";
@@ -71,7 +86,10 @@ export type HumanGateRecord = {
   /** The question a person reads, already interpolated. */
   prompt: string;
   options: HumanGateOptionView[];
-  /** Human seat or role the question is addressed to. Advisory. */
+  /**
+   * The one seat allowed to answer, when the step named one. Empty means any
+   * human seat with access to the crew.
+   */
   assignee?: string;
   principal: string;
   threadId: string;
@@ -160,6 +178,21 @@ export type HumanGatesSurface = {
   attachResume(id: string, resume: FlowResumeState): Promise<void>;
   /** Feed a conversation message in; resolves the gate it answers, if any. */
   observe(message: Message): void;
+  /**
+   * Whether an answer about to be posted would be refused for naming the wrong
+   * person, and by which gate.
+   *
+   * Asked *before* the message is stored so the caller gets a refusal it can
+   * show, instead of a reply that lands in the thread and quietly decides
+   * nothing. `observe` re-checks regardless — this is the message a person
+   * sees, not the enforcement.
+   */
+  assigneeRefusal(message: {
+    replyTo?: string;
+    author: string;
+    authorId?: string;
+    authorKind: "agent" | "human";
+  }): { gateId: string; stepId: string; assignee: string } | null;
   /** Close the open gates of a run that ended; they stop accepting answers. */
   cancelRun(runId: string, reason?: string): Promise<HumanGateRecord[]>;
   /** Time out gates past their deadline and let their runs take that port. */
@@ -366,6 +399,26 @@ export function createHumanGates(opts: {
       if (gate.status === "answered" || gate.status === "timed_out") startResume(gate);
     },
 
+    assigneeRefusal: (message) => {
+      // Only a human can resolve a gate at all, and an agent posting into a
+      // thread is ordinary traffic — refusing it here would break crews that
+      // reply to their own questions for reasons that have nothing to do with
+      // the gate. `observe` already declines to let one decide.
+      if (message.authorKind !== "human" || !message.replyTo) return null;
+      const id = byQuestion.get(message.replyTo);
+      const gate = id ? gates.get(id) : undefined;
+      if (!gate || gate.status !== "pending" || !gate.assignee) return null;
+      if (
+        gateAssigneeMatches(gate.assignee, {
+          author: message.author,
+          ...(message.authorId ? { authorId: message.authorId } : {}),
+        })
+      ) {
+        return null;
+      }
+      return { gateId: gate.id, stepId: gate.stepId, assignee: gate.assignee };
+    },
+
     observe: (message) => {
       if (message.kind !== "answer" || !message.replyTo) return;
       const id = byQuestion.get(message.replyTo);
@@ -380,6 +433,24 @@ export function createHumanGates(opts: {
           reason: "not_human",
           answeredBy: message.author,
           answerKind: message.authorKind,
+        });
+        return;
+      }
+
+      if (
+        !gateAssigneeMatches(gate.assignee, {
+          author: message.author,
+          ...(message.authorId ? { authorId: message.authorId } : {}),
+        })
+      ) {
+        // Someone else's decision. The question is deliberately not re-posted:
+        // it is still open, still addressed to the assignee, and re-asking
+        // would mint a new question id for a gate nothing has happened to.
+        audit("HumanGateUnresolved", gate, {
+          reason: "assignee_mismatch",
+          assignee: gate.assignee,
+          answeredBy: message.author,
+          ...(message.authorId ? { answeredById: message.authorId } : {}),
         });
         return;
       }
@@ -417,6 +488,11 @@ export function createHumanGates(opts: {
         outcome: "answered",
         optionId,
         answeredBy: message.author,
+        // The id the assignee check passed on, when there was one. "Who
+        // released this run" is the question asked after the fact, and a
+        // display name is renameable in a way a seat id is not.
+        ...(message.authorId ? { answeredById: message.authorId } : {}),
+        ...(gate.assignee ? { assignee: gate.assignee } : {}),
         ...(message.via ? { via: message.via } : {}),
       });
       // A run that has not attached its resume state yet is still parking;
