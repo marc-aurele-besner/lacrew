@@ -4,10 +4,12 @@ import { getCrewBlueprint } from "./crewBlueprints.js";
 import {
   crewFlowNeeds,
   crewFlowOwner,
+  crewSampleInputText,
   crewSampleNeeds,
   crewSampleRun,
   crewSampleRuns,
   flowInputKeys,
+  flowReadsWholeInput,
 } from "./crewSamples.js";
 import { getFlowTemplate } from "./templates.js";
 import { flow } from "./builder.js";
@@ -34,7 +36,24 @@ test("every sample supplies each input key its flow reads", () => {
   for (const sample of crewSampleRuns) {
     const def = getFlowTemplate(sample.flow)!.definition;
     const keys = flowInputKeys(def);
-    assert.ok(keys.length > 0, `flow "${sample.flow}" reads no keyed input`);
+    assert.ok(
+      keys.length > 0 || flowReadsWholeInput(def),
+      `flow "${sample.flow}" reads no input at all, so the fixture supplies nothing`,
+    );
+    if (keys.length === 0) {
+      // A `{{input}}` flow interpolates the text verbatim, so the fixture is the
+      // prose itself; there are no fields to check it against.
+      assert.equal(
+        typeof sample.input,
+        "string",
+        `flow "${sample.flow}" reads the whole input, so its sample must be a string`,
+      );
+      assert.ok(
+        (sample.input as string).trim().length > 0,
+        `sample for "${sample.flow}" supplies an empty input`,
+      );
+      continue;
+    }
     assert.equal(
       typeof sample.input === "object" && sample.input !== null && !Array.isArray(sample.input),
       true,
@@ -49,6 +68,30 @@ test("every sample supplies each input key its flow reads", () => {
       assert.notEqual(supplied[key], "", `sample for "${sample.flow}" supplies an empty "${key}"`);
     }
   }
+});
+
+/*
+  What actually goes on the wire. `POST /flows/run` takes one string, and the
+  two fixture shapes reach it differently: serializing a `{{input}}` brief would
+  hand the model a quoted string with its own escapes in it, and *not*
+  serializing a keyed body would leave every `{{input.<key>}}` empty.
+*/
+test("a sample's input reaches the runtime in the shape its flow reads", () => {
+  const github = crewSampleRun("github-experts")!;
+  assert.equal(crewSampleInputText(github), JSON.stringify(github.input));
+  assert.deepEqual(JSON.parse(crewSampleInputText(github)), github.input);
+
+  const content = crewSampleRun("content-studio")!;
+  assert.equal(crewSampleInputText(content), content.input);
+  assert.ok(!crewSampleInputText(content).startsWith('"'));
+});
+
+test("flowReadsWholeInput tells the two shapes apart", () => {
+  const whole = flow("t", "t").model("a", { prompt: "Brief: {{input}}", next: null }).build();
+  const keyed = flow("t", "t").model("a", { prompt: "PR {{input.number}}", next: null }).build();
+  assert.equal(flowReadsWholeInput(whole), true);
+  assert.equal(flowReadsWholeInput(keyed), false);
+  assert.deepEqual(flowInputKeys(keyed), ["number"]);
 });
 
 test("every sample's flow has an owning seat in its blueprint", () => {
@@ -78,6 +121,41 @@ test("sample requirements are read off the flow's own steps", () => {
       `flow calls connector "${id}" the blueprint does not declare`,
     );
   }
+});
+
+/*
+  The second certified path, and the reason it is a different shape rather than
+  a second GitHub crew: its first run calls nothing outside LaCrew, so the
+  checklist's connector step reports *not needed*. A suite where every fixture
+  wanted a connector would never exercise that answer on the surface operators
+  read.
+*/
+test("the content-studio sample needs a model and no connector", () => {
+  const sample = crewSampleRun("content-studio");
+  assert.ok(sample);
+  assert.deepEqual(crewSampleNeeds(sample), { model: true, connectors: [] });
+
+  const bp = getCrewBlueprint("content-studio")!;
+  const owner = crewFlowOwner(bp, sample.flow);
+  assert.equal(owner?.id, "editor-manager");
+});
+
+/*
+  The thesis the fixture exists to demonstrate, read off the blueprint rather
+  than asserted in prose: the flow's publish gate points at a target its own
+  blueprint leaves off the whitelist, so the certified first run can only be
+  refused there.
+*/
+test("the content-studio sample's write path aims at an unadmitted target", () => {
+  const bp = getCrewBlueprint("content-studio")!;
+  const publish = bp.targets.find((t) => t.id === "publish-endpoint");
+  assert.ok(publish, "the blueprint no longer declares a publishing endpoint");
+  assert.equal(publish.whitelisted, false);
+
+  const def = getFlowTemplate(crewSampleRun("content-studio")!.flow)!.definition;
+  const checks = def.steps.filter((s) => s.kind === "tool" && s.tool === "lacrew_check_policy");
+  assert.equal(checks.length, 1, "the flow no longer asks policy before publishing");
+  assert.ok(JSON.stringify(checks[0]).includes("{{target.publish-endpoint}}"));
 });
 
 test("crewFlowNeeds ignores the orchestrator's own MCP surface", () => {

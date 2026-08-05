@@ -13,7 +13,16 @@
  * scenario whose seat does not own the flow.
  */
 
+import { crewSampleInputText, crewSampleRun } from "./crewSamples.js";
 import type { FlowEvalScenario } from "./evals.js";
+
+/**
+ * The certified first-run input for `content-studio`, taken from the fixture
+ * the product actually hands an operator rather than retyped here. A scenario
+ * pinning a blueprint's thesis against a *different* input would keep passing
+ * after the fixture drifted into a brief the flow reads badly.
+ */
+const CONTENT_STUDIO_BRIEF = crewSampleInputText(crewSampleRun("content-studio")!);
 
 /** A dependency-bump pull request, as the GitHub connector would return one. */
 const botPullRequest = {
@@ -263,7 +272,15 @@ const scenarios: FlowEvalScenario[] = [
   },
 
   /* --------------------------------------------------------------- *
-   * Content studio — publishing is refused by construction.
+   * Content studio — the second certified vertical (F2.25). Publishing
+   * is refused by construction, and the pair below pins both ends of
+   * that: the refusal a fresh crew actually lands in, and what an
+   * admitted endpoint would change, so "DENY" is a verdict the flow
+   * reads rather than a branch that can only go one way.
+   *
+   * Both fire the blueprint's certified sample input, so a fixture the
+   * product hands an operator and the scenario that pins its thesis
+   * cannot drift apart (`crewSamples.ts`).
    * --------------------------------------------------------------- */
   {
     id: "content-studio/publish-denied-ends-in-signoff",
@@ -272,7 +289,7 @@ const scenarios: FlowEvalScenario[] = [
     flow: "content-weekly-brief",
     blueprint: "content-studio",
     asAgent: "editor-manager",
-    input: "Account: LaCrew org blog. Voice: plain, technical, no hype. Themes: agent treasuries.",
+    input: CONTENT_STUDIO_BRIEF,
     expect: {
       status: "completed",
       ran: ["ideate", "image-budget", "image-pack", "publish-check", "publish-allowed", "signoff"],
@@ -280,8 +297,42 @@ const scenarios: FlowEvalScenario[] = [
       port: { "publish-allowed": "signoff" },
       // The image budget is an admitted service; publication is not.
       verdict: { "image-budget": "ALLOW" },
+      // Once: the image budget, and nothing else. The refused run must not
+      // spend against the publishing endpoint on its way to the sign-off note.
+      called: { lacrew_propose_intent: 1 },
       // The whole flow is off-chain work with an onchain budget: no route,
       // no HTTP, nothing published.
+      noConnectorCalls: true,
+    },
+  },
+  {
+    id: "content-studio/publish-admitted-publishes",
+    describe:
+      "The same pipeline once a governance proposal has admitted the publishing endpoint: the gate is reached, the fee is paid once, and the run records which policy opened it. The sign-off package is not written, because nobody is being asked.",
+    flow: "content-weekly-brief",
+    blueprint: "content-studio",
+    asAgent: "editor-manager",
+    input: CONTENT_STUDIO_BRIEF,
+    mocks: {
+      policy: {
+        targets: { "publish-endpoint": "ALLOW" },
+        // Declared, because the blueprint deliberately refuses this target.
+        // Admitting it is the high-tier proposal the crew is built around, and
+        // an undeclared ALLOW here is how this suite would be made green by
+        // granting the studio authority nobody voted it.
+        admitsUnadmitted: ["publish-endpoint"],
+      },
+    },
+    expect: {
+      status: "completed",
+      ran: ["publish-check", "publish-allowed", "publish", "published"],
+      notRan: ["signoff"],
+      port: { "publish-allowed": "publish" },
+      verdict: { publish: "ALLOW" },
+      // Twice, and exactly twice: the image budget and the publication fee.
+      // The refused run above proposes once, so this is the whole difference
+      // admitting the endpoint makes — one more spend, not a different flow.
+      called: { lacrew_propose_intent: 2 },
       noConnectorCalls: true,
     },
   },

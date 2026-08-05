@@ -191,6 +191,16 @@ works. `crews checklist` closes that gap for a self-host: it probes a running
 orchestrator for the seven things a first supervised action needs, and exits
 non-zero while any of them is outstanding — so a script can gate on it.
 
+Two blueprints are **certified**: they ship a run input the product will fire at
+a crew nobody has finished configuring, and a driver that proves the path on a
+local chain. `crewSampleRun` answers nothing for the rest, and every surface
+says so rather than inventing an input.
+
+| Blueprint        | Certified flow         | What its first run needs               | What it proves                                                   |
+| ---------------- | ---------------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| `github-experts` | `bot-pr-triage`        | a model key and the `github` connector | a merge refused, because nothing admitted the merge authority    |
+| `content-studio` | `content-weekly-brief` | a model key, and nothing else          | a publication refused, because the endpoint is off the whitelist |
+
 ```bash
 ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
 ```
@@ -273,3 +283,27 @@ on the model and the script asserts _that_. Set `OPENROUTER_API_KEY` (or any
 provider key) and it drives the sample run itself, asserting the run was served
 by the runtime rather than the mock backend, that it reached the connector, and
 that it never merged.
+
+### The second path, which never leaves LaCrew
+
+```bash
+pnpm golden-path --blueprint content-studio
+```
+
+The same driver, the same chain, one deliberate difference: the content studio's
+weekly pipeline calls no connector route at all. So the run needs no credential
+and no stand-in host, and the checklist answers the connector step **not
+needed** rather than blocked — an answer a suite of GitHub-shaped verticals
+would never reach, and the one an operator meets first if they start here.
+
+What it refuses is a level up from a route. The pipeline asks
+`lacrew_check_policy` about the publishing endpoint before it spends against it,
+the deployed stack answers `DENY` because nothing admitted that address, and the
+run assembles the human sign-off package instead of publishing. With a model key
+the driver asserts exactly that: the `signoff` step ran, `publish` and
+`published` did not.
+
+Which seats to hire and which spend targets to bind are read off the sample
+flow's own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains
+a delegate gains the hire in the same commit rather than leaving the driver
+bound to a list somebody has to remember to update.

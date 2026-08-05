@@ -117,6 +117,26 @@ describe("lacrew crews", () => {
     });
   });
 
+  it("shows the second certified first run and what it does not need", () => {
+    const { out } = capture(["show", "content-studio"]);
+    assert.match(out, /content-weekly-brief · runs as Editor manager/);
+    assert.match(out, /Wire first: a model provider key/);
+    // The whole point of the second path: it calls nothing outside LaCrew, so
+    // it must not send anyone to register a connector.
+    assert.doesNotMatch(out, /Wire first:.*connector/);
+  });
+
+  /*
+    A `{{input}}` flow interpolates its input verbatim, so the brief goes on the
+    wire as itself. Serialized, the model would read a quoted string with its
+    own escapes in it and the "pipe it straight into a run" promise would break.
+  */
+  it("emits a whole-input sample as the brief itself, not as a JSON string", () => {
+    const { out } = capture(["sample", "content-studio", "--json"]);
+    assert.match(out, /^Account: the LaCrew org blog\./);
+    assert.doesNotMatch(out, /^"/);
+  });
+
   // A script asking for an input and getting an empty body must stop, not run
   // a flow with nothing in it.
   it("exits non-zero for a blueprint with no sample", () => {
@@ -163,6 +183,30 @@ function wired(): Record<string, unknown> {
         })),
       ],
     },
+  };
+}
+
+const CS = getCrewBlueprint("content-studio")!;
+
+/** The same, for the second certified blueprint — which registers no connector. */
+function contentWired(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    "/health": { mode: "chain", mocked: false, chainId: 31337, model: { provider: "openrouter" } },
+    "/connectors": { connectors: [] },
+    "/flows": { flows: CS.flows.map((id) => ({ id })) },
+    "/flows/runs": { runs: [{ id: "run_1" }] },
+    "/messages": { messages: [{ id: "m1" }] },
+    "/org": {
+      nodes: [
+        { account: "0x00000000000000000000000000000000000000ff", kind: "HumanRoot", label: "You" },
+        ...CS.roles.map((role, i) => ({
+          account: `0x${String(i + 1).padStart(40, "0")}`,
+          kind: role.kind === "manager_agent" ? "ManagerAgent" : "WorkerAgent",
+          label: role.label,
+        })),
+      ],
+    },
+    ...over,
   };
 }
 
@@ -337,5 +381,36 @@ describe("lacrew crews checklist", () => {
     const { err, code } = await captureAsync(["checklist", "not-a-blueprint"]);
     assert.match(err, /Usage: lacrew crews checklist/);
     assert.equal(code, 1);
+  });
+
+  /* ----------------------------------------------------------------- *
+   * The second certified vertical (F2.25). Its first run leaves LaCrew
+   * nowhere, so it exercises the branch `github-experts` never can: the
+   * connector step is answered *not needed* rather than blocked, and no
+   * connector is what stands in the way of the first run.
+   * ----------------------------------------------------------------- */
+  it("clears content-studio with no connector registered at all", async () => {
+    await withOrch(contentWired({ "/connectors": { connectors: [] } }), async (url) => {
+      const { out, code } = await captureAsync(["checklist", "content-studio", "--url", url]);
+      assert.match(out, /first run {2}7\/7/);
+      assert.match(out, /· Connector/);
+      assert.match(out, /does not leave LaCrew/);
+      assert.match(out, /Nothing is in the way/);
+      assert.equal(code, undefined);
+    });
+  });
+
+  // Its honest blocker is the model, and the checklist has to name that one
+  // rather than a credential nothing on this path would use.
+  it("blocks content-studio on the model, not on a connector", async () => {
+    const routes = contentWired({
+      "/connectors": { connectors: [] },
+      "/health": { mode: "chain", mocked: false, chainId: 31337, model: { provider: "memory" } },
+    });
+    await withOrch(routes, async (url) => {
+      const { out, code } = await captureAsync(["checklist", "content-studio", "--url", url]);
+      assert.match(out, /Model provider is what stands between/);
+      assert.equal(code, 1);
+    });
   });
 });

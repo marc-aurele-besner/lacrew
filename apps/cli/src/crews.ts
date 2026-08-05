@@ -20,6 +20,7 @@ import {
   crewFlowOwner,
   crewMonthlyGrantUsd,
   crewPlan,
+  crewSampleInputText,
   crewSampleNeeds,
   crewSampleRun,
   formatUsdc,
@@ -479,6 +480,11 @@ export async function cmdCrews(args: string[]): Promise<void> {
       than retyped out of the `show` output. Exits non-zero when the blueprint
       has no fixture: a script asking for one and getting an empty body should
       stop, not run a flow with no input.
+
+      `--json` prints what `POST /flows/run` takes, which is one string either
+      way: the JSON body for a flow reading `{{input.<key>}}`, the brief itself
+      for one reading the whole `{{input}}`. Serializing the second would hand
+      the model a quoted string to read around.
     */
     case "sample": {
       const bp = id ? getCrewBlueprint(id) : undefined;
@@ -496,12 +502,12 @@ export async function cmdCrews(args: string[]): Promise<void> {
         return;
       }
       if (hasFlag(rest, "--json")) {
-        console.log(JSON.stringify(sample.input));
+        console.log(crewSampleInputText(sample));
         return;
       }
       printSample(bp, false);
       console.log(
-        `\n  lacrew flows run ${sample.flow} --input '${JSON.stringify(sample.input)}'` +
+        `\n  lacrew flows run ${sample.flow} --input '${crewSampleInputText(sample)}'` +
           `${crewFlowOwner(bp, sample.flow) ? " --as <that seat's address>" : ""}`,
       );
       return;

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { flow } from "./builder.js";
-import { crewSampleRuns } from "./crewSamples.js";
+import { crewSampleInputText, crewSampleRuns } from "./crewSamples.js";
 import {
   evalAddress,
   evalCoverage,
@@ -339,6 +339,60 @@ test("every blueprint with a certified sample run has an eval for that flow", ()
       `"${sample.blueprint}" ships a certified sample of "${sample.flow}" with no eval`,
     );
   }
+});
+
+/*
+  And the eval has to fire the fixture's *own* input. The product hands an
+  operator one run input; a scenario pinning the same flow against a different
+  one keeps passing after the fixture drifts into a brief the flow reads badly,
+  which is precisely the failure the operator would meet first.
+*/
+test("a certified sample's input is the one its evals are run with", () => {
+  for (const sample of crewSampleRuns) {
+    const wire = crewSampleInputText(sample);
+    const forFlow = firstPartyEvals.filter(
+      (s) => s.blueprint === sample.blueprint && s.flow === sample.flow,
+    );
+    assert.ok(forFlow.length > 0, `no scenario runs "${sample.flow}" for "${sample.blueprint}"`);
+    assert.ok(
+      forFlow.some(
+        (s) => (typeof s.input === "string" ? s.input : JSON.stringify(s.input)) === wire,
+      ),
+      `no "${sample.blueprint}" scenario fires the certified input for "${sample.flow}"`,
+    );
+  }
+});
+
+/*
+  The second certified vertical's thesis, held from both ends (F2.25). The
+  refusal is the state a fresh crew lands in; the admitted mirror is what a
+  high-tier proposal would change. Without the pair, a `publish-allowed` branch
+  wired to `signoff` on both ports would pass the DENY scenario forever.
+*/
+test("content-studio pins the publish verdict in both directions", async () => {
+  const ids = [
+    "content-studio/publish-denied-ends-in-signoff",
+    "content-studio/publish-admitted-publishes",
+  ];
+  const scenarios = ids.map((id) => firstPartyEvals.find((s) => s.id === id));
+  for (const [i, s] of scenarios.entries()) assert.ok(s, `missing scenario "${ids[i]}"`);
+
+  const suite = await runFlowEvals(scenarios as FlowEvalScenario[]);
+  assert.equal(suite.ok, true, formatEvalReport(suite));
+
+  // The refusal must be a verdict the flow read, not a port it can only take.
+  const broken = mutate("content-weekly-brief", "publish-allowed", { onTrue: "signoff" });
+  const admitted = clone(
+    firstPartyEvals.find((s) => s.id === "content-studio/publish-admitted-publishes")!,
+  );
+  const result = await runFlowEval({
+    ...admitted,
+    id: "mutant/allow-still-routes-to-signoff",
+    flow: undefined,
+    definition: broken,
+  } as FlowEvalScenario);
+  assert.equal(result.ok, false, "an ALLOW that still refuses must fail the eval");
+  assert.ok(result.failures.some((f) => f.assertion === "port" || f.assertion === "ran"));
 });
 
 test("the report names the scenario, the assertion, and the coverage warning", async () => {
