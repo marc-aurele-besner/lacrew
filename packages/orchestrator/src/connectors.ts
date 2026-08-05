@@ -84,6 +84,12 @@ export type ConnectorAuth =
  */
 export type ConnectorArgRule = {
   /**
+   * This rule in the operator's own words — `dependabot/**, renovate/**` rather
+   * than the regex it compiled to. Purely for the surfaces that show a crew's
+   * reach; nothing is enforced from it, and a rule without one is still a rule.
+   */
+  label?: string;
+  /**
    * The call fails without this argument. Body and query args are optional by
    * default, which is usually right and occasionally dangerous: GitHub commits
    * to the *default branch* when a write leaves `branch` out, so the branch

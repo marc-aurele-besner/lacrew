@@ -634,3 +634,12 @@ test("the file a push carries is read back through a route that returns it verba
   assert.equal(raw.effect, "read");
   assert.equal(meta.effect, "read");
 });
+
+test("a compiled rule carries the operator's own words for it", () => {
+  // A status page saying "may push to dependabot/**" is readable; the same
+  // claim as a compiled regex is not, and an operator checking their own
+  // configuration should not have to recognise one.
+  const push = pushRoute();
+  assert.equal(push.argRules?.branch?.label, "dependabot/**, renovate/**");
+  assert.equal(push.argRules?.path?.label, "not .github/workflows/");
+});

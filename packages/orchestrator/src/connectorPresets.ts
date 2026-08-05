@@ -1258,11 +1258,24 @@ function applyGuards(
       ...rules[guards.branchArg],
       required: true,
       pattern: branchPattern(presetId, route.name, options.branches),
+      // The globs as the operator typed them. An operator reading "may push to
+      // dependabot/**" on a status page should not have to recognise it in a
+      // compiled regex.
+      label: (options.branches ?? []).map((b) => b.trim()).filter(Boolean).join(", "),
     };
   }
   if (guards.pathArg) {
-    const pattern = pathDenyPattern(options.denyPathPrefixes ?? DEFAULT_DENY_PATH_PREFIXES);
-    if (pattern) rules[guards.pathArg] = { ...rules[guards.pathArg], pattern };
+    const prefixes = (options.denyPathPrefixes ?? DEFAULT_DENY_PATH_PREFIXES)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const pattern = pathDenyPattern(prefixes);
+    if (pattern) {
+      rules[guards.pathArg] = {
+        ...rules[guards.pathArg],
+        pattern,
+        label: `not ${prefixes.join(", not ")}`,
+      };
+    }
   }
   return rules;
 }
