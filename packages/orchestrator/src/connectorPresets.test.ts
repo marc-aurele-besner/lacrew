@@ -486,6 +486,62 @@ test("nothing in the desk's presets can execute a trade", () => {
   }
 });
 
+test("nothing in the governance presets can cast a vote", () => {
+  // Read-only, and not as a narrowing of what these APIs offer. A Snapshot vote
+  // is an EIP-712 message signed by the delegate's key and posted to a
+  // different host; a Tally vote is a transaction to a governor, which is an
+  // onchain intent through the policy stack. A write route here would be an
+  // authority path beside that enforcement rather than through it.
+  for (const id of ["snapshot", "tally"]) {
+    const preset = getConnectorPreset(id)!;
+    assert.deepEqual(
+      preset.routes.filter((r) => r.effect === "write"),
+      [],
+      `${id} ships a write route`,
+    );
+    assert.deepEqual(presetPolicyTargetRoutes(preset), [], `${id} wants an address for a read`);
+    assert.deepEqual(validateConnector(buildConnectorPreset(id)), []);
+  }
+});
+
+test("the governance presets pin the endpoints they were checked against", () => {
+  // Both are one GraphQL endpoint, so which space or organisation a desk reads
+  // rides in the query. The hosts are the transcription worth testing: a
+  // preset pointed at the wrong one is a 404 in the middle of a sweep.
+  const hub = buildConnectorPreset("snapshot");
+  assert.equal(hub.baseUrl, "https://hub.snapshot.org");
+  assert.deepEqual(
+    hub.routes.map((r) => r.name),
+    ["query"],
+  );
+  assert.equal(hub.routes[0]!.path, "/graphql");
+  assert.equal(hub.routes[0]!.method, "POST");
+  // A POST that reads — the query is a body, not an effect.
+  assert.equal(hub.routes[0]!.effect, "read");
+  assert.deepEqual(hub.routes[0]!.params, ["query", "variables", "operationName"]);
+
+  const api = buildConnectorPreset("tally");
+  assert.equal(api.baseUrl, "https://api.tally.xyz");
+  assert.equal(api.routes[0]!.path, "/query");
+});
+
+test("the hub sends no credential and Tally's rides in the header it answers to", () => {
+  // The split is what makes the desk cheap to start: the public one drives the
+  // shipped sweep, so a governance crew needs no key to discover work at all.
+  assert.deepEqual(buildConnectorPreset("snapshot").auth, { kind: "none" });
+  assert.throws(
+    () => buildConnectorPreset("snapshot", { tokenEnv: "SNAPSHOT_TOKEN" }),
+    /connector_preset_takes_no_credential:snapshot/,
+  );
+  // `api-key`, not `authorization`: Tally answers "api key required" to a
+  // bearer token, which is a 401 an operator would read as a bad key.
+  assert.deepEqual(buildConnectorPreset("tally").auth, {
+    kind: "header",
+    header: "api-key",
+    valueEnv: "TALLY_API_KEY",
+  });
+});
+
 test("DefiLlama is two presets because it is two hosts", () => {
   // `api.llama.fi/pools` is a 404 — yields live on their own host. Merging the
   // two into one connector would ship a route that fails in the middle of a

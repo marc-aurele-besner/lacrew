@@ -1272,6 +1272,77 @@ const aave: ConnectorPreset = {
   ],
 };
 
+/* ------------------------------------------------------------------ *
+ * Governance venues — where the `governance-desk` finds a proposal rather
+ * than being handed one.
+ *
+ * Neither ships a write, and not out of caution: casting a vote on either
+ * surface is not a request a credential could authorise. Snapshot's vote is
+ * an EIP-712 message signed by the delegate's own key and posted to a
+ * different host; Tally's is a transaction to a governor contract, which is
+ * an onchain intent through the policy stack. A connector that could cast
+ * one would be a second authority path with none of that enforcement —
+ * the same objection that keeps a swap off the desk's market presets. So
+ * "read-only" here describes what these surfaces are, not a narrowing of
+ * them, and the desk's flow reads the queue and writes the instruction
+ * rather than pretending it voted.
+ * ------------------------------------------------------------------ */
+
+const snapshot: ConnectorPreset = {
+  id: "snapshot",
+  title: "Snapshot Hub (GraphQL)",
+  summary:
+    "Off-chain governance proposals, the spaces that hold them, and the votes already cast. What lets the governance desk discover a proposal instead of reasoning over one a human pasted in.",
+  baseUrl: "https://hub.snapshot.org",
+  auth: [
+    {
+      mode: "none",
+      label: "No credential",
+      note: "The hub answers proposal and space queries unauthenticated, under a shared rate limit a desk reading a few spaces on a weekly cycle sits well inside. The sequencer that accepts votes is a different host and takes a signature rather than a token, which is why nothing here reaches it.",
+    },
+  ],
+  routes: [
+    {
+      name: "query",
+      method: "POST",
+      path: "/graphql",
+      description:
+        'GraphQL against the hub. `proposals(where: { space_in: [...], state: "active" })` is the desk\'s queue, `proposal(id: ...)` one in full, `space(id: ...)` its voting period and strategies, `votes(where: { proposal: ... })` what has already been cast. Which space a desk reads rides in the query rather than the route, and GraphQL projects fields, so a queue comes back without every proposal\'s body attached.',
+      effect: "read",
+      params: ["query", "variables", "operationName"],
+    },
+  ],
+};
+
+const tally: ConnectorPreset = {
+  id: "tally",
+  title: "Tally API (GraphQL)",
+  summary:
+    "Onchain governor proposals for the organisations Tally indexes. The Snapshot preset's counterpart for a protocol whose votes are transactions rather than signed messages.",
+  baseUrl: "https://api.tally.xyz",
+  auth: [
+    {
+      mode: "token",
+      kind: "header",
+      header: "api-key",
+      env: "TALLY_API_KEY",
+      label: "API key",
+      note: "A free key from tally.xyz → Settings → API, sent as the literal key with no `Bearer` prefix. Tally answers 401 both when the header is missing and when the key is wrong, so a misplaced credential fails at the first call rather than degrading into an empty queue.",
+    },
+  ],
+  routes: [
+    {
+      name: "query",
+      method: "POST",
+      path: "/query",
+      description:
+        "GraphQL against Tally's v2 schema — `organizations` to resolve which id a protocol has, `proposals` for its queue, `proposal` for one in full. One endpoint, so which organisation a desk reads rides in the query rather than the route. The input shapes are Tally's to define, and this preset pins the endpoint and the credential rather than transcribing a schema it cannot check without a key.",
+      effect: "read",
+      params: ["query", "variables", "operationName"],
+    },
+  ],
+};
+
 /** Every preset that ships. */
 export const connectorPresets: ConnectorPreset[] = [
   github,
@@ -1289,6 +1360,8 @@ export const connectorPresets: ConnectorPreset[] = [
   defillama,
   defillamaYields,
   aave,
+  snapshot,
+  tally,
 ];
 
 export function getConnectorPreset(id: string): ConnectorPreset | undefined {
