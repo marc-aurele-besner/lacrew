@@ -425,11 +425,17 @@ const githubExperts: CrewBlueprint = {
       kind: "worker_agent",
       reportsTo: "review-lead",
       charter:
-        "Reproduces the breakage, writes the minimal patch, and pushes to the bot's PR branch so CI can go green.",
+        "Reproduces the breakage, writes the minimal patch, and pushes to the bot's PR branch so CI can go green. It can write to the branches the connector was registered for and nowhere else — not the default branch, not the workflow files, and never by rewriting history.",
       capUsdc: usdc(40),
       grantUsdc: usdc(60),
-      spends: ["model-api", "ci-minutes", "sandbox-runner"],
-      tools: ["lacrew_propose_intent", "lacrew_check_policy"],
+      spends: ["model-api", "ci-minutes", "sandbox-runner", "push-authority"],
+      tools: [
+        "lacrew_propose_intent",
+        "lacrew_check_policy",
+        "github.get_file",
+        "github.get_file_raw",
+        "github.update_file",
+      ],
       flows: ["dep-fix-loop"],
     },
     {
@@ -482,13 +488,27 @@ const githubExperts: CrewBlueprint = {
       whitelisted: true,
       note: "Not a payee — an address standing for permission to speak on the crew's own pull requests. Deliberately separate from merge authority: the fix-note runs on the path where merging did *not* happen, so binding both to one address would mean revoking merge rights also silences the explanation of why a PR is stuck. Two addresses, two governance decisions.",
     },
+    {
+      id: "push-authority",
+      label: "Push authority",
+      kind: "payout",
+      whitelisted: true,
+      note: "Not a payee — an address standing for permission to write to a branch. The third of three, and separate for the same reason as the other two: a crew that may push is not thereby allowed to merge its own work, and revoking the push should not also silence the note explaining why the PR is stuck. What it admits is still bounded by the connector: the branches named at registration, no workflow files, no force, no history rewrite.",
+    },
   ],
   connectors: [
     {
       id: "github",
-      routes: ["get_pull_request", "create_issue_comment", "merge_pull_request"],
+      routes: [
+        "get_pull_request",
+        "get_file",
+        "get_file_raw",
+        "create_issue_comment",
+        "update_file",
+        "merge_pull_request",
+      ],
       usedBy: "flow",
-      note: "Reads the PR being triaged, posts the fixer's note back on it, and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Either way both writes carry their own policy target: merge-authority for the merge, comment-authority for the comment.",
+      note: "Reads the PR being triaged, reads and rewrites the one file the fix touches, posts the fixer's note back on it, and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Each of the three writes carries its own policy target — merge-authority, comment-authority, push-authority — and the push additionally refuses to register until `--branch` names the branches it may land on: `--branch 'dependabot/**' --branch 'renovate/**'` is what this crew works on.",
     },
   ],
   externalScopes: [
@@ -573,12 +593,17 @@ const githubExperts: CrewBlueprint = {
     {
       never: "A workflow-file edit is merged and exfiltrates secrets",
       enforcedBy: "external",
-      how: "CODEOWNERS plus branch protection on `.github/workflows/**` require a human review the crew's token cannot satisfy. Triage routes such diffs to REJECT before that ever matters.",
+      how: "CODEOWNERS plus branch protection on `.github/workflows/**` require a human review the crew's token cannot satisfy. Triage routes such diffs to REJECT before that ever matters, and the push route refuses `.github/workflows/` as a path argument, so the crew cannot author one either.",
+    },
+    {
+      never: "The fixer writes to a branch nobody admitted",
+      enforcedBy: "policy",
+      how: "Two locks, and both have to be open. `push-authority` is an org-wide whitelist entry, so revoking one address stops every push the crew can make without touching GitHub; and the connector's push route was registered against a branch allowlist, so even an admitted crew can only land on `dependabot/**` and `renovate/**`. Widening either is a governance change rather than a run-time decision.",
     },
     {
       never: "Force-pushing or rewriting history on a default branch",
-      enforcedBy: "external",
-      how: "The App's token carries no force-push right and branch protection refuses it.",
+      enforcedBy: "policy",
+      how: "There is no field to force with. The crew's only write path to a branch is one Contents API route whose argument allowlist is message, content, sha, and branch — a flow cannot pass `force`, cannot delete, and cannot address a ref. `sha` names the blob being replaced, so a concurrent change is a refusal rather than a silent overwrite. Branch protection and the App's own scope remain underneath as the layer LaCrew does not enforce.",
     },
     {
       never: "GitHub permissions expand without the humans agreeing",

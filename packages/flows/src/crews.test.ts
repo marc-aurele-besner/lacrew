@@ -351,6 +351,48 @@ test("the GitHub crew asks policy before it merges, and cannot merge otherwise",
   assert.equal(merge?.kind === "tool" && merge.tool, "github.merge_pull_request");
 });
 
+test("the fixer asks policy before it pushes, and reads nothing if refused", () => {
+  const def = getFlowTemplate("dep-fix-loop")!.definition;
+  const check = def.steps.find((s) => s.id === "push-check");
+  assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
+  // The push is reachable only from the branch that read the verdict, and so
+  // are the reads: asking first is what makes a DENY cost nothing and touch
+  // nothing, rather than refusing after two requests have already gone out.
+  const reachesPush = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"push"'));
+  assert.deepEqual(
+    reachesPush.map((s) => s.id),
+    ["patch"],
+  );
+  const reachesRead = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"read-file"'));
+  assert.deepEqual(
+    reachesRead.map((s) => s.id),
+    ["may-push"],
+  );
+  const push = def.steps.find((s) => s.id === "push");
+  assert.equal(push?.kind === "tool" && push.tool, "github.update_file");
+});
+
+test("the push carries the branch it was given and the sha it read", () => {
+  const push = getFlowTemplate("dep-fix-loop")!.definition.steps.find((s) => s.id === "push");
+  assert.ok(push?.kind === "tool");
+  // Not a model's transcription of either. The branch is the run input and the
+  // sha is the earlier read's own answer, so the write names the exact blob it
+  // is replacing and a branch that moved underneath is refused by GitHub.
+  assert.equal(push.args?.branch, "{{input.branch}}");
+  assert.equal(push.args?.sha, "{{steps.read-file.json.body.sha}}");
+  assert.equal(push.args?.content, "{{steps.patch.text}}");
+  // No field that could force, and none that could name a different repo.
+  assert.deepEqual(Object.keys(push.args ?? {}).sort(), [
+    "branch",
+    "content",
+    "message",
+    "owner",
+    "path",
+    "repo",
+    "sha",
+  ]);
+});
+
 test("publication is asked of policy before it is ever proposed", () => {
   // Verified on Anvil: proposing against an unadmitted target reverts with
   // SessionTargetDenied, which fails the run — the sign-off package the deny

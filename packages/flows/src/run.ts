@@ -103,6 +103,25 @@ export function isFlowWaiting(
   );
 }
 
+/** Render one value the way an interpolated reference does. */
+function renderValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+/** Walk a dotted path into a parsed body: `body.sha`, `head.repo.name`, `tree.0.path`. */
+function readPath(root: unknown, path: string): unknown {
+  let node: unknown = root;
+  for (const key of path.split(".")) {
+    // Own properties only: `constructor` and `__proto__` are reachable on any
+    // object and resolve to something a prompt would happily print.
+    if (node === null || typeof node !== "object") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(node, key)) return undefined;
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node;
+}
+
 /**
  * Interpolate `{{input}}`, `{{input.<key>}}`, and
  * `{{steps.<id>.text|json|verdict}}` into a string. Unknown references render
@@ -114,6 +133,13 @@ export function isFlowWaiting(
  * was already given — is three completions and three chances to be wrong.
  * A non-JSON input yields empty for keyed refs; `{{input}}` still returns it
  * verbatim.
+ *
+ * `{{steps.<id>.json.<path>}}` reads into a previous step's result the same
+ * way, for the same reason. A push has to name the blob it is replacing, and
+ * that sha comes back from the read two steps earlier; without a path into it
+ * the only way to move a value between two tool calls is to ask a model to copy
+ * a forty-character hash, which is a completion that can be wrong and a step
+ * that cannot say it was.
  */
 export function interpolate(template: string, ctx: { input?: string; steps: StepOutputs }): string {
   let inputFields: Record<string, unknown> | null | undefined;
@@ -127,9 +153,17 @@ export function interpolate(template: string, ctx: { input?: string; steps: Step
         inputFields = null;
       }
     }
-    const value = inputFields?.[key];
-    if (value === undefined || value === null) return "";
-    return typeof value === "object" ? JSON.stringify(value) : String(value);
+    return renderValue(inputFields?.[key]);
+  };
+
+  const stepField = (id: string, path: string): string => {
+    const json = ctx.steps[id]?.json;
+    if (!json) return "";
+    try {
+      return renderValue(readPath(JSON.parse(json), path));
+    } catch {
+      return "";
+    }
   };
 
   return template.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, path: string) => {
@@ -138,6 +172,8 @@ export function interpolate(template: string, ctx: { input?: string; steps: Step
     if (keyed?.[1]) return field(keyed[1]);
     const m = /^steps\.([\w-]+)\.(text|json|verdict)$/.exec(path);
     if (m?.[1] && m[2]) return ctx.steps[m[1]]?.[m[2] as "text" | "json" | "verdict"] ?? "";
+    const into = /^steps\.([\w-]+)\.json\.([\w.-]+)$/.exec(path);
+    if (into?.[1] && into[2]) return stepField(into[1], into[2]);
     return "";
   });
 }

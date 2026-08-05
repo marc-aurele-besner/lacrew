@@ -387,6 +387,34 @@ test("interpolate reads fields of a JSON run input", () => {
   assert.equal(interpolate("{{input}} {{input.owner}}", plain), "just text ");
 });
 
+test("interpolate reads into a previous step's result", () => {
+  // A push has to name the blob it replaces, and that sha came back from a read
+  // two steps earlier. Without a path into it the only way to move the value is
+  // to ask a model to copy a hash — a completion that can be wrong and a step
+  // that cannot say it was.
+  const ctx = {
+    steps: {
+      "read-file": {
+        json: JSON.stringify({
+          ok: true,
+          body: { sha: "3d5f1c9a2b", path: "src/index.ts", links: [{ rel: "self" }] },
+        }),
+      },
+      raw: { json: JSON.stringify({ body: "export const x = 1;\n" }) },
+    },
+  };
+  assert.equal(interpolate("{{steps.read-file.json.body.sha}}", ctx), "3d5f1c9a2b");
+  assert.equal(interpolate("{{steps.raw.json.body}}", ctx), "export const x = 1;\n");
+  assert.equal(interpolate("{{steps.read-file.json.body.links.0.rel}}", ctx), "self");
+  // Missing paths render empty, like every other unknown reference.
+  assert.equal(interpolate("[{{steps.read-file.json.body.nope}}]", ctx), "[]");
+  assert.equal(interpolate("[{{steps.gone.json.body}}]", ctx), "[]");
+  // Inherited properties are not fields of the result.
+  assert.equal(interpolate("[{{steps.read-file.json.constructor}}]", ctx), "[]");
+  // The whole blob still resolves the way it always did.
+  assert.equal(interpolate("{{steps.raw.json}}", ctx), ctx.steps.raw.json);
+});
+
 test("flowToCode emits scope, schedule, and the new step kinds", () => {
   const def = flow("coded", "Coded")
     .trigger("cron")

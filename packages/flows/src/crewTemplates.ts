@@ -421,12 +421,12 @@ const depFixLoop: FlowTemplate = {
   id: "tpl-dep-fix-loop",
   name: "Dependency fix loop",
   description:
-    "Diagnose a red dependency PR, and either re-run a flake, spend the patch budget on a small fix, or hand a large or security-sensitive change to a human. The loop cannot run itself past its allowance.",
+    "Diagnose a red dependency PR, and either re-run a flake, spend the patch budget on a small fix and push it to the PR branch, or hand a large or security-sensitive change to a human. The push is asked of policy first and refused by the connector independently, against the crew's own push-authority address. The loop cannot run itself past its allowance.",
   category: "dev",
   author: "LaCrew",
   definition: flow("dep-fix-loop", "Dependency fix loop")
     .describe(
-      "Run input is the failing PR plus the CI log excerpt. There is no retry edge on purpose: a fix-until-green loop is exactly the runaway the budget is meant to stop, so each attempt is one run against one gate.",
+      'Run input is JSON: {"owner":"…","repo":"…","branch":"dependabot/…","path":"src/index.ts","log":"…"} — the branch and path the fix lands on, plus the CI excerpt. There is no retry edge on purpose: a fix-until-green loop is exactly the runaway the budget is meant to stop, so each attempt is one run against one gate. The push asks `lacrew_check_policy` about the push-authority address and stops on anything but ALLOW without touching GitHub; the connector re-checks it, and only writes to a branch the operator allowlisted at registration.',
     )
     .source({ templateId: "tpl-dep-fix-loop", author: "LaCrew" })
     .model("diagnose", {
@@ -436,6 +436,9 @@ const depFixLoop: FlowTemplate = {
         "Failing PR and CI excerpt: {{input}}\n\nReply with exactly one word: FLAKE (infrastructure or timing, unrelated to the bump), SMALL (a contained code or config change), LARGE (a breaking-change migration), or SECURITY (touches auth, crypto, CI workflows, or secrets).",
       next: "route",
     })
+    // The order matters. Asking before reading means a crew whose push
+    // authority was never admitted spends nothing and touches GitHub not at
+    // all — the refusal is the first thing that happens, not the last.
     .switch("route", {
       label: "Route the diagnosis",
       when: { source: "{{steps.diagnose.text}}" },
@@ -457,14 +460,69 @@ const depFixLoop: FlowTemplate = {
       label: "Spend the patch budget",
       target: "{{target.ci-minutes}}",
       value: "25000000",
-      onAllow: "patch",
+      onAllow: "push-check",
       onEscalate: "handoff",
       onDeny: "handoff",
     })
+    .tool(
+      "push-check",
+      "lacrew_check_policy",
+      { target: "{{target.push-authority}}", value: "0" },
+      { label: "May this crew push?", next: "may-push" },
+    )
+    .branch("may-push", {
+      label: "Push authority admitted?",
+      when: { source: "{{steps.push-check.json}}", op: "contains", value: '"ALLOW"' },
+      onTrue: "read-file",
+      onFalse: "push-blocked",
+    })
+    .tool(
+      "read-file",
+      "github.get_file",
+      { owner: "{{input.owner}}", repo: "{{input.repo}}", path: "{{input.path}}", ref: "{{input.branch}}" },
+      { label: "Read the file's sha", next: "read-source" },
+    )
+    .tool(
+      "read-source",
+      "github.get_file_raw",
+      { owner: "{{input.owner}}", repo: "{{input.repo}}", path: "{{input.path}}", ref: "{{input.branch}}" },
+      { label: "Read the file", next: "patch" },
+    )
     .model("patch", {
       label: "Write the patch",
+      system:
+        "You rewrite one file to fix a CI failure. Output the complete file and nothing else — no fences, no commentary, no diff. Change nothing the failure does not require.",
       prompt:
-        "Budget cleared: {{steps.patch-budget.json}}\nFailure: {{input}}\nDiagnosis: {{steps.diagnose.text}}\n\nWrite the minimal patch: the files to change, the change in each, and the commit message. Touch nothing beyond what the failure requires.",
+        "Budget cleared: {{steps.patch-budget.json}}\nFailure: {{input}}\nDiagnosis: {{steps.diagnose.text}}\nFile {{input.path}} on {{input.branch}}: {{steps.read-source.json.body}}\n\nReply with the entire contents of the fixed file.",
+      next: "push",
+    })
+    .tool(
+      "push",
+      "github.update_file",
+      {
+        owner: "{{input.owner}}",
+        repo: "{{input.repo}}",
+        path: "{{input.path}}",
+        branch: "{{input.branch}}",
+        // The sha the read returned, not one a model retyped: it names the
+        // exact blob being replaced, so a branch that moved under the crew is
+        // refused by GitHub instead of clobbered.
+        sha: "{{steps.read-file.json.body.sha}}",
+        message: "fix: repair CI on the dependency bump",
+        content: "{{steps.patch.text}}",
+      },
+      { label: "Push the fix to the PR branch", next: "push-note" },
+    )
+    .model("push-note", {
+      label: "Record the push",
+      prompt:
+        "Push result: {{steps.push.json}}\nDiagnosis: {{steps.diagnose.text}}\n\nWrite the one-line record for the review lead: what was changed, on which branch, and what CI has to say before this can merge. If the call did not return success, say that plainly and do not describe the fix as pushed.",
+      next: null,
+    })
+    .model("push-blocked", {
+      label: "Push authority refused",
+      prompt:
+        "Policy answered {{steps.push-check.json}} for the push-authority address, so nothing was written and nothing was read.\nFailure: {{input}}\nDiagnosis: {{steps.diagnose.text}}\n\nWrite the two-line note for the review lead: what the fix would have been, and that admitting the push-authority address is a governance change, not a retry.",
       next: null,
     })
     .model("handoff", {

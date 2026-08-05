@@ -39,6 +39,39 @@ const botPullRequest = {
   },
 };
 
+/**
+ * The run input the fixer takes: which branch the repair lands on and which
+ * file it rewrites. The branch is a bot branch because that is the only kind
+ * the connector is registered to accept.
+ */
+const FIX_INPUT = {
+  owner: "marc-aurele-besner",
+  repo: "lacrew",
+  branch: "renovate/viem-2.x",
+  path: "packages/core/src/version.ts",
+  log: "TypeError: viem.getContract is not a function",
+};
+
+/** The file's metadata, as the Contents API returns it — the sha the push pins. */
+const fileMeta = {
+  ok: true,
+  status: 200,
+  body: {
+    name: "version.ts",
+    path: "packages/core/src/version.ts",
+    sha: "3d5f1c9a2b",
+    size: 42,
+    encoding: "base64",
+  },
+};
+
+/** The same file under the raw media type: the text a model can actually patch. */
+const fileSource = {
+  ok: true,
+  status: 200,
+  body: 'export const version = "2.31.6";\n',
+};
+
 /** One in-range LP position, as the Uniswap subgraph would return it. */
 const lpPositions = {
   ok: true,
@@ -201,6 +234,66 @@ const scenarios: FlowEvalScenario[] = [
       // is how a crew becomes something a maintainer mutes.
       called: { "github.create_issue_comment": 1 },
       // The fix path never merges, whatever the merge authority says.
+      notCalled: ["github.merge_pull_request"],
+    },
+  },
+
+  {
+    id: "github-experts/push-refused",
+    describe:
+      "The fixer diagnoses a small repair on a crew whose push authority is not admitted: policy answers DENY, the run writes the note, and GitHub is never reached at all — not the write, and not the reads the patch would have needed.",
+    flow: "dep-fix-loop",
+    blueprint: "github-experts",
+    asAgent: "fixer",
+    input: FIX_INPUT,
+    mocks: {
+      model: [{ when: "FLAKE (infrastructure", reply: "SMALL" }],
+      // The repair budget clears; writing to the branch does not. The two are
+      // separate decisions, and this is the state that proves it.
+      policy: { targets: { "ci-minutes": "ALLOW", "push-authority": "DENY" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["diagnose", "route", "patch-budget", "push-check", "may-push", "push-blocked"],
+      notRan: ["read-file", "read-source", "patch", "push", "push-note"],
+      port: { "may-push": "push-blocked" },
+      // The whole point of asking before reading: a refused crew makes no
+      // request to GitHub whatsoever.
+      notCalled: ["github.update_file", "github.get_file", "github.get_file_raw"],
+      noConnectorCalls: true,
+    },
+  },
+  {
+    id: "github-experts/push-admitted",
+    describe:
+      "The same repair once push authority is admitted: the fixer reads the file, rewrites it, and commits to the bot's branch exactly once, pinned to the sha it read.",
+    flow: "dep-fix-loop",
+    blueprint: "github-experts",
+    asAgent: "fixer",
+    input: FIX_INPUT,
+    mocks: {
+      tools: {
+        "github.get_file": { result: fileMeta },
+        "github.get_file_raw": { result: fileSource },
+        "github.update_file": {
+          result: { ok: true, status: 200, body: { commit: { sha: "9a8b7c6" } } },
+        },
+      },
+      model: [
+        { when: "FLAKE (infrastructure", reply: "SMALL" },
+        { when: "Reply with the entire contents", reply: 'export const version = "2.31.7";\n' },
+      ],
+      policy: { targets: { "ci-minutes": "ALLOW", "push-authority": "ALLOW" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["push-check", "may-push", "read-file", "read-source", "patch", "push", "push-note"],
+      notRan: ["push-blocked", "handoff"],
+      port: { "may-push": "read-file" },
+      // Once. There is no retry edge, because a fix-until-green loop is the
+      // runaway the allowance exists to stop.
+      called: { "github.update_file": 1, "github.get_file": 1 },
+      // A crew that may push is not thereby allowed to merge its own work.
       notCalled: ["github.merge_pull_request"],
     },
   },
