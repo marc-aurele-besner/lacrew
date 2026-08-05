@@ -15,8 +15,23 @@
  * issues and verifies, the SDK and CLI carry it, and the cloud relays it.
  */
 
-/** Which kind of account the workspace root is, and therefore how it proves. */
-export type RootAuthKind = "passkey" | "wallet";
+/**
+ * Which kind of account the workspace root is, and therefore how it proves.
+ *
+ * `safe-passkey` is a passkey whose onchain identity is a Safe the credential
+ * owns. It verifies exactly like `passkey` — same COSE key, same assertion —
+ * but the challenge is not an opaque nonce: it is the hash of the Safe
+ * transaction the approval will execute, so the one assertion the root collects
+ * is both the proof this orchestrator checks and the ERC-1271 signature the
+ * Safe checks onchain. Two separate ceremonies would mean two consents that can
+ * disagree, which is one consent that can be swapped.
+ */
+export type RootAuthKind = "passkey" | "wallet" | "safe-passkey";
+
+/** Passkey roots, whether or not a Safe carries their onchain authority. */
+export function isPasskeyRootKind(kind: RootAuthKind): boolean {
+  return kind === "passkey" || kind === "safe-passkey";
+}
 
 /**
  * What a proof authorizes. Bound into the challenge record, so a proof
@@ -96,6 +111,13 @@ export interface RootAuthConfig {
   /** Passkey: origin the assertion must have been collected at. */
   origin?: string;
   /**
+   * `safe-passkey`: the Safe the credential owns, which is the org's root
+   * address and the sender the chain will see on `resolve`. Required for the
+   * kind, because the whole point is that the Safe — not any key this process
+   * holds — is `msg.sender`.
+   */
+  safeAddress?: `0x${string}`;
+  /**
    * Wallet: the address that must have signed. Checked against the chain's
    * `SessionRegistry.humanRoot` where one is readable, so a misconfigured
    * address cannot quietly stand in for the real root.
@@ -121,11 +143,16 @@ export function rootChallengeStatement(input: {
 
 /** Whether a config can actually verify a proof, and what is missing if not. */
 export function rootAuthConfigError(config: RootAuthConfig): string | null {
-  if (config.kind === "passkey") {
+  if (isPasskeyRootKind(config.kind)) {
     if (!config.credentialId) return "passkey root auth needs a credentialId";
     if (!config.publicKey) return "passkey root auth needs a COSE publicKey";
     if (!config.rpId) return "passkey root auth needs an rpId";
     if (!config.origin) return "passkey root auth needs an origin";
+    if (config.kind === "safe-passkey" && !config.safeAddress) {
+      // Without it there is no address to execute as, and falling back to a
+      // held key would be precisely the substitution this kind rules out.
+      return "safe-passkey root auth needs the root safeAddress";
+    }
     return null;
   }
   if (!config.address) return "wallet root auth needs an address";
