@@ -46,6 +46,11 @@ import { installShutdownHooks, listenHttp } from "./httpListen.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 import { createRootAuthSurface, readRootAuthConfig } from "./rootAuth.js";
+import {
+  createSafeApprovalSurface,
+  safeApprovalRelayChains,
+  safeApprovalRelayer,
+} from "./safeApproval.js";
 
 const port = Number(process.env.PORT ?? 8788);
 const queue: QueueProvider = createQueueFromEnv();
@@ -329,6 +334,36 @@ async function main(): Promise<void> {
     );
   }
 
+  // A Safe root has to *send* `resolve`, not merely sign for it (F2.6 / F1.3).
+  // Built only where every piece is present: an incomplete config leaves the
+  // path absent, and the routes refuse by name rather than quietly settling
+  // root-depth intents with a key this process happens to hold.
+  const rootSafeAddress = rootAuth.safeAddress;
+  const escalationRouter = runtime.escalationRouterAddress();
+  const rootRpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
+  const safeApproval =
+    rootSafeAddress && escalationRouter && rootRpc && process.env.LACREW_ROOT_PASSKEY_PUBKEY
+      ? createSafeApprovalSurface({
+          provider: rootRpc,
+          safeAddress: rootSafeAddress,
+          escalationRouter,
+          publicKey: process.env.LACREW_ROOT_PASSKEY_PUBKEY.trim(),
+          ...(safeApprovalRelayer() ? { relayerKey: safeApprovalRelayer()! } : {}),
+          allowChainIds: safeApprovalRelayChains(),
+        })
+      : undefined;
+  if (rootAuth.kind === "safe-passkey") {
+    console.log(
+      safeApproval
+        ? `[@lacrew/orchestrator] root Safe ${rootSafeAddress} settles root-depth intents through execTransaction${
+            safeApprovalRelayChains().length
+              ? ` (relaying on chain ${safeApprovalRelayChains().join(", ")})`
+              : " (unrelayed — the transaction is returned for your own wallet to send)"
+          }`
+        : "[@lacrew/orchestrator] root auth is safe-passkey but the Safe approval path is incomplete — root-depth approvals will refuse",
+    );
+  }
+
   const app = createOrchestratorApp({
     runtime,
     queue,
@@ -350,6 +385,7 @@ async function main(): Promise<void> {
     budgets,
     pnl,
     rootAuth,
+    ...(safeApproval ? { safeApproval } : {}),
     mcpUseMock,
     authToken,
     isDbReady: () => dbReady,

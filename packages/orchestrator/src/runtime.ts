@@ -1549,6 +1549,97 @@ export class CrewRuntime {
     };
   }
 
+  /** The router the org escalates through, when this runtime is on a chain. */
+  escalationRouterAddress(): `0x${string}` | null {
+    return isOnchainClient(this.client) ? this.client.addresses.escalationRouter : null;
+  }
+
+  /** One pending intent, or null once the chain no longer awaits anyone on it. */
+  async pendingIntent(intentId: string): Promise<Intent | null> {
+    const intents = await this.client.getPendingIntents();
+    return intents.find((i) => i.id === intentId) ?? null;
+  }
+
+  /**
+   * Settle an intent whose approver is a contract this process holds no key for
+   * — a passkey-owned Safe sending `resolve` through its own `execTransaction`
+   * (PRD F2.6 / F1.3).
+   *
+   * `send` broadcasts and returns the hash; everything else — what the chain
+   * says afterwards, the store, the audit entry, the receipt ingestion — runs
+   * exactly as it does for a key this process does hold. The chain is re-read
+   * rather than assumed: a transaction that was sent is not by itself a spend
+   * that was authorised, and an intent still pending afterwards must not be
+   * recorded as resolved.
+   */
+  async resolveThroughSafe(
+    intentId: string,
+    approved: boolean,
+    safeAddress: `0x${string}`,
+    authorizedBy: string,
+    send: () => Promise<`0x${string}`>,
+  ): Promise<ResolveResult> {
+    const before = await this.pendingIntent(intentId);
+    if (!before) throw new Error("intent_not_pending");
+    return this.resolve(intentId, approved, safeAddress, authorizedBy, async () => {
+      const txHash = await send();
+      const after = await this.pendingIntent(intentId);
+      return {
+        intent: after ?? {
+          ...before,
+          resolved: true,
+          approved,
+          verdict: approved ? "ALLOW" : "DENY",
+        },
+        escalated: Boolean(after),
+        txHash,
+      };
+    });
+  }
+
+  /**
+   * Record a Safe-root approval whose transaction someone else broadcast.
+   *
+   * The chain decides, not the caller: an intent still awaiting its approver
+   * comes back unconfirmed and nothing is written. A browser reporting that it
+   * sent something is not a spend that happened, and a queue cleared on that
+   * report is an approver told money moved when it may not have.
+   */
+  async confirmSafeResolve(input: {
+    intentId: string;
+    approved: boolean;
+    approver: `0x${string}`;
+    txHash?: `0x${string}`;
+  }): Promise<{
+    confirmed: boolean;
+    awaitingApprover?: `0x${string}` | null;
+    txHash?: `0x${string}`;
+  }> {
+    const stillPending = await this.pendingIntent(input.intentId);
+    if (stillPending) {
+      return { confirmed: false, awaitingApprover: stillPending.awaitingApprover };
+    }
+    void this.runtimeStore.markIntentResolved(input.intentId, {
+      status: input.approved ? "approved" : "denied",
+      resolveTxHash: input.txHash,
+      resolvedAt: new Date().toISOString(),
+    });
+    this.pushAudit({
+      type: "IntentResolved",
+      at: new Date().toISOString(),
+      payload: {
+        intentId: input.intentId,
+        approved: input.approved,
+        escalated: false,
+        approver: input.approver,
+        authorizedBy: "root:safe-passkey",
+        txHash: input.txHash,
+      },
+    });
+    if (input.txHash) await this.ingestReceiptLogs(input.txHash);
+    return { confirmed: true, ...(input.txHash ? { txHash: input.txHash } : {}) };
+  }
+
   /**
    * Whether an address holds the org's human-root seat.
    *
@@ -1752,14 +1843,24 @@ export class CrewRuntime {
    * `authorizedBy` records what let this call through — a verified root proof,
    * or the fact that nothing was asked. The trail must never read as though a
    * root signed for a decision no root was shown.
+   *
+   * `submit` replaces the keyring write for approvers this process holds no key
+   * for and never should — a passkey-owned Safe sends `resolve` through its own
+   * `execTransaction`. The bookkeeping below is identical either way on
+   * purpose: a Safe-settled approval must land in the same store, the same
+   * audit entry and the same receipt ingestion as any other, or the trail would
+   * quietly describe two different products.
    */
   async resolve(
     intentId: string,
     approved: boolean,
     approver: `0x${string}` = this.managerAgent,
     authorizedBy?: string,
+    submit?: () => Promise<ResolveResult>,
   ): Promise<ResolveResult> {
-    const result = await this.client.resolveIntent(intentId, approved, approver);
+    const result = submit
+      ? await submit()
+      : await this.client.resolveIntent(intentId, approved, approver);
     const txHash = "txHash" in result ? result.txHash : undefined;
 
     // Escalated intents climbed the tree and are still pending upstream.

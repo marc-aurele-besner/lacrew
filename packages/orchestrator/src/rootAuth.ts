@@ -13,12 +13,20 @@
  * key 8, nor to rotate key 7 into a fresh one — rotate re-issues authority and
  * revoke only removes it, and consent to one is not consent to the other. An
  * assertion collected to approve intent 3 is likewise not one to deny it.
+ *
+ * A `safe-passkey` root proves the same way and then goes one step further: its
+ * challenge is not a nonce this process invented but the hash of the Safe
+ * transaction the approval will execute (see `safeApproval.ts`). The assertion
+ * is therefore simultaneously the proof checked here and the signature the Safe
+ * checks onchain, which is what lets the Safe itself be `msg.sender` on
+ * `resolve` rather than some key this orchestrator happens to hold.
  */
 
 import { randomBytes } from "node:crypto";
 import { recoverMessageAddress } from "viem";
 import { verifyWebAuthnAssertion } from "@lacrew/adapter-wallet-safe";
 import {
+  isPasskeyRootKind,
   rootAuthConfigError,
   rootChallengeStatement,
   type RootAuthAction,
@@ -37,7 +45,7 @@ const MAX_PENDING = 256;
  * about.
  */
 export type RootAuthOutcome =
-  | { ok: true; via: "passkey" | "wallet" | "unconfigured" }
+  | { ok: true; via: "passkey" | "wallet" | "safe-passkey" | "unconfigured" }
   | { ok: false; error: string; status: 400 | 401 | 501 };
 
 export interface RootAuthStatus {
@@ -46,6 +54,8 @@ export interface RootAuthStatus {
   kind: RootAuthConfig["kind"] | null;
   /** Present when a config was supplied but cannot verify anything. */
   configError: string | null;
+  /** The root Safe, when the root is one — the address the chain will see. */
+  safeAddress: `0x${string}` | null;
   pendingChallenges: number;
   challengeTtlSec: number;
 }
@@ -53,8 +63,18 @@ export interface RootAuthStatus {
 export interface RootAuthSurface {
   readonly required: boolean;
   readonly kind: RootAuthConfig["kind"] | null;
-  /** Mint a challenge for one action on one subject. */
-  issueChallenge(action: RootAuthAction, subject: string): RootChallenge;
+  /** The Safe that carries this root's onchain authority, for `safe-passkey`. */
+  readonly safeAddress: `0x${string}` | null;
+  /**
+   * Mint a challenge for one action on one subject.
+   *
+   * `challenge` overrides the random nonce, and exists for exactly one case: a
+   * `safe-passkey` root, whose assertion has to be the Safe transaction's own
+   * signature and therefore has to answer that transaction's hash. The value is
+   * still recorded and still single-use, so nothing about the replay properties
+   * changes — only where the bytes came from.
+   */
+  issueChallenge(action: RootAuthAction, subject: string, challenge?: string): RootChallenge;
   /**
    * Consume the challenge and check the proof. Never throws: a caller that
    * cannot revoke needs the reason, and an exception here would read as an
@@ -95,13 +115,17 @@ type Pending = {
 export function readRootAuthConfig(env: NodeJS.ProcessEnv = process.env): RootAuthConfig | null {
   const kind = env.LACREW_ROOT_AUTH?.trim().toLowerCase();
   if (!kind) return null;
-  if (kind === "passkey") {
+  if (kind === "passkey" || kind === "safe-passkey") {
+    const safeAddress = env.LACREW_ROOT_SAFE_ADDRESS?.trim();
     return {
-      kind: "passkey",
+      kind,
       credentialId: env.LACREW_ROOT_PASSKEY_ID?.trim(),
       publicKey: env.LACREW_ROOT_PASSKEY_PUBKEY?.trim(),
       rpId: env.LACREW_ROOT_PASSKEY_RPID?.trim(),
       origin: env.LACREW_ROOT_PASSKEY_ORIGIN?.trim(),
+      ...(kind === "safe-passkey" && safeAddress
+        ? { safeAddress: safeAddress as `0x${string}` }
+        : {}),
     };
   }
   if (kind === "wallet") {
@@ -112,7 +136,7 @@ export function readRootAuthConfig(env: NodeJS.ProcessEnv = process.env): RootAu
     };
   }
   throw new Error(
-    `LACREW_ROOT_AUTH=${kind} is not a root account kind — use "passkey" or "wallet".`,
+    `LACREW_ROOT_AUTH=${kind} is not a root account kind — use "passkey", "safe-passkey" or "wallet".`,
   );
 }
 
@@ -130,7 +154,11 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
     }
   }
 
-  function issueChallenge(action: RootAuthAction, subject: string): RootChallenge {
+  function issueChallenge(
+    action: RootAuthAction,
+    subject: string,
+    supplied?: string,
+  ): RootChallenge {
     prune();
     if (pending.size >= MAX_PENDING) {
       // Oldest first: a burst of unanswered challenges must not lock out the
@@ -138,7 +166,7 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
       const oldest = [...pending.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
       if (oldest) pending.delete(oldest[0]);
     }
-    const challenge = randomBytes(32).toString("base64url");
+    const challenge = supplied ?? randomBytes(32).toString("base64url");
     const expiresAt = now() + ttlSec * 1000;
     pending.set(challenge, { action, subject, expiresAt });
     const chainId = options.chainId?.() ?? undefined;
@@ -186,7 +214,7 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
       return { ok: false, error: "challenge_not_for_this_action", status: 401 };
     }
 
-    if (config.kind === "passkey") {
+    if (isPasskeyRootKind(config.kind)) {
       if (input.proof.kind !== "passkey") {
         return { ok: false, error: "root_is_a_passkey", status: 400 };
       }
@@ -201,9 +229,14 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
         authenticatorData: input.proof.authenticatorData,
         clientDataJSON: input.proof.clientDataJSON,
         signature: input.proof.signature,
+        // A Safe's WebAuthn signer requires the user-verified flag, so an
+        // assertion without it would pass here and revert onchain — an approval
+        // that reads as granted and moved nothing. Refuse it where the reason
+        // is still legible.
+        ...(config.kind === "safe-passkey" ? { requireUserVerification: true } : {}),
       });
       if (!verified.verified) return { ok: false, error: verified.error, status: 401 };
-      return { ok: true, via: "passkey" };
+      return { ok: true, via: config.kind === "safe-passkey" ? "safe-passkey" : "passkey" };
     }
 
     if (input.proof.kind !== "wallet") {
@@ -243,6 +276,9 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
     get kind() {
       return config?.kind ?? null;
     },
+    get safeAddress() {
+      return config?.kind === "safe-passkey" ? (config.safeAddress ?? null) : null;
+    },
     issueChallenge,
     verify,
     status() {
@@ -251,6 +287,7 @@ export function createRootAuthSurface(options: RootAuthOptions = {}): RootAuthSu
         required: config !== null,
         kind: config?.kind ?? null,
         configError,
+        safeAddress: config?.kind === "safe-passkey" ? (config.safeAddress ?? null) : null,
         pendingChallenges: pending.size,
         challengeTtlSec: ttlSec,
       };

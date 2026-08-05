@@ -108,6 +108,41 @@ describe("root auth configuration", () => {
     assert.equal(outcome.ok === false && outcome.status, 501);
   });
 
+  it("reads a Safe root's address, and refuses the kind without one", async () => {
+    assert.deepEqual(
+      readRootAuthConfig({
+        LACREW_ROOT_AUTH: "safe-passkey",
+        LACREW_ROOT_PASSKEY_ID: "cred",
+        LACREW_ROOT_PASSKEY_PUBKEY: "key",
+        LACREW_ROOT_PASSKEY_RPID: "localhost",
+        LACREW_ROOT_PASSKEY_ORIGIN: "http://localhost:3000",
+        LACREW_ROOT_SAFE_ADDRESS: "0x5a7e",
+      } as never),
+      {
+        kind: "safe-passkey",
+        credentialId: "cred",
+        publicKey: "key",
+        rpId: "localhost",
+        origin: "http://localhost:3000",
+        safeAddress: "0x5a7e",
+      },
+    );
+    // Without the Safe there is no address to execute as, and the only thing
+    // left to fall back on would be a key this process holds — which is the
+    // substitution the kind exists to rule out.
+    const surface = createRootAuthSurface({
+      config: {
+        kind: "safe-passkey",
+        credentialId: "cred",
+        publicKey: "key",
+        rpId: "localhost",
+        origin: "http://localhost:3000",
+      },
+    });
+    assert.match(surface.status().configError ?? "", /safeAddress/);
+    assert.equal(surface.safeAddress, null);
+  });
+
   it("leaves revoke ungated when no root is configured, and says so", async () => {
     const surface = createRootAuthSurface({});
     assert.equal(surface.required, false);
