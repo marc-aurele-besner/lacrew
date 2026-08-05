@@ -304,9 +304,8 @@ test("the risk watch states the residual risk on every guardrail it has", () => 
 test("the DeFi patterns declare the connectors their own flows call", () => {
   // The counterpart to the studio and the desk above: these four ship a
   // pipeline that genuinely leaves LaCrew, so `usedBy: "flow"` is a claim the
-  // flow has to back. `governance-desk` is the deliberate exception — no
-  // proposal-feed preset exists, so it declares nothing rather than pretending.
-  for (const id of ["lp-advisor", "yield-desk", "risk-watch"]) {
+  // flow has to back.
+  for (const id of ["lp-advisor", "yield-desk", "risk-watch", "governance-desk"]) {
     const bp = getCrewBlueprint(id)!;
     const needed = bp.connectors.filter((c) => (c.usedBy ?? "flow") === "flow");
     assert.ok(needed.length > 0, `${id} ships a flow but needs no connector`);
@@ -324,8 +323,37 @@ test("the DeFi patterns declare the connectors their own flows call", () => {
       }
     }
   }
+});
 
-  assert.deepEqual(getCrewBlueprint("governance-desk")!.connectors, []);
+test("the governance desk discovers its own proposals, and stops short of casting", () => {
+  // The desk's whole gap was that it reasoned over a proposal a human pasted
+  // in. `governance-proposal-sweep` is the step that closes it, and the split
+  // between the two connectors is the thesis: the free, unauthenticated one
+  // drives the shipped flow, and the keyed one is there for a mandate that
+  // names an onchain venue.
+  const bp = getCrewBlueprint("governance-desk")!;
+  const byId = new Map(bp.connectors.map((c) => [c.id, c]));
+  assert.equal(byId.get("snapshot")?.usedBy ?? "flow", "flow");
+  assert.equal(byId.get("tally")?.usedBy, "operator");
+
+  const sweep = getFlowTemplate("governance-proposal-sweep")!.definition;
+  const tools = sweep.steps.flatMap((s) => (s.kind === "tool" ? [s.tool] : []));
+  assert.ok(tools.includes("snapshot.query"), "the sweep must read the space it sweeps");
+
+  // The one rule the flow rests on: the connector call is parameterised by the
+  // run input and nothing else. A step that fed a completion back into the
+  // query would be interpolating a model into GraphQL, and the queue would be
+  // whatever it wrote.
+  const queue = sweep.steps.find((s) => s.id === "queue")!;
+  assert.equal(queue.kind, "tool");
+  const query = String((queue as { args?: Record<string, unknown> }).args?.query ?? "");
+  assert.match(query, /\{\{input\.space\}\}/);
+  assert.ok(!/\{\{steps\./.test(query), "no step output may reach the query");
+
+  // And it does not claim to have voted. Casting is a signed message the crew
+  // cannot produce, so the sweep's terminal step is an instruction.
+  assert.ok(!sweep.steps.some((s) => s.kind === "governance"));
+  assert.ok(bp.outOfScope.some((line) => /casting the off-chain vote/i.test(line)));
 });
 
 test("the dev crew's connector note points at the credential the preset defaults to", () => {

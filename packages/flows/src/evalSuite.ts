@@ -105,6 +105,39 @@ const lpPositions = {
   },
 };
 
+/**
+ * A Snapshot space's open queue, recorded from `hub.snapshot.org` rather than
+ * invented. The desk's whole claim is that it finds work by itself, and a
+ * fixture somebody typed would pin the flow against a payload shape the hub
+ * does not serve — which is the drift the recording exists to catch.
+ */
+const snapshotQueue = {
+  ok: true,
+  status: 200,
+  body: {
+    data: {
+      proposals: [
+        {
+          id: "0x6dd4ac816d4c2dadec606a66a0c9d2549c8e1a209397b0bafdc316226dfc9640",
+          title:
+            "[sdCRV] [Ethereum] Activate the svZCHF/crvUSD LlamaLend v2 market with a 500,000 crvUSD borrow cap, 10% admin percentage, tweak discounts, and add the market's gauge to the Gauge Controller.",
+          body: "Quorum: 10% asdCRV\n\nView more on https://curve.finance/dao/#/ethereum/proposals/1474-OWNERSHIP",
+          choices: ["Yes", "No"],
+          state: "active",
+          start: 1785954311,
+          end: 1786206311,
+          quorum: 0,
+          scores: [0, 0],
+          scores_total: 0,
+          link: "https://snapshot.box/#/s:concentratordao.eth/proposal/0x6dd4ac816d4c2dadec606a66a0c9d2549c8e1a209397b0bafdc316226dfc9640",
+          author: "0x192F0fc41d78B15a84Dfeb2C8704FC99DdAf10e1",
+          space: { id: "concentratordao.eth", name: "Concentrator" },
+        },
+      ],
+    },
+  },
+};
+
 const scenarios: FlowEvalScenario[] = [
   /* --------------------------------------------------------------- *
    * GitHub experts — the golden path, and the one that must stay red
@@ -483,6 +516,63 @@ const scenarios: FlowEvalScenario[] = [
       port: { trade: "risk-memo" },
       called: { lacrew_propose_intent: 1 },
       auditIncludes: ["escalated up the reporting line"],
+    },
+  },
+  /* --------------------------------------------------------------- *
+   * Governance desk — the desk that had to be handed its work.
+   *
+   * The pair below pins the two ends of what the Snapshot preset
+   * bought: a run that starts from nothing but a space name and gets
+   * to an actionable instruction, and the one where the org's own
+   * money is on the table and the desk is not allowed to decide.
+   *
+   * Both assert the same negative. No governance action is taken by
+   * either — the vote is a signed message this crew cannot produce,
+   * and a flow that grew a casting step would be reaching for an
+   * authority path beside the policy stack.
+   * --------------------------------------------------------------- */
+  {
+    id: "governance-desk/sweep-finds-its-own-work",
+    describe:
+      "The sweep starts from a space name, reads the open queue off Snapshot, decides against the mandate, and ends in the instruction a mandate owner casts. Nothing is voted anywhere.",
+    flow: "governance-proposal-sweep",
+    blueprint: "governance-desk",
+    asAgent: "proposal-scout",
+    input: { space: "concentratordao.eth" },
+    mocks: {
+      tools: { "snapshot.query": { result: snapshotQueue } },
+      model: [{ when: "FOR, AGAINST, ABSTAIN, or ESCALATE", reply: "FOR" }],
+    },
+    expect: {
+      status: "completed",
+      ran: ["queue", "pending", "read", "conflict", "mandate", "route", "rationale", "instruction"],
+      notRan: ["abstain-note", "human-note"],
+      port: { route: "rationale", rationale: "instruction" },
+      // Once. The queue is one call parameterised by the run input, and a
+      // second would mean a step fed a completion back into a GraphQL string.
+      called: { "snapshot.query": 1 },
+      // The desk reads and advises. Casting is the mandate owner's press.
+      notCalled: ["lacrew_governance", "lacrew_propose_intent", "lacrew_org_action"],
+    },
+  },
+  {
+    id: "governance-desk/own-payout-is-not-its-decision",
+    describe:
+      "The conflict check finds the org's own money in the proposal. The desk does not weigh it — the run ports to the human note, and no rationale is written for a vote nobody may cast.",
+    flow: "governance-proposal-sweep",
+    blueprint: "governance-desk",
+    asAgent: "proposal-scout",
+    input: { space: "concentratordao.eth" },
+    mocks: {
+      tools: { "snapshot.query": { result: snapshotQueue } },
+      model: [{ when: "FOR, AGAINST, ABSTAIN, or ESCALATE", reply: "ESCALATE" }],
+    },
+    expect: {
+      status: "completed",
+      ran: ["queue", "read", "conflict", "mandate", "route", "human-note"],
+      notRan: ["rationale", "instruction", "abstain-note"],
+      port: { route: "human-note" },
+      notCalled: ["lacrew_governance", "lacrew_propose_intent"],
     },
   },
 ];

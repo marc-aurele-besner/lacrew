@@ -1094,7 +1094,7 @@ const governanceVoteCycle: FlowTemplate = {
   author: "LaCrew",
   definition: flow("governance-vote-cycle", "Governance: vote cycle")
     .describe(
-      'Run input is the proposal text plus {"proposalId":"…"}. Runs as the proposal scout. This flow does not discover proposals — no Snapshot or Tally connector ships, so one is handed to it rather than invented.',
+      'Run input is the proposal text plus {"proposalId":"…"}, which is the LaCrew governance proposal the vote is cast against. Runs as the proposal scout. This flow does not discover anything: the proposal is handed to it, which is the right shape when a human is already looking at one. `governance-proposal-sweep` is the path that starts from a Snapshot space instead.',
     )
     .trigger("cron")
     .schedule("0 10 * * 2")
@@ -1183,6 +1183,116 @@ const governanceVoteCycle: FlowTemplate = {
     .build(),
 };
 
+/* ------------------------------------------------------------------ *
+ * Governance: proposal sweep (author-drafted pattern)
+ *
+ * The discovery half of the desk. `governance-vote-cycle` reasons about a
+ * proposal somebody handed it; this one goes and finds it, which is the
+ * difference between a desk that watches a protocol and a desk that waits
+ * to be told.
+ *
+ * It ends in an instruction rather than a vote, and that is the design
+ * rather than an unfinished edge. A Snapshot vote is an EIP-712 message
+ * signed by the delegate's own key — the crew does not hold it, no
+ * connector ships a route to the sequencer, and one that did would be a
+ * second authority path beside the policy stack. So the sweep produces the
+ * thing a human can act on in one read: which proposal, which choice, and
+ * the mandate clause it rests on.
+ *
+ * One rule holds the whole flow together: no model output ever goes back
+ * into a query. The single connector call is parameterised by the run
+ * input's space and nothing else, and every step after it reasons over
+ * what came back. A flow that let a completion name the next id would be
+ * interpolating a model into a GraphQL string.
+ * ------------------------------------------------------------------ */
+
+const governanceProposalSweep: FlowTemplate = {
+  id: "tpl-governance-proposal-sweep",
+  name: "Governance: proposal sweep",
+  description:
+    "Read a Snapshot space's open proposals, pick the one that needs a decision this cycle, check the org's own exposure, and decide against the written mandate. Ends with the vote instruction a human casts, because casting it is a signature this crew does not hold.",
+  category: "governance",
+  author: "LaCrew",
+  definition: flow("governance-proposal-sweep", "Governance: proposal sweep")
+    .describe(
+      'Run input is JSON: {"space":"aavedao.eth"} — the Snapshot space to sweep. Runs as the proposal scout. The queue is capped at three proposals in the query itself, because each carries its body and the whole result is read by a model. The GraphQL filter is written with spaces inside its braces: an adjacent "{{" would be read as an interpolation placeholder and eaten before the query was sent.',
+    )
+    .trigger("cron")
+    .schedule("0 9 * * 2")
+    .source({ templateId: "tpl-governance-proposal-sweep", author: "LaCrew" })
+    .tool(
+      "queue",
+      "snapshot.query",
+      {
+        query:
+          'query { proposals(first: 3, where: { space_in: ["{{input.space}}"], state: "active" }, orderBy: "created", orderDirection: desc) { id title body choices state start end quorum scores scores_total link author space { id name } } }',
+      },
+      { label: "Read the space's open proposals", next: "pending" },
+    )
+    .tool("pending", "lacrew_list_pending_intents", undefined, {
+      label: "See what is already waiting on a human",
+      next: "read",
+    })
+    .model("read", {
+      label: "Pick the one that needs a decision, and say what it does",
+      system:
+        "You read governance proposals for an organisation that holds tokens. You describe what a proposal does, not what its author says it does.",
+      prompt:
+        "Open proposals: {{steps.queue.json}}\nAlready pending a human: {{steps.pending.json}}\n\nPick the single proposal that most needs a decision this cycle — the one closing soonest that nothing is already waiting on. Give its id and its title, then in three lines: what it actually changes, who is better off if it passes, and what it costs if it passes and the case for it turns out to be wrong. If the space has no open proposals, say so and stop describing.",
+      next: "conflict",
+    })
+    .agent("conflict", {
+      label: "Check the org's own exposure",
+      action: "invoke",
+      agent: "{{crew.conflict-checker}}",
+      prompt:
+        "Proposal: {{steps.read.text}}\n\nDoes this organisation hold a position this proposal moves, or would it receive or lose money if it passes? Answer plainly, and say so even if the connection is indirect.",
+      next: "mandate",
+    })
+    .model("mandate", {
+      label: "Decide against the mandate",
+      prompt:
+        "Proposal: {{steps.read.text}}\nOur exposure: {{steps.conflict.json}}\n\nDecide against the written mandate. If the proposal moves value to or from this org, or the mandate does not cover it, or the queue held nothing to decide, the answer is ESCALATE — a desk voting on its own payout is not a judgement call. Reply with exactly one word: FOR, AGAINST, ABSTAIN, or ESCALATE.",
+      next: "route",
+    })
+    .switch("route", {
+      label: "FOR / AGAINST / ABSTAIN / ESCALATE",
+      when: { source: "{{steps.mandate.text}}" },
+      cases: [
+        { value: "FOR", next: "rationale" },
+        { value: "AGAINST", next: "rationale" },
+        { value: "ABSTAIN", next: "abstain-note" },
+        { value: "ESCALATE", next: "human-note" },
+      ],
+      onDefault: "human-note",
+    })
+    .model("rationale", {
+      label: "Write the rationale",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\nDecision: {{steps.mandate.text}}\n\nWrite the rationale to publish with this vote. Cite the clause of the mandate it rests on, and state the strongest argument the other way.",
+      next: "instruction",
+    })
+    .model("instruction", {
+      label: "Hand the vote to the mandate owner",
+      prompt:
+        "Open proposals: {{steps.queue.json}}\nDecision: {{steps.mandate.text}}\nRationale: {{steps.rationale.text}}\n\nWrite the instruction the mandate owner acts on: the proposal id and its link, which of the proposal's own choices to pick and its position in that list, when voting closes, and the rationale to publish with it. Open by stating that nothing has been cast — a Snapshot vote is a signed message this crew cannot produce, so this is an instruction and not a record.",
+      next: null,
+    })
+    .model("abstain-note", {
+      label: "Record the abstention",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\n\nWrite why the desk stood aside, and what would have to be true for it to vote next time.",
+      next: null,
+    })
+    .model("human-note", {
+      label: "Hand it to a human",
+      prompt:
+        "Proposal: {{steps.read.text}}\nExposure: {{steps.conflict.json}}\nDecision: {{steps.mandate.text}}\n\nWrite why this one is a human's decision rather than the desk's, and the smallest thing that would settle it. If the org stands to gain or lose money here, lead with that. If the sweep found nothing open, say that instead of implying a judgement was made.",
+      next: null,
+    })
+    .build(),
+};
+
 /** Templates that make up the first-party crew blueprints. */
 export const crewFlowTemplates: FlowTemplate[] = [
   deskOpportunityScan,
@@ -1197,5 +1307,6 @@ export const crewFlowTemplates: FlowTemplate[] = [
   lpRangeReview,
   yieldRotationCheck,
   riskSweep,
+  governanceProposalSweep,
   governanceVoteCycle,
 ];
