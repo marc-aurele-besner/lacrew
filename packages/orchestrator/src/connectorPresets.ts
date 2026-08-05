@@ -17,7 +17,7 @@
  * through `validateConnector` and the same registry as a hand-written one. What
  * it removes is the copying, not the operator's decision.
  *
- * Two things a preset refuses to guess:
+ * Three things a preset refuses to guess:
  *
  * 1. **The credential.** A preset names the environment variable it reads; it
  *    never carries a token, and a missing one fails the call rather than
@@ -27,6 +27,12 @@
  *    route that needs one is refused at build time unless the operator binds it
  *    — the alternative is shipping a merge route admitted by nothing, which is
  *    exactly the comfortable mistake the policy target exists to prevent.
+ * 3. **Where a write may land.** A route that pushes to a branch will not
+ *    register until the operator names the branches it may touch. There is no
+ *    safe default: the narrow ones break the crew, and the wide one is not an
+ *    allowlist. Everything else about the push is fixed by the route itself —
+ *    no field can force, no field can delete, and a path argument is encoded a
+ *    segment at a time so it cannot walk out of the repo it named.
  *
  * What a preset *does* decide is the write's default **mode** (F2.24). Routes
  * whose mistakes are public and hard to take back — merge a pull request,
@@ -38,7 +44,7 @@
  * defaults are the direction it is safer to be wrong in, not a ceiling.
  */
 
-import type { Connector, ConnectorAuth, ConnectorRoute } from "./connectors.js";
+import type { Connector, ConnectorArgRule, ConnectorAuth, ConnectorRoute } from "./connectors.js";
 
 /**
  * A preset's route. Same shape a connector route has, except `policyTarget` is
@@ -51,6 +57,21 @@ export type ConnectorPresetRoute = Omit<ConnectorRoute, "policyTarget"> & {
    * one rather than reusing a payee.
    */
   policyTarget?: { required: true; note: string };
+  /**
+   * Arguments whose constraint is the operator's to write, not the preset's.
+   *
+   * A push route is the case: "may this crew write to a branch" is a question
+   * about the crew, and a preset that guessed an answer would be shipping the
+   * blast radius. So the route names which argument carries the branch, and
+   * refuses to build until the operator says which branches — the same refusal
+   * as an unbound policy target, for the same reason.
+   */
+  guards?: {
+    /** Constrained by `branches`; the route will not build without it. */
+    branchArg?: string;
+    /** Constrained by `denyPathPrefixes`, which has a default. */
+    pathArg?: string;
+  };
 };
 
 /**
@@ -145,7 +166,30 @@ export type ConnectorPresetOptions = {
    * the narrowest connector that does the job is the one to register.
    */
   omitRoutes?: string[];
+  /**
+   * Branch names the connector's push routes may target, as globs: `*` matches
+   * within a segment, `**` across them, everything else is literal. Required
+   * for any route that declares a `branchArg` — a fixer that repairs bot PRs
+   * wants `dependabot/**` and `renovate/**`, and naming `main` here is a
+   * decision an operator should have to type.
+   */
+  branches?: string[];
+  /**
+   * Path prefixes a push route refuses outright. Defaults to
+   * `.github/workflows/`: a crew that can edit the workflow that reviews it can
+   * approve its own work, and that is worth refusing one layer earlier than
+   * branch protection. Pass `[]` to keep only the platform's own protections.
+   */
+  denyPathPrefixes?: string[];
 };
+
+/** Every route the operator must supply a branch allowlist for. */
+export function presetBranchAllowlistRoutes(preset: ConnectorPreset): string[] {
+  return preset.routes.filter((r) => r.guards?.branchArg).map((r) => r.name);
+}
+
+/** Default for `denyPathPrefixes` — stated once so the CLI and the docs agree. */
+export const DEFAULT_DENY_PATH_PREFIXES = [".github/workflows/"];
 
 /* ------------------------------------------------------------------ *
  * GitHub — the surface the `github-experts` crew works in
@@ -155,7 +199,7 @@ const github: ConnectorPreset = {
   id: "github",
   title: "GitHub REST API",
   summary:
-    "Reads pull requests, their files, and their CI state; comments on them, and merges the ones that clear policy. What the `github-experts` crew's triage flow calls.",
+    "Reads pull requests, their files, and their CI state; comments on them, pushes a fix to an allowlisted branch, and merges the ones that clear policy. What the `github-experts` crew's triage and fix flows call.",
   baseUrl: "https://api.github.com",
   auth: [
     {
@@ -164,7 +208,7 @@ const github: ConnectorPreset = {
       privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
       installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
       label: "GitHub App installation",
-      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read, Pull requests: read (write only if the merge or comment route is registered), Issues: write if the comment route is registered — GitHub files PR conversation comments under issues, Checks: read. The registry mints and refreshes the hourly installation token itself.",
+      note: "The right shape for a crew: scoped to the repos the App was installed on, its own identity in GitHub's audit log, and revocable without taking away a person's access. Install the App on the allowlisted accounts with Contents: read (write only if the push route is registered), Pull requests: read (write only if the merge route is registered), Issues: write if the comment route is registered — GitHub files PR conversation comments under issues, Checks: read. The registry mints and refreshes the hourly installation token itself.",
     },
     {
       mode: "token",
@@ -216,6 +260,30 @@ const github: ConnectorPreset = {
       params: ["status", "filter", "per_page", "page"],
     },
     {
+      name: "get_file",
+      method: "GET",
+      path: "/repos/{owner}/{repo}/contents/{path}",
+      description:
+        "One file at a ref: its blob sha, size, and encoding. The sha is what a push pins, so the write replaces the version the crew actually read.",
+      effect: "read",
+      params: ["ref"],
+      argRules: { path: { multiSegment: true } },
+    },
+    {
+      name: "get_file_raw",
+      method: "GET",
+      path: "/repos/{owner}/{repo}/contents/{path}",
+      description:
+        "The same file, verbatim. Under the raw media type GitHub returns the bytes instead of base64, so a flow hands a model the text rather than a string it cannot decode.",
+      effect: "read",
+      params: ["ref"],
+      // The one thing that separates this route from `get_file`. A connector-wide
+      // header would apply it to every read, including the ones whose JSON the
+      // crew needs.
+      headers: { accept: "application/vnd.github.raw" },
+      argRules: { path: { multiSegment: true } },
+    },
+    {
       name: "create_issue_comment",
       method: "POST",
       // GitHub files pull request comments under `issues`: a PR is an issue
@@ -234,6 +302,35 @@ const github: ConnectorPreset = {
       policyTarget: {
         required: true,
         note: "The crew's authority to speak on its own PRs — not a payee, and deliberately not the merge authority. A crew whose merge rights were revoked should still be able to say why a PR is stuck; binding both to one address makes silencing it the side effect of a governance action nobody meant that way. In the `github-experts` blueprint this is the `comment-authority` target.",
+      },
+    },
+    {
+      name: "update_file",
+      method: "PUT",
+      path: "/repos/{owner}/{repo}/contents/{path}",
+      description:
+        "Commit one file onto a branch — the fixer's push, as one gated call rather than a shell. `sha` names the blob being replaced, so a branch that moved under the crew is refused instead of clobbered, and there is no field that could rewrite history.",
+      effect: "write",
+      params: ["message", "content", "sha", "branch"],
+      // Same reasoning as the merge: a commit on somebody's branch is public and
+      // awkward to take back, so the first run of a new crew stops for a human
+      // rather than discovering the flow was wrong in a repo.
+      mode: "ask",
+      argRules: {
+        path: { multiSegment: true },
+        // The branch is not optional here even though GitHub treats it that way:
+        // a missing `branch` commits to the repository's default branch, which
+        // is the one place a fixer must never land.
+        branch: { required: true },
+        // Plain text in, base64 on the wire. A quarter-megabyte is far past any
+        // patch a fixer should be writing, and a model that loops has to stop
+        // somewhere short of the request limit.
+        content: { encode: "base64", maxBytes: 262_144 },
+      },
+      guards: { branchArg: "branch", pathArg: "path" },
+      policyTarget: {
+        required: true,
+        note: "The crew's authority to write to a branch — not a payee, and a third address alongside merge and comment authority. A crew that may push is not thereby allowed to merge, and revoking the push should not silence the note explaining why a PR is stuck. In the `github-experts` blueprint this is the `push-authority` target.",
       },
     },
     {
@@ -1102,6 +1199,74 @@ export function resolvePresetAuth(
   return hit;
 }
 
+/** Regex-escape everything a glob does not spell. */
+function escapeLiteral(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * One branch glob as a pattern: `*` stays inside a segment, `**` crosses them.
+ *
+ * The distinction is the point of having globs at all — `dependabot/*` admits
+ * `dependabot/npm` and not `dependabot/npm/react`, and an operator who means
+ * the second writes it.
+ */
+function branchGlobToPattern(glob: string): string {
+  return glob
+    .split("**")
+    .map((part) => part.split("*").map(escapeLiteral).join("[^/]*"))
+    .join(".*");
+}
+
+/**
+ * The pattern a set of branch globs compiles to, or throws if the operator
+ * supplied none. Refusing beats defaulting: every default here is either so
+ * narrow it breaks the crew or so wide it is not an allowlist.
+ */
+function branchPattern(presetId: string, route: string, branches: string[] | undefined): string {
+  const globs = (branches ?? []).map((b) => b.trim()).filter(Boolean);
+  if (globs.length === 0) {
+    throw new Error(
+      `connector_preset_unbound_branch_allowlist:${presetId}.${route} — this route writes to a branch, so it will not register until you say which. Pass --branch (repeatable), e.g. --branch 'dependabot/**' --branch 'renovate/**'.`,
+    );
+  }
+  // Git refuses a `..` component in a ref name and so does this, ahead of the
+  // allowlist: a branch is a ref, refs are used as path segments by half the
+  // API, and `dependabot/x/../../main` is inside `dependabot/**` by every
+  // reading except the one that matters.
+  return `(?!.*(?:^|/)\\.\\.?(?:/|$))(?:${globs.map(branchGlobToPattern).join("|")})`;
+}
+
+/** A path pattern that refuses the given prefixes and admits everything else. */
+function pathDenyPattern(prefixes: string[]): string | undefined {
+  const clean = prefixes.map((p) => p.trim()).filter(Boolean);
+  if (clean.length === 0) return undefined;
+  return `(?!(?:${clean.map(escapeLiteral).join("|")})).*`;
+}
+
+/** Fold the operator's branch allowlist and path denylist into a route's rules. */
+function applyGuards(
+  presetId: string,
+  route: ConnectorPresetRoute,
+  options: ConnectorPresetOptions,
+): Record<string, ConnectorArgRule> | undefined {
+  const guards = route.guards;
+  if (!guards) return route.argRules;
+  const rules: Record<string, ConnectorArgRule> = { ...(route.argRules ?? {}) };
+  if (guards.branchArg) {
+    rules[guards.branchArg] = {
+      ...rules[guards.branchArg],
+      required: true,
+      pattern: branchPattern(presetId, route.name, options.branches),
+    };
+  }
+  if (guards.pathArg) {
+    const pattern = pathDenyPattern(options.denyPathPrefixes ?? DEFAULT_DENY_PATH_PREFIXES);
+    if (pattern) rules[guards.pathArg] = { ...rules[guards.pathArg], pattern };
+  }
+  return rules;
+}
+
 function buildAuth(auth: ConnectorPresetAuth, options: ConnectorPresetOptions): ConnectorAuth {
   if (auth.mode === "none") return { kind: "none" };
   if (auth.mode === "github-app") {
@@ -1166,10 +1331,21 @@ export function buildConnectorPreset(id: string, options: ConnectorPresetOptions
   }
 
   const omitted = new Set(options.omitRoutes ?? []);
+  // A branch allowlist for a preset with nothing to constrain means the
+  // operator believes they narrowed something. They did not, and finding that
+  // out from a commit on the wrong branch is worse than finding it here.
+  if (
+    options.branches?.length &&
+    presetBranchAllowlistRoutes(preset).every((r) => omitted.has(r))
+  ) {
+    throw new Error(`connector_preset_takes_no_branch_allowlist:${id}`);
+  }
+
   const routes: ConnectorRoute[] = [];
   for (const route of preset.routes) {
     if (omitted.has(route.name)) continue;
-    const { policyTarget, ...rest } = route;
+    const { policyTarget, guards: _guards, argRules: _argRules, ...rest } = route;
+    const argRules = applyGuards(id, route, options);
     const bound = options.policyTargets?.[route.name];
     if (policyTarget?.required && !bound) {
       throw new Error(
@@ -1182,7 +1358,11 @@ export function buildConnectorPreset(id: string, options: ConnectorPresetOptions
       // preset. Both are worth stopping on rather than silently honouring.
       throw new Error(`connector_preset_route_takes_no_policy_target:${id}.${route.name}`);
     }
-    routes.push(bound ? { ...rest, policyTarget: bound } : rest);
+    routes.push({
+      ...rest,
+      ...(argRules ? { argRules } : {}),
+      ...(bound ? { policyTarget: bound } : {}),
+    });
   }
   if (routes.length === 0) throw new Error(`connector_preset_all_routes_omitted:${id}`);
 

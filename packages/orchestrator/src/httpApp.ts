@@ -645,6 +645,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
             params: r.params ?? [],
             requiresPolicyTarget: Boolean(r.policyTarget?.required),
             ...(r.policyTarget ? { policyTargetNote: r.policyTarget.note } : {}),
+            // A write that lands on a branch will not register until the
+            // operator names which ones, so the catalog's command has to carry
+            // the flag. Leaving it out would print a line that fails at boot.
+            ...(r.guards?.branchArg ? { requiresBranchAllowlist: true } : {}),
             // The mode this route would ship with, so the catalog says what
             // registering it actually turns on rather than leaving an operator
             // to discover their first merge stopped for a question.

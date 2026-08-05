@@ -215,7 +215,7 @@ test("status reports whether a token is held, never the token", async () => {
 function appConnector() {
   return buildConnectorPreset("github", {
     authMode: "github-app",
-    omitRoutes: ["merge_pull_request", "create_issue_comment"],
+    omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
   });
 }
 
@@ -273,7 +273,7 @@ test("a bearer connector does not re-mint on a 401 — there is nothing to re-mi
     connectors: [
       buildConnectorPreset("github", {
         authMode: "token",
-        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+        omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
       }),
     ],
     env: { GH_TOKEN: "ghp_x" },
@@ -293,7 +293,9 @@ test("describe() reports wiring without a credential anywhere in it", async () =
         policyTargets: {
           merge_pull_request: "0x00000000000000000000000000000000000000aa",
           create_issue_comment: "0x00000000000000000000000000000000000000bb",
+          update_file: "0x00000000000000000000000000000000000000cc",
         },
+        branches: ["dependabot/**"],
       }),
     ],
     env: ENV,
@@ -331,7 +333,7 @@ test("describe() says not-ready when the env vars are absent", () => {
     connectors: [
       buildConnectorPreset("github", {
         authMode: "github-app",
-        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+        omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
       }),
     ],
     env: { GITHUB_APP_ID: "1" },

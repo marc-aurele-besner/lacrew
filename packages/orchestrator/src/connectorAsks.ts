@@ -134,6 +134,24 @@ export function askFingerprint(input: {
     .digest("hex");
 }
 
+/** How much of one argument a question shows before it stops being readable. */
+const ARG_PREVIEW_CHARS = 200;
+
+/**
+ * One argument as the question renders it.
+ *
+ * A push carries a whole file, and pasting it into a chat message buries the
+ * two fields the human is actually deciding on — which branch, which path — in
+ * kilobytes they will scroll past. The value is still pinned exactly: the
+ * fingerprint is taken over the full args, so a yes releases the call that was
+ * asked about and nothing else.
+ */
+function argPreview(value: unknown): string {
+  const text = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+  if (text.length <= ARG_PREVIEW_CHARS) return text;
+  return `${text.slice(0, ARG_PREVIEW_CHARS)}… (${text.length} characters)`;
+}
+
 function askIdOf(request: ConnectorAskRequest, fingerprint: string): string {
   // Deterministic so two replicas racing the same suspended step converge on
   // one ask rather than posting the operator two questions about one merge.
@@ -276,7 +294,7 @@ export function createConnectorAsks(opts: {
 
   const questionBody = (request: ConnectorAskRequest): string => {
     const args = Object.entries(request.args)
-      .map(([k, v]) => `  ${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+      .map(([k, v]) => `  ${k}: ${argPreview(v)}`)
       .join("\n");
     return [
       `Confirm write: ${request.connector}.${request.route}`,

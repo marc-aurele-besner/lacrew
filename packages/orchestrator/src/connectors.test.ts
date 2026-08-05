@@ -839,3 +839,256 @@ test("a cap that would refuse every call is rejected at registration", () => {
     1,
   );
 });
+
+/* ——— argument rules: what a route's fields may say (F2.13) ——— */
+
+/** A push-shaped connector: one file, one branch, one commit. */
+function pushConnector(overrides: Partial<Connector> = {}): Connector {
+  return {
+    id: "github",
+    baseUrl: "https://api.github.com",
+    auth: { kind: "bearer", tokenEnv: "GH_TOKEN" },
+    routes: [
+      {
+        name: "get_file",
+        method: "GET",
+        path: "/repos/{owner}/{repo}/contents/{path}",
+        effect: "read",
+        params: ["ref"],
+        argRules: { path: { multiSegment: true } },
+      },
+      {
+        name: "update_file",
+        method: "PUT",
+        path: "/repos/{owner}/{repo}/contents/{path}",
+        effect: "write",
+        params: ["message", "content", "sha", "branch"],
+        argRules: {
+          path: { multiSegment: true, pattern: "(?!(?:\\.github/workflows/)).*" },
+          branch: {
+            required: true,
+            pattern: "(?!.*(?:^|/)\\.\\.?(?:/|$))(?:dependabot/.*|renovate/.*)",
+          },
+          content: { encode: "base64", maxBytes: 64 },
+        },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function pushArgs(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    owner: "o",
+    repo: "r",
+    path: "src/index.ts",
+    branch: "dependabot/npm_and_yarn/lodash-4.17.21",
+    message: "fix: pin lodash",
+    content: "export const x = 1;\n",
+    sha: "abc123",
+    ...over,
+  };
+}
+
+test("a push lands on an allowlisted branch, with the file base64 on the wire", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  const res = await registry.call("github.update_file", pushArgs());
+  assert.equal(res.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.url, "https://api.github.com/repos/o/r/contents/src/index.ts");
+  const body = JSON.parse(String(calls[0]!.init.body)) as Record<string, string>;
+  // The flow passed plain text; the endpoint takes base64. A model asked to
+  // produce base64 itself would fail by producing something that decodes.
+  assert.equal(Buffer.from(body.content!, "base64").toString("utf8"), "export const x = 1;\n");
+  assert.equal(body.branch, "dependabot/npm_and_yarn/lodash-4.17.21");
+});
+
+test("a branch outside the allowlist is refused without the network being reached", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  for (const branch of ["main", "dependabot/x/../../main", "evil/dependabot/x"]) {
+    await assert.rejects(
+      registry.call("github.update_file", pushArgs({ branch })),
+      /connector_arg_refused:github\.update_file:branch/,
+      `${branch} must be refused`,
+    );
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("a push with no branch is refused rather than landing on the default one", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  const { branch: _dropped, ...noBranch } = pushArgs();
+  // GitHub treats `branch` as optional and commits to the repository's default
+  // branch without it, which is the one place a fixer must never land.
+  await assert.rejects(
+    registry.call("github.update_file", noBranch),
+    /connector_missing_arg:branch/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a path argument spans segments but cannot walk out of them", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  await registry.call("github.get_file", { owner: "o", repo: "r", path: "src/lib/index.ts" });
+  assert.equal(calls[0]!.url, "https://api.github.com/repos/o/r/contents/src/lib/index.ts");
+
+  for (const path of ["../../../user", "src/../../etc/passwd", "src//index.ts"]) {
+    await assert.rejects(
+      registry.call("github.get_file", { owner: "o", repo: "r", path }),
+      /connector_arg_refused:github\.get_file:path/,
+      `${path} must be refused`,
+    );
+  }
+  assert.equal(calls.length, 1);
+});
+
+test("the paths a push refuses are refused whatever else the call says", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  // A crew that can edit the workflow reviewing its work can approve itself.
+  await assert.rejects(
+    registry.call("github.update_file", pushArgs({ path: ".github/workflows/ci.yml" })),
+    /connector_arg_refused:github\.update_file:path/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("an oversized file is refused, and the refusal names the limit but not the file", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  await assert.rejects(
+    registry.call("github.update_file", pushArgs({ content: "y".repeat(65) })),
+    (err: Error) => {
+      assert.match(err.message, /connector_arg_too_large:github\.update_file:content:64/);
+      assert.ok(!err.message.includes("yyyy"));
+      return true;
+    },
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a body over the request cap is refused before it is sent", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = createConnectorRegistry({
+    connectors: [pushConnector()],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+    maxRequestBytes: 120,
+  });
+  await assert.rejects(
+    registry.call("github.update_file", pushArgs({ message: "m".repeat(200) })),
+    /connector_request_too_large:github\.update_file:120/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a route header rides on that route only, and cannot carry a credential", async () => {
+  const { calls, impl } = recordingFetch();
+  const connector = pushConnector();
+  connector.routes[0]!.headers = { accept: "application/vnd.github.raw" };
+  const registry = createConnectorRegistry({
+    connectors: [connector],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  await registry.call("github.get_file", { owner: "o", repo: "r", path: "README.md" });
+  const headers = calls[0]!.init.headers as Record<string, string>;
+  assert.equal(headers.accept, "application/vnd.github.raw");
+  assert.equal(headers.authorization, "Bearer ghp_secret");
+
+  const shadowed = pushConnector();
+  shadowed.routes[0]!.headers = { Authorization: "Bearer nope" };
+  assert.ok(validateConnector(shadowed).some((e) => e.includes("would override the credential")));
+});
+
+test("an argument rule that constrains nothing is rejected at registration", () => {
+  const cases: Array<[Partial<Connector>, RegExp]> = [
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { nope: { pattern: "x" } } }] },
+      /argRules names "nope", which the route does not take/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { branch: { multiSegment: true } } }] },
+      /cannot be multiSegment/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { path: { encode: "base64" } } }] },
+      /cannot be encoded/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[0]!, argRules: { ref: { encode: "base64" } } }] },
+      /sends no body/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { branch: { pattern: "([" } } }] },
+      /pattern is not a regular expression/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { branch: { oneOf: [] } } }] },
+      /oneOf is empty/,
+    ],
+  ];
+  for (const [overrides, expected] of cases) {
+    const errors = validateConnector(pushConnector(overrides));
+    assert.ok(
+      errors.some((e) => expected.test(e)),
+      `expected ${expected} in ${errors.join("; ")}`,
+    );
+  }
+});
+
+test("a pattern matches the whole value, so a prefix cannot slip past it", async () => {
+  const { calls, impl } = recordingFetch();
+  const connector = pushConnector();
+  connector.routes[1]!.argRules = { branch: { required: true, pattern: "release" } };
+  const registry = createConnectorRegistry({
+    connectors: [connector],
+    env: TOKEN_ENV,
+    fetchImpl: impl,
+  });
+  await assert.rejects(
+    registry.call("github.update_file", pushArgs({ branch: "release-hijack" })),
+    /connector_arg_refused/,
+  );
+  await registry.call("github.update_file", pushArgs({ branch: "release" }));
+  assert.equal(calls.length, 1);
+});
+
+test("describe() publishes the constraints a route runs under, and no credential", () => {
+  const registry = createConnectorRegistry({ connectors: [pushConnector()], env: TOKEN_ENV });
+  const [view] = registry.describe();
+  const push = view!.routes.find((r) => r.name === "update_file")!;
+  // Public by design: which branches a crew may write to is the operator's own
+  // decision, and it belongs where they read what the crew can do.
+  assert.match(push.argRules?.branch?.pattern ?? "", /dependabot\//);
+  assert.equal(push.maxRequestBytes, 1_048_576);
+  assert.ok(!JSON.stringify(view).includes("ghp_secret"));
+});

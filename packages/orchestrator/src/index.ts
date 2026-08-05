@@ -28,10 +28,12 @@ export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
   connectorEnvVars,
   createConnectorRegistry,
+  DEFAULT_MAX_REQUEST_BYTES,
   DEFAULT_MAX_RESPONSE_BYTES,
   loadConnectorsFromEnv,
   validateConnector,
   type Connector,
+  type ConnectorArgRule,
   type ConnectorAuth,
   type ConnectorCallResult,
   type ConnectorRegistry,
@@ -167,7 +169,9 @@ export {
 export {
   buildConnectorPreset,
   connectorPresets,
+  DEFAULT_DENY_PATH_PREFIXES,
   getConnectorPreset,
+  presetBranchAllowlistRoutes,
   presetPolicyTargetRoutes,
   resolveConnectorConfig,
   resolvePresetAuth,

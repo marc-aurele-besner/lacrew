@@ -13,6 +13,7 @@ import { crewFlowTemplates, getSkillPack, type SkillPack } from "@lacrew/flows";
 const AGENT = "0x00000000000000000000000000000000000000a1";
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa";
 const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb";
+const PUSH_AUTHORITY = "0x00000000000000000000000000000000000000cc";
 
 /**
  * An app with a knob for each thing a pack's `requires` is checked against:
@@ -39,12 +40,14 @@ async function buildApp(
             buildConnectorPreset("github", {
               authMode: "token",
               ...(github === "read"
-                ? { omitRoutes: ["merge_pull_request", "create_issue_comment"] }
+                ? { omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"] }
                 : {
                     policyTargets: {
                       merge_pull_request: MERGE_AUTHORITY,
                       create_issue_comment: COMMENT_AUTHORITY,
+                      update_file: PUSH_AUTHORITY,
                     },
+                    branches: ["dependabot/**"],
                   }),
             }),
           ],

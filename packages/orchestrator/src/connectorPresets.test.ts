@@ -5,6 +5,7 @@ import {
   buildConnectorPreset,
   connectorPresets,
   getConnectorPreset,
+  presetBranchAllowlistRoutes,
   presetPolicyTargetRoutes,
   resolveConnectorConfig,
 } from "./connectorPresets.js";
@@ -12,12 +13,20 @@ import { createConnectorRegistry, loadConnectorsFromEnv, validateConnector } fro
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa" as const;
 const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb" as const;
+const PUSH_AUTHORITY = "0x00000000000000000000000000000000000000cc" as const;
 
-/** Both of the github preset's writes bound, which is what building it takes. */
+/** The branches the fixer's push may land on, as an operator would write them. */
+const BOT_BRANCHES = ["dependabot/**", "renovate/**"];
+
+/** Every one of the github preset's writes bound, which is what building it takes. */
 const GITHUB_TARGETS = {
   merge_pull_request: MERGE_AUTHORITY,
   create_issue_comment: COMMENT_AUTHORITY,
+  update_file: PUSH_AUTHORITY,
 } as const;
+
+/** The github preset with everything it refuses to guess supplied. */
+const GITHUB_BINDINGS = { policyTargets: GITHUB_TARGETS, branches: BOT_BRANCHES };
 
 /** A stand-in host for the presets that ship none, because the site is the operator's. */
 const OWN_HOST = "https://blog.example/ghost/api/admin";
@@ -28,6 +37,7 @@ function bindings(preset: (typeof connectorPresets)[number]) {
     policyTargets: Object.fromEntries(
       presetPolicyTargetRoutes(preset).map((name) => [name, MERGE_AUTHORITY]),
     ),
+    ...(presetBranchAllowlistRoutes(preset).length > 0 ? { branches: BOT_BRANCHES } : {}),
     ...(preset.baseUrl === undefined ? { baseUrl: OWN_HOST } : {}),
   };
 }
@@ -44,7 +54,7 @@ test("every shipped preset builds into a connector the registry accepts", () => 
 });
 
 test("the github preset serves the routes the github-experts blueprint declares", () => {
-  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
   const names = connector.routes.map((r) => r.name);
   // The three the shipped `bot-pr-triage` flow actually calls. If these drift,
   // the crew's tools resolve to nothing at run time.
@@ -72,7 +82,7 @@ test("the comment write is gated by its own address, not the merge authority", (
   // The whole reason it is a separate target: the fix-note runs on the path
   // where merging did not happen. One address for both would mean revoking
   // merge rights also silences the explanation of why a PR is stuck.
-  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
   const comment = connector.routes.find((r) => r.name === "create_issue_comment")!;
   assert.equal(comment.policyTarget, COMMENT_AUTHORITY);
   assert.notEqual(comment.policyTarget, MERGE_AUTHORITY);
@@ -82,7 +92,7 @@ test("commenting can be registered without granting the merge", () => {
   // A crew that reports and never merges is a real configuration, and it must
   // not have to bind a merge authority it will never use to get there.
   const connector = buildConnectorPreset("github", {
-    omitRoutes: ["merge_pull_request"],
+    omitRoutes: ["merge_pull_request", "update_file"],
     policyTargets: { create_issue_comment: COMMENT_AUTHORITY },
   });
   assert.ok(connector.routes.some((r) => r.name === "create_issue_comment"));
@@ -95,19 +105,16 @@ test("the default credential mode is the App, and the PAT is an explicit opt-in"
   // attributes every crew action to a person. Whichever mode is listed first
   // is what an operator who does not choose ends up running.
   assert.equal(getConnectorPreset("github")!.auth[0]!.mode, "github-app");
-  assert.deepEqual(buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }).auth, {
+  assert.deepEqual(buildConnectorPreset("github", GITHUB_BINDINGS).auth, {
     kind: "github-app",
     appIdEnv: "GITHUB_APP_ID",
     privateKeyEnv: "GITHUB_APP_PRIVATE_KEY",
     installationIdEnv: "GITHUB_APP_INSTALLATION_ID",
   });
-  assert.deepEqual(
-    buildConnectorPreset("github", {
-      authMode: "token",
-      policyTargets: GITHUB_TARGETS,
-    }).auth,
-    { kind: "bearer", tokenEnv: "GH_TOKEN" },
-  );
+  assert.deepEqual(buildConnectorPreset("github", { ...GITHUB_BINDINGS, authMode: "token" }).auth, {
+    kind: "bearer",
+    tokenEnv: "GH_TOKEN",
+  });
 });
 
 test("an unsupported auth mode names the ones that exist", () => {
@@ -117,11 +124,11 @@ test("an unsupported auth mode names the ones that exist", () => {
   );
 });
 
-test("the merge and the comment are the only writes — a preset does not widen what a token can do", () => {
-  const connector = buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS });
+test("the comment, the push, and the merge are the only writes — a preset does not widen what a token can do", () => {
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
   assert.deepEqual(
     connector.routes.filter((r) => r.effect === "write").map((r) => r.name),
-    ["create_issue_comment", "merge_pull_request"],
+    ["create_issue_comment", "update_file", "merge_pull_request"],
   );
 });
 
@@ -140,11 +147,12 @@ test("a write with no policy target is refused rather than registered unadmitted
 
 test("omitting the writes builds a read-only connector without any binding", () => {
   const connector = buildConnectorPreset("github", {
-    omitRoutes: ["merge_pull_request", "create_issue_comment"],
+    omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
   });
   assert.ok(connector.routes.every((r) => r.effect === "read"));
   assert.ok(!connector.routes.some((r) => r.name === "merge_pull_request"));
   assert.ok(!connector.routes.some((r) => r.name === "create_issue_comment"));
+  assert.ok(!connector.routes.some((r) => r.name === "update_file"));
   assert.deepEqual(validateConnector(connector), []);
 });
 
@@ -202,7 +210,7 @@ test("overrides cover a self-hosted instance and a renamed credential", () => {
     baseUrl: "https://github.acme.example/api/v3",
     tokenEnv: "GHE_TOKEN",
     timeoutMs: 5_000,
-    policyTargets: GITHUB_TARGETS,
+    ...GITHUB_BINDINGS,
   });
   assert.equal(connector.id, "ghe");
   assert.equal(connector.baseUrl, "https://github.acme.example/api/v3");
@@ -222,7 +230,7 @@ test("omitting every route is an error rather than an empty connector", () => {
 test("LACREW_CONNECTORS accepts a preset reference alongside a hand-written one", () => {
   const connectors = loadConnectorsFromEnv({
     LACREW_CONNECTORS: JSON.stringify([
-      { preset: "github", policyTargets: GITHUB_TARGETS },
+      { preset: "github", ...GITHUB_BINDINGS },
       {
         id: "cms",
         baseUrl: "https://cms.example",
@@ -501,7 +509,7 @@ test("a preset route calls the URL the preset wrote down", async () => {
     connectors: [
       buildConnectorPreset("github", {
         authMode: "token",
-        omitRoutes: ["merge_pull_request", "create_issue_comment"],
+        omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
       }),
     ],
     env: { GH_TOKEN: "ghp_secret" },
@@ -514,4 +522,115 @@ test("a preset route calls the URL the preset wrote down", async () => {
   });
   assert.equal(res.ok, true);
   assert.deepEqual(calls, ["https://api.github.com/repos/marc-aurele-besner/lacrew/pulls/94"]);
+});
+
+/* ——— the push surface (F2.13) ——— */
+
+/** Build the github preset and hand back the route that pushes. */
+function pushRoute(options: Parameters<typeof buildConnectorPreset>[1] = GITHUB_BINDINGS) {
+  return buildConnectorPreset("github", options).routes.find((r) => r.name === "update_file")!;
+}
+
+test("the push is one gated call on the Contents API, not a shell", () => {
+  const push = pushRoute();
+  assert.equal(push.method, "PUT");
+  assert.equal(push.path, "/repos/{owner}/{repo}/contents/{path}");
+  assert.equal(push.effect, "write");
+  assert.equal(push.policyTarget, PUSH_AUTHORITY);
+  // Its own address. A crew that may push is not thereby allowed to merge, and
+  // revoking the push must not silence the note saying why a PR is stuck.
+  assert.notEqual(push.policyTarget, MERGE_AUTHORITY);
+  assert.notEqual(push.policyTarget, COMMENT_AUTHORITY);
+  // `ask` for the same reason the merge is: a commit on somebody's branch is
+  // public and awkward to take back.
+  assert.equal(push.mode, "ask");
+});
+
+test("no field on the push could force, delete, or rewrite history", () => {
+  const push = pushRoute();
+  assert.deepEqual(push.params, ["message", "content", "sha", "branch"]);
+  // The allowlist is the control: `force` is not refused by a check somewhere,
+  // it is a field the route does not have, so a flow cannot pass one and an
+  // undeclared arg is dropped rather than forwarded.
+  for (const forbidden of ["force", "ref", "delete", "committer", "author"]) {
+    assert.ok(!push.params!.includes(forbidden), `${forbidden} must not be a push param`);
+  }
+  // And the method that would remove a file is not registered at all.
+  const all = buildConnectorPreset("github", GITHUB_BINDINGS).routes;
+  assert.ok(!all.some((r) => r.method === "DELETE"));
+});
+
+test("a branch glob says what it means: * stays in a segment, ** crosses", () => {
+  const oneSegment = pushRoute({ ...GITHUB_BINDINGS, branches: ["dependabot/*"] });
+  const test1 = new RegExp(`^(?:${oneSegment.argRules!.branch!.pattern!})$`);
+  assert.ok(test1.test("dependabot/npm"));
+  assert.ok(!test1.test("dependabot/npm/lodash-4"));
+  assert.ok(!test1.test("main"));
+
+  const anyDepth = pushRoute({ ...GITHUB_BINDINGS, branches: ["dependabot/**"] });
+  const test2 = new RegExp(`^(?:${anyDepth.argRules!.branch!.pattern!})$`);
+  assert.ok(test2.test("dependabot/npm/lodash-4"));
+  assert.ok(!test2.test("main"));
+  // A ref component git itself refuses, refused ahead of the allowlist.
+  assert.ok(!test2.test("dependabot/../main"));
+});
+
+test("the push refuses the workflow directory unless the operator replaces the list", () => {
+  const byDefault = new RegExp(`^(?:${pushRoute().argRules!.path!.pattern!})$`);
+  assert.ok(!byDefault.test(".github/workflows/ci.yml"));
+  assert.ok(byDefault.test("src/index.ts"));
+  assert.ok(byDefault.test(".github/dependabot.yml"));
+
+  // Opting out is possible and explicit: an operator who trusts branch
+  // protection and CODEOWNERS for this can say so.
+  const opened = pushRoute({ ...GITHUB_BINDINGS, denyPathPrefixes: [] });
+  assert.equal(opened.argRules?.path?.pattern, undefined);
+  assert.equal(opened.argRules?.path?.multiSegment, true);
+});
+
+test("a push route will not register until the operator names the branches", () => {
+  assert.throws(
+    () => buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }),
+    /connector_preset_unbound_branch_allowlist:github\.update_file/,
+  );
+  // And a branch allowlist for a connector with nothing to constrain is the
+  // operator believing they narrowed something. They did not.
+  assert.throws(
+    () =>
+      buildConnectorPreset("github", {
+        omitRoutes: ["update_file", "merge_pull_request", "create_issue_comment"],
+        branches: ["dependabot/**"],
+      }),
+    /connector_preset_takes_no_branch_allowlist:github/,
+  );
+});
+
+test("no preset ships a branch-writing route without a branch allowlist", () => {
+  // Catalog-wide rather than per-preset: the next connector that learns to
+  // write to a branch must declare the guard, or this fails rather than
+  // shipping a push admitted by nothing but a policy target.
+  for (const preset of connectorPresets) {
+    for (const route of preset.routes) {
+      if (route.effect !== "write") continue;
+      if (!(route.params ?? []).includes("branch")) continue;
+      assert.equal(
+        route.guards?.branchArg,
+        "branch",
+        `${preset.id}.${route.name} writes to a branch and must declare a branch guard`,
+      );
+    }
+  }
+});
+
+test("the file a push carries is read back through a route that returns it verbatim", () => {
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
+  const raw = connector.routes.find((r) => r.name === "get_file_raw")!;
+  const meta = connector.routes.find((r) => r.name === "get_file")!;
+  // Same endpoint, two media types: the sha the write pins comes from the JSON
+  // representation, and the text a model patches comes from the raw one.
+  assert.equal(raw.path, meta.path);
+  assert.equal(raw.headers?.accept, "application/vnd.github.raw");
+  assert.equal(meta.headers, undefined);
+  assert.equal(raw.effect, "read");
+  assert.equal(meta.effect, "read");
 });
