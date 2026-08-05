@@ -21,24 +21,29 @@
  *    `mode: onchain` before anything else runs. Nothing stubs its health; if it
  *    comes up in mock mode the script fails rather than reporting a green path
  *    against fabricated data.
- *  - **The connector**, for a path that has one. The `github` preset,
- *    registered exactly as an operator would register it, pointed at a local
- *    stand-in for api.github.com instead of the real host. The stand-in is the
- *    one fake, and it is the right one: the alternative is a token, a network
- *    round trip, and a public write path in CI.
+ *  - **The connector**, for a path that has one. The preset, registered exactly
+ *    as an operator would register it. `github-experts` is pointed at a local
+ *    stand-in for api.github.com rather than the real host — the one fake here,
+ *    and the right one, since the alternative is a token, a network round trip
+ *    and a public write path in CI. `governance-desk` needs no stand-in: its
+ *    connector is a public read with no credential and no write route to
+ *    misfire, so it talks to the real hub.
  *  - **The policy verdict.** `lacrew_check_policy` is asked about the address
  *    the flow's write path would spend against, which nothing has admitted, and
  *    the DENY comes off the deployed policy stack.
  *
- * ## Two paths, deliberately different shapes
+ * ## Three paths, deliberately different shapes
  *
- * `github-experts` needs a connector and a credential before its run means
- * anything. `content-studio` calls nothing outside LaCrew — its whole pipeline
- * is model work against a brief, and the write it could attempt is a
- * publication its own blueprint leaves off the whitelist. So it drives the
- * checklist branch the first path never reaches: the connector step answered
- * *not needed* rather than blocked. Certifying two GitHub-shaped verticals
- * would leave that answer unproved on the surface operators read.
+ * `github-experts` needs a connector, a credential and an admitted address
+ * before its run means anything. `content-studio` calls nothing outside LaCrew
+ * — its whole pipeline is model work against a brief, and the write it could
+ * attempt is a publication its own blueprint leaves off the whitelist — so it
+ * drives the checklist branch the first path never reaches: the connector step
+ * answered *not needed* rather than blocked. `governance-desk` is the third
+ * shape: a connector that is genuinely required and costs nothing to wire,
+ * because the surface is public and read-only. Certifying three GitHub-shaped
+ * verticals would leave both of those answers unproved on the surface
+ * operators read.
  *
  * Which seats to hire and which targets to bind are read off the sample flow's
  * own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains a
@@ -105,23 +110,55 @@ const targetAddress = (id, i) => NAMED_TARGETS[id] ?? `0x${String(i + 1).padStar
  *
  * `refuses` is the target the run's write path asks policy about — the one the
  * whole path exists to show being refused. `connector` is present only for a
- * path that leaves LaCrew, and `policyTargets` maps each of that preset's write
- * routes to the blueprint target its spend is checked against: the preset
- * refuses to build with any of them unbound, on the grounds that a write route
- * whose authority nobody named is one nothing can refuse. The addresses come
- * from the same derived map the flow is bound with, so a route and a step
- * cannot end up pointed at two different accounts.
+ * path that leaves LaCrew, `stub` only for one whose surface must not be the
+ * real host, and `policyTargets` maps each of that preset's write authorities
+ * to the blueprint target its spend is checked against: the preset refuses to
+ * build with any of them unbound, on the grounds that a write route whose
+ * authority nobody named is one nothing can refuse. `branches` is the same
+ * refusal for where a push may land. The addresses come from the same derived
+ * map the flow is bound with, so a route and a step cannot end up pointed at
+ * two different accounts. `endsIn` is what stands in for a stub's hit log on a
+ * path with no route to watch: the steps the run must have reached, and the
+ * ones it must not.
  */
 const PROFILES = {
   "github-experts": {
     refuses: "merge-authority",
     connector: "github",
+    stub: true,
     policyTargets: {
       merge_pull_request: "merge-authority",
       create_issue_comment: "comment-authority",
+      // The push binds once however many of git's object routes it takes:
+      // four bindings would read as four decisions and end as four addresses.
+      push_authority: "push-authority",
+    },
+    // The push routes refuse to register until somebody names the branches
+    // they may land on — the narrow defaults break the crew and the wide one
+    // is not an allowlist — so the driver names the ones this crew works on.
+    branches: ["dependabot/**", "renovate/**"],
+  },
+  "content-studio": {
+    refuses: "publish-endpoint",
+    endsIn: {
+      claim: "it ended in the human sign-off package, not a publication",
+      ran: ["signoff"],
+      notRan: ["published", "publish"],
     },
   },
-  "content-studio": { refuses: "publish-endpoint" },
+  "governance-desk": {
+    // The desk admits no payout address on purpose, so this is the target its
+    // own guardrail says must come back refused. There is no write route to
+    // aim at instead: the connector is a read, and the vote it advises is a
+    // signature nothing here holds.
+    refuses: "treasury-payout",
+    connector: "snapshot",
+    endsIn: {
+      claim: "it ended in an instruction for a human, and voted nothing anywhere",
+      ran: ["queue"],
+      notRan: ["cast-for", "cast-against"],
+    },
+  },
 };
 
 const children = [];
@@ -391,7 +428,7 @@ async function main() {
       .map((id, i) => [id, targetAddress(id, i)]),
   );
 
-  const stub = profile.connector ? await startGithubStub() : null;
+  const stub = profile.stub ? await startGithubStub() : null;
   if (stub) log("stub", `api.github.com stand-in on ${stub.baseUrl}`);
 
   if (!(await rpcReady(RPC))) {
@@ -424,19 +461,28 @@ async function main() {
     // run never leaves LaCrew registers nothing — wiring a connector it does
     // not call would hide the checklist answer it exists to prove.
     LACREW_CONNECTORS: JSON.stringify(
-      stub
+      profile.connector
         ? [
             {
               preset: profile.connector,
-              baseUrl: stub.baseUrl,
-              authMode: "token",
-              tokenEnv: TOKEN_ENV,
-              policyTargets: Object.fromEntries(
-                Object.entries(profile.policyTargets ?? {}).map(([route, target]) => [
-                  route,
-                  targets[target] ?? targetAddress(target, 0),
-                ]),
-              ),
+              // Only a stubbed path overrides the host and the credential. A
+              // public read registers as an operator would register it: the
+              // preset's own base URL, and nothing standing in for a token it
+              // does not take.
+              ...(stub
+                ? {
+                    baseUrl: stub.baseUrl,
+                    authMode: "token",
+                    tokenEnv: TOKEN_ENV,
+                    policyTargets: Object.fromEntries(
+                      Object.entries(profile.policyTargets ?? {}).map(([route, target]) => [
+                        route,
+                        targets[target] ?? targetAddress(target, 0),
+                      ]),
+                    ),
+                    ...(profile.branches ? { branches: profile.branches } : {}),
+                  }
+                : {}),
             },
           ]
         : [],
@@ -473,8 +519,14 @@ async function main() {
     const registered = (connectors.connectors ?? []).find((c) => c.id === profile.connector);
     check(`the ${profile.connector} connector is registered`, Boolean(registered));
     // Presence only — the registry reports whether the env var is set, never
-    // what is in it.
-    check("its credential resolves", registered?.auth?.ready === true, `${TOKEN_ENV} is set`);
+    // what is in it. A preset that takes no credential has to reach the same
+    // answer from an empty list, or the checklist would block a crew on a
+    // variable nothing reads.
+    check(
+      "its credential resolves",
+      registered?.auth?.ready === true,
+      stub ? `${TOKEN_ENV} is set` : `${profile.connector} takes no credential`,
+    );
   } else {
     check(
       "this path needs no connector, and the flow's own steps say so",
@@ -574,7 +626,17 @@ async function main() {
   );
 
   console.log("\nEnforcement");
-  const refusedTarget = targets[profile.refuses];
+  /*
+    Usually the address the sample flow's own write path spends against, taken
+    from its `{{target.*}}` bindings. A flow with no write path binds no target,
+    and `governance-desk` is that case — its refusal claim is about an address
+    its flow never names: the withdrawal address the blueprint deliberately
+    leaves off the whitelist, so a proposal routing funds to this org can be
+    voted on and the funds cannot be received. The derived address stands for
+    it, and it is unadmitted for the same reason every other one here is:
+    nothing whitelisted it.
+  */
+  const refusedTarget = targets[profile.refuses] ?? targetAddress(profile.refuses, 0);
   const verdict = await mcp("lacrew_check_policy", {
     agent: seats.roles[wanted[0]],
     target: refusedTarget,
@@ -678,19 +740,19 @@ async function main() {
         "and it never merged, because nothing admitted the merge authority",
         !stub.hits.some((h) => h.startsWith("PUT ")),
       );
-    } else {
+    }
+    if (profile.endsIn) {
       /*
-        The same refusal, one layer up. This path has no route to watch, so what
-        stands in for the stub's hit log is where the run ended: policy answered
-        DENY for the publishing endpoint, the branch took its false edge, and
-        the run assembled the package a human reads instead of publishing.
+        The same refusal, one layer up. A path with no route to watch has no hit
+        log, so what stands in for it is where the run ended — the steps it
+        reached, and the ones it must not have.
       */
+      const { claim, ran: must, notRan } = profile.endsIn;
       check(
-        "it ended in the human sign-off package, not a publication",
-        ran.has("signoff") && !ran.has("published"),
+        claim,
+        must.every((id) => ran.has(id)) && notRan.every((id) => !ran.has(id)),
         [...ran].join(", ").slice(0, 200),
       );
-      check("and it never reached the publication gate at all", !ran.has("publish"));
     }
     const after = crewChecklist(await facts());
     check(

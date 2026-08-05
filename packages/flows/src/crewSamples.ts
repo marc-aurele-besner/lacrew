@@ -98,6 +98,19 @@ const samples: CrewSampleRun[] = [
     safety:
       "Nothing leaves LaCrew: every step is model work against a brief written here, and the flow calls no connector route at all. The one write it could attempt is the publication, and this blueprint deliberately leaves the publishing endpoint off the whitelist — so the flow asks policy first, reads DENY, and assembles the human sign-off package instead of posting. Admitting that endpoint is a high-tier proposal both human seats can see, never a side effect of this run.",
   },
+  {
+    blueprint: "governance-desk",
+    flow: "governance-proposal-sweep",
+    // Aave's space: large, public, and the one the Snapshot preset was
+    // verified against. A space rather than a proposal is the whole point of
+    // this fixture — the crew is being asked to find the work, not to reason
+    // about work somebody else already found.
+    input: { space: "aavedao.eth" },
+    summary:
+      "Sweeps a public Snapshot space for open proposals, picks the one that needs a decision, and writes the vote instruction with its rationale.",
+    safety:
+      "The read is one unauthenticated GraphQL query against a public governance forum, so it needs no credential and touches nothing of yours — this is the cheapest certified sample to actually run. Nothing is voted anywhere: the desk holds no key that could sign a Snapshot message and no route on the connector could send one, so the run ends in an instruction for a human rather than a record of a vote. If the space has nothing open the flow says so and hands it to a human, which is the honest answer rather than a manufactured decision.",
+  },
 ];
 
 /** The certified sample run for a blueprint, or nothing when it has none. */

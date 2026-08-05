@@ -106,7 +106,14 @@ const lpPositions = {
 };
 
 /**
- * A Snapshot space's open queue, recorded from `hub.snapshot.org` rather than
+ * The certified first-run input for `governance-desk`, taken from the same
+ * fixture as the sample above so the scenario and the run the product hands an
+ * operator cannot drift apart.
+ */
+const GOVERNANCE_DESK_SPACE = crewSampleRun("governance-desk")!.input;
+
+/**
+ * That space's open queue, recorded from `hub.snapshot.org` rather than
  * invented. The desk's whole claim is that it finds work by itself, and a
  * fixture somebody typed would pin the flow against a payload shape the hub
  * does not serve — which is the drift the recording exists to catch.
@@ -118,20 +125,19 @@ const snapshotQueue = {
     data: {
       proposals: [
         {
-          id: "0x6dd4ac816d4c2dadec606a66a0c9d2549c8e1a209397b0bafdc316226dfc9640",
-          title:
-            "[sdCRV] [Ethereum] Activate the svZCHF/crvUSD LlamaLend v2 market with a 500,000 crvUSD borrow cap, 10% admin percentage, tweak discounts, and add the market's gauge to the Gauge Controller.",
-          body: "Quorum: 10% asdCRV\n\nView more on https://curve.finance/dao/#/ethereum/proposals/1474-OWNERSHIP",
-          choices: ["Yes", "No"],
+          id: "0x1d5029f1b99b62843590e28d027a1a5aa21f4fe19f175284197c58779db14027",
+          title: "[ARFC] Onboard PT-AUSD-8OCT2026 to Aave V3 Monad Instance",
+          body: "# Summary\n\nThis ARFC proposes onboarding PT-AUSD-8OCT2026, the PT for Agora's AUSD, to the Aave V3 instance on Monad.\n\n# Motivation\n\nAave went live on Monad in July 2026.",
+          choices: ["For", "Against", "Abstain"],
           state: "active",
-          start: 1785954311,
-          end: 1786206311,
+          start: 1786042739,
+          end: 1786301939,
           quorum: 0,
-          scores: [0, 0],
+          scores: [0, 0, 0],
           scores_total: 0,
-          link: "https://snapshot.box/#/s:concentratordao.eth/proposal/0x6dd4ac816d4c2dadec606a66a0c9d2549c8e1a209397b0bafdc316226dfc9640",
-          author: "0x192F0fc41d78B15a84Dfeb2C8704FC99DdAf10e1",
-          space: { id: "concentratordao.eth", name: "Concentrator" },
+          link: "https://snapshot.box/#/s:aavedao.eth/proposal/0x1d5029f1b99b62843590e28d027a1a5aa21f4fe19f175284197c58779db14027",
+          author: "0x2cc1ADE245020FC5AAE66Ad443e1F66e01c54Df1",
+          space: { id: "aavedao.eth", name: "Aave DAO" },
         },
       ],
     },
@@ -538,7 +544,7 @@ const scenarios: FlowEvalScenario[] = [
     flow: "governance-proposal-sweep",
     blueprint: "governance-desk",
     asAgent: "proposal-scout",
-    input: { space: "concentratordao.eth" },
+    input: GOVERNANCE_DESK_SPACE,
     mocks: {
       tools: { "snapshot.query": { result: snapshotQueue } },
       model: [{ when: "FOR, AGAINST, ABSTAIN, or ESCALATE", reply: "FOR" }],
@@ -562,7 +568,7 @@ const scenarios: FlowEvalScenario[] = [
     flow: "governance-proposal-sweep",
     blueprint: "governance-desk",
     asAgent: "proposal-scout",
-    input: { space: "concentratordao.eth" },
+    input: GOVERNANCE_DESK_SPACE,
     mocks: {
       tools: { "snapshot.query": { result: snapshotQueue } },
       model: [{ when: "FOR, AGAINST, ABSTAIN, or ESCALATE", reply: "ESCALATE" }],
