@@ -364,7 +364,9 @@ export LACREW_ROOT_APPROVAL_RELAYER=0x…          # a funded key; authorizes no
 export LACREW_ROOT_APPROVAL_RELAY_CHAINS=31337   # the only chains it may spend on
 ```
 
-With no relayer for the chain, `/intents/resolve` answers `409 safe_exec_unsigned` and hands back the built transaction for your own wallet to send. Nothing is recorded then — handing someone a transaction is not a spend that happened — so tell the orchestrator once it lands, and it re-reads the chain before writing anything:
+With no relayer for the chain, `/intents/resolve` answers `409 safe_exec_unsigned` and hands back the built transaction for your own wallet to send. Nothing is recorded then — handing someone a transaction is not a spend that happened — so tell the orchestrator once it lands, and it re-reads the chain before writing anything.
+
+In the cloud Approvals inbox this is one press: the row keeps the signed approval and offers "Connect a wallet and send", which connects, broadcasts, and confirms. Approve and Deny disappear from that row while it stands, because the decision is already signed and offering them again would ask for the same consent twice. Driving it yourself:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8788/intents/confirm \
