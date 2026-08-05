@@ -5,13 +5,19 @@ import { cmdConnectors } from "./connectors.js";
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa";
 const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb";
+const PUSH_AUTHORITY = "0x00000000000000000000000000000000000000cc";
 
-/** Both github writes bound, as `config` requires before it will emit anything. */
+/** Every github write bound, as `config` requires before it will emit anything —
+ *  the push additionally naming the branches it may land on. */
 const BIND_GITHUB_WRITES = [
   "--policy-target",
   `merge_pull_request=${MERGE_AUTHORITY}`,
   "--policy-target",
   `create_issue_comment=${COMMENT_AUTHORITY}`,
+  "--policy-target",
+  `push_authority=${PUSH_AUTHORITY}`,
+  "--branch",
+  "dependabot/**",
 ];
 
 /** Run a command with stdout captured, so assertions read what a user reads. */
@@ -130,6 +136,14 @@ describe("lacrew connectors", () => {
       "merge_pull_request",
       "--omit",
       "create_issue_comment",
+      "--omit",
+      "update_file",
+      "--omit",
+      "create_tree",
+      "--omit",
+      "create_commit",
+      "--omit",
+      "update_ref",
     ]);
     assert.equal(code, undefined);
     const parsed = JSON.parse(out) as Connector[];

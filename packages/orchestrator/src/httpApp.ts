@@ -50,7 +50,7 @@ import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
-import { connectorPresets } from "./connectorPresets.js";
+import { connectorPresets, presetPolicyTargetKey } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
@@ -645,6 +645,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
             params: r.params ?? [],
             requiresPolicyTarget: Boolean(r.policyTarget?.required),
             ...(r.policyTarget ? { policyTargetNote: r.policyTarget.note } : {}),
+            // The name the address is bound under, which is the route's own
+            // unless several share one authority. A catalog that printed the
+            // route name there would hand back a command that fails at boot.
+            ...(presetPolicyTargetKey(r) ? { policyTargetName: presetPolicyTargetKey(r) } : {}),
+            // A write that lands on a branch will not register until the
+            // operator names which ones, so the catalog's command has to carry
+            // the flag. Leaving it out would print a line that fails at boot.
+            ...(r.guards?.branchArg ? { requiresBranchAllowlist: true } : {}),
             // The mode this route would ship with, so the catalog says what
             // registering it actually turns on rather than leaving an operator
             // to discover their first merge stopped for a question.

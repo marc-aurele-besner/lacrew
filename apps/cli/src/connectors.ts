@@ -23,6 +23,9 @@ import {
   buildConnectorPreset,
   connectorPresets,
   getConnectorPreset,
+  presetPolicyTargetKey,
+  presetPolicyTargetRoutes,
+  DEFAULT_DENY_PATH_PREFIXES,
   DEFAULT_MAX_RESPONSE_BYTES,
   type ConnectorPreset,
   type ConnectorPresetAuthMode,
@@ -47,7 +50,11 @@ function flagValues(args: string[], flag: string): string[] {
 
 function routeLine(preset: ConnectorPreset, name: string): string {
   const route = preset.routes.find((r) => r.name === name)!;
-  const gate = route.policyTarget?.required ? "  ⚠ needs a policy target" : "";
+  const needs = [
+    ...(route.policyTarget?.required ? ["a policy target"] : []),
+    ...(route.guards?.branchArg ? ["a branch allowlist"] : []),
+  ];
+  const gate = needs.length > 0 ? `  ⚠ needs ${needs.join(" and ")}` : "";
   return `  ${route.effect === "write" ? "write" : "read "}  ${preset.id}.${route.name}  ${route.method} ${route.path}${gate}`;
 }
 
@@ -81,7 +88,7 @@ function printList(): void {
     console.log("");
   }
   console.log("Detail:  lacrew connectors show <id>");
-  console.log("Config:  lacrew connectors config <id> --policy-target <route>=0x…");
+  console.log("Config:  lacrew connectors config <id> --policy-target <name>=0x…");
 }
 
 function printShow(id: string): void {
@@ -120,6 +127,20 @@ function printShow(id: string): void {
     if (route.description) console.log(`         ${route.description}`);
     if (route.params?.length) console.log(`         args: ${route.params.join(", ")}`);
     if (route.policyTarget) console.log(`         target: ${route.policyTarget.note}`);
+    if (route.guards?.branchArg) {
+      console.log(
+        `         branches: "${route.guards.branchArg}" is refused unless it matches --branch. There is no default.`,
+      );
+    }
+    if (route.guards?.pathArg) {
+      console.log(
+        `         paths: "${route.guards.pathArg}" refuses ${DEFAULT_DENY_PATH_PREFIXES.join(", ")} unless --deny-path replaces the list.`,
+      );
+    }
+    const capped = Object.entries(route.argRules ?? {}).filter(([, r]) => r.maxBytes !== undefined);
+    for (const [arg, rule] of capped) {
+      console.log(`         max ${arg}: ${formatBytes(rule.maxBytes!)}`);
+    }
     if (route.maxResponseBytes) {
       console.log(
         `         max response: ${formatBytes(route.maxResponseBytes)} (raised for this route)`,
@@ -132,22 +153,32 @@ function printShow(id: string): void {
       ` connector_response_too_large, unless a route above raises its own limit.`,
   );
 
-  const gated = preset.routes.filter((r) => r.policyTarget?.required);
+  // By binding name, not by route: the four calls of an atomic push name one
+  // authority, and printing four lines would read as four decisions.
+  const gated = presetPolicyTargetRoutes(preset);
+  const branched = preset.routes.filter((r) => r.guards?.branchArg);
   const needsBaseUrl = preset.baseUrl === undefined;
   if (gated.length > 0 || needsBaseUrl) {
     console.log("\nBind before registering");
     if (needsBaseUrl) console.log("  --base-url https://…");
-    for (const route of gated) {
-      console.log(`  --policy-target ${route.name}=0x…`);
+    for (const name of gated) {
+      const shared = preset.routes.filter((r) => presetPolicyTargetKey(r) === name);
+      const covers =
+        shared.length > 1 ? `   (admits ${shared.map((r) => r.name).join(", ")})` : "";
+      console.log(`  --policy-target ${name}=0x…${covers}`);
     }
+    if (branched.length > 0) console.log("  --branch '<glob>'   (repeatable)");
     if (gated.length > 0) {
+      const writes = preset.routes.filter((r) => r.policyTarget?.required).map((r) => r.name);
       console.log("  Or leave the write out entirely:");
-      console.log(`  --omit ${gated.map((r) => r.name).join(" --omit ")}`);
+      console.log(`  --omit ${writes.join(" --omit ")}`);
     }
   }
 
   console.log(
-    `\nEmit it:  lacrew connectors config ${preset.id}${needsBaseUrl ? " --base-url https://…" : ""}${gated.map((r) => ` --policy-target ${r.name}=0x…`).join("")}`,
+    `\nEmit it:  lacrew connectors config ${preset.id}${needsBaseUrl ? " --base-url https://…" : ""}${gated
+      .map((name) => ` --policy-target ${name}=0x…`)
+      .join("")}${branched.length > 0 ? " --branch 'dependabot/**'" : ""}`,
   );
 }
 
@@ -170,6 +201,8 @@ function parsePolicyTargets(args: string[]): Record<string, `0x${string}`> {
 function printConfig(id: string, args: string[]): void {
   const policyTargets = parsePolicyTargets(args);
   const omitRoutes = flagValues(args, "--omit");
+  const branches = flagValues(args, "--branch");
+  const denyPaths = flagValues(args, "--deny-path");
   const authMode = flagValue(args, "--auth") as ConnectorPresetAuthMode | undefined;
   const options: ConnectorPresetOptions = {
     ...(authMode ? { authMode } : {}),
@@ -181,6 +214,11 @@ function printConfig(id: string, args: string[]): void {
     ...(flagValue(args, "--id") ? { id: flagValue(args, "--id") } : {}),
     ...(Object.keys(policyTargets).length > 0 ? { policyTargets } : {}),
     ...(omitRoutes.length > 0 ? { omitRoutes } : {}),
+    ...(branches.length > 0 ? { branches } : {}),
+    // An empty `--deny-path ''` is how an operator says "keep only the
+    // platform's own protections", and it has to be distinguishable from not
+    // passing the flag at all, which keeps the default.
+    ...(args.includes("--deny-path") ? { denyPathPrefixes: denyPaths } : {}),
   };
   // Throws rather than emits when a write is unbound: config that would stop
   // the orchestrator at boot is worse than an error here, where the operator
@@ -426,7 +464,14 @@ Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
 
 Flags for config:
   --auth <mode>                 Credential mode (see: connectors show <id>)
-  --policy-target <route>=0x…   Admit a write route (repeatable)
+  --policy-target <name>=0x…    Admit a write (repeatable). The name is the
+                                route's, or the authority several routes share
+                                — see: connectors show <id>
+  --branch <glob>               Branches a push route may write to (repeatable;
+                                * within a segment, ** across). No default —
+                                a push route will not register without one
+  --deny-path <prefix>          Paths a push route refuses (repeatable;
+                                replaces the default ${DEFAULT_DENY_PATH_PREFIXES.join(", ")})
   --omit <route>                Leave a route out (repeatable)
   --base-url <url>              Self-hosted instance (e.g. GitHub Enterprise);
                                 required for a preset with no default host

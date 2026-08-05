@@ -351,6 +351,57 @@ test("the GitHub crew asks policy before it merges, and cannot merge otherwise",
   assert.equal(merge?.kind === "tool" && merge.tool, "github.merge_pull_request");
 });
 
+test("the fixer asks policy before it pushes, and reads nothing if refused", () => {
+  const def = getFlowTemplate("dep-fix-loop")!.definition;
+  const check = def.steps.find((s) => s.id === "push-check");
+  assert.equal(check?.kind === "tool" && check.tool, "lacrew_check_policy");
+  // The push is reachable only from the branch that read the verdict, and so
+  // are the reads: asking first is what makes a DENY cost nothing and touch
+  // nothing, rather than refusing after two requests have already gone out.
+  const reachesPush = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"push"'));
+  assert.deepEqual(
+    reachesPush.map((s) => s.id),
+    ["build-commit"],
+  );
+  const reachesRead = def.steps.filter((s) =>
+    JSON.stringify(stepEdges(s)).includes('"read-changed"'),
+  );
+  assert.deepEqual(
+    reachesRead.map((s) => s.id),
+    ["may-push"],
+  );
+  const push = def.steps.find((s) => s.id === "push");
+  assert.equal(push?.kind === "tool" && push.tool, "github.update_ref");
+});
+
+test("the fix lands as one commit, whatever it touches", () => {
+  const def = getFlowTemplate("dep-fix-loop")!.definition;
+  const step = (id: string) => {
+    const s = def.steps.find((x) => x.id === id);
+    assert.ok(s?.kind === "tool", `${id} should be a tool step`);
+    return s;
+  };
+  // Git's own object API in order: a tree off the branch's tree, one commit on
+  // it, then the ref moves. Several files in, one commit and one CI run out.
+  assert.equal(step("build-tree").tool, "github.create_tree");
+  assert.equal(step("build-tree").args?.base_tree, "{{steps.read-base.json.body.tree.sha}}");
+  assert.equal(step("build-tree").args?.tree, "{{steps.patch.text}}");
+  assert.equal(step("build-commit").tool, "github.create_commit");
+  assert.equal(step("build-commit").args?.tree, "{{steps.build-tree.json.body.sha}}");
+  // The head the run read, so a branch that moved underneath makes this a
+  // non-fast-forward that GitHub refuses rather than a silent clobber.
+  assert.equal(step("build-commit").args?.parents, "{{steps.read-head.json.body.object.sha}}");
+});
+
+test("the push carries the branch it was given and the commit it built", () => {
+  const push = getFlowTemplate("dep-fix-loop")!.definition.steps.find((s) => s.id === "push");
+  assert.ok(push?.kind === "tool");
+  assert.equal(push.args?.branch, "{{input.branch}}");
+  assert.equal(push.args?.sha, "{{steps.build-commit.json.body.sha}}");
+  // No field that could force, and none that could name a different repo.
+  assert.deepEqual(Object.keys(push.args ?? {}).sort(), ["branch", "owner", "repo", "sha"]);
+});
+
 test("publication is asked of policy before it is ever proposed", () => {
   // Verified on Anvil: proposing against an unadmitted target reverts with
   // SessionTargetDenied, which fails the run — the sign-off package the deny

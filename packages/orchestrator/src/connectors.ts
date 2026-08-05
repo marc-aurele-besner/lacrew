@@ -15,7 +15,10 @@
  *    a route the operator registered. It cannot compose a URL, cannot change
  *    the method, and cannot reach a host nobody admitted. A `{placeholder}` in
  *    a path is filled from named args and percent-encoded, so an arg cannot
- *    escape its segment and walk to another endpoint.
+ *    escape its segment and walk to another endpoint. A route may narrow an
+ *    argument further still — `argRules` pins a value to a pattern, a set, or a
+ *    size, which is how "this crew may only push to `dependabot/*`" is a
+ *    property of the registration rather than a sentence in a prompt.
  * 2. **Credentials never enter the flow.** Auth material is read from the
  *    environment at call time. Args cannot set headers, and a definition that
  *    names a connector never sees its token.
@@ -66,6 +69,113 @@ export type ConnectorAuth =
    */
   | GithubAppAuth;
 
+/**
+ * What one argument of a route is allowed to be.
+ *
+ * The param allowlist answers "which fields may a flow set". This answers "and
+ * what may they say" — the difference between registering a route that can push
+ * to a branch and registering one that can push to *this* branch. A rule is
+ * checked before the request is built, so a refused value never reaches the
+ * network, and the refusal names the argument without echoing what was in it.
+ *
+ * Rules are operator configuration, at the same trust level as the base URL: a
+ * `pattern` is compiled and run against caller-supplied values, so write it
+ * yourself rather than accepting one from a marketplace listing.
+ */
+export type ConnectorArgRule = {
+  /**
+   * This rule in the operator's own words — `dependabot/**, renovate/**` rather
+   * than the regex it compiled to. Purely for the surfaces that show a crew's
+   * reach; nothing is enforced from it, and a rule without one is still a rule.
+   */
+  label?: string;
+  /**
+   * The call fails without this argument. Body and query args are optional by
+   * default, which is usually right and occasionally dangerous: GitHub commits
+   * to the *default branch* when a write leaves `branch` out, so the branch
+   * allowlist would constrain a field nobody sent. A path arg is always
+   * required; saying so again here is harmless.
+   */
+  required?: boolean;
+  /**
+   * Regex the value must match **whole** — it is anchored for you, so
+   * `dependabot/.+` cannot be slipped past with a prefix.
+   */
+  pattern?: string;
+  /** The complete set of accepted values. */
+  oneOf?: string[];
+  /**
+   * Largest the value may be, in UTF-8 bytes, as the flow supplied it. Checked
+   * before `encode`, so the number is the one an author reasons about (a file's
+   * text) rather than its transport size.
+   */
+  maxBytes?: number;
+  /**
+   * The value is a `/`-separated path — a repo path like `src/index.ts`, a
+   * branch like `renovate/lockfile`. `.`, `..`, and empty segments are refused,
+   * so it can still only name something inside where it was put.
+   *
+   * On a path argument it also changes the encoding: each segment is
+   * percent-encoded separately so the slashes survive. Without it a path arg is
+   * one segment and its slashes are encoded, which is the right default —
+   * most path args are an owner, a repo, or a number.
+   */
+  multiSegment?: boolean;
+  /**
+   * Body args only: send the value base64-encoded. GitHub's Contents API takes
+   * a file that way, and the alternative is asking a model to emit base64 —
+   * a step that fails silently by producing something that decodes to garbage.
+   */
+  encode?: "base64";
+  /**
+   * The value is fixed at registration: whatever the caller passed is replaced,
+   * and the field is sent even when the caller omitted it.
+   *
+   * This is the strongest thing in here, because it removes a choice rather
+   * than narrowing one. A git tree entry's `mode` decides whether it is a
+   * regular file, an executable, a **symlink**, or a **submodule pointer**; a
+   * crew whose charter is "fix the build" has no business expressing the last
+   * two, and an allowlist would still let a model try. Pinned, they are not
+   * representable.
+   */
+  fixed?: string;
+  /**
+   * Body args only: parse the value as JSON before sending it.
+   *
+   * A flow's args are strings by the time they are interpolated, so a route
+   * whose body takes a list — git's create-tree takes the files — could not be
+   * called at all. Invalid JSON fails the call; it is not passed through as a
+   * string, which would reach the far side as a field that looks filled in.
+   *
+   * A fenced code block is unwrapped first. That is the one wrapper a model
+   * adds after being told not to, and failing a repair on three backticks is
+   * not a safety property.
+   */
+  json?: boolean;
+  /**
+   * With `json`: the parsed value must be an array of objects, and each object
+   * is **rebuilt** from these rules — declared fields only, in the same spirit
+   * as the route's own param allowlist. A key nobody declared is dropped rather
+   * than forwarded, so a model cannot smuggle `sha` or `type` into an entry the
+   * operator described as a path and some content.
+   *
+   * Item rules take the scalar half of this vocabulary: `required`, `pattern`,
+   * `oneOf`, `maxBytes`, `multiSegment`, `fixed`.
+   */
+  items?: Record<string, ConnectorArgRule>;
+  /** With `items`: how many entries the array may carry. */
+  maxItems?: number;
+  /**
+   * Send the value as a single-element array.
+   *
+   * Not a convenience: git's create-commit takes `parents`, and a commit with
+   * two of them is a merge and a commit with none is an orphan. A crew that
+   * repairs a branch makes neither, and passing one value that is wrapped here
+   * means neither is expressible rather than merely refused.
+   */
+  wrap?: "array";
+};
+
 export type ConnectorRoute = {
   /** Suffix a flow calls as `<connector>.<name>`, e.g. `get_pull_request`. */
   name: string;
@@ -88,6 +198,25 @@ export type ConnectorRoute = {
    * to smuggle fields into a request the operator described.
    */
   params?: string[];
+  /**
+   * Per-argument constraints, by argument name. Names a path placeholder or an
+   * entry of `params`; anything else is a typo and refused at registration
+   * rather than silently constraining nothing.
+   */
+  argRules?: Record<string, ConnectorArgRule>;
+  /**
+   * Constant headers for this route only — a media type the endpoint needs that
+   * the rest of the connector does not. Same refusal as the connector's own:
+   * none of them may carry auth material.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Largest request body this route may send, in bytes. Overrides the
+   * connector's, which overrides the registry default. A write that carries a
+   * file is the reason this exists: without it the only bound on what a crew
+   * uploads is what a model happened to emit.
+   */
+  maxRequestBytes?: number;
   /**
    * Address standing for "authority to take this action". When set, the caller
    * is expected to clear it with `lacrew_check_policy` first; `callConnector`
@@ -140,6 +269,11 @@ export type Connector = {
    * registry default; a route may narrow or widen it again.
    */
   maxResponseBytes?: number;
+  /**
+   * Largest request body any route here may send, in bytes. Overrides the
+   * registry default; a route may narrow or widen it again.
+   */
+  maxRequestBytes?: number;
 };
 
 export type ConnectorCallResult = {
@@ -178,6 +312,14 @@ export type ConnectorRouteView = {
    * the one place it happened to be written down.
    */
   maxResponseBytes: number;
+  /** Same, for what this route will send. Resolved the same way. */
+  maxRequestBytes: number;
+  /**
+   * The constraints on this route's arguments, as registered. Public by design:
+   * "which branches may this crew push to" is the operator's own decision and
+   * the answer belongs on the surface where they read what the crew can do.
+   */
+  argRules?: Record<string, ConnectorArgRule>;
 };
 
 /**
@@ -192,6 +334,8 @@ export type ConnectorView = {
   timeoutMs: number;
   /** The limit routes here inherit when they declare none of their own. */
   maxResponseBytes: number;
+  /** The limit routes here inherit for what they send. */
+  maxRequestBytes: number;
   auth: {
     kind: ConnectorAuth["kind"];
     envVars: string[];
@@ -279,6 +423,11 @@ export type ConnectorRegistryOptions = {
    * a connector or a route narrows or widens it from there.
    */
   maxResponseBytes?: number;
+  /**
+   * Default request ceiling for connectors that declare none, in bytes.
+   * Defaults to `DEFAULT_MAX_REQUEST_BYTES`.
+   */
+  maxRequestBytes?: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -295,6 +444,18 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  * happens.
  */
 export const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+
+/**
+ * How much a connector will send in one request before refusing, when nothing
+ * narrower is declared.
+ *
+ * The response ceiling bounds what a crew reads; this bounds what it *does*. A
+ * write route that carries a file takes its content from a model completion,
+ * and a model that loops or pastes its whole context produces a body nobody
+ * sized. One mebibyte is far past any patch a fixer should be writing and far
+ * under the size where an accident becomes an incident on the other side.
+ */
+export const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 
 /** Env vars a connector reads for auth — what an operator must set. */
 export function connectorEnvVars(connector: Connector): string[] {
@@ -361,6 +522,133 @@ function isPositiveInteger(value: number | undefined): boolean {
   return value === undefined || (Number.isInteger(value) && value > 0);
 }
 
+/** Whether params ride in a JSON body rather than the query string. */
+function sendsBody(method: ConnectorRoute["method"]): boolean {
+  return method !== "GET" && method !== "DELETE";
+}
+
+/** The `{placeholder}` names a path fills from args. */
+function pathArgNames(path: string): string[] {
+  return [...(path ?? "").matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((m) => m[1]!);
+}
+
+/**
+ * Constant headers, wherever they are declared. A header that could set
+ * credentials would be a second, unaudited way to authenticate — and one the
+ * operator reads as harmless metadata.
+ */
+function headerErrors(
+  where: string,
+  headers: Record<string, string> | undefined,
+  authHeaderName: string | undefined,
+): string[] {
+  const errors: string[] = [];
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (!/^[A-Za-z0-9-]+$/.test(name)) {
+      errors.push(`${where} header "${name}" is not a header name`);
+      continue;
+    }
+    if (typeof value !== "string" || value.trim() === "") {
+      errors.push(`${where} header "${name}" has no value`);
+    }
+    if (name.toLowerCase() === "authorization" || name.toLowerCase() === authHeaderName) {
+      errors.push(`${where} header "${name}" would override the credential`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Anchor an operator's pattern so it matches the whole value. An unanchored
+ * `dependabot/.+` would admit `evil/dependabot/x`, which is the mistake a
+ * branch allowlist exists to prevent.
+ */
+export function wholeValueRegExp(pattern: string): RegExp {
+  return new RegExp(`^(?:${pattern})$`);
+}
+
+/** The checks that read the same whether a rule governs an argument or a field. */
+function scalarRuleErrors(where: string, arg: string, rule: ConnectorArgRule): string[] {
+  const errors: string[] = [];
+  if (rule.pattern !== undefined) {
+    try {
+      wholeValueRegExp(rule.pattern);
+    } catch {
+      errors.push(`${where} argRules "${arg}" pattern is not a regular expression`);
+    }
+  }
+  if (rule.oneOf !== undefined && rule.oneOf.length === 0) {
+    // A rule that admits nothing refuses every call, which reads as a broken
+    // connector rather than as the empty list it was.
+    errors.push(`${where} argRules "${arg}" oneOf is empty`);
+  }
+  if (!isPositiveInteger(rule.maxBytes)) {
+    errors.push(`${where} argRules "${arg}" maxBytes must be a positive integer`);
+  }
+  if (rule.fixed !== undefined && typeof rule.fixed !== "string") {
+    errors.push(`${where} argRules "${arg}" fixed must be a string`);
+  }
+  return errors;
+}
+
+/** Rules that constrain nothing, or constrain an argument the route never takes. */
+function argRuleErrors(connectorId: string, route: ConnectorRoute): string[] {
+  const errors: string[] = [];
+  const where = `route "${connectorId}.${route.name}"`;
+  const inPath = new Set(pathArgNames(route.path ?? ""));
+  const inParams = new Set(route.params ?? []);
+  for (const [arg, rule] of Object.entries(route.argRules ?? {})) {
+    if (!inPath.has(arg) && !inParams.has(arg)) {
+      errors.push(`${where} argRules names "${arg}", which the route does not take`);
+      continue;
+    }
+    errors.push(...scalarRuleErrors(where, arg, rule));
+    if (rule.encode && !inParams.has(arg)) {
+      // Encoding a path argument would produce a segment nobody can read back,
+      // and the caller would be describing a resource that does not exist.
+      errors.push(`${where} argRules "${arg}" is not a body argument and cannot be encoded`);
+    }
+    for (const [field, body] of [
+      ["encode", rule.encode],
+      ["json", rule.json],
+      ["wrap", rule.wrap],
+    ] as const) {
+      if (body && !sendsBody(route.method)) {
+        errors.push(`${where} sends no body, so argRules "${arg}" cannot use ${field}`);
+      }
+    }
+    if ((rule.json || rule.wrap) && inPath.has(arg)) {
+      // A path segment is a string. A list rendered into one is a caller
+      // describing a resource that does not exist.
+      errors.push(`${where} argRules "${arg}" is a path argument and cannot carry a list`);
+    }
+    if (rule.items && !rule.json) {
+      errors.push(`${where} argRules "${arg}" declares items but is not json`);
+    }
+    if (rule.maxItems !== undefined && !rule.items) {
+      errors.push(`${where} argRules "${arg}" declares maxItems but no items`);
+    }
+    if (!isPositiveInteger(rule.maxItems)) {
+      errors.push(`${where} argRules "${arg}" maxItems must be a positive integer`);
+    }
+    if (rule.json && rule.wrap) {
+      errors.push(`${where} argRules "${arg}" cannot both parse a list and wrap one`);
+    }
+    for (const [field, item] of Object.entries(rule.items ?? {})) {
+      errors.push(...scalarRuleErrors(where, `${arg}.${field}`, item));
+      // Item rules are the scalar half of the vocabulary. Nesting the rest
+      // would be a schema language, and a connector definition arriving as
+      // operator config is not the place for one.
+      for (const unsupported of ["json", "items", "encode", "wrap", "maxItems"] as const) {
+        if (item[unsupported] !== undefined) {
+          errors.push(`${where} argRules "${arg}.${field}" cannot use ${unsupported}`);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
 function isLoopback(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
 }
@@ -410,6 +698,9 @@ export function validateConnector(connector: Connector): string[] {
   if (!isPositiveInteger(connector.maxResponseBytes)) {
     errors.push(`connector "${connector.id}" maxResponseBytes must be a positive integer`);
   }
+  if (!isPositiveInteger(connector.maxRequestBytes)) {
+    errors.push(`connector "${connector.id}" maxRequestBytes must be a positive integer`);
+  }
 
   const authHeaderName =
     connector.auth?.kind === "bearer"
@@ -417,20 +708,7 @@ export function validateConnector(connector: Connector): string[] {
       : connector.auth?.kind === "header"
         ? connector.auth.header?.trim().toLowerCase()
         : undefined;
-  for (const [name, value] of Object.entries(connector.headers ?? {})) {
-    if (!/^[A-Za-z0-9-]+$/.test(name)) {
-      errors.push(`connector "${connector.id}" header "${name}" is not a header name`);
-      continue;
-    }
-    if (typeof value !== "string" || value.trim() === "") {
-      errors.push(`connector "${connector.id}" header "${name}" has no value`);
-    }
-    // A constant header that could set credentials would be a second, unaudited
-    // way to authenticate — and one the operator reads as harmless metadata.
-    if (name.toLowerCase() === "authorization" || name.toLowerCase() === authHeaderName) {
-      errors.push(`connector "${connector.id}" header "${name}" would override the credential`);
-    }
-  }
+  errors.push(...headerErrors(`connector "${connector.id}"`, connector.headers, authHeaderName));
 
   const seen = new Set<string>();
   for (const route of connector.routes ?? []) {
@@ -476,18 +754,153 @@ export function validateConnector(connector: Connector): string[] {
         `route "${connector.id}.${route.name}" maxResponseBytes must be a positive integer`,
       );
     }
+    if (!isPositiveInteger(route.maxRequestBytes)) {
+      errors.push(
+        `route "${connector.id}.${route.name}" maxRequestBytes must be a positive integer`,
+      );
+    }
+    errors.push(
+      ...headerErrors(`route "${connector.id}.${route.name}"`, route.headers, authHeaderName),
+    );
+    errors.push(...argRuleErrors(connector.id, route));
   }
   return errors;
 }
 
+/**
+ * Hold a value to the route's rule, or refuse the call.
+ *
+ * The error names the tool and the argument and never the value: a refused
+ * branch name is uninteresting, and a refused file body would put the whole
+ * thing in a log line and an audit row.
+ */
+function checkArgRule(
+  tool: string,
+  arg: string,
+  raw: string,
+  rule: ConnectorArgRule | undefined,
+): void {
+  if (!rule) return;
+  if (rule.maxBytes !== undefined && Buffer.byteLength(raw) > rule.maxBytes) {
+    throw new Error(`connector_arg_too_large:${tool}:${arg}:${rule.maxBytes}`);
+  }
+  if (rule.oneOf && !rule.oneOf.includes(raw)) {
+    throw new Error(`connector_arg_refused:${tool}:${arg}`);
+  }
+  if (rule.pattern && !wholeValueRegExp(rule.pattern).test(raw)) {
+    throw new Error(`connector_arg_refused:${tool}:${arg}`);
+  }
+  // A path is a path wherever it rides. On a path argument this also decides
+  // the encoding; in a body field there is nothing to encode, and the check is
+  // the whole point.
+  if (rule.multiSegment) checkSegments(tool, arg, raw);
+}
+
+/** `.`, `..`, and empty segments are not names inside anything. */
+function checkSegments(tool: string, arg: string, raw: string): void {
+  for (const part of raw.split("/")) {
+    if (part === "" || part === "." || part === "..") {
+      throw new Error(`connector_arg_refused:${tool}:${arg}`);
+    }
+  }
+}
+
+/**
+ * Parse a JSON argument, unwrapping a fenced code block first.
+ *
+ * The fence is the one wrapper a model adds after being told not to, and
+ * failing a repair on three backticks is not a safety property. Anything else
+ * that is not JSON fails the call rather than going out as a string, which
+ * would reach the far side as a field that looks filled in.
+ */
+function parseJsonArg(tool: string, arg: string, raw: string): unknown {
+  const unfenced = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    throw new Error(`connector_arg_not_json:${tool}:${arg}`);
+  }
+}
+
+/**
+ * Rebuild one entry of a list argument from the rules the operator declared.
+ *
+ * Declared fields only, in the same spirit as the route's own param allowlist:
+ * a key nobody wrote down is dropped rather than forwarded. That is what keeps
+ * a model from adding `sha` or `type` to something the operator described as a
+ * path and some content — and `fixed` is what keeps `mode` from ever saying
+ * symlink.
+ */
+function buildItem(
+  tool: string,
+  arg: string,
+  index: number,
+  entry: unknown,
+  items: Record<string, ConnectorArgRule>,
+): Record<string, unknown> {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    throw new Error(`connector_arg_refused:${tool}:${arg}`);
+  }
+  const source = entry as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [field, rule] of Object.entries(items)) {
+    const where = `${arg}[${index}].${field}`;
+    if (rule.fixed !== undefined) {
+      out[field] = rule.fixed;
+      continue;
+    }
+    const value = source[field];
+    if (value === undefined || value === null || String(value).trim() === "") {
+      if (rule.required) throw new Error(`connector_missing_arg:${where}`);
+      continue;
+    }
+    const raw = String(value);
+    checkArgRule(tool, where, raw, rule);
+    out[field] = raw;
+  }
+  return out;
+}
+
+/** Apply the list half of a rule: parse, bound, rebuild each entry, or wrap one. */
+function buildListArg(
+  tool: string,
+  arg: string,
+  value: unknown,
+  rule: ConnectorArgRule,
+): unknown[] {
+  if (rule.wrap === "array") return [value];
+  const parsed = parseJsonArg(tool, arg, String(value ?? ""));
+  if (!Array.isArray(parsed)) throw new Error(`connector_arg_refused:${tool}:${arg}`);
+  if (rule.maxItems !== undefined && parsed.length > rule.maxItems) {
+    throw new Error(`connector_arg_too_many:${tool}:${arg}:${rule.maxItems}`);
+  }
+  if (!rule.items) return parsed;
+  return parsed.map((entry, i) => buildItem(tool, arg, i, entry, rule.items!));
+}
+
+/**
+ * Encode a multi-segment path argument one segment at a time.
+ *
+ * The slashes survive — that is the point, a branch is `renovate/lockfile` and
+ * a file is `src/index.ts`. `checkArgRule` has already refused the segments that
+ * would walk out of where the path put it.
+ */
+function encodeSegments(raw: string): string {
+  return raw.split("/").map(encodeURIComponent).join("/");
+}
+
 /** Fill `{arg}` segments from args, percent-encoded so nothing escapes a segment. */
-function renderPath(route: ConnectorRoute, args: Record<string, unknown>): string {
+function renderPath(tool: string, route: ConnectorRoute, args: Record<string, unknown>): string {
   return route.path.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, key: string) => {
+    const rule = route.argRules?.[key];
+    if (rule?.fixed !== undefined) return encodeSegments(rule.fixed);
     const value = args[key];
     if (value === undefined || value === null || `${value}`.trim() === "") {
       throw new Error(`connector_missing_arg:${key}`);
     }
-    return encodeURIComponent(String(value));
+    const raw = String(value);
+    checkArgRule(tool, key, raw, rule);
+    return rule?.multiSegment ? encodeSegments(raw) : encodeURIComponent(raw);
   });
 }
 
@@ -542,6 +955,11 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
   const maxBytesFor = (connector: Connector, route: ConnectorRoute): number =>
     route.maxResponseBytes ?? connector.maxResponseBytes ?? defaultMaxBytes;
 
+  const defaultMaxRequestBytes = opts.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES;
+  /** Same precedence, for what goes out. */
+  const maxRequestBytesFor = (connector: Connector, route: ConnectorRoute): number =>
+    route.maxRequestBytes ?? connector.maxRequestBytes ?? defaultMaxRequestBytes;
+
   const resolve = (name: string): { connector: Connector; route: ConnectorRoute } | undefined => {
     const dot = name.indexOf(".");
     if (dot <= 0) return undefined;
@@ -563,6 +981,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           baseUrl: connector.baseUrl,
           timeoutMs: connector.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           maxResponseBytes: connector.maxResponseBytes ?? defaultMaxBytes,
+          maxRequestBytes: connector.maxRequestBytes ?? defaultMaxRequestBytes,
           auth: {
             kind: (connector.auth ?? { kind: "none" as const }).kind,
             envVars,
@@ -591,6 +1010,8 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
                   })
                 : null,
             maxResponseBytes: maxBytesFor(connector, route),
+            maxRequestBytes: maxRequestBytesFor(connector, route),
+            ...(route.argRules ? { argRules: route.argRules } : {}),
           })),
         };
       }),
@@ -625,18 +1046,61 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
         }
       }
 
-      const path = renderPath(route, args);
+      const path = renderPath(name, route, args);
       const url = new URL(`${connector.baseUrl.replace(/\/$/, "")}${path}`);
       const allowed = new Set(route.params ?? []);
       const payload: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(args)) {
-        if (allowed.has(key)) payload[key] = value;
+        if (!allowed.has(key)) continue;
+        const rule = route.argRules?.[key];
+        if (!rule) {
+          payload[key] = value;
+          continue;
+        }
+        // Fixed first: the caller's value is not narrowed here, it is replaced,
+        // so checking theirs would be checking something that never goes out.
+        if (rule.fixed !== undefined) {
+          payload[key] = rule.fixed;
+          continue;
+        }
+        if (rule.json || rule.wrap) {
+          payload[key] = buildListArg(name, key, value, rule);
+          continue;
+        }
+        const raw = String(value ?? "");
+        checkArgRule(name, key, raw, rule);
+        payload[key] =
+          rule.encode === "base64" ? Buffer.from(raw, "utf8").toString("base64") : value;
       }
-      const hasBody = route.method !== "GET" && route.method !== "DELETE";
+      // Checked after the loop because an argument nobody passed never enters
+      // it: the failure this catches is the field being absent, not wrong. A
+      // fixed field is always present, and a list is present when it is a list.
+      for (const [key, rule] of Object.entries(route.argRules ?? {})) {
+        if (!rule.required || !allowed.has(key)) continue;
+        if (rule.fixed !== undefined) {
+          payload[key] = rule.fixed;
+          continue;
+        }
+        const built = payload[key];
+        const empty = Array.isArray(built)
+          ? built.length === 0
+          : String(built ?? "").trim() === "";
+        if (empty) throw new Error(`connector_missing_arg:${key}`);
+      }
+      const hasBody = sendsBody(route.method);
       if (!hasBody) {
         for (const [key, value] of Object.entries(payload)) {
           url.searchParams.set(key, String(value));
         }
+      }
+      // Sized once, on exactly the bytes that would go out. A body assembled
+      // from a model completion has no other bound: the response ceiling says
+      // nothing about what a crew sends, and the other side's limit is found
+      // out by hitting it, after the request has already been made.
+      const requestBody = hasBody ? JSON.stringify(payload) : undefined;
+      const maxRequestBytes = maxRequestBytesFor(connector, route);
+      if (requestBody !== undefined && Buffer.byteLength(requestBody) > maxRequestBytes) {
+        throw new Error(`connector_request_too_large:${name}:${maxRequestBytes}`);
       }
 
       // Asked *after* the request is built, so what the human confirms is what
@@ -678,9 +1142,10 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
               // would shadow it, and the ordering keeps that true if validation
               // changes.
               ...(connector.headers ?? {}),
+              ...(route.headers ?? {}),
               ...(await authHeaders(connector, env, githubApp)),
             },
-            ...(hasBody ? { body: JSON.stringify(payload) } : {}),
+            ...(requestBody !== undefined ? { body: requestBody } : {}),
             signal: controller.signal,
           });
 
