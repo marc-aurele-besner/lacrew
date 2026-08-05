@@ -40,10 +40,11 @@ authority to a guess.
 
 The first three ship no flows, because how a support desk or an on-call rota
 actually works is the part most specific to one team, and inventing it would be
-the same fabrication one level down. The four DeFi patterns each ship one,
-because there the pipeline _is_ the claim: "this crew can only advise" is not a
-sentence in a summary, it is a policy check `lp-range-review` performs against a
-router nobody admitted — and it is only checkable because the flow runs it.
+the same fabrication one level down. The four DeFi patterns each ship at least
+one, because there the pipeline _is_ the claim: "this crew can only advise" is
+not a sentence in a summary, it is a policy check `lp-range-review` performs
+against a router nobody admitted — and it is only checkable because the flow
+runs it.
 
 Each of the four is built around a different layer:
 
@@ -53,6 +54,15 @@ Each of the four is built around a different layer:
 | `yield-desk`      | Admission as the risk control. It carries an unadmitted-market entry so the refusal path is exercised, and its allocator holds a dedicated stack because the org-wide whitelist admits a market for every seat at once |
 | `risk-watch`      | Detection is not prevention. Every guardrail states its residual risk, not only the `monitoring` ones validation demands it of                                                                                         |
 | `governance-desk` | An onchain action that moves no value. The cap, the whitelist and the allowance all answer ALLOW on a vote, and the blueprint says so instead of implying the policy stack covers it                                   |
+
+`governance-desk` ships two flows rather than one, and the pair is the point.
+`governance-vote-cycle` reasons about a proposal handed to it, which is right
+when a human is already looking at one. `governance-proposal-sweep` starts from
+a Snapshot space instead and finds the proposal itself — the difference between
+a desk that watches a protocol and a desk that waits to be told. It ends in the
+instruction a mandate owner casts, because a Snapshot vote is a message signed
+by the delegate's key and no connector ships a route that could send one. See
+[how discovery reaches a run](/docs/connectors#how-discovery-reaches-a-run).
 
 ## What a blueprint holds
 

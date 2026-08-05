@@ -111,6 +111,8 @@ what is still unbound.
 | `defillama`        | Protocol and chain TVL — money leaving before a headline says so | —                                                              | `none`                                        |
 | `defillama-yields` | Pool-level APY and its history                                   | —                                                              | `none`                                        |
 | `aave`             | Aave v3 reserve data: supply and borrow rates, liquidity, caps   | —                                                              | `none`                                        |
+| `snapshot`         | Off-chain governance: a space's open proposals, and the votes cast on them | —                                                  | `none`                                        |
+| `tally`            | Onchain governor proposals for the organisations Tally indexes   | —                                                              | `token` → `TALLY_API_KEY` (`api-key`)         |
 
 GitHub is the only one that offers an App today, and it is the only one whose
 service supports the shape. Where a service has something closer to it than a
@@ -118,13 +120,22 @@ personal token — GitLab's project access tokens, Notion's integration secrets,
 scoped to what is shared with them rather than to a person — the preset's note
 says so, so the choice is on screen when you make it.
 
-Five things worth reading off that table:
+Six things worth reading off that table:
 
 **No DeFi preset has a write at all.** A swap, or a supply into a lending
 market, is an onchain intent that goes through `lacrew_propose_intent` and the
 policy stack. A connector that could execute one would be a second execution
 path with none of that enforcement, so `uniswap`, `tenderly`, `coingecko`,
 `defillama`, `defillama-yields` and `aave` read and simulate, and nothing else.
+
+**Neither governance preset can cast a vote**, for a reason that is not the same
+caution. `tally` is the DeFi argument again: a vote there is a transaction to a
+governor contract, which is an intent through the policy stack. `snapshot` is
+the sharper case — a Snapshot vote is an EIP-712 message signed by the
+delegate's own key and posted to a different host, so there is no credential a
+connector could hold that would authorise one. The desk discovers proposals,
+decides against its mandate, and writes the instruction a human casts. See
+[how discovery reaches a run](#how-discovery-reaches-a-run) for the shape.
 
 **DefiLlama is two presets because it is two hosts.** A connector has exactly
 one base URL, and DefiLlama serves TVL from `api.llama.fi` while yields live on
@@ -649,3 +660,63 @@ lacrew crews show github-experts
 
 `validateCrewBlueprint` rejects a blueprint whose flows call a route no declared
 connector serves.
+
+## How discovery reaches a run
+
+A connector call needs arguments, and the run input is where they come from. For
+most flows that is a detail; for a crew whose job is to *find* work it is the
+whole shape, so the governance desk is worth walking through.
+
+Before the `snapshot` preset, `governance-vote-cycle` took the proposal itself:
+
+```jsonc
+// run input — a human had already found this and pasted it in
+{ "proposalId": "42" }   // plus the proposal text as the run's prose input
+```
+
+That flow still ships, and it is the right one when somebody is already looking
+at a proposal. What it cannot do is start. `governance-proposal-sweep` takes the
+*place to look* instead:
+
+```jsonc
+// run input — the space, and nothing about any particular proposal
+{ "space": "aavedao.eth" }
+```
+
+and the first step turns that into a payload:
+
+```ts
+.tool("queue", "snapshot.query", {
+  query:
+    'query { proposals(first: 3, where: { space_in: ["{{input.space}}"], state: "active" }, ' +
+    'orderBy: "created", orderDirection: desc) { id title body choices state start end ' +
+    'quorum scores scores_total link author space { id name } } }',
+})
+```
+
+Three things about that step generalise to any discovery flow:
+
+**The query is parameterised by the run input and nothing else.** `{{input.space}}`
+is interpolated; no `{{steps.*}}` reference appears anywhere in it. A flow that
+let a model completion name the next id would be interpolating a completion into
+a GraphQL string, and the queue would be whatever the model wrote. Where a
+second call genuinely needs a value the first one returned, use
+`{{steps.<id>.json.<path>}}` to read it out of the result rather than asking a
+model to retype it — and prefer projecting the fields you need in the first
+query, as the sweep does, so there is no second call to parameterise.
+
+**The result bound is in the query.** `first: 3` is there because each proposal
+carries its body and the whole result is read by a model. The route's
+`maxResponseBytes` bounds the transport; it does not bound the prompt, and the
+place to bound the prompt is the query.
+
+**Nested braces need a space.** `where: { space_in: [...] }` is written with
+spaces inside the braces on purpose: an adjacent `{{` is read as an
+interpolation placeholder and eaten before the query is ever sent. This bites
+every GraphQL route, which is why the desk's and the LP advisor's flows both say
+so in their descriptions.
+
+The sweep ends in an instruction rather than a vote — see
+[what ships](#what-ships) for why the governance presets have no write route.
+The instruction names the proposal, the choice, the deadline and the mandate
+clause, which is the thing a mandate owner can act on in one read.
