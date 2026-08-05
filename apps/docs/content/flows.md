@@ -27,8 +27,12 @@ they do for any other agent action.
 | `human`      | **Stops** the run until a person picks an option                     | one port per option / `timeoutPort` |
 | `wait`       | Parks the run until a human or an event releases it                  | `next`                              |
 
-Prompts and string args interpolate `{{input}}`, `{{steps.<id>.text}}`,
-`{{steps.<id>.json}}`, and `{{steps.<id>.verdict}}`. Steps fall through in
+Prompts and string args interpolate `{{input}}`, `{{input.<key>}}`,
+`{{steps.<id>.text}}`, `{{steps.<id>.json}}`, `{{steps.<id>.verdict}}`, and
+`{{steps.<id>.json.<path>}}` — a dotted path into an earlier step's result, so
+one tool call can hand a value to the next (`{{steps.read.json.body.sha}}`)
+without a model being asked to copy it. Unknown references render empty, and a
+path only reads own properties. Steps fall through in
 declaration order unless a step routes explicitly; `null` stops the flow.
 Cycles are rejected — recurrence belongs to the trigger layer instead:
 

@@ -22,12 +22,15 @@ lacrew connectors show github
 ```
 
 A preset never carries a credential, and it will not guess a write's
-`policyTarget` — that address only exists once the crew is stood up. Bind it and
-emit the config:
+`policyTarget` — that address only exists once the crew is stood up. Nor will it
+guess where a push may land. Bind what applies and emit the config:
 
 ```bash
 lacrew connectors config github --policy-target merge_pull_request=0xMERGE_AUTHORITY
 ```
+
+Registering only what a crew needs is the point: `--omit` leaves a route out
+entirely, and a read-only GitHub connector needs no address at all.
 
 ## Credentials: prefer an App to a personal token
 
@@ -91,7 +94,7 @@ what is still unbound.
 
 | Preset             | What a crew uses it for                                          | Writes (need an address)                                       | Credential modes                              |
 | ------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
-| `github`           | Pull requests, files, combined status, check runs                | `merge_pull_request`, `create_issue_comment`                   | `github-app` (default) · `token` → `GH_TOKEN` |
+| `github`           | Pull requests, files, combined status, check runs, file contents | `merge_pull_request`, `create_issue_comment`, `update_file`    | `github-app` (default) · `token` → `GH_TOKEN` |
 | `gitlab`           | Merge requests, diffs, pipelines — gitlab.com or self-hosted     | `merge_merge_request`                                          | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`)    |
 | `npm`              | Published versions, dist-tags, deprecations                      | —                                                              | `none`                                        |
 | `pypi`             | Release history, requires-python, yanked releases                | —                                                              | `none`                                        |
@@ -113,7 +116,7 @@ personal token — GitLab's project access tokens, Notion's integration secrets,
 scoped to what is shared with them rather than to a person — the preset's note
 says so, so the choice is on screen when you make it.
 
-Four things worth reading off that table:
+Five things worth reading off that table:
 
 **No DeFi preset has a write at all.** A swap, or a supply into a lending
 market, is an onchain intent that goes through `lacrew_propose_intent` and the
@@ -153,10 +156,98 @@ issues them — an account without one cannot use that preset at all.
 is an error rather than a no-op: an operator who names a token there believes one
 is going out.
 
+**The push is a route, not a shell.** `github.update_file` is how the
+`github-experts` fixer gets a patch onto a bot's PR branch. It is one gated
+call on the Contents API, and it is the only write path a crew has to a
+repository's contents — see
+[What the fixer can and cannot do](#what-the-fixer-can-and-cannot-do).
+
 A preset may also pin constant headers the service requires — `notion` sends
-`Notion-Version`, `ghost` sends `Accept-Version`. They are part of the connector,
-not a flow's args, and one that would shadow the credential is rejected at
+`Notion-Version`, `ghost` sends `Accept-Version`. A single route can pin one of
+its own: `github.get_file_raw` sends `Accept: application/vnd.github.raw` so the
+file comes back as text rather than base64, while `github.get_file` reads the
+same endpoint as JSON for the blob sha. Headers are part of the connector, not a
+flow's args, and one that would shadow the credential is rejected at
 registration.
+
+## What the fixer can and cannot do
+
+The `github-experts` charter says the fixer "pushes to the bot's PR branch".
+Git is not one REST call, and the answer is not a shell: an orchestrator that
+could run `git` for an agent would be a second execution path with none of the
+enforcement the first one has. What ships instead is one write route on GitHub's
+Contents API — `PUT /repos/{owner}/{repo}/contents/{path}` — which commits a
+single file onto a named branch.
+
+Register it with the branches it may land on:
+
+```bash
+lacrew connectors config github \
+  --policy-target update_file=0x…            # the push-authority address \
+  --branch 'dependabot/**' --branch 'renovate/**'
+```
+
+**It can:** commit one file per call onto an allowlisted branch, pinned by the
+blob `sha` it read a step earlier, having asked `lacrew_check_policy` about the
+crew's `push-authority` address and been answered ALLOW. The write ships in
+`ask` mode, so the first one stops for a human in-thread.
+
+**It cannot:**
+
+|                                     |                                                                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Force-push or rewrite history**   | There is no field to do it with. The route's args are `message`, `content`, `sha`, `branch` — a flow cannot pass `force`, and an undeclared arg is dropped, not sent. |
+| **Push to a branch nobody admitted** | The `branch` arg is pinned to the globs you registered, and it is *required*: GitHub commits to the default branch when a write omits it, so a missing branch is a refused call rather than a commit on `main`. |
+| **Escape the repo it named**        | `path` is encoded a segment at a time, and `.`, `..`, and empty segments are refused. So is a branch name containing a `..` component, ahead of the allowlist.        |
+| **Touch the workflow files**        | `.github/workflows/` is refused as a path prefix by default. `--deny-path` replaces the list; `--deny-path ''` keeps only branch protection and CODEOWNERS.           |
+| **Delete anything**                 | The DELETE route on that endpoint is not registered, and no preset ships it.                                                                                          |
+| **Upload something enormous**       | `content` is capped at 256 KB, and the whole request body at 1 MB. Both refuse rather than truncate.                                                                   |
+| **Push without being admitted**     | `push-authority` is an ordinary whitelist entry. Revoking that one address stops every push the crew can make, org-wide, without touching GitHub.                      |
+
+Two addresses stay separate from it on purpose. A crew that may push is not
+thereby allowed to merge its own work, and revoking the push must not also
+silence the note explaining why a PR is stuck — so `push-authority`,
+`merge-authority`, and `comment-authority` are three whitelist entries and three
+governance decisions.
+
+What remains outside LaCrew's reach is the same as before: branch protection,
+CODEOWNERS, and the scope of the App installation are GitHub's to enforce. The
+org chart bounds money and authority, not repository access.
+
+## Constraining what an argument may say
+
+The param allowlist answers *which* fields a flow may set. `argRules` answers
+*what they may say*, per route:
+
+```json
+{
+  "name": "update_file",
+  "method": "PUT",
+  "path": "/repos/{owner}/{repo}/contents/{path}",
+  "effect": "write",
+  "params": ["message", "content", "sha", "branch"],
+  "argRules": {
+    "path": { "multiSegment": true },
+    "branch": { "required": true, "pattern": "dependabot/.*" },
+    "content": { "encode": "base64", "maxBytes": 262144 }
+  }
+}
+```
+
+| Field          | What it does                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `required`     | The call fails without the argument. Body args are optional by default, which is occasionally dangerous.                |
+| `pattern`      | A regex the value must match **whole** — it is anchored for you, so a prefix cannot slip past `dependabot/.+`.          |
+| `oneOf`        | The complete set of accepted values.                                                                                    |
+| `maxBytes`     | A ceiling on the value as the flow supplied it, checked before any encoding.                                            |
+| `multiSegment` | Path args only: the value may contain `/`, each segment encoded separately, with `.`, `..`, and empties refused.        |
+| `encode`       | Body args only: send the value base64-encoded, so a model can emit plain text for an endpoint that takes base64.        |
+
+A refused value fails the step with `connector_arg_refused:<tool>:<arg>` (or
+`connector_arg_too_large:<tool>:<arg>:<limit>`) **before the request is built**,
+and the error never echoes the value. Rules that constrain nothing are rejected
+at registration: an `argRules` entry naming an argument the route does not take
+is a typo, not a silent no-op.
 
 ## Registering one by hand
 
@@ -199,8 +290,11 @@ flow("bot-pr-triage").tool("pr", "github.get_pull_request", {
 });
 ```
 
-`{{input.<key>}}` reads a field of a JSON run input, so a route gets its args
-without a model being asked to re-extract each one from a blob it already has.
+`{{input.<key>}}` reads a field of a JSON run input, and
+`{{steps.<id>.json.<path>}}` reads into an earlier step's result, so a route
+gets its args without a model being asked to re-extract each one from a blob it
+already has — the push names the `sha` the read returned rather than a hash a
+completion retyped.
 
 ## What a flow cannot do
 
@@ -210,11 +304,13 @@ marketplace listing. The registry is built on that assumption:
 |                                           |                                                                                                                                                        |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Routes are an allowlist, not a URL**    | A flow names a route the operator wrote down. It cannot compose a URL, change the method, or reach a host nobody admitted.                             |
-| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment.                                                                   |
+| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment. A `multiSegment` arg keeps its slashes but still refuses `.`, `..`, and empties. |
 | **Undeclared args are dropped**           | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described. |
 | **Credentials never enter the flow**      | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one.                        |
 | **`http://` is refused**                  | Except for loopback, so a local tool server still works in development.                                                                                |
+| **Argument values can be pinned**         | A route's `argRules` hold a value to a pattern, a set, or a size before the request is built. See [Constraining what an argument may say](#constraining-what-an-argument-may-say). |
 | **Responses have a ceiling**              | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit).                              |
+| **Requests have one too**                 | A body over 1 MB is refused with `connector_request_too_large`. What a crew sends is bounded by the registration, not by what a model happened to emit. |
 
 An invalid connector is rejected at registration, and the orchestrator refuses
 to boot with one — a silently dropped connector reads to a flow author as "the
@@ -514,7 +610,8 @@ to register before standing the crew up:
 ```bash
 lacrew crews show github-experts
 # Connectors to register before the crew can work
-#   github  (github.get_pull_request, github.create_issue_comment, github.merge_pull_request)
+#   github  (github.get_pull_request, github.get_file, github.get_file_raw,
+#            github.create_issue_comment, github.update_file, github.merge_pull_request)
 #      ships as a preset:  lacrew connectors show github
 ```
 
