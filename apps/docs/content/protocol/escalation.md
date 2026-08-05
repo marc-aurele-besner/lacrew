@@ -25,7 +25,7 @@ Worker proposes action
 
 1. Leaves never pull from the treasury; they spend allowance only.
 2. Escalation is a purchase order, not a governance vote.
-3. Human root approvals are passkey signatures (planned); managers may auto-approve within their own policy bounds.
+3. Human root approvals are passkey signatures; where the root is a Safe the credential owns, that signature is the Safe's own — it authorizes an `execTransaction` whose `msg.sender` on `resolve` is the Safe. Managers may auto-approve within their own policy bounds. See [Self-hosting → When the root is a Safe](../self-host.md).
 4. Every `IntentCreated` / `IntentResolved` event is part of the audit trail.
 
 ## Current scaffolding

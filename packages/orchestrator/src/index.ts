@@ -14,6 +14,16 @@ export {
   type RootAuthStatus,
   type RootAuthSurface,
 } from "./rootAuth.js";
+export {
+  createSafeApprovalSurface,
+  safeApprovalRelayChains,
+  safeApprovalRelayer,
+  SafeApprovalRefusal,
+  type SafeApprovalChallenge,
+  type SafeApprovalOptions,
+  type SafeApprovalResult,
+  type SafeApprovalSurface,
+} from "./safeApproval.js";
 export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
   connectorEnvVars,

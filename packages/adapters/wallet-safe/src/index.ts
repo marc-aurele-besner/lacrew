@@ -26,6 +26,7 @@ export * from "./safe.js";
 export * from "./allowance.js";
 export * from "./passkey.js";
 export * from "./rootDeploy.js";
+export * from "./safeResolve.js";
 export * from "./webauthn.js";
 export * from "./execute.js";
 export { demoPolicyVerdict };

@@ -45,6 +45,7 @@ import {
   type SessionScope,
 } from "@lacrew/core";
 import type { RootAuthSurface } from "./rootAuth.js";
+import { SafeApprovalRefusal, type SafeApprovalSurface } from "./safeApproval.js";
 import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
@@ -127,6 +128,12 @@ export interface OrchestratorAppOptions {
    * `/health` and `GET /root-auth` so nobody has to guess which it is.
    */
   rootAuth?: RootAuthSurface;
+  /**
+   * The root Safe's own `execTransaction` path (F2.6 / F1.3). Present only for
+   * a `safe-passkey` root, and required for one: without it a Safe root could
+   * prove itself and still not be the sender the router demands.
+   */
+  safeApproval?: SafeApprovalSurface;
   mcpUseMock: boolean;
   authToken?: string;
   /** Live DB reachability (checked once on boot). */
@@ -203,6 +210,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     budgets,
     pnl,
     rootAuth,
+    safeApproval,
     mcpUseMock,
     authToken,
   } = options;
@@ -220,6 +228,78 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     } catch {
       return [];
     }
+  };
+
+  /**
+   * Settle one intent as the root Safe (F2.6 / F1.3).
+   *
+   * Two honest answers, never a third. When this deployment may broadcast on
+   * this chain, the Safe transaction goes out and the result is an ordinary
+   * resolve. When it may not, the built transaction comes back with a 409 and
+   * **nothing is recorded** — the caller's wallet is the sender, and reporting a
+   * spend as settled because we handed someone a transaction is how an approver
+   * comes to believe money moved that did not.
+   */
+  const resolveThroughSafe = async (
+    c: Context,
+    input: {
+      safeApproval: SafeApprovalSurface;
+      intentId: string;
+      approved: boolean;
+      awaitingApprover: `0x${string}` | null;
+      proof: Extract<RootProof, { kind: "passkey" }>;
+      authorizedBy: string;
+    },
+  ): Promise<Response> => {
+    let submitted: Awaited<ReturnType<SafeApprovalSurface["submit"]>>;
+    try {
+      submitted = await input.safeApproval.submit({
+        intentId: input.intentId,
+        approved: input.approved,
+        awaitingApprover: input.awaitingApprover,
+        proof: input.proof,
+      });
+    } catch (err) {
+      // A refusal is something the operator can answer — a stale assertion, a
+      // Safe that is not theirs, a chain waiting on someone else. Anything else
+      // is this orchestrator's problem, and says so with a different status.
+      const status = err instanceof SafeApprovalRefusal ? 401 : 502;
+      return jsonBig(c, { error: msgOf(err, "safe_exec_failed").split("\n")[0] }, status);
+    }
+
+    if (!submitted.sent) {
+      return jsonBig(
+        c,
+        {
+          error: "safe_exec_unsigned",
+          detail:
+            "This orchestrator relays on no chain, so the root Safe's transaction is yours to send. " +
+            "Broadcast it, then POST /intents/confirm.",
+          safeTxHash: submitted.safeTxHash,
+          transaction: {
+            to: submitted.execution.to,
+            data: submitted.execution.data,
+            value: submitted.execution.value.toString(),
+          },
+        },
+        409,
+      );
+    }
+
+    const sent = submitted;
+    const result = await runtime.resolveThroughSafe(
+      input.intentId,
+      input.approved,
+      input.safeApproval.safeAddress,
+      input.authorizedBy,
+      async () => sent.txHash,
+    );
+    return jsonBig(c, {
+      ...result,
+      authorizedBy: input.authorizedBy,
+      approver: input.safeApproval.safeAddress,
+      safeTxHash: sent.safeTxHash,
+    });
   };
 
   app.use("*", async (c, next) => {
@@ -1663,6 +1743,50 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           awaitingApprover: authority.awaitingApprover,
         });
       }
+      // A Safe root signs its own transaction, so the nonce is not ours to
+      // invent: the challenge *is* the Safe transaction hash, which makes one
+      // assertion both the proof checked here and the signature the Safe checks
+      // onchain. Two ceremonies would be two consents that can disagree.
+      if (rootAuth.kind === "safe-passkey") {
+        if (!safeApproval) {
+          return jsonBig(
+            c,
+            {
+              error: "safe_approval_unavailable",
+              detail:
+                "This root is a Safe but no Safe approval path is wired — a proof collected now would settle nothing.",
+            },
+            501,
+          );
+        }
+        let planned: Awaited<ReturnType<SafeApprovalSurface["challengeFor"]>>;
+        try {
+          planned = await safeApproval.challengeFor(body.subject, action === "intent:approve");
+        } catch (err) {
+          return jsonBig(
+            c,
+            {
+              error: "safe_tx_unbuildable",
+              detail: err instanceof Error ? err.message.split("\n")[0] : "unknown error",
+            },
+            502,
+          );
+        }
+        return jsonBig(c, {
+          required: true,
+          kind: rootAuth.kind,
+          ...rootAuth.issueChallenge(action, body.subject, planned.challenge),
+          safeAddress: planned.safeAddress,
+          safeTxHash: planned.safeTxHash,
+          /**
+           * The Safe's signer requires it, so a "preferred" ceremony would
+           * produce an assertion that passes here and reverts onchain.
+           */
+          userVerification: "required" as const,
+          /** False means the caller's own wallet has to send the built transaction. */
+          relayed: await safeApproval.canRelay(),
+        });
+      }
     }
     return jsonBig(c, {
       required: true,
@@ -2190,6 +2314,28 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
       if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
       authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
+
+      // A Safe root is the sender, not merely the signer. The proof above says
+      // the root consented; this is what makes the chain see the Safe on
+      // `resolve`, and there is deliberately no fallback to a key this process
+      // holds — an approval settled by the orchestrator's own EOA is exactly
+      // the substitution a Safe root exists to rule out.
+      if (proof.via === "safe-passkey") {
+        if (!safeApproval) {
+          return jsonBig(c, { error: "safe_approval_unavailable" }, 501);
+        }
+        if (body.rootProof?.kind !== "passkey") {
+          return jsonBig(c, { error: "root_is_a_passkey" }, 400);
+        }
+        return resolveThroughSafe(c, {
+          safeApproval,
+          intentId: body.intentId,
+          approved: body.approved,
+          awaitingApprover: authority.awaitingApprover,
+          proof: body.rootProof,
+          authorizedBy,
+        });
+      }
     }
 
     // The awaiting approver, not the caller's suggestion: a body that could
@@ -2201,6 +2347,46 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       authorizedBy,
     );
     return jsonBig(c, { ...result, authorizedBy, approver: authority.awaitingApprover });
+  });
+
+  /**
+   * Record a Safe-root approval whose transaction the caller broadcast.
+   *
+   * Only reachable after `/intents/resolve` answered `safe_exec_unsigned` —
+   * this deployment has no relayer for the chain, so the user's own wallet is
+   * the sender. The chain is re-read rather than believed: a browser saying it
+   * sent something is not a spend that happened, and an intent still awaiting
+   * its approver comes back `confirmed: false` instead of clearing a queue.
+   */
+  app.post("/intents/confirm", async (c) => {
+    const body = await bodyOf<{
+      intentId?: string;
+      approved?: boolean;
+      txHash?: `0x${string}`;
+    }>(c);
+    if (!body.intentId || typeof body.approved !== "boolean") {
+      return jsonBig(c, { error: "intentId_and_approved_required" }, 400);
+    }
+    if (!safeApproval) return jsonBig(c, { error: "safe_approval_unavailable" }, 501);
+    try {
+      const outcome = await runtime.confirmSafeResolve({
+        intentId: body.intentId,
+        approved: body.approved,
+        approver: safeApproval.safeAddress,
+        ...(body.txHash ? { txHash: body.txHash } : {}),
+      });
+      return jsonBig(c, {
+        ...outcome,
+        authorizedBy: "root:safe-passkey",
+        approver: safeApproval.safeAddress,
+      });
+    } catch (err) {
+      return jsonBig(
+        c,
+        { error: "approver_unreadable", detail: msgOf(err, "unknown error").split("\n")[0] },
+        502,
+      );
+    }
   });
 
   app.get("/marketplace/quote", async (c) => {

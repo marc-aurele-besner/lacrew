@@ -22,6 +22,7 @@ export {
   approveIntent,
   denyIntent,
   resolveIntentWithProof,
+  SafeExecutionRequired,
   type ResolveIntentOptions,
   type ResolvedIntent,
   type RootSigner,

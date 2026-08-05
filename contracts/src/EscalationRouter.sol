@@ -206,7 +206,10 @@ contract EscalationRouter {
 
         IOrgRegistry.Node memory approver = orgRegistry.getNode(msg.sender);
         if (approver.parent == address(0) || approver.kind == IOrgRegistry.NodeKind.HumanRoot) {
-            // Root reserved authority finalizes; passkey binding is off-chain / AA (TODO).
+            // Root reserved authority finalizes. A passkey root arrives here as
+            // its own Safe: msg.sender is the Safe, and the credential authorized
+            // this call through Safe.execTransaction, so the binding this comment
+            // once deferred is the sender check on line 180 (F2.6 / F1.3).
             intent.resolved = true;
             intent.approved = true;
             _finalizeAction(intent.agent, intent.target, intent.value, intent.data);

@@ -271,19 +271,25 @@ Compromise blast radius is the session's remaining `maxValue` on whitelisted tar
 
 Out of the box those routes are open to anyone who can reach the orchestrator. Set `LACREW_ROOT_AUTH` and they demand a fresh proof from the workspace root instead — the orchestrator mints the challenge and checks the answer itself, so nothing in front of it (a control plane, a reverse proxy, a stolen cookie) can stand in for the human.
 
-Two kinds of root, matching the account kinds in F1.3:
+Three kinds of root, matching the account kinds in F1.3:
 
 ```bash
 # A wallet root (injected EOA / hardware wallet)
 export LACREW_ROOT_AUTH=wallet
 export LACREW_ROOT_ADDRESS=0x…            # must be SessionRegistry.humanRoot
 
-# A passkey root (the Safe-with-passkey default)
+# A passkey root that signs, while some other address sends
 export LACREW_ROOT_AUTH=passkey
 export LACREW_ROOT_PASSKEY_ID=…           # base64url credential id
 export LACREW_ROOT_PASSKEY_PUBKEY=…       # base64url COSE public key from registration
 export LACREW_ROOT_PASSKEY_RPID=localhost
 export LACREW_ROOT_PASSKEY_ORIGIN=http://localhost:3000
+
+# A passkey-owned Safe — the default root kind, and the only one where the
+# root address is itself the sender the chain sees on `resolve`
+export LACREW_ROOT_AUTH=safe-passkey
+export LACREW_ROOT_PASSKEY_ID=…           # …plus the four passkey values above
+export LACREW_ROOT_SAFE_ADDRESS=0x…       # the deployed Safe the credential owns
 ```
 
 Check what a deployment actually enforces before trusting it:
@@ -317,7 +323,7 @@ curl -s -X POST http://127.0.0.1:8788/intents/resolve \
   -d '{"intentId":"12","approved":true,"challenge":"…","rootProof":{…}}' | jq .
 ```
 
-The reply carries `approver` (the seat that signed, read off the chain) and `authorizedBy` (`root:passkey`, `root:wallet`, `approver`, or `unauthenticated` when no root is configured). `@lacrew/sdk` wraps the exchange:
+The reply carries `approver` (the seat that signed, read off the chain) and `authorizedBy` (`root:passkey`, `root:safe-passkey`, `root:wallet`, `approver`, or `unauthenticated` when no root is configured). `@lacrew/sdk` wraps the exchange:
 
 ```ts
 import { approveIntent } from "@lacrew/sdk";
@@ -327,6 +333,74 @@ await approveIntent({ intentId: "12", proof: assertion }); // passkey root, sign
 ```
 
 Two things it will not do: resolve as the root without a proof, and resolve an intent the chain does not have pending — "we could not find it" must never fall through to "no proof needed".
+
+#### When the root is a Safe
+
+`LACREW_ROOT_AUTH=passkey` proves who the root is. It does not make the root the sender: some address the deployment holds a key for still submits `resolve`, and the chain sees that address. For a Safe root that is not good enough — the Safe *is* the org's root address, so anything else is a different account moving the money with the root's blessing.
+
+`safe-passkey` closes that. Approving builds a Safe transaction that calls `resolve`, and the Safe sends it:
+
+```
+challenge  = the Safe transaction's own EIP-712 hash
+assertion  = one navigator.credentials.get() over that hash
+             ├── the orchestrator verifies it against the registered COSE key
+             └── the Safe's SafeWebAuthnSigner verifies it inside execTransaction
+resolve    = msg.sender is the Safe
+```
+
+One ceremony, two verifiers. Two separate ones would be two consents that can disagree, which is one consent that can be swapped.
+
+Consequences worth knowing:
+
+- **The ceremony must use `userVerification: "required"`.** Safe's signer contract demands the flag; an assertion without it passes every off-chain check and then reverts inside `execTransaction`. The challenge response says `userVerification: "required"` for this reason, and the orchestrator refuses such a proof rather than broadcasting it.
+- **The challenge is not reusable and not ours to invent.** It folds in the Safe's live nonce, so any other Safe transaction that lands first invalidates it.
+- **Deploying the Safe conferred no ownership.** Before every approval the orchestrator re-reads the Safe and refuses unless it is 1-of-1 owned by the signer this credential implies.
+- **Gas is a separate decision from authority.** Nothing here is paid for by the root.
+
+Who broadcasts is two deliberate settings, with no default — a relayer set up for a local chain must not become a mainnet sender because a chain id changed:
+
+```bash
+export LACREW_ROOT_APPROVAL_RELAYER=0x…          # a funded key; authorizes nothing
+export LACREW_ROOT_APPROVAL_RELAY_CHAINS=31337   # the only chains it may spend on
+```
+
+With no relayer for the chain, `/intents/resolve` answers `409 safe_exec_unsigned` and hands back the built transaction for your own wallet to send. Nothing is recorded then — handing someone a transaction is not a spend that happened — so tell the orchestrator once it lands, and it re-reads the chain before writing anything.
+
+In the cloud Approvals inbox this is one press: the row keeps the signed approval and offers "Connect a wallet and send", which connects, broadcasts, and confirms. Approve and Deny disappear from that row while it stands, because the decision is already signed and offering them again would ask for the same consent twice. Driving it yourself:
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/intents/confirm \
+  -H 'content-type: application/json' \
+  -d '{"intentId":"12","approved":true,"txHash":"0x…"}' | jq .
+```
+
+`confirmed: false` with an `awaitingApprover` means the router still awaits the Safe: the transaction did not land, and nothing was written.
+
+##### The recipe, on Anvil
+
+```bash
+# 1. A chain with Safe's singletons and passkey module on it.
+anvil --port 8546 --fork-url https://mainnet.base.org
+
+# 2. Derive and deploy the root Safe from the registered credential
+#    (Settings → Root account in the cloud app, or @lacrew/adapter-wallet-safe
+#    directly: deployRootSafe → relayRootSafeDeployment → verifyRootSafeDeployed).
+
+# 3. Point the orchestrator at it, and let it relay on this chain only.
+export LACREW_ROOT_AUTH=safe-passkey
+export LACREW_ROOT_SAFE_ADDRESS=0x…            # the deployed Safe
+export LACREW_ROOT_PASSKEY_ID=… LACREW_ROOT_PASSKEY_PUBKEY=…
+export LACREW_ROOT_PASSKEY_RPID=localhost LACREW_ROOT_PASSKEY_ORIGIN=http://localhost:3000
+export LACREW_ROOT_APPROVAL_RELAYER=0x…        # an anvil dev key
+export LACREW_ROOT_APPROVAL_RELAY_CHAINS=31337
+
+# 4. Escalate something past the worker's cap, then approve it as the Safe.
+lacrew intents list
+lacrew intents approve 12                      # prints the hash to sign, and stops
+lacrew intents approve 12 --root-proof '{"kind":"passkey","credentialId":"…","authenticatorData":"…","clientDataJSON":"…","signature":"…"}'
+```
+
+The whole loop — deploy the passkey Safe, bootstrap the org through it, escalate, approve as the Safe, watch USDC land on the target, and watch a different credential's assertion revert with the funds unmoved — is asserted end to end by `packages/adapters/wallet-safe/src/safeRootApprove.test.ts` against a fork.
 
 #### The recipe, on Anvil
 

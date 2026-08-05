@@ -43,8 +43,13 @@ export interface ResolveIntentOptions {
 
 export interface ResolvedIntent {
   txHash?: `0x${string}`;
+  /** Present when a Safe root executed the resolve; the hash it signed. */
+  safeTxHash?: `0x${string}`;
   escalated: boolean;
-  /** `root:passkey`, `root:wallet`, `approver`, or `unauthenticated`. */
+  /**
+   * `root:passkey`, `root:safe-passkey`, `root:wallet`, `approver`, or
+   * `unauthenticated`.
+   */
   authorizedBy: string;
   /** The seat that signed, as the orchestrator read it off the chain. */
   approver: `0x${string}` | null;
@@ -52,8 +57,33 @@ export interface ResolvedIntent {
 }
 
 type ChallengeResponse =
-  | ({ required: true; kind: "passkey" | "wallet" } & RootChallenge)
+  | ({
+      required: true;
+      kind: "passkey" | "wallet" | "safe-passkey";
+      /** `safe-passkey` only: the Safe, the hash it will execute, and who sends. */
+      safeAddress?: `0x${string}`;
+      safeTxHash?: `0x${string}`;
+      userVerification?: "required";
+      relayed?: boolean;
+    } & RootChallenge)
   | { required: false; challenge: null; kind: null; awaitingApprover?: string | null };
+
+/**
+ * A Safe root's approval, built but not broadcast — this orchestrator relays on
+ * no chain, so the transaction is the caller's to send. Raised rather than
+ * returned so a caller cannot mistake it for a settled intent: nothing has
+ * happened on chain yet, and the intent is still pending.
+ */
+export class SafeExecutionRequired extends Error {
+  constructor(
+    readonly transaction: { to: `0x${string}`; data: `0x${string}`; value: string },
+    readonly safeTxHash: `0x${string}`,
+    detail: string,
+  ) {
+    super(`safe_exec_unsigned: ${detail}`);
+    this.name = "SafeExecutionRequired";
+  }
+}
 
 const DEFAULT_URL = "http://127.0.0.1:8788";
 
@@ -72,8 +102,24 @@ async function orchPost<T>(
     },
     body: JSON.stringify(body),
   });
-  const parsed = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(parsed.error ?? `${res.status} ${res.statusText}`);
+  const parsed = (await res.json().catch(() => ({}))) as T & {
+    error?: string;
+    detail?: string;
+    safeTxHash?: `0x${string}`;
+    transaction?: { to: `0x${string}`; data: `0x${string}`; value: string };
+  };
+  if (!res.ok) {
+    // The one refusal that carries work for the caller rather than a mistake to
+    // fix: the Safe's transaction is built and waiting for a sender.
+    if (parsed.error === "safe_exec_unsigned" && parsed.transaction && parsed.safeTxHash) {
+      throw new SafeExecutionRequired(
+        parsed.transaction,
+        parsed.safeTxHash,
+        parsed.detail ?? "Broadcast it, then confirm.",
+      );
+    }
+    throw new Error(parsed.error ?? `${res.status} ${res.statusText}`);
+  }
   return parsed;
 }
 
@@ -98,10 +144,15 @@ export async function resolveIntentWithProof(
   if (issued.required) {
     if (options.proof) {
       proved = { challenge: issued.challenge, rootProof: options.proof };
-    } else if (issued.kind === "passkey") {
+    } else if (issued.kind === "passkey" || issued.kind === "safe-passkey") {
       throw new Error(
-        `root_proof_required: intent ${options.intentId} awaits a passkey root. ` +
-          `Collect the assertion where the authenticator is and pass it as \`proof\`. ` +
+        `root_proof_required: intent ${options.intentId} awaits a ${
+          issued.kind === "safe-passkey"
+            ? `passkey-owned Safe (${issued.safeAddress}). The challenge is that Safe's own ` +
+              `transaction hash, so the assertion must be collected with ` +
+              `userVerification: "required" — the Safe's signer will not accept it otherwise`
+            : "passkey root"
+        }. Collect the assertion where the authenticator is and pass it as \`proof\`. ` +
           `Challenge: ${issued.challenge}`,
       );
     } else if (options.rootAccount) {
