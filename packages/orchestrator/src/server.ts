@@ -29,6 +29,7 @@ import {
 } from "./externalMcp.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { createPlanRequirements, planRequiredFromEnv } from "./planRequired.js";
+import { createCrewBindings } from "./crewBindings.js";
 import { createDualControl, dualControlFromEnv } from "./dualControl.js";
 import { createEvalRunner } from "./evalRunner.js";
 import { scopeOfThread } from "./conversation.js";
@@ -129,6 +130,13 @@ async function main(): Promise<void> {
       }),
     onEvent: (event) => runtime.recordAudit(event),
     ttlMs: humanGateTtlMs(),
+  });
+  // Blueprint seat bindings (F2.25). Bookkeeping rather than a control: it
+  // records which account each blueprint seat landed on, so `/org` can serve a
+  // role id the chain has no room for and a renamed seat still resolves.
+  const crewBindings = createCrewBindings({
+    store: runtime.store,
+    onEvent: (event) => runtime.recordAudit(event),
   });
   // Plan-required mode (F2.31). Built before the surfaces it guards, and from
   // the environment as well as the store: a self-host operator sets
@@ -372,6 +380,7 @@ async function main(): Promise<void> {
     mcpBackend,
     connectors,
     connectorModes,
+    crewBindings,
     planRequired,
     dualControl,
     ...(externalMcp ? { externalMcp } : {}),
@@ -489,6 +498,26 @@ async function main(): Promise<void> {
       console.error(
         "[@lacrew/orchestrator] plan-required rules could not be read: every crew is acting " +
           "without having to plan first. Onchain and connector controls are unaffected. " +
+          "Fix the store and restart.",
+        err,
+      );
+    }
+
+    // Blueprint seat bindings (F2.25). Fails open like plan-required, for a
+    // milder reason: these rows *find* seats and bound nothing, so a process
+    // that cannot read them resolves seats by label with the misses named — the
+    // behaviour every self-host had before the map existed. The line is here
+    // because a silent zero reads as "nobody ever bound a seat", which would
+    // send an operator to bind seats that are already bound.
+    try {
+      const seats = await crewBindings.hydrate();
+      if (seats > 0) {
+        console.log(`[@lacrew/orchestrator] crew bindings: ${seats} seat(s) restored`);
+      }
+    } catch (err) {
+      console.error(
+        "[@lacrew/orchestrator] crew seat bindings could not be read: a seat renamed since it " +
+          "was hired will be reported missing rather than bound. Nothing is unbounded by this. " +
           "Fix the store and restart.",
         err,
       );

@@ -107,6 +107,12 @@ export {
   type PlanRequirementRow,
 } from "./planRequired.js";
 export {
+  upsertCrewBinding,
+  deleteCrewBinding,
+  listCrewBindings,
+  type CrewBindingRow,
+} from "./crewBindings.js";
+export {
   upsertDualControlRule,
   deleteDualControlRule,
   listDualControlRules,

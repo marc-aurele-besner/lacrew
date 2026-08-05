@@ -783,6 +783,7 @@ Commands:
                             (see: lacrew flows help)
   crews <sub>               Vertical crew blueprints — list, show <id>,
                             plan <id> (the calls that stand a crew up),
+                            bind <id> (which account each seat landed on),
                             eval <id> (the scenarios that hold it to them)
   connectors <sub>          Connectors — list, show <id>, config <id>
                             (JSON for LACREW_CONNECTORS); write policy —

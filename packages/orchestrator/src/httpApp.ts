@@ -69,12 +69,14 @@ import {
   type ConnectorModesSurface,
 } from "./connectorPolicy.js";
 import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
+import type { CrewBindingsSurface } from "./crewBindings.js";
 import { isDualControlRefused, type DualControlSurface } from "./dualControl.js";
 import {
   DUAL_CONTROL_MODES,
   DUAL_CONTROL_REVIEWERS,
   PLAN_REQUIRED_MODES,
   isFlowWaiting,
+  crewBindingScope,
   parseDualControlScope,
   parsePlanRequiredScope,
   parseReviewer,
@@ -102,6 +104,12 @@ export interface OrchestratorAppOptions {
   connectors?: ConnectorRegistry;
   /** Write-mode rules (F2.24); absent in embedders that wired none. */
   connectorModes?: ConnectorModesSurface;
+  /**
+   * Persisted blueprint seat bindings (F2.25); absent in embedders that wired
+   * none, in which case `/org` serves whatever role ids the chart already
+   * carries — which for a self-host is none.
+   */
+  crewBindings?: CrewBindingsSurface;
   /** Plan-required rules (F2.31); absent in embedders that wired none. */
   planRequired?: PlanRequirementsSurface;
   /** Dual-control rules and reviews (F2.32); absent in embedders that wired none. */
@@ -199,6 +207,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     mcpBackend,
     connectors,
     connectorModes,
+    crewBindings,
     planRequired,
     dualControl,
     externalMcp,
@@ -2251,13 +2260,106 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...usage, mode: runtime.mode });
   });
 
-  app.get("/org", async (c) =>
-    jsonBig(c, {
-      nodes: await runtime.getClient().getOrgTree(),
+  /**
+   * The org chart, with each seat's blueprint role id where one was bound.
+   *
+   * The chain carries `{account, kind, parent, active}` and no names, so the
+   * role id is layered on from this orchestrator's own record (F2.25) — which
+   * is what lets a checklist find the `reviewer` seat after somebody renamed
+   * it. A node nothing bound is served exactly as it arrived.
+   */
+  app.get("/org", async (c) => {
+    const nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+    return jsonBig(c, {
+      nodes: crewBindings ? crewBindings.apply(nodes) : nodes,
       mode: runtime.mode,
       chainId: runtime.chainId,
-    }),
-  );
+    });
+  });
+
+  /* ——— blueprint seat bindings (F2.25) ——— */
+
+  /**
+   * Which account each blueprint seat landed on.
+   *
+   * `?crew=` / `?blueprint=` narrow to one scope and also return `roles` in the
+   * shape `bindCrewFlow` takes, so a caller installing flows does not have to
+   * reshape the list itself.
+   */
+  app.get("/crew/bindings", async (c) => {
+    if (!crewBindings) return jsonBig(c, { error: "crew_bindings_unavailable" }, 503);
+    const crewId = c.req.query("crew")?.trim();
+    const blueprintId = c.req.query("blueprint")?.trim();
+    const scope =
+      crewId || blueprintId
+        ? { ...(crewId ? { crewId } : {}), ...(blueprintId ? { blueprintId } : {}) }
+        : undefined;
+    return jsonBig(c, {
+      bindings: crewBindings.list(scope),
+      roles: crewBindings.roles(scope),
+      ...(scope ? { scope: crewBindingScope(scope) } : {}),
+    });
+  });
+
+  /**
+   * Record what an install bound. Merges, never replaces: a second pass that
+   * lands one more hire must not erase the seats the first one bound, and a
+   * blank address clears one entry rather than storing an empty string.
+   *
+   * Nothing here is authority — a bound role id *finds* a seat whose readiness
+   * is still derived live, and it admits no target and grants no budget.
+   */
+  app.put("/crew/bindings", async (c) => {
+    if (!crewBindings) return jsonBig(c, { error: "crew_bindings_unavailable" }, 503);
+    const body = await bodyOf<{
+      crewId?: string;
+      blueprintId?: string;
+      roles?: Record<string, string>;
+      labels?: Record<string, string>;
+    }>(c);
+    const roles = body.roles;
+    if (!roles || typeof roles !== "object" || Array.isArray(roles)) {
+      return jsonBig(c, { error: "roles_required" }, 400);
+    }
+    const scope = {
+      ...(body.crewId?.trim() ? { crewId: body.crewId.trim() } : {}),
+      ...(body.blueprintId?.trim() ? { blueprintId: body.blueprintId.trim() } : {}),
+    };
+    const cleared: string[] = [];
+    try {
+      for (const [roleId, account] of Object.entries(roles)) {
+        if (typeof account !== "string") throw new Error("crew_binding_account_invalid");
+        if (!account.trim()) {
+          if (await crewBindings.clear({ ...scope, roleId })) cleared.push(roleId.trim());
+          continue;
+        }
+        const label = body.labels?.[roleId];
+        await crewBindings.set({
+          ...scope,
+          roleId,
+          account,
+          ...(typeof label === "string" && label.trim() ? { label } : {}),
+        });
+      }
+    } catch (err) {
+      // The bindings written before the bad one stand. Rolling them back would
+      // discard seats that were named correctly because a later line had a
+      // typo, and this map is merged on every write anyway.
+      return jsonBig(
+        c,
+        {
+          error: msgOf(err, "invalid_crew_binding"),
+          bindings: crewBindings.list(scope),
+        },
+        400,
+      );
+    }
+    return jsonBig(c, {
+      bindings: crewBindings.list(scope),
+      roles: crewBindings.roles(scope),
+      ...(cleared.length > 0 ? { cleared } : {}),
+    });
+  });
 
   /**
    * Settle a pending intent (PRD F2.6 / F1.3).

@@ -163,6 +163,21 @@ private keys never leave the process). `GET /sessions/history` and
 `GET /intents/history` read them back; without a database the same endpoints
 serve a bounded in-memory ring.
 
+Blueprint seat bindings (`orchestrator_crew_bindings`) live here too — see
+[naming the seats](./crews.md#naming-the-seats).
+
+Those round trips are checked against a real database in CI (the **Stores
+(Postgres)** job), not only against the memory fallback: the in-memory store
+holds each record whole, so a column the row mapping forgets to write survives
+there no matter what it does. To run them locally, point `DATABASE_URL` at a
+migrated database and the store tests stop skipping:
+
+```bash
+DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew \
+  pnpm --filter @lacrew/orchestrator exec node --import tsx --test \
+  src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts
+```
+
 ### More than one orchestrator per database
 
 `DATABASE_SCHEMA` puts a runtime's tables in a Postgres schema of its own, so
@@ -597,9 +612,24 @@ of it at once, against this orchestrator, and exits non-zero while anything
 stands in the way:
 
 ```bash
-ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts \
-  --bind reviewer=0x… --bind fixer=0x…
+ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
 ```
+
+It needs no `--bind` flags once this orchestrator knows which account each seat
+landed on. Record that once, right after the install, while the labels and the
+blueprint still agree:
+
+```bash
+lacrew crews bind github-experts --from-org   # persist what a label match found
+lacrew crews bind github-experts              # what is stored, seat by seat
+```
+
+The mapping lives in the orchestrator's own store — Postgres when
+`DATABASE_URL` is set, memory otherwise — and is hydrated at boot, so it
+survives a restart and does not depend on you still having the plan file you
+installed from. `GET /org` then carries a `roleId` on every bound seat, and a
+seat renamed afterwards still resolves. Details, including what the record is
+*not*, are in [Crew blueprints](./crews.md#naming-the-seats).
 
 `pnpm golden-path` goes further: it stands the whole stack up on Anvil, hires
 seats through real governance proposals, registers the `github` preset against a

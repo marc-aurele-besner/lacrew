@@ -84,6 +84,12 @@ export interface OrgNode {
   active: boolean;
   /** Display label for UIs; not stored onchain. */
   label?: string;
+  /**
+   * Blueprint role id this seat was hired as, when something recorded one
+   * (F2.25). Not stored onchain either — and unlike the label it is stable, so
+   * it is what a seat is found by after somebody renames it.
+   */
+  roleId?: string;
 }
 
 export interface Allowance {

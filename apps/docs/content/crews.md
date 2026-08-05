@@ -234,23 +234,62 @@ has run yet" would refuse every first run there has ever been.
 
 ### Naming the seats
 
-The chain stores addresses and reporting lines, not role ids, so a seat is
-found by matching the label against the blueprint's. That works until somebody
-renames the seat. `--bind` is where a self-host keeps the mapping — the same
-vocabulary `crews plan` takes:
+The chain stores addresses and reporting lines. It stores no role ids and no
+names, so something off-chain has to remember that `reviewer` landed on `0x2b09…`
+— otherwise a seat is found by matching a typed label against the blueprint's,
+which works until somebody renames it.
+
+The orchestrator keeps that mapping itself:
 
 ```bash
-lacrew crews checklist github-experts \
-  --bind reviewer=0x2b09… --bind fixer=0xFF31…
+# Record what the hires landed on. --from-org reads the live chart and
+# persists every seat a label still matches — do this while the labels
+# and the blueprint still agree, which is right after the install.
+lacrew crews bind github-experts --from-org
+
+# Or say it outright, one seat at a time.
+lacrew crews bind github-experts --bind reviewer=0x2b09… --bind fixer=0xFF31…
+
+# What is stored, seat by seat.
+lacrew crews bind github-experts
 ```
+
+Bindings live in the orchestrator's own store (Postgres when `DATABASE_URL` is
+set, memory otherwise) and are hydrated at boot, so they survive a restart and
+they do not depend on the operator still having the plan file they installed
+from. `GET /org` then carries a `roleId` on every seat that has one, which is
+where `crews checklist`, `crews sample` and a flow install all read it.
+
+`--bind` still works on `crews checklist`, and it **wins** over what the
+orchestrator stored: it is the operator saying, right now, which account a seat
+is on. An empty value on `crews bind` (`--bind reviewer=`) forgets a seat rather
+than storing a blank address.
 
 A bound seat resolves through its role id and survives any rename. A seat
 nothing matched is **named**, never bound to a plausible-looking wrong address:
 running a flow as the wrong principal gets the wrong policy stack, which is the
 difference between a spend that escalates to a manager and one that should never
 have been attempted. Two seats sharing a label bind neither, for the same
-reason. (The hosted control plane stores this mapping per crew at install time;
-a self-host's equivalent is the plan it installed from.)
+reason.
+
+None of this is authority. A stored role id *finds* a seat whose readiness is
+still derived live, every time; it admits no target, grants no budget and
+approves no spend. That is also why an unreadable binding store is not an
+outage: seats fall back to matching by label with the misses named, which is
+exactly how a self-host behaved before the map existed.
+
+The routes underneath, for a self-host driving the orchestrator directly:
+
+| Route | What it does |
+| --- | --- |
+| `GET /crew/bindings[?blueprint=&crew=]` | the bindings in force, plus `roles` in the shape a flow install takes |
+| `PUT /crew/bindings` | record `{blueprintId?, crewId?, roles, labels?}`; merges, and a blank address forgets one seat |
+
+The hosted control plane stores the same mapping per crew and writes it through
+to the tenant's orchestrator on install, so the two agree. Where they disagree,
+the orchestrator is the source of truth — it is the process that will actually
+run the flow as that principal — and the cloud says so rather than picking
+silently.
 
 ### The whole path, checked
 
