@@ -163,6 +163,21 @@ private keys never leave the process). `GET /sessions/history` and
 `GET /intents/history` read them back; without a database the same endpoints
 serve a bounded in-memory ring.
 
+Blueprint seat bindings (`orchestrator_crew_bindings`) live here too — see
+[naming the seats](./crews.md#naming-the-seats).
+
+Those round trips are checked against a real database in CI (the **Stores
+(Postgres)** job), not only against the memory fallback: the in-memory store
+holds each record whole, so a column the row mapping forgets to write survives
+there no matter what it does. To run them locally, point `DATABASE_URL` at a
+migrated database and the store tests stop skipping:
+
+```bash
+DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew \
+  pnpm --filter @lacrew/orchestrator exec node --import tsx --test \
+  src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts
+```
+
 ### More than one orchestrator per database
 
 `DATABASE_SCHEMA` puts a runtime's tables in a Postgres schema of its own, so

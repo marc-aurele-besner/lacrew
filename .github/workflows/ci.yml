@@ -80,3 +80,51 @@ jobs:
       # No network: the harness blocks fetch for the duration of every run, so
       # a scenario that reaches api.github.com fails with the URL it tried.
       - run: pnpm --filter @lacrew/flows eval
+
+  # The persisted stores, against the database they actually run on (F2.25).
+  #
+  # Every store test here is gated on DATABASE_URL and skips without one, so the
+  # Packages job above proves the memory fallbacks and nothing else. That is a
+  # real gap: the memory store holds each record object whole, so a column the
+  # row mapping forgets to write round-trips there no matter what — which is how
+  # a message's `blocks` shipped writing and reading as undefined while every
+  # conversation test passed. This job is the pass that would have caught it.
+  stores:
+    name: Stores (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lacrew
+          POSTGRES_PASSWORD: lacrew
+          POSTGRES_DB: lacrew
+        ports:
+          - 5432:5432
+        # Without this the first query races the server's own startup.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://lacrew:lacrew@127.0.0.1:5432/lacrew
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      # No Foundry here: `sync-abis` falls back to the committed `src/abis.ts`
+      # when there are no forge artifacts, and nothing in this job touches a
+      # contract. The Contracts job is where ABI drift is caught.
+      - run: pnpm build
+      # The schema first: a store test against an unmigrated database fails with
+      # a bare "relation does not exist", which reads like a code bug.
+      - run: pnpm --filter @lacrew/db db:migrate
+      - name: Store round-trips
+        run: >-
+          pnpm --filter @lacrew/orchestrator exec node --import tsx --test
+          src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts
