@@ -18,6 +18,7 @@ import { cmdFlows } from "./flows.js";
 import { cmdSkills } from "./skills.js";
 import { cmdHeartbeat } from "./heartbeat.js";
 import { cmdSession } from "./session.js";
+import { cmdIntents } from "./intents.js";
 import { cmdMcp } from "./mcp.js";
 import { cmdBudget } from "./budget.js";
 import { cmdPnl } from "./pnl.js";
@@ -246,6 +247,13 @@ async function main(): Promise<void> {
   }
   if (cmd === "session") {
     await cmdSession(rest);
+    return;
+  }
+  // `intents` (plural, subcommands) goes through a running orchestrator and its
+  // root proof; the older `approve`/`deny` below write straight to chain with
+  // the local key. Both are real paths — see intents.ts for which is which.
+  if (cmd === "intents" && rest.length > 0 && !rest[0]!.startsWith("-")) {
+    await cmdIntents(rest);
     return;
   }
   if (cmd === "budget") {
@@ -752,8 +760,12 @@ Commands:
   epoch [--asset <sym>] [--rpc]  Run next payroll epoch (per asset with --asset)
   tick                      Run one mocked worker tick
   propose <a> <t> <v>       Propose an intent
-  approve <id> [approver]   Approve a pending intent
-  deny <id> [approver]      Deny a pending intent
+  approve <id> [approver]   Approve a pending intent with the local key
+  deny <id> [approver]      Deny a pending intent with the local key
+  intents list              Pending escalations through a running orchestrator
+  intents approve <id>      Root-authorized approve (passkey, Safe, or wallet root)
+  intents deny <id>         Root-authorized deny, proved the same way
+  intents confirm <id>      Record a Safe approval you broadcast yourself
   gov propose <low|high> <target> [data]  Constitutional proposal
   gov hire <label>          Propose OrgRegistry.addNode (--rpc)
   gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
