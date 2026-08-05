@@ -636,15 +636,16 @@ seats through real governance proposals, registers the `github` preset against a
 local stand-in host, and asserts the checklist clears — with the runtime
 asserted `onchain` first, so a green result cannot come from mock mode.
 
-Two blueprints are certified, and the second is the one to run if you have no
-connector to wire:
+Three blueprints are certified, and they are three different setup burdens —
+run the one that matches what you have:
 
 ```bash
-pnpm golden-path                              # github-experts
-pnpm golden-path --blueprint content-studio   # needs only a model key
+pnpm golden-path                               # github-experts: a connector, a credential, an address
+pnpm golden-path --blueprint content-studio    # needs only a model key
+pnpm golden-path --blueprint governance-desk   # a connector, but a public one that takes no key
 ```
 
-Both are documented in
+All three are documented in
 [Crew blueprints](./crews.md#the-first-run-on-your-own-anvil).
 
 ## External MCP servers
