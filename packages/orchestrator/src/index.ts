@@ -172,6 +172,7 @@ export {
   DEFAULT_DENY_PATH_PREFIXES,
   getConnectorPreset,
   presetBranchAllowlistRoutes,
+  presetPolicyTargetKey,
   presetPolicyTargetRoutes,
   resolveConnectorConfig,
   resolvePresetAuth,

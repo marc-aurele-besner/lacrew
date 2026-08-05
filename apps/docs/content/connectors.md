@@ -30,7 +30,9 @@ lacrew connectors config github --policy-target merge_pull_request=0xMERGE_AUTHO
 ```
 
 Registering only what a crew needs is the point: `--omit` leaves a route out
-entirely, and a read-only GitHub connector needs no address at all.
+entirely, and a read-only GitHub connector needs no address at all. Where
+several routes are one authority, they bind under one name — `connectors show`
+prints which, and says what it admits.
 
 ## Credentials: prefer an App to a personal token
 
@@ -94,7 +96,7 @@ what is still unbound.
 
 | Preset             | What a crew uses it for                                          | Writes (need an address)                                       | Credential modes                              |
 | ------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
-| `github`           | Pull requests, files, combined status, check runs, file contents | `merge_pull_request`, `create_issue_comment`, `update_file`    | `github-app` (default) · `token` → `GH_TOKEN` |
+| `github`           | Pull requests, files, CI state, file contents, git refs and trees | `merge_pull_request`, `create_issue_comment`, and the push (`update_file`, `create_tree`, `create_commit`, `update_ref`, which bind one address between them) | `github-app` (default) · `token` → `GH_TOKEN` |
 | `gitlab`           | Merge requests, diffs, pipelines — gitlab.com or self-hosted     | `merge_merge_request`                                          | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`)    |
 | `npm`              | Published versions, dist-tags, deprecations                      | —                                                              | `none`                                        |
 | `pypi`             | Release history, requires-python, yanked releases                | —                                                              | `none`                                        |
@@ -156,10 +158,10 @@ issues them — an account without one cannot use that preset at all.
 is an error rather than a no-op: an operator who names a token there believes one
 is going out.
 
-**The push is a route, not a shell.** `github.update_file` is how the
-`github-experts` fixer gets a patch onto a bot's PR branch. It is one gated
-call on the Contents API, and it is the only write path a crew has to a
-repository's contents — see
+**The push is a set of routes, not a shell.** The `github-experts` fixer gets a
+patch onto a bot's PR branch through git's own object API — tree, commit, ref —
+so a fix touching several files is one commit rather than several. These are the
+only write paths a crew has to a repository's contents — see
 [What the fixer can and cannot do](#what-the-fixer-can-and-cannot-do).
 
 A preset may also pin constant headers the service requires — `notion` sends
@@ -175,34 +177,57 @@ registration.
 The `github-experts` charter says the fixer "pushes to the bot's PR branch".
 Git is not one REST call, and the answer is not a shell: an orchestrator that
 could run `git` for an agent would be a second execution path with none of the
-enforcement the first one has. What ships instead is one write route on GitHub's
-Contents API — `PUT /repos/{owner}/{repo}/contents/{path}` — which commits a
-single file onto a named branch.
-
-Register it with the branches it may land on:
+enforcement the first one has. What ships instead is a small set of gated routes
+over git's own object model, registered with the branches they may land on:
 
 ```bash
 lacrew connectors config github \
-  --policy-target update_file=0x…            # the push-authority address \
+  --policy-target push_authority=0x… \
   --branch 'dependabot/**' --branch 'renovate/**'
 ```
 
-**It can:** commit one file per call onto an allowlisted branch, pinned by the
-blob `sha` it read a step earlier, having asked `lacrew_check_policy` about the
-crew's `push-authority` address and been answered ALLOW. The write ships in
-`ask` mode, so the first one stops for a human in-thread.
+**It can:** land a fix of up to twenty files as **one commit** on an allowlisted
+branch, having asked `lacrew_check_policy` about the crew's `push-authority`
+address and been answered ALLOW. That is git's own object API, in four calls:
+
+```
+get_ref     → where the branch points
+get_commit  → the tree that commit carries
+create_tree → a new tree: base_tree plus the files being changed
+create_commit → one commit, one parent — the head that was read
+update_ref  → the branch moves. This is the push, and this is the one that asks.
+```
+
+One commit means one CI run and one diff for a reviewer, which is the whole
+reason not to write files one at a time. Only `update_ref` ships in `ask` mode:
+a tree and a commit nothing points at are invisible and get garbage-collected,
+so confirming them would gate nothing — and three confirmations per push is how
+an operator learns to approve the one that matters without reading it.
+
+All four bind **one** address (`--policy-target push_authority=0x…`), because
+it is one decision. `update_file` is also registered for the single-file case:
+one call, no sha juggling, same authority and same allowlist.
 
 **It cannot:**
 
 |                                     |                                                                                                                                                                     |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Force-push or rewrite history**   | There is no field to do it with. The route's args are `message`, `content`, `sha`, `branch` — a flow cannot pass `force`, and an undeclared arg is dropped, not sent. |
+| **Force-push or rewrite history**   | There is no field to do it with. `update_ref` takes one argument, the commit — a flow cannot pass `force`, and an undeclared arg is dropped, not sent. Without it GitHub refuses anything that is not a fast-forward, so a branch that moved underneath loses the fix rather than clobbering it. |
+| **Write a merge or an orphan commit** | `parents` is one value that goes out as a list of one. Two parents is a merge and none is an orphan; neither is expressible.                                          |
+| **Add a symlink or a submodule**    | A tree entry's `mode` and `type` are *fixed* at registration, not allowlisted — `100644` and `blob`. The values that mean symlink (`120000`) and submodule pointer (`160000`) are not values a call can carry. A `sha` field is dropped, so an entry cannot point at a blob nobody wrote. |
 | **Push to a branch nobody admitted** | The `branch` arg is pinned to the globs you registered, and it is *required*: GitHub commits to the default branch when a write omits it, so a missing branch is a refused call rather than a commit on `main`. |
-| **Escape the repo it named**        | `path` is encoded a segment at a time, and `.`, `..`, and empty segments are refused. So is a branch name containing a `..` component, ahead of the allowlist.        |
-| **Touch the workflow files**        | `.github/workflows/` is refused as a path prefix by default. `--deny-path` replaces the list; `--deny-path ''` keeps only branch protection and CODEOWNERS.           |
-| **Delete anything**                 | The DELETE route on that endpoint is not registered, and no preset ships it.                                                                                          |
-| **Upload something enormous**       | `content` is capped at 256 KB, and the whole request body at 1 MB. Both refuse rather than truncate.                                                                   |
+| **Escape the repo it named**        | `path` is encoded a segment at a time, and `.`, `..`, and empty segments are refused — inside a tree entry as well as in a URL. So is a branch name containing a `..` component, ahead of the allowlist. |
+| **Touch the workflow files**        | `.github/workflows/` is refused as a path prefix by default, on every route that writes a path. `--deny-path` replaces the list; `--deny-path ''` keeps only branch protection and CODEOWNERS. |
+| **Delete anything**                 | The DELETE routes on those endpoints are not registered, and no preset ships them.                                                                                    |
+| **Upload something enormous**       | A file is capped at 256 KB, a tree at 20 files and 512 KB, and the whole request body at 1 MB. All of them refuse rather than truncate.                                |
 | **Push without being admitted**     | `push-authority` is an ordinary whitelist entry. Revoking that one address stops every push the crew can make, org-wide, without touching GitHub.                      |
+
+What it can still get wrong, and what bounds it: an entry naming a file the run
+never read replaces that file in full. Nothing structural prevents that — the
+bound is the blast radius rather than the model's discipline, which is why the
+branch allowlist, the twenty-file cap, the workflow refusal, and a human on the
+merge all exist. The `github-experts` blueprint states this as a guardrail with
+its residual risk rather than implying the policy stack covers it.
 
 Two addresses stay separate from it on purpose. A crew that may push is not
 thereby allowed to merge its own work, and revoking the push must not also
@@ -240,8 +265,13 @@ The param allowlist answers *which* fields a flow may set. `argRules` answers
 | `pattern`      | A regex the value must match **whole** — it is anchored for you, so a prefix cannot slip past `dependabot/.+`.          |
 | `oneOf`        | The complete set of accepted values.                                                                                    |
 | `maxBytes`     | A ceiling on the value as the flow supplied it, checked before any encoding.                                            |
-| `multiSegment` | Path args only: the value may contain `/`, each segment encoded separately, with `.`, `..`, and empties refused.        |
+| `multiSegment` | The value is a `/`-separated path: `.`, `..`, and empty segments are refused. On a path arg it also encodes per segment so the slashes survive. |
 | `encode`       | Body args only: send the value base64-encoded, so a model can emit plain text for an endpoint that takes base64.        |
+| `fixed`        | The value is set at registration and replaces whatever the caller passed. Removes a choice rather than narrowing one.   |
+| `json`         | Body args only: parse the value as JSON first, so a route whose body takes a list can be called from a flow at all. A fenced code block is unwrapped; anything else that is not JSON fails the call. |
+| `items`        | With `json`: each entry is an object **rebuilt** from these rules. Undeclared keys are dropped, exactly as an undeclared arg is. |
+| `maxItems`     | With `items`: how many entries the list may carry.                                                                      |
+| `wrap`         | Send the value as a single-element array — when "exactly one" is the property worth having.                            |
 
 A refused value fails the step with `connector_arg_refused:<tool>:<arg>` (or
 `connector_arg_too_large:<tool>:<arg>:<limit>`) **before the request is built**,
@@ -610,8 +640,10 @@ to register before standing the crew up:
 ```bash
 lacrew crews show github-experts
 # Connectors to register before the crew can work
-#   github  (github.get_pull_request, github.get_file, github.get_file_raw,
-#            github.create_issue_comment, github.update_file, github.merge_pull_request)
+#   github  (github.get_pull_request, github.list_pull_request_files, github.get_file_raw,
+#            github.get_ref, github.get_commit, github.create_issue_comment,
+#            github.create_tree, github.create_commit, github.update_ref,
+#            github.merge_pull_request)
 #      ships as a preset:  lacrew connectors show github
 ```
 

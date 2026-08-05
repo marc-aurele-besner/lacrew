@@ -47,30 +47,35 @@ const botPullRequest = {
 const FIX_INPUT = {
   owner: "marc-aurele-besner",
   repo: "lacrew",
+  number: 94,
   branch: "renovate/viem-2.x",
   path: "packages/core/src/version.ts",
   log: "TypeError: viem.getContract is not a function",
 };
 
-/** The file's metadata, as the Contents API returns it — the sha the push pins. */
-const fileMeta = {
+/** What the bump touched, as the PR files endpoint returns it. */
+const changedFiles = {
   ok: true,
   status: 200,
-  body: {
-    name: "version.ts",
-    path: "packages/core/src/version.ts",
-    sha: "3d5f1c9a2b",
-    size: 42,
-    encoding: "base64",
-  },
+  body: [
+    { filename: "package.json", status: "modified", patch: '-"viem": "2.31.6"\n+"viem": "2.31.7"' },
+  ],
 };
 
-/** The same file under the raw media type: the text a model can actually patch. */
+/** The failing file under the raw media type: the text a model can actually patch. */
 const fileSource = {
   ok: true,
   status: 200,
   body: 'export const version = "2.31.6";\n',
 };
+
+/** Where the branch points, and the tree that commit carries. */
+const branchHead = {
+  ok: true,
+  status: 200,
+  body: { ref: "refs/heads/renovate/viem-2.x", object: { sha: "aaa1111", type: "commit" } },
+};
+const baseCommit = { ok: true, status: 200, body: { sha: "aaa1111", tree: { sha: "ttt2222" } } };
 
 /** One in-range LP position, as the Uniswap subgraph would return it. */
 const lpPositions = {
@@ -255,44 +260,68 @@ const scenarios: FlowEvalScenario[] = [
     expect: {
       status: "completed",
       ran: ["diagnose", "route", "patch-budget", "push-check", "may-push", "push-blocked"],
-      notRan: ["read-file", "read-source", "patch", "push", "push-note"],
+      notRan: ["read-changed", "read-source", "patch", "build-tree", "build-commit", "push"],
       port: { "may-push": "push-blocked" },
       // The whole point of asking before reading: a refused crew makes no
       // request to GitHub whatsoever.
-      notCalled: ["github.update_file", "github.get_file", "github.get_file_raw"],
+      notCalled: ["github.update_ref", "github.create_tree", "github.create_commit"],
       noConnectorCalls: true,
     },
   },
   {
     id: "github-experts/push-admitted",
     describe:
-      "The same repair once push authority is admitted: the fixer reads the file, rewrites it, and commits to the bot's branch exactly once, pinned to the sha it read.",
+      "The same repair once push authority is admitted: the fixer reads what the bump changed and the failing file, writes a tree, commits it against the head it read, and moves the branch — one commit for two files, and exactly one ref update.",
     flow: "dep-fix-loop",
     blueprint: "github-experts",
     asAgent: "fixer",
     input: FIX_INPUT,
     mocks: {
       tools: {
-        "github.get_file": { result: fileMeta },
+        "github.list_pull_request_files": { result: changedFiles },
         "github.get_file_raw": { result: fileSource },
-        "github.update_file": {
-          result: { ok: true, status: 200, body: { commit: { sha: "9a8b7c6" } } },
+        "github.get_ref": { result: branchHead },
+        "github.get_commit": { result: baseCommit },
+        "github.create_tree": { result: { ok: true, status: 201, body: { sha: "ttt3333" } } },
+        "github.create_commit": { result: { ok: true, status: 201, body: { sha: "ccc4444" } } },
+        "github.update_ref": {
+          result: { ok: true, status: 200, body: { object: { sha: "ccc4444" } } },
         },
       },
       model: [
         { when: "FLAKE (infrastructure", reply: "SMALL" },
-        { when: "Reply with the entire contents", reply: 'export const version = "2.31.7";\n' },
+        {
+          when: "Reply with the JSON array",
+          // Two files, one commit — the thing a per-file write cannot do.
+          reply: JSON.stringify([
+            { path: "packages/core/src/version.ts", content: 'export const version = "2.31.7";\n' },
+            { path: "package.json", content: '{ "viem": "2.31.7" }\n' },
+          ]),
+        },
       ],
       policy: { targets: { "ci-minutes": "ALLOW", "push-authority": "ALLOW" } },
     },
     expect: {
       status: "completed",
-      ran: ["push-check", "may-push", "read-file", "read-source", "patch", "push", "push-note"],
+      ran: [
+        "push-check",
+        "may-push",
+        "read-changed",
+        "read-source",
+        "patch",
+        "read-head",
+        "read-base",
+        "build-tree",
+        "build-commit",
+        "push",
+        "push-note",
+      ],
       notRan: ["push-blocked", "handoff"],
-      port: { "may-push": "read-file" },
-      // Once. There is no retry edge, because a fix-until-green loop is the
-      // runaway the allowance exists to stop.
-      called: { "github.update_file": 1, "github.get_file": 1 },
+      port: { "may-push": "read-changed" },
+      // One tree, one commit, one ref update — for two files. There is no retry
+      // edge, because a fix-until-green loop is the runaway the allowance
+      // exists to stop.
+      called: { "github.create_tree": 1, "github.create_commit": 1, "github.update_ref": 1 },
       // A crew that may push is not thereby allowed to merge its own work.
       notCalled: ["github.merge_pull_request"],
     },

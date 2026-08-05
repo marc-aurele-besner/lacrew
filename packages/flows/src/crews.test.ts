@@ -361,36 +361,45 @@ test("the fixer asks policy before it pushes, and reads nothing if refused", () 
   const reachesPush = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"push"'));
   assert.deepEqual(
     reachesPush.map((s) => s.id),
-    ["patch"],
+    ["build-commit"],
   );
-  const reachesRead = def.steps.filter((s) => JSON.stringify(stepEdges(s)).includes('"read-file"'));
+  const reachesRead = def.steps.filter((s) =>
+    JSON.stringify(stepEdges(s)).includes('"read-changed"'),
+  );
   assert.deepEqual(
     reachesRead.map((s) => s.id),
     ["may-push"],
   );
   const push = def.steps.find((s) => s.id === "push");
-  assert.equal(push?.kind === "tool" && push.tool, "github.update_file");
+  assert.equal(push?.kind === "tool" && push.tool, "github.update_ref");
 });
 
-test("the push carries the branch it was given and the sha it read", () => {
+test("the fix lands as one commit, whatever it touches", () => {
+  const def = getFlowTemplate("dep-fix-loop")!.definition;
+  const step = (id: string) => {
+    const s = def.steps.find((x) => x.id === id);
+    assert.ok(s?.kind === "tool", `${id} should be a tool step`);
+    return s;
+  };
+  // Git's own object API in order: a tree off the branch's tree, one commit on
+  // it, then the ref moves. Several files in, one commit and one CI run out.
+  assert.equal(step("build-tree").tool, "github.create_tree");
+  assert.equal(step("build-tree").args?.base_tree, "{{steps.read-base.json.body.tree.sha}}");
+  assert.equal(step("build-tree").args?.tree, "{{steps.patch.text}}");
+  assert.equal(step("build-commit").tool, "github.create_commit");
+  assert.equal(step("build-commit").args?.tree, "{{steps.build-tree.json.body.sha}}");
+  // The head the run read, so a branch that moved underneath makes this a
+  // non-fast-forward that GitHub refuses rather than a silent clobber.
+  assert.equal(step("build-commit").args?.parents, "{{steps.read-head.json.body.object.sha}}");
+});
+
+test("the push carries the branch it was given and the commit it built", () => {
   const push = getFlowTemplate("dep-fix-loop")!.definition.steps.find((s) => s.id === "push");
   assert.ok(push?.kind === "tool");
-  // Not a model's transcription of either. The branch is the run input and the
-  // sha is the earlier read's own answer, so the write names the exact blob it
-  // is replacing and a branch that moved underneath is refused by GitHub.
   assert.equal(push.args?.branch, "{{input.branch}}");
-  assert.equal(push.args?.sha, "{{steps.read-file.json.body.sha}}");
-  assert.equal(push.args?.content, "{{steps.patch.text}}");
+  assert.equal(push.args?.sha, "{{steps.build-commit.json.body.sha}}");
   // No field that could force, and none that could name a different repo.
-  assert.deepEqual(Object.keys(push.args ?? {}).sort(), [
-    "branch",
-    "content",
-    "message",
-    "owner",
-    "path",
-    "repo",
-    "sha",
-  ]);
+  assert.deepEqual(Object.keys(push.args ?? {}).sort(), ["branch", "owner", "repo", "sha"]);
 });
 
 test("publication is asked of policy before it is ever proposed", () => {

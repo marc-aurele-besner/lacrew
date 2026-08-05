@@ -9,7 +9,12 @@ import {
   presetPolicyTargetRoutes,
   resolveConnectorConfig,
 } from "./connectorPresets.js";
-import { createConnectorRegistry, loadConnectorsFromEnv, validateConnector } from "./connectors.js";
+import {
+  createConnectorRegistry,
+  loadConnectorsFromEnv,
+  validateConnector,
+  wholeValueRegExp,
+} from "./connectors.js";
 
 const MERGE_AUTHORITY = "0x00000000000000000000000000000000000000aa" as const;
 const COMMENT_AUTHORITY = "0x00000000000000000000000000000000000000bb" as const;
@@ -22,8 +27,11 @@ const BOT_BRANCHES = ["dependabot/**", "renovate/**"];
 const GITHUB_TARGETS = {
   merge_pull_request: MERGE_AUTHORITY,
   create_issue_comment: COMMENT_AUTHORITY,
-  update_file: PUSH_AUTHORITY,
+  push_authority: PUSH_AUTHORITY,
 } as const;
+
+/** Every route that can put a commit on a branch — one authority, four calls. */
+const PUSH_ROUTES = ["update_file", "create_tree", "create_commit", "update_ref"];
 
 /** The github preset with everything it refuses to guess supplied. */
 const GITHUB_BINDINGS = { policyTargets: GITHUB_TARGETS, branches: BOT_BRANCHES };
@@ -92,7 +100,7 @@ test("commenting can be registered without granting the merge", () => {
   // A crew that reports and never merges is a real configuration, and it must
   // not have to bind a merge authority it will never use to get there.
   const connector = buildConnectorPreset("github", {
-    omitRoutes: ["merge_pull_request", "update_file"],
+    omitRoutes: ["merge_pull_request", ...PUSH_ROUTES],
     policyTargets: { create_issue_comment: COMMENT_AUTHORITY },
   });
   assert.ok(connector.routes.some((r) => r.name === "create_issue_comment"));
@@ -128,7 +136,14 @@ test("the comment, the push, and the merge are the only writes — a preset does
   const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
   assert.deepEqual(
     connector.routes.filter((r) => r.effect === "write").map((r) => r.name),
-    ["create_issue_comment", "update_file", "merge_pull_request"],
+    [
+      "create_issue_comment",
+      "update_file",
+      "create_tree",
+      "create_commit",
+      "update_ref",
+      "merge_pull_request",
+    ],
   );
 });
 
@@ -147,7 +162,7 @@ test("a write with no policy target is refused rather than registered unadmitted
 
 test("omitting the writes builds a read-only connector without any binding", () => {
   const connector = buildConnectorPreset("github", {
-    omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
+    omitRoutes: ["merge_pull_request", "create_issue_comment", ...PUSH_ROUTES],
   });
   assert.ok(connector.routes.every((r) => r.effect === "read"));
   assert.ok(!connector.routes.some((r) => r.name === "merge_pull_request"));
@@ -509,7 +524,7 @@ test("a preset route calls the URL the preset wrote down", async () => {
     connectors: [
       buildConnectorPreset("github", {
         authMode: "token",
-        omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
+        omitRoutes: ["merge_pull_request", "create_issue_comment", ...PUSH_ROUTES],
       }),
     ],
     env: { GH_TOKEN: "ghp_secret" },
@@ -591,14 +606,14 @@ test("the push refuses the workflow directory unless the operator replaces the l
 test("a push route will not register until the operator names the branches", () => {
   assert.throws(
     () => buildConnectorPreset("github", { policyTargets: GITHUB_TARGETS }),
-    /connector_preset_unbound_branch_allowlist:github\.update_file/,
+    /connector_preset_unbound_branch_allowlist:github\.(update_file|update_ref)/,
   );
   // And a branch allowlist for a connector with nothing to constrain is the
   // operator believing they narrowed something. They did not.
   assert.throws(
     () =>
       buildConnectorPreset("github", {
-        omitRoutes: ["update_file", "merge_pull_request", "create_issue_comment"],
+        omitRoutes: [...PUSH_ROUTES, "merge_pull_request", "create_issue_comment"],
         branches: ["dependabot/**"],
       }),
     /connector_preset_takes_no_branch_allowlist:github/,
@@ -642,4 +657,67 @@ test("a compiled rule carries the operator's own words for it", () => {
   const push = pushRoute();
   assert.equal(push.argRules?.branch?.label, "dependabot/**, renovate/**");
   assert.equal(push.argRules?.path?.label, "not .github/workflows/");
+});
+
+test("the atomic push is four calls and one authority", () => {
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
+  const routes = PUSH_ROUTES.map((n) => connector.routes.find((r) => r.name === n)!);
+  // One address for all of them. Four bindings would look like four decisions,
+  // and the risk is not the typing — it is an operator eventually binding four
+  // different addresses and believing they narrowed something.
+  for (const route of routes) {
+    assert.equal(route.policyTarget, PUSH_AUTHORITY, `${route.name} shares the push authority`);
+  }
+  assert.deepEqual(presetPolicyTargetRoutes(getConnectorPreset("github")!), [
+    "create_issue_comment",
+    "push_authority",
+    "merge_pull_request",
+  ]);
+});
+
+test("only the call that moves the branch stops for a human", () => {
+  const connector = buildConnectorPreset("github", GITHUB_BINDINGS);
+  const modeOf = (name: string) => connector.routes.find((r) => r.name === name)!.mode;
+  // A tree and a commit nothing points at are invisible and get collected. A
+  // confirmation there would gate nothing, and three per push is how an
+  // operator learns to approve the one that matters without reading it.
+  assert.equal(modeOf("create_tree"), undefined);
+  assert.equal(modeOf("create_commit"), undefined);
+  assert.equal(modeOf("update_ref"), "ask");
+});
+
+test("the ref update has no field that could force it", () => {
+  const push = buildConnectorPreset("github", GITHUB_BINDINGS).routes.find(
+    (r) => r.name === "update_ref",
+  )!;
+  // GitHub defaults `force` to false, so leaving it out of the allowlist means
+  // a non-fast-forward is refused on their side as well as on ours.
+  assert.deepEqual(push.params, ["sha"]);
+  assert.equal(push.method, "PATCH");
+  assert.equal(push.argRules?.branch?.label, "dependabot/**, renovate/**");
+});
+
+test("a commit the crew builds cannot be a merge or an orphan", () => {
+  const commit = buildConnectorPreset("github", GITHUB_BINDINGS).routes.find(
+    (r) => r.name === "create_commit",
+  )!;
+  assert.equal(commit.argRules?.parents?.wrap, "array");
+  assert.equal(commit.argRules?.parents?.required, true);
+});
+
+test("every file in a tree is a regular file, and the path denylist reaches inside", () => {
+  const tree = buildConnectorPreset("github", GITHUB_BINDINGS).routes.find(
+    (r) => r.name === "create_tree",
+  )!;
+  const items = tree.argRules?.tree?.items;
+  // Fixed, not allowlisted: symlink and submodule are not values a call can
+  // carry rather than values a check rejects.
+  assert.equal(items?.mode?.fixed, "100644");
+  assert.equal(items?.type?.fixed, "blob");
+  // The operator refused a directory, not a calling convention — so the same
+  // refusal lands on the route that writes several files at once.
+  assert.equal(items?.path?.label, "not .github/workflows/");
+  assert.ok(!wholeValueRegExp(items!.path!.pattern!).test(".github/workflows/ci.yml"));
+  assert.ok(wholeValueRegExp(items!.path!.pattern!).test("src/index.ts"));
+  assert.equal(tree.argRules?.tree?.maxItems, 20);
 });

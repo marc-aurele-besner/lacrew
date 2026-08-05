@@ -23,6 +23,8 @@ import {
   buildConnectorPreset,
   connectorPresets,
   getConnectorPreset,
+  presetPolicyTargetKey,
+  presetPolicyTargetRoutes,
   DEFAULT_DENY_PATH_PREFIXES,
   DEFAULT_MAX_RESPONSE_BYTES,
   type ConnectorPreset,
@@ -86,7 +88,7 @@ function printList(): void {
     console.log("");
   }
   console.log("Detail:  lacrew connectors show <id>");
-  console.log("Config:  lacrew connectors config <id> --policy-target <route>=0x…");
+  console.log("Config:  lacrew connectors config <id> --policy-target <name>=0x…");
 }
 
 function printShow(id: string): void {
@@ -151,25 +153,31 @@ function printShow(id: string): void {
       ` connector_response_too_large, unless a route above raises its own limit.`,
   );
 
-  const gated = preset.routes.filter((r) => r.policyTarget?.required);
+  // By binding name, not by route: the four calls of an atomic push name one
+  // authority, and printing four lines would read as four decisions.
+  const gated = presetPolicyTargetRoutes(preset);
   const branched = preset.routes.filter((r) => r.guards?.branchArg);
   const needsBaseUrl = preset.baseUrl === undefined;
   if (gated.length > 0 || needsBaseUrl) {
     console.log("\nBind before registering");
     if (needsBaseUrl) console.log("  --base-url https://…");
-    for (const route of gated) {
-      console.log(`  --policy-target ${route.name}=0x…`);
+    for (const name of gated) {
+      const shared = preset.routes.filter((r) => presetPolicyTargetKey(r) === name);
+      const covers =
+        shared.length > 1 ? `   (admits ${shared.map((r) => r.name).join(", ")})` : "";
+      console.log(`  --policy-target ${name}=0x…${covers}`);
     }
     if (branched.length > 0) console.log("  --branch '<glob>'   (repeatable)");
     if (gated.length > 0) {
+      const writes = preset.routes.filter((r) => r.policyTarget?.required).map((r) => r.name);
       console.log("  Or leave the write out entirely:");
-      console.log(`  --omit ${gated.map((r) => r.name).join(" --omit ")}`);
+      console.log(`  --omit ${writes.join(" --omit ")}`);
     }
   }
 
   console.log(
     `\nEmit it:  lacrew connectors config ${preset.id}${needsBaseUrl ? " --base-url https://…" : ""}${gated
-      .map((r) => ` --policy-target ${r.name}=0x…`)
+      .map((name) => ` --policy-target ${name}=0x…`)
       .join("")}${branched.length > 0 ? " --branch 'dependabot/**'" : ""}`,
   );
 }
@@ -456,7 +464,9 @@ Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
 
 Flags for config:
   --auth <mode>                 Credential mode (see: connectors show <id>)
-  --policy-target <route>=0x…   Admit a write route (repeatable)
+  --policy-target <name>=0x…    Admit a write (repeatable). The name is the
+                                route's, or the authority several routes share
+                                — see: connectors show <id>
   --branch <glob>               Branches a push route may write to (repeatable;
                                 * within a segment, ** across). No default —
                                 a push route will not register without one

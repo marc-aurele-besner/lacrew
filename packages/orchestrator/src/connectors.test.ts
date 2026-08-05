@@ -1036,8 +1036,34 @@ test("an argument rule that constrains nothing is rejected at registration", () 
       /argRules names "nope", which the route does not take/,
     ],
     [
-      { routes: [{ ...pushConnector().routes[1]!, argRules: { branch: { multiSegment: true } } }] },
-      /cannot be multiSegment/,
+      { routes: [{ ...pushConnector().routes[0]!, argRules: { ref: { json: true } } }] },
+      /sends no body, so argRules "ref" cannot use json/,
+    ],
+    [
+      { routes: [{ ...pushConnector().routes[1]!, argRules: { path: { json: true } } }] },
+      /is a path argument and cannot carry a list/,
+    ],
+    [
+      {
+        routes: [
+          {
+            ...pushConnector().routes[1]!,
+            argRules: { content: { items: { a: { required: true } } } },
+          },
+        ],
+      },
+      /declares items but is not json/,
+    ],
+    [
+      {
+        routes: [
+          {
+            ...pushConnector().routes[1]!,
+            argRules: { content: { json: true, items: { a: { json: true } } } },
+          },
+        ],
+      },
+      /argRules "content.a" cannot use json/,
     ],
     [
       { routes: [{ ...pushConnector().routes[1]!, argRules: { path: { encode: "base64" } } }] },
@@ -1091,4 +1117,175 @@ test("describe() publishes the constraints a route runs under, and no credential
   assert.match(push.argRules?.branch?.pattern ?? "", /dependabot\//);
   assert.equal(push.maxRequestBytes, 1_048_576);
   assert.ok(!JSON.stringify(view).includes("ghp_secret"));
+});
+
+/* ——— list arguments: the atomic push's tree (F2.13) ——— */
+
+/** A create-tree-shaped route: a list of files, each one rebuilt from rules. */
+function treeConnector(overrides: Partial<Connector> = {}): Connector {
+  return {
+    id: "github",
+    baseUrl: "https://api.github.com",
+    auth: { kind: "bearer", tokenEnv: "GH_TOKEN" },
+    routes: [
+      {
+        name: "create_tree",
+        method: "POST",
+        path: "/repos/{owner}/{repo}/git/trees",
+        effect: "write",
+        params: ["base_tree", "tree"],
+        argRules: {
+          base_tree: { required: true },
+          tree: {
+            required: true,
+            json: true,
+            maxItems: 2,
+            items: {
+              path: { required: true, multiSegment: true, pattern: "(?!(?:\\.github/)).*" },
+              content: { required: true, maxBytes: 64 },
+              mode: { fixed: "100644" },
+              type: { fixed: "blob" },
+            },
+          },
+        },
+      },
+      {
+        name: "create_commit",
+        method: "POST",
+        path: "/repos/{owner}/{repo}/git/commits",
+        effect: "write",
+        params: ["message", "tree", "parents"],
+        argRules: { parents: { required: true, wrap: "array" } },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function treeRegistry(fetchImpl: typeof fetch) {
+  return createConnectorRegistry({ connectors: [treeConnector()], env: TOKEN_ENV, fetchImpl });
+}
+
+const twoFiles = JSON.stringify([
+  { path: "src/index.ts", content: "a" },
+  { path: "package.json", content: "b" },
+]);
+
+test("a tree argument arrives as a list, and every entry is a regular file", async () => {
+  const { calls, impl } = recordingFetch();
+  await treeRegistry(impl).call("github.create_tree", {
+    owner: "o",
+    repo: "r",
+    base_tree: "ttt",
+    tree: twoFiles,
+  });
+  const body = JSON.parse(String(calls[0]!.init.body)) as { tree: Record<string, string>[] };
+  // Two files, one call — the thing a per-file write cannot do, and the reason
+  // a three-file repair is one commit and one CI run.
+  assert.deepEqual(body.tree, [
+    { path: "src/index.ts", content: "a", mode: "100644", type: "blob" },
+    { path: "package.json", content: "b", mode: "100644", type: "blob" },
+  ]);
+});
+
+test("an entry cannot be a symlink, a submodule, or a pointer at somebody else's blob", async () => {
+  const { calls, impl } = recordingFetch();
+  await treeRegistry(impl).call("github.create_tree", {
+    owner: "o",
+    repo: "r",
+    base_tree: "ttt",
+    tree: JSON.stringify([
+      // Every one of these is a way out of "fix the build": a symlink reads a
+      // file the repo does not contain, a submodule pointer pulls in a whole
+      // other repository, and a bare sha points at a blob nobody reviewed.
+      { path: "evil", content: "/etc/passwd", mode: "120000", type: "blob" },
+      { path: "vendor", content: "x", mode: "160000", type: "commit", sha: "deadbeef" },
+    ]),
+  });
+  const body = JSON.parse(String(calls[0]!.init.body)) as { tree: Record<string, string>[] };
+  assert.equal(body.tree[0]!.mode, "100644");
+  assert.equal(body.tree[0]!.type, "blob");
+  assert.equal(body.tree[1]!.mode, "100644");
+  // The keys nobody declared are gone, not narrowed: `sha` never reaches the
+  // wire, so an entry the crew did not write cannot be pointed at.
+  assert.ok(!JSON.stringify(body).includes("deadbeef"));
+  assert.deepEqual(Object.keys(body.tree[0]!).sort(), ["content", "mode", "path", "type"]);
+});
+
+test("a tree entry is held to the same rules a single write would be", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = treeRegistry(impl);
+  const cases: Array<[string, unknown, RegExp]> = [
+    ["a path the operator refused", [{ path: ".github/workflows/ci.yml", content: "x" }], /connector_arg_refused:github\.create_tree:tree\[0\]\.path/],
+    ["a path that walks out", [{ path: "src/../../etc/passwd", content: "x" }], /connector_arg_refused:github\.create_tree:tree\[0\]\.path/],
+    ["a file over the cap", [{ path: "a.ts", content: "y".repeat(65) }], /connector_arg_too_large:github\.create_tree:tree\[0\]\.content:64/],
+    ["an entry with no content", [{ path: "a.ts" }], /connector_missing_arg:tree\[0\]\.content/],
+    ["an entry that is not an object", ["a.ts"], /connector_arg_refused:github\.create_tree:tree/],
+  ];
+  for (const [what, tree, expected] of cases) {
+    await assert.rejects(
+      registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: JSON.stringify(tree) }),
+      expected,
+      `${what} must be refused`,
+    );
+  }
+  // Not one of them reached the network.
+  assert.equal(calls.length, 0);
+});
+
+test("a tree bigger than the cap is refused rather than sent", async () => {
+  const { calls, impl } = recordingFetch();
+  await assert.rejects(
+    treeRegistry(impl).call("github.create_tree", {
+      owner: "o",
+      repo: "r",
+      base_tree: "t",
+      tree: JSON.stringify([
+        { path: "a", content: "1" },
+        { path: "b", content: "2" },
+        { path: "c", content: "3" },
+      ]),
+    }),
+    /connector_arg_too_many:github\.create_tree:tree:2/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a list argument that is not JSON fails the call rather than going out as a string", async () => {
+  const { calls, impl } = recordingFetch();
+  const registry = treeRegistry(impl);
+  await assert.rejects(
+    registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: "sorry, I can't" }),
+    /connector_arg_not_json:github\.create_tree:tree/,
+  );
+  await assert.rejects(
+    registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: '{"path":"a"}' }),
+    /connector_arg_refused:github\.create_tree:tree/,
+  );
+  assert.equal(calls.length, 0);
+
+  // A fenced block is the one wrapper a model adds after being told not to, and
+  // failing a repair on three backticks is not a safety property.
+  await registry.call("github.create_tree", {
+    owner: "o",
+    repo: "r",
+    base_tree: "t",
+    tree: "```json\n" + twoFiles + "\n```",
+  });
+  assert.equal(calls.length, 1);
+});
+
+test("a commit this crew builds has exactly one parent", async () => {
+  const { calls, impl } = recordingFetch();
+  await treeRegistry(impl).call("github.create_commit", {
+    owner: "o",
+    repo: "r",
+    message: "fix",
+    tree: "ttt",
+    // Whatever the caller passes is one value, and it goes out as a list of
+    // one: a second parent would make this a merge and none would orphan it.
+    parents: "aaa111",
+  });
+  const body = JSON.parse(String(calls[0]!.init.body)) as { parents: string[] };
+  assert.deepEqual(body.parents, ["aaa111"]);
 });

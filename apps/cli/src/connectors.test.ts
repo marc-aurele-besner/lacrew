@@ -15,7 +15,7 @@ const BIND_GITHUB_WRITES = [
   "--policy-target",
   `create_issue_comment=${COMMENT_AUTHORITY}`,
   "--policy-target",
-  `update_file=${PUSH_AUTHORITY}`,
+  `push_authority=${PUSH_AUTHORITY}`,
   "--branch",
   "dependabot/**",
 ];
@@ -138,6 +138,12 @@ describe("lacrew connectors", () => {
       "create_issue_comment",
       "--omit",
       "update_file",
+      "--omit",
+      "create_tree",
+      "--omit",
+      "create_commit",
+      "--omit",
+      "update_ref",
     ]);
     assert.equal(code, undefined);
     const parsed = JSON.parse(out) as Connector[];

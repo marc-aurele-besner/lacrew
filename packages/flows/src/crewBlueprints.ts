@@ -432,9 +432,13 @@ const githubExperts: CrewBlueprint = {
       tools: [
         "lacrew_propose_intent",
         "lacrew_check_policy",
-        "github.get_file",
+        "github.list_pull_request_files",
         "github.get_file_raw",
-        "github.update_file",
+        "github.get_ref",
+        "github.get_commit",
+        "github.create_tree",
+        "github.create_commit",
+        "github.update_ref",
       ],
       flows: ["dep-fix-loop"],
     },
@@ -501,14 +505,18 @@ const githubExperts: CrewBlueprint = {
       id: "github",
       routes: [
         "get_pull_request",
-        "get_file",
+        "list_pull_request_files",
         "get_file_raw",
+        "get_ref",
+        "get_commit",
         "create_issue_comment",
-        "update_file",
+        "create_tree",
+        "create_commit",
+        "update_ref",
         "merge_pull_request",
       ],
       usedBy: "flow",
-      note: "Reads the PR being triaged, reads and rewrites the one file the fix touches, posts the fixer's note back on it, and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Each of the three writes carries its own policy target — merge-authority, comment-authority, push-authority — and the push additionally refuses to register until `--branch` names the branches it may land on: `--branch 'dependabot/**' --branch 'renovate/**'` is what this crew works on.",
+      note: "Reads the PR being triaged, reads and rewrites the one file the fix touches, posts the fixer's note back on it, and merges the ones that clear both the classifier and the merge-authority check. Register it as a GitHub App installation (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) — that is the preset's default, and it scopes the crew to the repos the App was installed on rather than to a person's whole account. `--auth token` reads a PAT from GH_TOKEN instead. Each authority carries its own policy target — merge-authority, comment-authority, push-authority — and the push binds once (`--policy-target push_authority=0x…`) however many of git's object routes it takes, because it is one decision. It additionally refuses to register until `--branch` names the branches it may land on: `--branch 'dependabot/**' --branch 'renovate/**'` is what this crew works on.",
     },
   ],
   externalScopes: [
@@ -603,7 +611,19 @@ const githubExperts: CrewBlueprint = {
     {
       never: "Force-pushing or rewriting history on a default branch",
       enforcedBy: "policy",
-      how: "There is no field to force with. The crew's only write path to a branch is one Contents API route whose argument allowlist is message, content, sha, and branch — a flow cannot pass `force`, cannot delete, and cannot address a ref. `sha` names the blob being replaced, so a concurrent change is a refusal rather than a silent overwrite. Branch protection and the App's own scope remain underneath as the layer LaCrew does not enforce.",
+      how: "There is no field to force with. The ref update the crew can make takes one argument — the commit — and the commit it builds takes exactly one parent, so a merge commit and an orphan are not expressible either. Without `force`, GitHub itself refuses anything that is not a fast-forward, which is what makes a branch that moved underneath a lost fix rather than a clobbered one. Branch protection and the App's own scope remain underneath as the layer LaCrew does not enforce.",
+    },
+    {
+      never: "A fix adds a symlink or a submodule instead of a file",
+      enforcedBy: "policy",
+      how: "Every tree entry the crew can build is a regular file: `mode` and `type` are fixed at registration rather than allowlisted, so the values that mean symlink or submodule pointer are not representable in a call this crew can make.",
+    },
+    {
+      never: "A repair rewrites a file nobody looked at",
+      enforcedBy: "flow",
+      how: "The fix path reads the failing file and the bump's own diff before the model writes anything, and the tree it builds is based on the branch's tree, so every file the fix does not name is carried through untouched.",
+      residualRisk:
+        "An entry naming a file the run did not read replaces that file in full, and nothing structural stops the model from writing one. What bounds it is the blast radius rather than the model's discipline: an allowlisted bot branch, at most twenty files, no workflow directory, and a human on the merge. A repo where that is not enough should set the push route to `ask` for every commit rather than only the first.",
     },
     {
       never: "GitHub permissions expand without the humans agreeing",

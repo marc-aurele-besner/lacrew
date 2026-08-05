@@ -55,8 +55,14 @@ export type ConnectorPresetRoute = Omit<ConnectorRoute, "policyTarget"> & {
    * Present on writes that must be admitted before they can be registered.
    * `note` says what the address stands for, so the operator binds the right
    * one rather than reusing a payee.
+   *
+   * `key` names the authority when several routes share one. An atomic push is
+   * four calls and one decision, and asking an operator to type the same
+   * address four times would make it look like four — the risk being that they
+   * eventually bind four *different* ones and believe they have narrowed
+   * something. Absent, the route's own name is the binding name.
    */
-  policyTarget?: { required: true; note: string };
+  policyTarget?: { required: true; note: string; key?: string };
   /**
    * Arguments whose constraint is the operator's to write, not the preset's.
    *
@@ -69,7 +75,12 @@ export type ConnectorPresetRoute = Omit<ConnectorRoute, "policyTarget"> & {
   guards?: {
     /** Constrained by `branches`; the route will not build without it. */
     branchArg?: string;
-    /** Constrained by `denyPathPrefixes`, which has a default. */
+    /**
+     * Constrained by `denyPathPrefixes`, which has a default. `"tree.path"`
+     * names the `path` field of each entry of a list argument, because a route
+     * that writes several files at once carries its paths there and an operator
+     * who refused a directory meant it whichever route reaches it.
+     */
     pathArg?: string;
   };
 };
@@ -156,9 +167,13 @@ export type ConnectorPresetOptions = {
   installationIdEnv?: string;
   timeoutMs?: number;
   /**
-   * Route name → the address standing for the authority to take that action.
-   * Required for every route the preset marks; supplying one for a route that
-   * does not take one is an error rather than a no-op.
+   * Binding name → the address standing for the authority to take that action.
+   * The binding name is the route's, unless several routes name one authority
+   * between them: the four calls of an atomic push bind once, as
+   * `push_authority`. `lacrew connectors show <id>` prints the names to use.
+   *
+   * Required for every one the preset marks; supplying a name it does not take
+   * is an error rather than a no-op.
    */
   policyTargets?: Record<string, `0x${string}`>;
   /**
@@ -194,6 +209,18 @@ export const DEFAULT_DENY_PATH_PREFIXES = [".github/workflows/"];
 /* ------------------------------------------------------------------ *
  * GitHub — the surface the `github-experts` crew works in
  * ------------------------------------------------------------------ */
+
+/**
+ * Said once and shared by every route that can put a commit on a branch.
+ *
+ * The atomic push is four calls, and four subtly different notes would read as
+ * four different authorities. It is one: admitting the address admits the push,
+ * revoking it stops all of it.
+ */
+const PUSH_AUTHORITY_KEY = "push_authority";
+
+const PUSH_AUTHORITY_NOTE =
+  "The crew's authority to write to a branch — not a payee, and a third address alongside merge and comment authority. A crew that may push is not thereby allowed to merge, and revoking the push should not silence the note explaining why a PR is stuck. Every route that can put a commit on a branch shares this one address, so admitting it is one decision and revoking it stops the whole path. In the `github-experts` blueprint this is the `push-authority` target.";
 
 const github: ConnectorPreset = {
   id: "github",
@@ -328,10 +355,99 @@ const github: ConnectorPreset = {
         content: { encode: "base64", maxBytes: 262_144 },
       },
       guards: { branchArg: "branch", pathArg: "path" },
-      policyTarget: {
-        required: true,
-        note: "The crew's authority to write to a branch — not a payee, and a third address alongside merge and comment authority. A crew that may push is not thereby allowed to merge, and revoking the push should not silence the note explaining why a PR is stuck. In the `github-experts` blueprint this is the `push-authority` target.",
+      policyTarget: { required: true, key: PUSH_AUTHORITY_KEY, note: PUSH_AUTHORITY_NOTE },
+    },
+    {
+      name: "get_ref",
+      method: "GET",
+      path: "/repos/{owner}/{repo}/git/ref/heads/{branch}",
+      description:
+        "Where a branch currently points. The first step of an atomic push: the commit read here becomes the parent, so a branch that moved underneath is a refused update rather than a lost commit.",
+      effect: "read",
+      argRules: { branch: { multiSegment: true } },
+    },
+    {
+      name: "get_commit",
+      method: "GET",
+      path: "/repos/{owner}/{repo}/git/commits/{sha}",
+      description:
+        "One commit, and — the reason a push reads it — the tree it points at, which the new tree is based on so untouched files stay untouched.",
+      effect: "read",
+    },
+    {
+      name: "create_tree",
+      method: "POST",
+      path: "/repos/{owner}/{repo}/git/trees",
+      description:
+        "Build a tree from `base_tree` plus the files being changed. This is what makes a multi-file fix one commit instead of one commit per file — and one CI run instead of several.",
+      effect: "write",
+      params: ["base_tree", "tree"],
+      // `auto`, unlike the ref update. A tree nothing points at is invisible and
+      // is garbage-collected; stopping a human here would be a confirmation
+      // that gates nothing, and three of those per push is how an operator
+      // learns to approve the one that matters without reading it.
+      argRules: {
+        base_tree: { required: true },
+        tree: {
+          required: true,
+          json: true,
+          // Bounded because the list comes from a model completion. A repair
+          // touching more than a handful of files is not the small fix this
+          // path is for, and it should stop rather than land.
+          maxItems: 20,
+          maxBytes: 524_288,
+          label: "up to 20 regular files, no symlinks or submodules",
+          items: {
+            path: { required: true, multiSegment: true },
+            content: { required: true, maxBytes: 262_144 },
+            // Pinned, not narrowed. A tree entry's mode is what decides whether
+            // it is a regular file, an executable, a symlink, or a submodule
+            // pointer; the last two are ways to reach outside the repository
+            // that "fix the build" never implied, and here they are not
+            // representable rather than merely refused.
+            mode: { fixed: "100644" },
+            type: { fixed: "blob" },
+          },
+        },
       },
+      guards: { pathArg: "tree.path" },
+      policyTarget: { required: true, key: PUSH_AUTHORITY_KEY, note: PUSH_AUTHORITY_NOTE },
+    },
+    {
+      name: "create_commit",
+      method: "POST",
+      path: "/repos/{owner}/{repo}/git/commits",
+      description:
+        "Turn a tree into a commit. One parent, always: a second would make it a merge and none would make it an orphan, and a crew repairing a branch writes neither.",
+      effect: "write",
+      params: ["message", "tree", "parents"],
+      argRules: {
+        message: { required: true, maxBytes: 4_096 },
+        tree: { required: true },
+        // One value in, a one-element array on the wire. The shape of the
+        // commit is a property of the registration rather than of what a flow
+        // happened to pass.
+        parents: { required: true, wrap: "array", label: "exactly one parent commit" },
+      },
+      policyTarget: { required: true, key: PUSH_AUTHORITY_KEY, note: PUSH_AUTHORITY_NOTE },
+    },
+    {
+      name: "update_ref",
+      method: "PATCH",
+      path: "/repos/{owner}/{repo}/git/refs/heads/{branch}",
+      description:
+        "Move the branch to a commit — the push itself. There is no `force`: the route does not take one, so the update is a fast-forward or it is refused by GitHub.",
+      effect: "write",
+      // `force` is absent on purpose, and an undeclared arg is dropped rather
+      // than forwarded. GitHub defaults it to false, so a non-fast-forward
+      // update is refused on the other side as well as on this one.
+      params: ["sha"],
+      // The one moment the branch changes, and the only one of the four a human
+      // is asked about.
+      mode: "ask",
+      argRules: { branch: { multiSegment: true }, sha: { required: true } },
+      guards: { branchArg: "branch" },
+      policyTarget: { required: true, key: PUSH_AUTHORITY_KEY, note: PUSH_AUTHORITY_NOTE },
     },
     {
       name: "merge_pull_request",
@@ -1179,9 +1295,17 @@ export function getConnectorPreset(id: string): ConnectorPreset | undefined {
   return connectorPresets.find((p) => p.id === id);
 }
 
-/** Route names a preset cannot register until the operator binds an address. */
+/** The binding name one route's policy target is supplied under. */
+export function presetPolicyTargetKey(route: ConnectorPresetRoute): string | undefined {
+  return route.policyTarget?.required ? (route.policyTarget.key ?? route.name) : undefined;
+}
+
+/**
+ * Names a preset cannot register until the operator binds an address, each once
+ * however many routes share it.
+ */
 export function presetPolicyTargetRoutes(preset: ConnectorPreset): string[] {
-  return preset.routes.filter((r) => r.policyTarget?.required).map((r) => r.name);
+  return [...new Set(preset.routes.map(presetPolicyTargetKey).filter((k): k is string => !!k))];
 }
 
 /** The auth mode a set of options selects, defaulting to the preset's first. */
@@ -1270,11 +1394,20 @@ function applyGuards(
       .filter(Boolean);
     const pattern = pathDenyPattern(prefixes);
     if (pattern) {
-      rules[guards.pathArg] = {
-        ...rules[guards.pathArg],
-        pattern,
-        label: `not ${prefixes.join(", not ")}`,
-      };
+      const label = `not ${prefixes.join(", not ")}`;
+      // `tree.path` reaches the field inside each entry of a list argument. The
+      // operator refused a directory, not a calling convention, so the same
+      // refusal has to land wherever the route carries its paths.
+      const [arg, field] = guards.pathArg.split(".");
+      const target = rules[arg!];
+      if (field && target?.items?.[field]) {
+        rules[arg!] = {
+          ...target,
+          items: { ...target.items, [field]: { ...target.items[field], pattern, label } },
+        };
+      } else {
+        rules[guards.pathArg] = { ...rules[guards.pathArg], pattern, label };
+      }
     }
   }
   return rules;
@@ -1325,8 +1458,12 @@ export function buildConnectorPreset(id: string, options: ConnectorPresetOptions
   for (const name of options.omitRoutes ?? []) {
     if (!known.has(name)) throw new Error(`connector_preset_unknown_route:${id}.${name}`);
   }
+  // A binding may name a route or the authority several routes share; anything
+  // else is a typo, and honouring it silently would leave a write unadmitted
+  // while the operator believed they had bound it.
+  const bindable = new Set([...known, ...presetPolicyTargetRoutes(preset)]);
   for (const name of Object.keys(options.policyTargets ?? {})) {
-    if (!known.has(name)) throw new Error(`connector_preset_unknown_route:${id}.${name}`);
+    if (!bindable.has(name)) throw new Error(`connector_preset_unknown_route:${id}.${name}`);
   }
 
   // Options that make no sense for this preset are reported before anything the
@@ -1359,10 +1496,11 @@ export function buildConnectorPreset(id: string, options: ConnectorPresetOptions
     if (omitted.has(route.name)) continue;
     const { policyTarget, guards: _guards, argRules: _argRules, ...rest } = route;
     const argRules = applyGuards(id, route, options);
-    const bound = options.policyTargets?.[route.name];
+    const key = presetPolicyTargetKey(route);
+    const bound = options.policyTargets?.[key ?? route.name];
     if (policyTarget?.required && !bound) {
       throw new Error(
-        `connector_preset_unbound_policy_target:${id}.${route.name} — ${policyTarget.note}`,
+        `connector_preset_unbound_policy_target:${id}.${key} — ${policyTarget.note}`,
       );
     }
     if (bound && !policyTarget?.required) {

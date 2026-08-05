@@ -119,7 +119,7 @@ describe("orchestrator Hono app", () => {
           policyTargets: {
             merge_pull_request: "0x00000000000000000000000000000000000000aa",
             create_issue_comment: "0x00000000000000000000000000000000000000bb",
-            update_file: "0x00000000000000000000000000000000000000cc",
+            push_authority: "0x00000000000000000000000000000000000000cc",
           },
           branches: ["dependabot/**"],
         }),
@@ -157,7 +157,14 @@ describe("orchestrator Hono app", () => {
       connectors: [
         buildConnectorPreset("github", {
           authMode: "token",
-          omitRoutes: ["merge_pull_request", "create_issue_comment", "update_file"],
+          omitRoutes: [
+          "merge_pull_request",
+          "create_issue_comment",
+          "update_file",
+          "create_tree",
+          "create_commit",
+          "update_ref",
+        ],
         }),
       ],
       env: {},
@@ -1095,7 +1102,7 @@ describe("connector write policy routes (F2.24)", () => {
           policyTargets: {
             merge_pull_request: "0x00000000000000000000000000000000000000aa",
             create_issue_comment: "0x00000000000000000000000000000000000000bb",
-            update_file: "0x00000000000000000000000000000000000000cc",
+            push_authority: "0x00000000000000000000000000000000000000cc",
           },
           branches: ["dependabot/**"],
         }),
