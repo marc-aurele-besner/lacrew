@@ -597,9 +597,24 @@ of it at once, against this orchestrator, and exits non-zero while anything
 stands in the way:
 
 ```bash
-ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts \
-  --bind reviewer=0x… --bind fixer=0x…
+ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
 ```
+
+It needs no `--bind` flags once this orchestrator knows which account each seat
+landed on. Record that once, right after the install, while the labels and the
+blueprint still agree:
+
+```bash
+lacrew crews bind github-experts --from-org   # persist what a label match found
+lacrew crews bind github-experts              # what is stored, seat by seat
+```
+
+The mapping lives in the orchestrator's own store — Postgres when
+`DATABASE_URL` is set, memory otherwise — and is hydrated at boot, so it
+survives a restart and does not depend on you still having the plan file you
+installed from. `GET /org` then carries a `roleId` on every bound seat, and a
+seat renamed afterwards still resolves. Details, including what the record is
+*not*, are in [Crew blueprints](./crews.md#naming-the-seats).
 
 `pnpm golden-path` goes further: it stands the whole stack up on Anvil, hires
 seats through real governance proposals, registers the `github` preset against a

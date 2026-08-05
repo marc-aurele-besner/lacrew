@@ -6,6 +6,7 @@
  */
 
 import type { AgentControlRecord } from "./agentControls.js";
+import type { CrewBindingStore } from "./crewBindings.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
 import type { HumanGateRecord, HumanGateStore } from "./humanGates.js";
 import type {
@@ -20,6 +21,9 @@ import {
   formatReviewer,
   parseReviewer,
   planRequiredScopeKey,
+  crewBindingKey,
+  crewBindingScope,
+  type CrewRoleBinding,
   type DualControlMode,
   type DualControlRecord,
   type PlanRequiredMode,
@@ -36,11 +40,13 @@ import {
   allAgentControlRows,
   createDb,
   deleteConnectorMode,
+  deleteCrewBinding,
   deleteDualControlRule,
   deleteExternalMcpTool,
   deletePlanRequirement,
   insertMessageRow,
   listConnectorModes,
+  listCrewBindings,
   listDualControlRules,
   listExternalMcpTools,
   listPlanRequirements,
@@ -57,6 +63,7 @@ import {
   upsertAgentControlRow,
   upsertConnectorAsk,
   upsertConnectorMode,
+  upsertCrewBinding,
   upsertDualControlReview,
   upsertDualControlRule,
   upsertExternalMcpTool,
@@ -79,6 +86,7 @@ export interface RuntimeStore
   extends
     ConnectorModeStore,
     ConnectorAskStore,
+    CrewBindingStore,
     HumanGateStore,
     ExternalMcpStore,
     PlanRequiredStore,
@@ -135,6 +143,7 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const planRequirements = new Map<string, PlanRequiredRecord>();
   const dualControlRules = new Map<string, DualControlRecord>();
   const dualControlReviews = new Map<string, DualControlReviewRecord>();
+  const seatBindings = new Map<string, CrewRoleBinding>();
 
   return {
     name: "memory",
@@ -203,6 +212,16 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     },
     removePlanRequirement: async (scopeKey) => {
       planRequirements.delete(scopeKey);
+    },
+    // One row per seat a blueprint install landed, so unbounded like the rules
+    // above: a trimmed row is a seat the checklist stops finding after a
+    // rename, which is the exact failure this record exists to prevent.
+    loadCrewBindings: async () => [...seatBindings.values()],
+    saveCrewBinding: async (record) => {
+      seatBindings.set(crewBindingKey(record), record);
+    },
+    removeCrewBinding: async (key) => {
+      seatBindings.delete(key);
     },
     loadConnectorAsks: async () => [...connectorAsks.values()],
     saveConnectorAsk: async (record) => {
@@ -748,6 +767,49 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await deletePlanRequirement(db(), scopeKey);
       } catch (err) {
         warn("plan requirement delete", err);
+      }
+    },
+    loadCrewBindings: async () => {
+      try {
+        return (await listCrewBindings(db())).map((row) => ({
+          roleId: row.roleId,
+          account: row.account,
+          ...(row.label ? { label: row.label } : {}),
+          ...(row.blueprintId ? { blueprintId: row.blueprintId } : {}),
+          ...(row.crewId ? { crewId: row.crewId } : {}),
+          at: row.updatedAt,
+        }));
+      } catch (err) {
+        // Rethrown, like the rules above, for a milder reason: this record
+        // bounds nothing, so the caller keeps serving — but an empty list reads
+        // as "no seat was ever bound", and a boot that reported zero rows
+        // because the database blinked would send an operator to bind seats
+        // that are already bound.
+        warn("crew bindings load", err);
+        throw err;
+      }
+    },
+    saveCrewBinding: async (record) => {
+      try {
+        await upsertCrewBinding(db(), {
+          key: crewBindingKey(record),
+          scopeKey: crewBindingScope(record),
+          roleId: record.roleId,
+          account: record.account,
+          label: record.label ?? null,
+          blueprintId: record.blueprintId ?? null,
+          crewId: record.crewId ?? null,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("crew binding save", err);
+      }
+    },
+    removeCrewBinding: async (key) => {
+      try {
+        await deleteCrewBinding(db(), key);
+      } catch (err) {
+        warn("crew binding delete", err);
       }
     },
     loadConnectorAsks: async () => {

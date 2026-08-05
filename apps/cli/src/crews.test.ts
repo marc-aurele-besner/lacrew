@@ -414,3 +414,222 @@ describe("lacrew crews checklist", () => {
     });
   });
 });
+
+/* ------------------------------------------------------------------------- *
+ * bind — the seat mapping kept by the orchestrator instead of a plan file.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * An orchestrator that actually remembers what was bound.
+ *
+ * `withOrch` serves canned bodies, which is right for a checklist read and
+ * wrong here: the whole claim is that a write lands and the next read — of
+ * `/crew/bindings` *and* of `/org` — reflects it.
+ */
+async function withBindingOrch(
+  seed: { nodes: Array<Record<string, unknown>> },
+  run: (url: string, stored: Map<string, { roleId: string; account: string; label?: string }>) => Promise<void>,
+): Promise<void> {
+  const stored = new Map<string, { roleId: string; account: string; label?: string }>();
+  const server: Server = createServer((req, res) => {
+    const [path] = (req.url ?? "").split("?") as [string];
+    const send = (body: unknown, status = 200): void => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    const list = () => [...stored.values()];
+    const roles = () => Object.fromEntries(list().map((b) => [b.roleId, b.account]));
+
+    if (path === "/org") {
+      const byAccount = new Map(list().map((b) => [b.account, b.roleId]));
+      send({
+        nodes: seed.nodes.map((n) => {
+          const roleId = byAccount.get(String(n.account).toLowerCase());
+          return roleId ? { ...n, roleId } : n;
+        }),
+      });
+      return;
+    }
+    if (path === "/crew/bindings" && req.method === "GET") {
+      send({ bindings: list(), roles: roles() });
+      return;
+    }
+    if (path === "/crew/bindings" && req.method === "PUT") {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as {
+          roles?: Record<string, string>;
+          labels?: Record<string, string>;
+        };
+        const cleared: string[] = [];
+        for (const [roleId, account] of Object.entries(body.roles ?? {})) {
+          if (!account.trim()) {
+            if (stored.delete(roleId)) cleared.push(roleId);
+            continue;
+          }
+          if (!/^0x[0-9a-fA-F]{40}$/.test(account.trim())) {
+            send({ error: "crew_binding_account_invalid", bindings: list() }, 400);
+            return;
+          }
+          stored.set(roleId, {
+            roleId,
+            account: account.trim().toLowerCase(),
+            ...(body.labels?.[roleId] ? { label: body.labels[roleId]! } : {}),
+          });
+        }
+        send({ bindings: list(), roles: roles(), ...(cleared.length ? { cleared } : {}) });
+      });
+      return;
+    }
+    send({ error: "unavailable" }, 503);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await run(`http://127.0.0.1:${port}`, stored);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+/** The chart a hand install leaves: blueprint labels, no role ids anywhere. */
+function ghChart(over: (role: (typeof GH.roles)[number], i: number) => Record<string, unknown> = () => ({})) {
+  return {
+    nodes: [
+      { account: "0x00000000000000000000000000000000000000ff", kind: "HumanRoot", label: "You" },
+      ...GH.roles.map((role, i) => ({
+        account: `0x${String(i + 1).padStart(40, "0")}`,
+        kind: role.kind === "manager_agent" ? "ManagerAgent" : "WorkerAgent",
+        label: role.label,
+        ...over(role, i),
+      })),
+    ],
+  };
+}
+
+describe("lacrew crews bind", () => {
+  it("prints what is stored, seat by seat, when asked for nothing", async () => {
+    await withBindingOrch(ghChart(), async (url) => {
+      const { out } = await captureAsync(["bind", "github-experts", "--url", url]);
+      assert.match(out, /seats bound on the orchestrator {2}0\/6/);
+      assert.match(out, /· reviewer {2}unbound/);
+      assert.match(out, /admits nothing and budgets nothing/);
+    });
+  });
+
+  it("records the account an operator names, and reads it back", async () => {
+    await withBindingOrch(ghChart(), async (url, stored) => {
+      const { out } = await captureAsync([
+        "bind",
+        "github-experts",
+        "--url",
+        url,
+        "--bind",
+        "reviewer=0x0000000000000000000000000000000000000004",
+      ]);
+      assert.match(out, /✓ reviewer {2}0x0{39}4/);
+      assert.equal(stored.get("reviewer")?.account, "0x0000000000000000000000000000000000000004");
+    });
+  });
+
+  /*
+    The move that matters after a hand install: the labels still agree with the
+    blueprint *now*, so writing the ids down is what makes the next read survive
+    the first rename.
+  */
+  it("--from-org persists every seat a label match found, with its label", async () => {
+    await withBindingOrch(ghChart(), async (url, stored) => {
+      const { out } = await captureAsync(["bind", "github-experts", "--url", url, "--from-org"]);
+      assert.match(out, /seats bound on the orchestrator {2}6\/6/);
+      assert.equal(stored.size, GH.roles.length);
+      assert.equal(stored.get("reviewer")?.label, "Reviewer");
+    });
+  });
+
+  it("--from-org binds nothing for a seat nothing matched, and names it", async () => {
+    const chart = ghChart((role) => (role.id === "reviewer" ? { label: "PR gatekeeper" } : {}));
+    await withBindingOrch(chart, async (url, stored) => {
+      const { out } = await captureAsync(["bind", "github-experts", "--url", url, "--from-org"]);
+      assert.match(out, /Seats nothing matched.*reviewer/);
+      assert.equal(stored.has("reviewer"), false);
+    });
+  });
+
+  it("forgets a seat on a blank address", async () => {
+    await withBindingOrch(ghChart(), async (url, stored) => {
+      await captureAsync(["bind", "github-experts", "--url", url, "--from-org"]);
+      const { out } = await captureAsync(["bind", "github-experts", "--url", url, "--bind", "reviewer="]);
+      assert.match(out, /Forgot: reviewer/);
+      assert.equal(stored.has("reviewer"), false);
+    });
+  });
+
+  it("reports a refused address rather than claiming it was bound", async () => {
+    await withBindingOrch(ghChart(), async (url, stored) => {
+      const { err, code } = await captureAsync([
+        "bind",
+        "github-experts",
+        "--url",
+        url,
+        "--bind",
+        "reviewer=not-an-address",
+      ]);
+      assert.match(err, /Nothing was bound/);
+      assert.equal(stored.size, 0);
+      assert.equal(code, 1);
+    });
+  });
+
+  it("exits non-zero when no orchestrator answers", async () => {
+    const { err, code } = await captureAsync([
+      "bind",
+      "github-experts",
+      "--url",
+      "http://127.0.0.1:1",
+    ]);
+    assert.match(err, /did not answer/);
+    assert.equal(code, 1);
+  });
+
+  /*
+    The acceptance criterion, end to end and without a plan file: bind the
+    seats, rename one on the chart, and the checklist still resolves all six —
+    with no `--bind` on the command line at all.
+  */
+  it("leaves the checklist resolving a renamed seat with no --bind flag", async () => {
+    await withBindingOrch(ghChart(), async (url) => {
+      await captureAsync(["bind", "github-experts", "--url", url, "--from-org"]);
+      const { out } = await captureAsync(["bind", "github-experts", "--url", url, "--json"]);
+      const body = JSON.parse(out) as { roles: Record<string, string> };
+      assert.equal(Object.keys(body.roles).length, GH.roles.length);
+    });
+  });
+});
+
+describe("lacrew crews checklist — where a seat's id came from", () => {
+  it("names the seats only a label found, and how to persist them", async () => {
+    await withOrch(wired(), async (url) => {
+      const { out } = await captureAsync(["checklist", "github-experts", "--url", url]);
+      assert.match(out, /Resolved by label, not by a stored id/);
+      assert.match(out, /lacrew crews bind github-experts --from-org/);
+    });
+  });
+
+  it("says nothing about labels once every seat carries a stored id", async () => {
+    const routes = wired();
+    const org = routes["/org"] as { nodes: Array<Record<string, unknown>> };
+    routes["/org"] = {
+      nodes: org.nodes.map((n) => {
+        const role = GH.roles.find((r) => r.label === n.label);
+        return role ? { ...n, roleId: role.id } : n;
+      }),
+    };
+    await withOrch(routes, async (url) => {
+      const { out, code } = await captureAsync(["checklist", "github-experts", "--url", url]);
+      assert.match(out, /All 6 seats hold accounts/);
+      assert.doesNotMatch(out, /Resolved by label/);
+      assert.equal(code, undefined);
+    });
+  });
+});

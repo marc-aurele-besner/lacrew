@@ -295,6 +295,9 @@ async function orch(path, init = {}) {
   return body;
 }
 
+/** The blueprint's own label for a served seat, or none when nothing bound it. */
+const labelOf = (bp, node) => bp.roles.find((r) => r.id === node.roleId)?.label;
+
 const mcp = (name, args_ = {}) =>
   orch("/mcp/call", { method: "POST", body: JSON.stringify({ name, arguments: args_ }) });
 
@@ -496,6 +499,27 @@ async function main() {
   }
 
   /*
+    The bindings, written to the orchestrator that just minted the accounts —
+    which is the only moment anything knows the mapping first-hand. After this,
+    a seat is a node with an address and whatever label somebody types.
+  */
+  const written = await orch("/crew/bindings", {
+    method: "PUT",
+    body: JSON.stringify({
+      blueprintId: BLUEPRINT,
+      roles: roleAccounts,
+      labels: Object.fromEntries(
+        Object.keys(roleAccounts).map((id) => [id, bp.roles.find((r) => r.id === id).label]),
+      ),
+    }),
+  });
+  check(
+    "the orchestrator stored which account each seat landed on",
+    Object.keys(written.roles ?? {}).length === Object.keys(roleAccounts).length,
+    Object.keys(written.roles ?? {}).join(", "),
+  );
+
+  /*
     The rename, done for real. The seat keeps its account, its policy stack and
     its reporting line; only the string a human reads changes. Everything after
     this point resolves it through the stored role id — which is the whole point
@@ -504,20 +528,27 @@ async function main() {
   const [renamedRole, unrenamedRole] = wanted;
   const renamed = `${bp.roles.find((r) => r.id === renamedRole).label} (renamed)`;
   /*
-    The chain stores no labels, so the display name and the role id are both
-    control-plane state layered over the served node — which is exactly the
-    layering `nodeLabels` already does in the cloud and the reason a role id
-    belongs beside it. Every hired seat carries its id; only the first seat's
-    label is changed, and the second is left alone as the control.
+    The chain stores no labels *and* no role ids. The display name is still
+    layered on by hand here, the way a self-host's own tooling would; the role
+    id is not — it comes back on the served node because the orchestrator
+    persisted it above, which is the difference this path exists to prove.
   */
-  const orgNodes = (await orch("/org")).nodes.map((n) => {
-    const roleId = Object.keys(roleAccounts).find(
-      (r) => roleAccounts[r].toLowerCase() === n.account.toLowerCase(),
-    );
-    if (!roleId) return n;
-    const role = bp.roles.find((r) => r.id === roleId);
-    return { ...n, roleId, label: roleId === renamedRole ? renamed : role.label };
-  });
+  const served = (await orch("/org")).nodes;
+  check(
+    "and serves it back on the org chart, unasked",
+    wanted.every((id) =>
+      served.some(
+        (n) => n.roleId === id && n.account.toLowerCase() === roleAccounts[id].toLowerCase(),
+      ),
+    ),
+    served
+      .filter((n) => n.roleId)
+      .map((n) => `${n.roleId}→${n.account.slice(0, 8)}`)
+      .join(" "),
+  );
+  const orgNodes = served.map((n) =>
+    n.roleId === renamedRole ? { ...n, label: renamed } : { ...n, label: labelOf(bp, n) },
+  );
   const seats = resolveCrewSeats(bp, orgNodes);
   check(
     "a renamed seat still resolves through its stored role id",

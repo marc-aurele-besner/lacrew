@@ -144,6 +144,16 @@ export type ProtocolEventType =
    */
   | "PlanRequiredChanged"
   /**
+   * A blueprint seat was bound to an account, or that binding was forgotten
+   * (F2.25).
+   *
+   * Bookkeeping rather than enforcement — the row says which account the
+   * `reviewer` seat landed on, and admits nothing. It is in the trail because
+   * re-pointing a role id silently changes which principal a flow runs as, and
+   * "who moved the reviewer" is a question asked afterwards.
+   */
+  | "CrewBindingChanged"
+  /**
    * A blocking human gate opened: a `human` step posted its question and parked
    * the run (F2.27).
    *

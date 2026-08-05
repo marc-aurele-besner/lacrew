@@ -61,6 +61,16 @@ export {
   type EnforcementLayer,
 } from "./crews.js";
 export {
+  applyCrewRoleIds,
+  crewBindingConflicts,
+  crewBindingKey,
+  crewBindingRoles,
+  crewBindingScope,
+  normalizeCrewBinding,
+  type CrewRoleBinding,
+  type CrewRoleBindingInput,
+} from "./crewBindings.js";
+export {
   resolveCrewSeats,
   seatRoleMap,
   type CrewSeatBinding,

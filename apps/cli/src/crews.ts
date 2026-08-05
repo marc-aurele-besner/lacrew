@@ -267,6 +267,28 @@ async function probe<T>(args: string[], path: string): Promise<T | null> {
   }
 }
 
+/**
+ * One write. Unlike `probe`, a failure is the answer the caller has to report:
+ * a bind that silently did not land is a mapping the operator believes is
+ * stored and is not, which is the exact failure this whole record exists to
+ * prevent.
+ */
+async function putJson<T>(args: string[], path: string, body: unknown): Promise<T> {
+  const token = process.env.ORCH_TOKEN?.trim();
+  const res = await fetch(`${orchUrl(args)}${path}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  const parsed = (text ? JSON.parse(text) : {}) as T & { error?: string };
+  if (!res.ok) throw new Error(parsed.error ?? `orchestrator answered ${res.status}`);
+  return parsed;
+}
+
 type HealthProbe = {
   mode?: string;
   mocked?: boolean;
@@ -283,7 +305,14 @@ type ConnectorProbe = { connectors?: Array<{ id: string; auth?: { ready?: boolea
 type FlowsProbe = { flows?: Array<{ id: string }> };
 type RunsProbe = { runs?: unknown[] };
 type MessagesProbe = { messages?: unknown[] };
-type OrgProbe = { nodes?: Array<{ account?: string; kind?: string; label?: string }> };
+/**
+ * `/org` carries the blueprint role id on every seat the orchestrator has a
+ * binding for (F2.25) — the chain has no room for one, so this is the
+ * orchestrator's own record layered over the chart it serves.
+ */
+type OrgProbe = {
+  nodes?: Array<{ account?: string; kind?: string; label?: string; roleId?: string }>;
+};
 
 /**
  * The thread the crew talks in.
@@ -308,7 +337,13 @@ function threadOf(bp: CrewBlueprint, args: string[]): string {
 async function probeFacts(
   bp: CrewBlueprint,
   args: string[],
-): Promise<{ facts: CrewChecklistFacts; seatsReadable: boolean; missingSeats: string[] }> {
+): Promise<{
+  facts: CrewChecklistFacts;
+  seatsReadable: boolean;
+  missingSeats: string[];
+  /** Seats that only a typed label found, so nothing has persisted their id. */
+  byLabel: string[];
+}> {
   const sample = crewSampleRun(bp.id);
   const needs = sample ? crewSampleNeeds(sample) : undefined;
   const [health, connectors, flows, runs, messages, org] = await Promise.all([
@@ -324,12 +359,14 @@ async function probeFacts(
   ]);
 
   /*
-    A self-host has nowhere to persist "this account is the reviewer": the chain
-    stores no labels and the orchestrator stores no role ids, so the mapping
-    lives in whatever the operator installed the crew from. `--bind` is that
-    file, in the same vocabulary `crews plan --bind` already uses — and it makes
-    the checklist survive a rename here for the same reason the hosted control
-    plane's stored map does.
+    Seats come with their role ids attached: the orchestrator persists the
+    mapping (`lacrew crews bind`) and layers it onto the chart it serves, so a
+    seat renamed after it was hired still resolves without the operator holding
+    on to the plan file they installed from.
+
+    `--bind` stays, and it *wins* — it is the operator saying, right now, which
+    account a seat is on, against an orchestrator that may have been told
+    nothing or told something stale. Same vocabulary `crews plan --bind` uses.
   */
   const bound = parseBindings(args).roles ?? {};
   const roleOf = new Map(
@@ -343,6 +380,7 @@ async function probeFacts(
   return {
     seatsReadable: Boolean(seats),
     missingSeats: seats?.missing ?? [],
+    byLabel: seats?.bindings.filter((b) => b.boundBy === "label").map((b) => b.role) ?? [],
     facts: {
       // An unreadable chart reports zero seats, which the seats step renders as
       // the one blocker worth naming: nothing can run as a principal nobody can
@@ -375,6 +413,137 @@ async function probeFacts(
   };
 }
 
+/* ------------------------------------------------------------------------- *
+ * bind — the seat mapping, kept by the orchestrator instead of a plan file.
+ * ------------------------------------------------------------------------- */
+
+type BindingsResponse = {
+  bindings?: Array<{ roleId: string; account: string; label?: string; at?: string }>;
+  roles?: Record<string, string>;
+  cleared?: string[];
+};
+
+/** `--crew <id>` narrows to one crew; the blueprint id is the scope otherwise. */
+function bindScope(bp: CrewBlueprint, args: string[]): { blueprintId: string; crewId?: string } {
+  const crewId = flagValue(args, "--crew")?.trim();
+  return { blueprintId: bp.id, ...(crewId ? { crewId } : {}) };
+}
+
+function bindQuery(scope: { blueprintId: string; crewId?: string }): string {
+  const params = new URLSearchParams({ blueprint: scope.blueprintId });
+  if (scope.crewId) params.set("crew", scope.crewId);
+  return `/crew/bindings?${params.toString()}`;
+}
+
+/**
+ * Record which account each blueprint seat landed on, on the orchestrator.
+ *
+ * Three ways in, in the order an operator reaches for them:
+ *
+ *  - `--bind <role>=0x…` — say it outright. A blank value (`--bind <role>=`)
+ *    forgets that seat rather than storing an empty address.
+ *  - `--from-org` — read the live chart and persist what a label match found.
+ *    This is the one that matters after a hand install: the labels still agree
+ *    with the blueprint *now*, and writing the ids down is what makes the next
+ *    read survive the first rename.
+ *  - neither — print what is stored.
+ */
+async function cmdBind(bp: CrewBlueprint, args: string[]): Promise<void> {
+  const scope = bindScope(bp, args);
+  const asked = parseBindings(args).roles ?? {};
+  const json = hasFlag(args, "--json");
+
+  let roles: Record<string, string> = { ...asked };
+  const labels: Record<string, string> = {};
+
+  if (hasFlag(args, "--from-org")) {
+    const org = await probe<OrgProbe>(args, "/org");
+    if (!org?.nodes) {
+      console.error(`The org chart could not be read from ${orchUrl(args)} — nothing was bound.`);
+      process.exitCode = 1;
+      return;
+    }
+    const seats = resolveCrewSeats(bp, org.nodes);
+    for (const binding of seats.bindings) {
+      // An address the operator typed on this command line outranks one a label
+      // match found: they are looking at the crew, and the match is a guess
+      // that happens to be checkable.
+      if (roles[binding.role]) continue;
+      roles[binding.role] = binding.account;
+      const label = org.nodes.find(
+        (n) => n.account?.trim().toLowerCase() === binding.account.trim().toLowerCase(),
+      )?.label;
+      if (label) labels[binding.role] = label;
+    }
+    if (seats.missing.length > 0 && !json) {
+      console.log(
+        `Seats nothing matched, so nothing was bound for them: ${seats.missing.join(", ")}` +
+          `${seats.ambiguous.length > 0 ? ` (${seats.ambiguous.join(", ")} matched two seats each — a plausible wrong address is worse than none)` : ""}`,
+      );
+    }
+  }
+
+  if (Object.keys(roles).length === 0) {
+    const stored = await probe<BindingsResponse>(args, bindQuery(scope));
+    if (!stored) {
+      console.error(
+        `The orchestrator at ${orchUrl(args)} did not answer, so what it has bound is unknown.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (json) {
+      console.log(JSON.stringify(stored, null, 2));
+      return;
+    }
+    printBindings(bp, stored);
+    return;
+  }
+
+  let result: BindingsResponse;
+  try {
+    result = await putJson<BindingsResponse>(args, "/crew/bindings", {
+      ...scope,
+      roles,
+      ...(Object.keys(labels).length > 0 ? { labels } : {}),
+    });
+  } catch (err) {
+    console.error(
+      `Nothing was bound: ${err instanceof Error ? err.message : "the orchestrator refused"}.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (result.cleared?.length) console.log(`Forgot: ${result.cleared.join(", ")}`);
+  printBindings(bp, result);
+}
+
+function printBindings(bp: CrewBlueprint, body: BindingsResponse): void {
+  const bindings = body.bindings ?? [];
+  console.log(`${bp.name} — seats bound on the orchestrator  ${bindings.length}/${bp.roles.length}`);
+  for (const role of bp.roles) {
+    const hit = bindings.find((b) => b.roleId === role.id);
+    console.log(
+      hit
+        ? `  ✓ ${role.id}  ${hit.account}${hit.label && hit.label !== role.label ? `  (hired as "${hit.label}")` : ""}`
+        : `  · ${role.id}  unbound — resolves by label until something records it`,
+    );
+  }
+  const extra = bindings.filter((b) => !bp.roles.some((r) => r.id === b.roleId));
+  if (extra.length > 0) {
+    // Named rather than hidden: a role id this build does not know is either a
+    // blueprint that moved on or a typo, and both are the operator's to settle.
+    console.log(
+      `\n  Bound to role ids this blueprint does not declare: ${extra.map((b) => b.roleId).join(", ")}`,
+    );
+  }
+  console.log("\n  A bound seat is found after a rename. It admits nothing and budgets nothing.");
+}
+
 const MARK: Record<CrewCheck["state"], string> = {
   done: "✓",
   blocked: "▲",
@@ -391,7 +560,7 @@ const MARK: Record<CrewCheck["state"], string> = {
  * refuse every first run there has ever been.
  */
 async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> {
-  const { facts, seatsReadable, missingSeats } = await probeFacts(bp, args);
+  const { facts, seatsReadable, missingSeats, byLabel } = await probeFacts(bp, args);
   const steps = crewChecklist(facts);
   const blocker = crewChecklistBlocker(steps);
   const progress = crewChecklistProgress(steps);
@@ -422,11 +591,22 @@ async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> 
   }
   if (!seatsReadable) {
     console.log("\n  The org chart could not be read, so no seat could be resolved.");
-  } else if (missingSeats.length > 0) {
-    console.log(
-      `\n  Seats nothing matched: ${missingSeats.join(", ")}. A seat renamed after it was hired ` +
-        `is found by its stored blueprint role id; without one, only the label can answer.`,
-    );
+  } else {
+    if (missingSeats.length > 0) {
+      console.log(
+        `\n  Seats nothing matched: ${missingSeats.join(", ")}. A seat renamed after it was hired ` +
+          `is found by its stored blueprint role id; without one, only the label can answer.`,
+      );
+    }
+    // Named while everything still works, because that is the only moment it
+    // can be fixed cheaply: after the rename, the label these seats were found
+    // by is gone and nothing knows where they went.
+    if (byLabel.length > 0) {
+      console.log(
+        `\n  Resolved by label, not by a stored id: ${byLabel.join(", ")}. Rename one and this ` +
+          `list loses it — persist the mapping with:  lacrew crews bind ${bp.id} --from-org`,
+      );
+    }
   }
   if (blocker) {
     console.log(`\n  ${blocker.title} is what stands between this crew and its first run.`);
@@ -534,6 +714,27 @@ export async function cmdCrews(args: string[]): Promise<void> {
       return;
     }
 
+    /*
+      The mapping that used to live in whatever plan file the operator
+      installed from, kept by the orchestrator instead (F2.25). Losing the file
+      no longer loses the crew's seats, and a rename stops being the thing that
+      quietly unbinds a flow.
+    */
+    case "bind": {
+      const bp = id ? getCrewBlueprint(id) : undefined;
+      if (!bp) {
+        console.error(
+          `Usage: lacrew crews bind <id> [--bind <role>=0x…] [--from-org] [--crew <id>] [--url http://…] [--json]  (${crewBlueprints
+            .map((b) => b.id)
+            .join(", ")})`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      await cmdBind(bp, rest);
+      return;
+    }
+
     case "plan": {
       const bp = id ? getCrewBlueprint(id) : undefined;
       if (!bp) {
@@ -572,15 +773,19 @@ export async function cmdCrews(args: string[]): Promise<void> {
     }
 
     default:
-      console.log(`Usage: lacrew crews <list|show|sample|checklist|plan|eval>
+      console.log(`Usage: lacrew crews <list|show|sample|checklist|bind|plan|eval>
 
   list                       First-party crew blueprints
   show <id> [--json]         Org chart, budgets, ladder, guardrails, flows
   sample <id> [--json]       The certified first run and its input
   checklist <id> [--json]    Probe a running orchestrator for what the first run
         [--url] [--thread]   still needs. Exits non-zero while anything blocks.
-        [--bind <role>=0x…]  Name the account each seat landed on, so a renamed
-                             seat still resolves.
+        [--bind <role>=0x…]  Override the account a seat landed on for this read;
+                             the orchestrator's own bindings answer otherwise.
+  bind <id> [--from-org]     Record on the orchestrator which account each seat
+        [--bind <role>=0x…]  landed on, so a renamed seat still resolves. With
+        [--crew <id>]        neither flag, prints what is stored. An empty value
+        [--json]             (--bind <role>=) forgets one seat.
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
   eval [id…] [--list]        Run the crew's eval scenarios offline; a failure

@@ -58,6 +58,11 @@ export {
   type ConnectorWriteMode,
 } from "./connectorPolicy.js";
 export {
+  createCrewBindings,
+  type CrewBindingStore,
+  type CrewBindingsSurface,
+} from "./crewBindings.js";
+export {
   PlanRequiredError,
   createPlanRequirements,
   isPlanRequired,
