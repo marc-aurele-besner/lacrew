@@ -16,15 +16,25 @@
  *    stub text and the caller must say so; a fixture that quietly swapped in a
  *    canned result would be the exact "Mocked success presented as live" this
  *    path exists to avoid.
- * 2. **It points at something public.** The subject is a public pull request on
- *    LaCrew's own repo, so firing it needs no repo the operator owns and leaks
- *    nothing. It is also the PR the connector was first verified against.
+ * 2. **It touches nothing of the operator's.** `github-experts` reads a public
+ *    pull request on LaCrew's own repo — the one the connector was first
+ *    verified against — so firing it needs no repo they own and leaks nothing.
+ *    `content-studio` reads nothing at all: its subject is a brief written here,
+ *    and the run never leaves LaCrew.
  * 3. **Its write path can only refuse.** `bot-pr-triage` may merge, and on a
  *    fresh crew nothing has admitted the merge-authority address, so the flow
- *    asks `lacrew_check_policy`, reads DENY and writes the refusal note. That
- *    is the enforcement story working, not a degraded run — and it is why this
- *    flow is the golden path rather than a read-only one that would teach the
- *    operator nothing about what the crew cannot do.
+ *    asks `lacrew_check_policy`, reads DENY and writes the refusal note.
+ *    `content-weekly-brief` asks the same question about a publishing endpoint
+ *    its own blueprint leaves off the whitelist, reads DENY and assembles the
+ *    human sign-off package. That is the enforcement story working, not a
+ *    degraded run — and it is why these beat read-only flows as golden paths:
+ *    they teach the operator what the crew cannot do.
+ *
+ * The two certified paths are deliberately different shapes. One needs a
+ * connector and a credential before it means anything; the other calls nothing
+ * outside LaCrew, so its checklist reports the connector step as *not needed*
+ * rather than blocked. A golden path that only ever exercised the connector
+ * branch would leave that answer untested on the surface operators read.
  *
  * Not every blueprint has one, and `crewSampleRun` returns `undefined` rather
  * than inventing an input. A surface with no fixture should say the blueprint
@@ -40,7 +50,13 @@ export type CrewSampleRun = {
   blueprint: string;
   /** Flow definition id it runs. Must be a flow the blueprint ships. */
   flow: string;
-  /** Run input, exactly as the orchestrator's `POST /flows/run` takes it. */
+  /**
+   * Run input, in the shape the flow reads it.
+   *
+   * An object for a flow that reads `{{input.<key>}}`, a string for one that
+   * reads the whole `{{input}}`. `crewSampleInputText` is what puts it on the
+   * wire — `POST /flows/run` takes one string either way.
+   */
   input: unknown;
   /** What the run does, in the operator's terms. */
   summary: string;
@@ -66,11 +82,40 @@ const samples: CrewSampleRun[] = [
     safety:
       "The pull request is public and already merged, so the read touches nothing of yours. If the crew classifies it as mergeable the flow asks policy about the merge-authority address first — on a new crew nothing has admitted that address, so the answer is DENY and the run writes the refusal note instead of merging. Admitting it is a governance proposal, never a side effect of this run.",
   },
+  {
+    blueprint: "content-studio",
+    flow: "content-weekly-brief",
+    // The account brief the pipeline writes for, whole: `content-weekly-brief`
+    // reads `{{input}}` rather than keyed fields, because the brief is prose a
+    // human writes about a voice and there is no schema for that.
+    //
+    // LaCrew's own blog, so the fixture describes an account the operator does
+    // not have to own — and the run never reaches an account either way.
+    input:
+      "Account: the LaCrew org blog. Voice: plain and technical, explains the mechanism rather than announcing the news; no hype register, no growth-hacking tone. Never posts: price talk, competitor claims, or a number it cannot source. Themes this week: budgets that live onchain, what an escalation costs the team that raised it, and why a refusal is the product working.",
+    summary:
+      "Runs the studio's weekly pipeline for one account: shortlist, specialist vote, draft, editor pass, image pack, then the publication question.",
+    safety:
+      "Nothing leaves LaCrew: every step is model work against a brief written here, and the flow calls no connector route at all. The one write it could attempt is the publication, and this blueprint deliberately leaves the publishing endpoint off the whitelist — so the flow asks policy first, reads DENY, and assembles the human sign-off package instead of posting. Admitting that endpoint is a high-tier proposal both human seats can see, never a side effect of this run.",
+  },
 ];
 
 /** The certified sample run for a blueprint, or nothing when it has none. */
 export function crewSampleRun(blueprintId: string): CrewSampleRun | undefined {
   return samples.find((s) => s.blueprint === blueprintId);
+}
+
+/**
+ * The fixture's input as `POST /flows/run` takes it: one string.
+ *
+ * A flow reading `{{input.<key>}}` wants the JSON body; a flow reading the
+ * whole `{{input}}` wants the text, and serializing that one would hand the
+ * model a quoted string with its own escapes to read around. The eval harness
+ * makes exactly this choice for a scenario's input, so a fixture and the
+ * scenario that pins it cannot disagree about what the run was given.
+ */
+export function crewSampleInputText(sample: CrewSampleRun): string {
+  return typeof sample.input === "string" ? sample.input : JSON.stringify(sample.input);
 }
 
 /** Every certified sample, in registry order. */
@@ -125,20 +170,11 @@ export function crewSampleNeeds(sample: CrewSampleRun): CrewSampleNeeds | undefi
   return def ? crewFlowNeeds(def) : undefined;
 }
 
-/**
- * `{{input.<key>}}` keys a flow reads, sorted.
- *
- * Used to hold a fixture to its flow: a step that starts reading `input.branch`
- * must not leave the sample supplying three of four fields and failing at the
- * connector with a missing path argument.
- */
-const INPUT_KEY = /\{\{\s*input\.([\w-]+)\s*\}\}/g;
-
-export function flowInputKeys(def: FlowDefinition): string[] {
-  const keys = new Set<string>();
+/** Every string anywhere in a flow's steps, so a scan cannot miss a nested one. */
+function eachStepString(def: FlowDefinition, visit: (text: string) => void): void {
   const walk = (value: unknown): void => {
     if (typeof value === "string") {
-      for (const m of value.matchAll(INPUT_KEY)) keys.add(m[1]!);
+      visit(value);
       return;
     }
     if (Array.isArray(value)) {
@@ -150,5 +186,39 @@ export function flowInputKeys(def: FlowDefinition): string[] {
     }
   };
   walk(def.steps);
+}
+
+/**
+ * `{{input.<key>}}` keys a flow reads, sorted.
+ *
+ * Used to hold a fixture to its flow: a step that starts reading `input.branch`
+ * must not leave the sample supplying three of four fields and failing at the
+ * connector with a missing path argument.
+ */
+const INPUT_KEY = /\{\{\s*input\.([\w-]+)\s*\}\}/g;
+
+export function flowInputKeys(def: FlowDefinition): string[] {
+  const keys = new Set<string>();
+  eachStepString(def, (text) => {
+    for (const m of text.matchAll(INPUT_KEY)) keys.add(m[1]!);
+  });
   return [...keys].sort();
+}
+
+/**
+ * Whether a flow reads the whole `{{input}}` rather than keyed fields.
+ *
+ * The two shapes want different fixtures — a JSON body against the keys, or the
+ * prose a `{{input}}` step interpolates verbatim — and a check that only knew
+ * about keys would either wave a whole-input flow through with no input at all
+ * or demand fields it never reads.
+ */
+const WHOLE_INPUT = /\{\{\s*input\s*\}\}/;
+
+export function flowReadsWholeInput(def: FlowDefinition): boolean {
+  let found = false;
+  eachStepString(def, (text) => {
+    if (WHOLE_INPUT.test(text)) found = true;
+  });
+  return found;
 }

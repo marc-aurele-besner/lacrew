@@ -336,7 +336,7 @@ Two things it will not do: resolve as the root without a proof, and resolve an i
 
 #### When the root is a Safe
 
-`LACREW_ROOT_AUTH=passkey` proves who the root is. It does not make the root the sender: some address the deployment holds a key for still submits `resolve`, and the chain sees that address. For a Safe root that is not good enough — the Safe *is* the org's root address, so anything else is a different account moving the money with the root's blessing.
+`LACREW_ROOT_AUTH=passkey` proves who the root is. It does not make the root the sender: some address the deployment holds a key for still submits `resolve`, and the chain sees that address. For a Safe root that is not good enough — the Safe _is_ the org's root address, so anything else is a different account moving the money with the root's blessing.
 
 `safe-passkey` closes that. Approving builds a Safe transaction that calls `resolve`, and the Safe sends it:
 
@@ -604,8 +604,18 @@ ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts \
 `pnpm golden-path` goes further: it stands the whole stack up on Anvil, hires
 seats through real governance proposals, registers the `github` preset against a
 local stand-in host, and asserts the checklist clears — with the runtime
-asserted `onchain` first, so a green result cannot come from mock mode. Both are
-documented in [Crew blueprints](./crews.md#the-first-run-on-your-own-anvil).
+asserted `onchain` first, so a green result cannot come from mock mode.
+
+Two blueprints are certified, and the second is the one to run if you have no
+connector to wire:
+
+```bash
+pnpm golden-path                              # github-experts
+pnpm golden-path --blueprint content-studio   # needs only a model key
+```
+
+Both are documented in
+[Crew blueprints](./crews.md#the-first-run-on-your-own-anvil).
 
 ## External MCP servers
 

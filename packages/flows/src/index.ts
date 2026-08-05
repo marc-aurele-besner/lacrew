@@ -79,12 +79,14 @@ export {
   type CrewChecklistFacts,
 } from "./crewChecklist.js";
 export {
+  crewSampleInputText,
   crewSampleRun,
   crewSampleRuns,
   crewSampleNeeds,
   crewFlowNeeds,
   crewFlowOwner,
   flowInputKeys,
+  flowReadsWholeInput,
   type CrewSampleNeeds,
   type CrewSampleRun,
 } from "./crewSamples.js";

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * The `github-experts` golden path, driven end to end against a real chain.
+ * A certified golden path, driven end to end against a real chain.
  *
- *   pnpm golden-path
+ *   pnpm golden-path                              # github-experts
+ *   pnpm golden-path --blueprint content-studio   # the second certified path
  *
  * Everything the first-run checklist claims is derived from a probe, and every
  * probe in the test suites is a fixture. That is the right trade for a unit
@@ -20,14 +21,28 @@
  *    `mode: onchain` before anything else runs. Nothing stubs its health; if it
  *    comes up in mock mode the script fails rather than reporting a green path
  *    against fabricated data.
- *  - **The connector.** The `github` preset, registered exactly as an operator
- *    would register it, pointed at a local stand-in for api.github.com instead
- *    of the real host. The stand-in is the one fake, and it is the right one:
- *    the alternative is a token, a network round trip, and a public write path
- *    in CI.
- *  - **The policy verdict.** `lacrew_check_policy` is asked about the
- *    merge-authority address the crew has not admitted, and the DENY comes off
- *    the deployed policy stack.
+ *  - **The connector**, for a path that has one. The `github` preset,
+ *    registered exactly as an operator would register it, pointed at a local
+ *    stand-in for api.github.com instead of the real host. The stand-in is the
+ *    one fake, and it is the right one: the alternative is a token, a network
+ *    round trip, and a public write path in CI.
+ *  - **The policy verdict.** `lacrew_check_policy` is asked about the address
+ *    the flow's write path would spend against, which nothing has admitted, and
+ *    the DENY comes off the deployed policy stack.
+ *
+ * ## Two paths, deliberately different shapes
+ *
+ * `github-experts` needs a connector and a credential before its run means
+ * anything. `content-studio` calls nothing outside LaCrew — its whole pipeline
+ * is model work against a brief, and the write it could attempt is a
+ * publication its own blueprint leaves off the whitelist. So it drives the
+ * checklist branch the first path never reaches: the connector step answered
+ * *not needed* rather than blocked. Certifying two GitHub-shaped verticals
+ * would leave that answer unproved on the surface operators read.
+ *
+ * Which seats to hire and which targets to bind are read off the sample flow's
+ * own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains a
+ * delegate gains the hire here in the same commit.
  *
  * What is optional: a model key. Without one the run's completions come back as
  * the orchestrator's stub, so the checklist correctly *blocks on the model*,
@@ -36,8 +51,9 @@
  * sample run lands a message in the thread instead.
  *
  * Flags:
- *   --keep-chain    reuse an Anvil already listening instead of starting one
- *   --keep-running  leave the stack up after the checks pass (for poking at it)
+ *   --blueprint <id>  which certified path to drive (default github-experts)
+ *   --keep-chain      reuse an Anvil already listening instead of starting one
+ *   --keep-running    leave the stack up after the checks pass (for poking at it)
  */
 
 import { spawn } from "node:child_process";
@@ -49,6 +65,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const has = (flag) => args.includes(flag);
+const flagValue = (flag) => {
+  const i = args.indexOf(flag);
+  return i >= 0 && args[i + 1] && !args[i + 1].startsWith("-") ? args[i + 1] : undefined;
+};
 
 if (existsSync(resolve(ROOT, ".env"))) process.loadEnvFile(resolve(ROOT, ".env"));
 
@@ -57,19 +77,52 @@ const RPC = process.env.ANVIL_RPC ?? "http://127.0.0.1:8545";
 const ORCH_PORT = process.env.GOLDEN_PATH_PORT ?? "8799";
 const ORCH = `http://127.0.0.1:${ORCH_PORT}`;
 const TOKEN_ENV = "GOLDEN_PATH_GH_TOKEN";
-const BLUEPRINT = "github-experts";
+const BLUEPRINT = flagValue("--blueprint") ?? "github-experts";
 
 /**
- * An address nothing has admitted to the whitelist.
+ * Addresses nothing has admitted to the whitelist.
  *
- * The crew's merge path asks policy about this before it merges, and on a crew
- * that has never had a governance proposal admit it the answer is DENY. That
- * refusal is what the golden path is meant to teach, so the script asserts it
- * rather than arranging for it not to happen.
+ * A fresh deployment admits nothing, so every one of these reads DENY off the
+ * policy stack — which is the state the golden path is about. The flow's write
+ * path asks about one of them before it writes, and the script asserts that
+ * refusal rather than arranging for it not to happen. Named ones keep the
+ * constants the fixtures and docs already use; a target a template adds later
+ * gets a deterministic filler rather than stopping the driver.
+ *
+ * Every one is EIP-55 checksummed, and the filler is all digits so it cannot
+ * fail to be: `lacrew_check_policy` parses these as addresses, and a wrong-case
+ * hex nibble comes back a 500 rather than a verdict.
  */
-const MERGE_AUTHORITY = "0x000000000000000000000000000000000000dEaD";
-/** Whatever the crew pays for inference. Only that it is an address matters here. */
-const MODEL_API = "0x000000000000000000000000000000000000BEEF";
+const NAMED_TARGETS = {
+  "merge-authority": "0x000000000000000000000000000000000000dEaD",
+  "model-api": "0x000000000000000000000000000000000000bEEF",
+  "publish-endpoint": "0x000000000000000000000000000000000000FEeD",
+};
+const targetAddress = (id, i) => NAMED_TARGETS[id] ?? `0x${String(i + 1).padStart(40, "0")}`;
+
+/**
+ * What a certified path needs that cannot be read off the blueprint or the flow.
+ *
+ * `refuses` is the target the run's write path asks policy about — the one the
+ * whole path exists to show being refused. `connector` is present only for a
+ * path that leaves LaCrew, and `policyTargets` maps each of that preset's write
+ * routes to the blueprint target its spend is checked against: the preset
+ * refuses to build with any of them unbound, on the grounds that a write route
+ * whose authority nobody named is one nothing can refuse. The addresses come
+ * from the same derived map the flow is bound with, so a route and a step
+ * cannot end up pointed at two different accounts.
+ */
+const PROFILES = {
+  "github-experts": {
+    refuses: "merge-authority",
+    connector: "github",
+    policyTargets: {
+      merge_pull_request: "merge-authority",
+      create_issue_comment: "comment-authority",
+    },
+  },
+  "content-studio": { refuses: "publish-endpoint" },
+};
 
 const children = [];
 let shuttingDown = false;
@@ -294,6 +347,10 @@ async function main() {
   const {
     getCrewBlueprint,
     bindCrewFlow,
+    crewFlowOwner,
+    crewFlowPlaceholders,
+    crewSampleInputText,
+    crewSampleNeeds,
     getFlowTemplate,
     crewSampleRun,
     crewChecklist,
@@ -303,9 +360,36 @@ async function main() {
   const bp = getCrewBlueprint(BLUEPRINT);
   const sample = crewSampleRun(BLUEPRINT);
   if (!bp || !sample) throw new Error(`${BLUEPRINT} has no blueprint or no certified sample`);
+  const profile = PROFILES[BLUEPRINT];
+  if (!profile) {
+    throw new Error(
+      `no driver profile for "${BLUEPRINT}" — certified paths: ${Object.keys(PROFILES).join(", ")}`,
+    );
+  }
+  log("path", `${bp.name} — ${sample.flow}`);
 
-  const stub = await startGithubStub();
-  log("stub", `api.github.com stand-in on ${stub.baseUrl}`);
+  /*
+    Read off the sample flow itself rather than listed here: a template that
+    gains a delegate gains the hire, and one that gains a spend target gains the
+    binding, in the same commit that added the step.
+  */
+  const sampleDef = getFlowTemplate(sample.flow).definition;
+  const placeholders = crewFlowPlaceholders(sampleDef);
+  const owner = crewFlowOwner(bp, sample.flow);
+  const needs = crewSampleNeeds(sample);
+  const wanted = [
+    ...(owner ? [owner.id] : []),
+    ...placeholders.filter((p) => p.startsWith("crew.")).map((p) => p.slice("crew.".length)),
+  ].filter((id, i, all) => all.indexOf(id) === i);
+  const targets = Object.fromEntries(
+    placeholders
+      .filter((p) => p.startsWith("target."))
+      .map((p) => p.slice("target.".length))
+      .map((id, i) => [id, targetAddress(id, i)]),
+  );
+
+  const stub = profile.connector ? await startGithubStub() : null;
+  if (stub) log("stub", `api.github.com stand-in on ${stub.baseUrl}`);
 
   if (!(await rpcReady(RPC))) {
     log("anvil", "starting");
@@ -333,16 +417,27 @@ async function main() {
   spawnService("orchestrator", "pnpm", ["--filter", "@lacrew/orchestrator", "dev:once"], {
     PORT: ORCH_PORT,
     // Registered the way an operator registers it: the real preset, the
-    // operator's own host, the operator's own credential env var.
-    LACREW_CONNECTORS: JSON.stringify([
-      {
-        preset: "github",
-        baseUrl: stub.baseUrl,
-        authMode: "token",
-        tokenEnv: TOKEN_ENV,
-        policyTargets: { merge_pull_request: MERGE_AUTHORITY },
-      },
-    ]),
+    // operator's own host, the operator's own credential env var. A path whose
+    // run never leaves LaCrew registers nothing — wiring a connector it does
+    // not call would hide the checklist answer it exists to prove.
+    LACREW_CONNECTORS: JSON.stringify(
+      stub
+        ? [
+            {
+              preset: profile.connector,
+              baseUrl: stub.baseUrl,
+              authMode: "token",
+              tokenEnv: TOKEN_ENV,
+              policyTargets: Object.fromEntries(
+                Object.entries(profile.policyTargets ?? {}).map(([route, target]) => [
+                  route,
+                  targets[target] ?? targetAddress(target, 0),
+                ]),
+              ),
+            },
+          ]
+        : [],
+    ),
     [TOKEN_ENV]: "local-fixture-token",
     // The hires below are governance proposals; without this each one waits for
     // a hand to press Execute and the script cannot finish unattended.
@@ -370,20 +465,28 @@ async function main() {
   log("orchestrator", modelLive ? `model provider ${health.model.provider}` : "no model key — completions return the local stub");
 
   console.log("\nConnector");
-  const connectors = await orch("/connectors");
-  const github = (connectors.connectors ?? []).find((c) => c.id === "github");
-  check("the github connector is registered", Boolean(github));
-  // Presence only — the registry reports whether the env var is set, never
-  // what is in it.
-  check("its credential resolves", github?.auth?.ready === true, `${TOKEN_ENV} is set`);
+  if (profile.connector) {
+    const connectors = await orch("/connectors");
+    const registered = (connectors.connectors ?? []).find((c) => c.id === profile.connector);
+    check(`the ${profile.connector} connector is registered`, Boolean(registered));
+    // Presence only — the registry reports whether the env var is set, never
+    // what is in it.
+    check("its credential resolves", registered?.auth?.ready === true, `${TOKEN_ENV} is set`);
+  } else {
+    check(
+      "this path needs no connector, and the flow's own steps say so",
+      needs.connectors.length === 0,
+      needs.connectors.join(", ") || "no connector routes in the sample flow",
+    );
+  }
 
   console.log("\nSeats");
   /*
-    Only the seats the sample's own flow names. Hiring all six would spend six
-    proposals to prove nothing the two do not: a flow binds the principals it
+    Only the seats the sample's own flow names — its owning principal and every
+    delegate it invokes. Hiring the whole blueprint would spend a proposal per
+    seat to prove nothing these do not: a flow binds the principals it
     references, and the checklist counts the rest as still-pending hires.
   */
-  const wanted = ["reviewer", "fixer"];
   const roleAccounts = {};
   for (const roleId of wanted) {
     const role = bp.roles.find((r) => r.id === roleId);
@@ -398,13 +501,14 @@ async function main() {
     this point resolves it through the stored role id — which is the whole point
     of storing one.
   */
-  const renamed = "PR gatekeeper (renamed)";
+  const [renamedRole, unrenamedRole] = wanted;
+  const renamed = `${bp.roles.find((r) => r.id === renamedRole).label} (renamed)`;
   /*
     The chain stores no labels, so the display name and the role id are both
     control-plane state layered over the served node — which is exactly the
     layering `nodeLabels` already does in the cloud and the reason a role id
-    belongs beside it. Every hired seat carries its id; only the reviewer's
-    label is changed.
+    belongs beside it. Every hired seat carries its id; only the first seat's
+    label is changed, and the second is left alone as the control.
   */
   const orgNodes = (await orch("/org")).nodes.map((n) => {
     const roleId = Object.keys(roleAccounts).find(
@@ -412,17 +516,17 @@ async function main() {
     );
     if (!roleId) return n;
     const role = bp.roles.find((r) => r.id === roleId);
-    return { ...n, roleId, label: roleId === "reviewer" ? renamed : role.label };
+    return { ...n, roleId, label: roleId === renamedRole ? renamed : role.label };
   });
   const seats = resolveCrewSeats(bp, orgNodes);
   check(
     "a renamed seat still resolves through its stored role id",
-    seats.roles.reviewer?.toLowerCase() === roleAccounts.reviewer?.toLowerCase(),
-    `${renamed} → ${seats.roles.reviewer ?? "unresolved"}`,
+    seats.roles[renamedRole]?.toLowerCase() === roleAccounts[renamedRole]?.toLowerCase(),
+    `${renamed} → ${seats.roles[renamedRole] ?? "unresolved"}`,
   );
   check(
     "and the resolution says the label no longer matches",
-    seats.renamed.some((b) => b.role === "reviewer"),
+    seats.renamed.some((b) => b.role === renamedRole),
   );
   const withoutRoleIds = resolveCrewSeats(
     bp,
@@ -430,30 +534,32 @@ async function main() {
   );
   check(
     "without the stored id the same seat is reported missing, never guessed",
-    withoutRoleIds.missing.includes("reviewer") && !withoutRoleIds.roles.reviewer,
+    withoutRoleIds.missing.includes(renamedRole) && !withoutRoleIds.roles[renamedRole],
   );
   check(
     "while a seat nobody renamed still binds by label alone",
-    withoutRoleIds.roles.fixer?.toLowerCase() === roleAccounts.fixer?.toLowerCase(),
+    withoutRoleIds.roles[unrenamedRole]?.toLowerCase() ===
+      roleAccounts[unrenamedRole]?.toLowerCase(),
   );
 
   console.log("\nEnforcement");
+  const refusedTarget = targets[profile.refuses];
   const verdict = await mcp("lacrew_check_policy", {
-    agent: seats.roles.reviewer,
-    target: MERGE_AUTHORITY,
+    agent: seats.roles[wanted[0]],
+    target: refusedTarget,
     value: "0",
   });
   const verdictText = JSON.stringify(verdict);
   check(
-    "the unadmitted merge authority reads DENY off the deployed policy stack",
+    `the unadmitted ${profile.refuses} reads DENY off the deployed policy stack`,
     /DENY|ESCALATE/.test(verdictText),
     verdictText.slice(0, 160),
   );
 
   console.log("\nFlows");
-  const bound = bindCrewFlow(getFlowTemplate(sample.flow).definition, {
+  const bound = bindCrewFlow(sampleDef, {
     roles: { ...seats.roles },
-    targets: { "merge-authority": MERGE_AUTHORITY, "model-api": MODEL_API },
+    targets,
   });
   await orch("/flows", { method: "POST", body: JSON.stringify({ flow: bound }) });
   const saved = await orch("/flows");
@@ -483,7 +589,10 @@ async function main() {
       blueprintFlows: [sample.flow],
       runs: (runs.runs ?? []).length,
       threadMessages: (msgs.messages ?? []).length,
-      sample: { flow: sample.flow, needs: { model: true, connectors: ["github"] } },
+      // The flow's own requirements, not a repeat of them: a path that calls
+      // nothing outside LaCrew has to reach the checklist's *not needed*
+      // answer, and a hardcoded connector list here would hide that.
+      sample: { flow: sample.flow, needs },
     };
   };
 
@@ -491,6 +600,19 @@ async function main() {
   const blocker = crewChecklistBlocker(before);
   for (const step of before) {
     log("checklist", `${step.state.padEnd(8)} ${step.title} — ${step.detail}`);
+  }
+  /*
+    The branch the second certified path exists to drive. A run that calls
+    nothing outside LaCrew must not send an operator to register a credential,
+    and "not needed" is a different answer from "wired" — one a suite of
+    connector-shaped verticals never reaches.
+  */
+  if (!profile.connector) {
+    check(
+      "the checklist answers the connector step 'not needed', not blocked",
+      before.find((s) => s.id === "connector")?.state === "optional",
+      before.find((s) => s.id === "connector")?.detail ?? "",
+    );
   }
 
   if (!modelLive) {
@@ -508,20 +630,37 @@ async function main() {
   } else {
     check("with a model key nothing blocks the first run", blocker === null, blocker?.title ?? "");
     console.log("\nSample run");
+    const runAs = owner ? seats.roles[owner.id] : undefined;
     const runOut = await orch("/flows/run", {
       method: "POST",
       body: JSON.stringify({
         id: sample.flow,
-        input: JSON.stringify(sample.input),
-        ...(seats.roles.reviewer ? { as: seats.roles.reviewer } : {}),
+        input: crewSampleInputText(sample),
+        ...(runAs ? { as: runAs } : {}),
       }),
     });
     check("the run was served by the runtime, not the mock backend", runOut.mocked !== true && runOut.source !== "mock");
-    check("it reached the connector", stub.hits.some((h) => h.startsWith("GET /repos/")), stub.hits.join(", "));
-    check(
-      "and it never merged, because nothing admitted the merge authority",
-      !stub.hits.some((h) => h.startsWith("PUT ")),
-    );
+    const ran = new Set((runOut.steps ?? []).map((s) => s.stepId));
+    if (stub) {
+      check("it reached the connector", stub.hits.some((h) => h.startsWith("GET /repos/")), stub.hits.join(", "));
+      check(
+        "and it never merged, because nothing admitted the merge authority",
+        !stub.hits.some((h) => h.startsWith("PUT ")),
+      );
+    } else {
+      /*
+        The same refusal, one layer up. This path has no route to watch, so what
+        stands in for the stub's hit log is where the run ended: policy answered
+        DENY for the publishing endpoint, the branch took its false edge, and
+        the run assembled the package a human reads instead of publishing.
+      */
+      check(
+        "it ended in the human sign-off package, not a publication",
+        ran.has("signoff") && !ran.has("published"),
+        [...ran].join(", ").slice(0, 200),
+      );
+      check("and it never reached the publication gate at all", !ran.has("publish"));
+    }
     const after = crewChecklist(await facts());
     check(
       "the checklist's run step now reads done",
@@ -531,8 +670,8 @@ async function main() {
 
   console.log(
     failures === 0
-      ? `\n${C.ok}golden path: every check held.${C.off}`
-      : `\n${C.bad}golden path: ${failures} check(s) failed.${C.off}`,
+      ? `\n${C.ok}golden path (${BLUEPRINT}): every check held.${C.off}`
+      : `\n${C.bad}golden path (${BLUEPRINT}): ${failures} check(s) failed.${C.off}`,
   );
   if (has("--keep-running") && failures === 0) {
     log("stack", `left up on ${ORCH} — ctrl-c to stop`);
