@@ -334,7 +334,27 @@ it has one — a hosted control plane passes its seat id here. An assigned gate 
 matched against it first and against `author` second, because a display name is
 renameable and a control that hinged on one would move with a rename. Both are
 set server-side by whatever posts the message, exactly like `authorKind`;
-nothing a message claims about itself is consulted.
+nothing a message claims about itself is consulted. It is **stored with the
+message**, not only carried through the live post: the audit event names the
+seat that released a run, and a message that kept only the display name would
+stop agreeing with it the first time somebody is renamed.
+
+### What may go in `assignee`
+
+One token: a seat id, a `0x` address, or a single-word handle, optionally
+written `seat:<id>` (the spelling the dual-control reviewer spec uses).
+`{{…}}` is fine — it resolves per run.
+
+Anything with a space in it is refused, both when the flow is saved and, for an
+interpolated value, when the gate is about to open (`human_gate_invalid_assignee`
+fails the step). This is a shape check, not a directory lookup: the runtime has
+no register of a workspace's people, so it cannot tell a live seat from a typo.
+What it can refuse is the input that is unmistakably not a reference to anybody
+— "whoever is on call", "ask the reviewer" — because a gate assigned to a
+sentence opens, looks decided, is answerable by nobody, and holds the run until
+the deadline fails it closed. A hosted control plane that _does_ know its seats
+should offer them as a picker rather than a text box; validating a name against
+a directory is its job, not the runtime's.
 
 There is deliberately no route that resolves a gate directly: a second way in
 would be one the conversation never gets to attribute to a seat. Every gate

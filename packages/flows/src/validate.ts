@@ -1,4 +1,5 @@
 import { isValidCron } from "./cron.js";
+import { gateAssigneeIssue } from "./humanGate.js";
 import type {
   AgentStep,
   BranchStep,
@@ -281,6 +282,13 @@ export function validateFlow(def: FlowDefinition): FlowValidationResult {
             );
           }
         });
+      }
+      // An assignee nothing can match is a gate that opens, looks decided, and
+      // is released by nobody until the deadline fails it closed. Refused at
+      // the definition, where an operator is still looking at the field.
+      const assigneeIssue = gateAssigneeIssue(hg.assignee);
+      if (assigneeIssue) {
+        errors.push(`human step "${step.id}" assignee ${assigneeIssue} (got "${hg.assignee}")`);
       }
       if (hg.timeoutMs !== undefined) {
         if (!Number.isInteger(hg.timeoutMs) || hg.timeoutMs < MIN_HUMAN_GATE_TIMEOUT_MS) {
