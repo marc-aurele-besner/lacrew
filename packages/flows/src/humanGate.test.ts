@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { flow } from "./builder.js";
 import { flowToCode } from "./codegen.js";
-import { gateAssigneeMatches } from "./humanGate.js";
+import { GATE_ASSIGNEE_MAX_CHARS, gateAssigneeIssue, gateAssigneeMatches } from "./humanGate.js";
 import { createMockFlowBackend, FlowWaitingError, runFlow } from "./run.js";
 import { stepEdges, validateFlow } from "./validate.js";
 import type { FlowBackend, FlowDefinition, HumanGateResolution } from "./types.js";
@@ -310,4 +310,38 @@ test("anyone else does not match, and a blank identity never stands in for one",
   // after normalization — that pairing is checked above and returns true only
   // because the *gate* named nobody, never because the author is anonymous.
   assert.equal(gateAssigneeMatches("seat_42", { author: "  ", authorId: "  " }), false);
+});
+
+test("an assignee that could never name a seat is refused, and a real one is not", () => {
+  // Empty is the documented default (anyone with access), not a gap to flag.
+  assert.equal(gateAssigneeIssue(undefined), null);
+  assert.equal(gateAssigneeIssue("   "), null);
+
+  assert.equal(gateAssigneeIssue("seat_42"), null);
+  assert.equal(gateAssigneeIssue("seat:seat_42"), null);
+  assert.equal(gateAssigneeIssue("0x00000000000000000000000000000000000000f0"), null);
+  // Resolved per run; the value is not knowable here and refusing the template
+  // would refuse every flow that picks its assignee from the input.
+  assert.equal(gateAssigneeIssue("{{input.reviewer}}"), null);
+
+  // The shapes that produce a gate nobody can release.
+  assert.ok(gateAssigneeIssue("Ada Lovelace"));
+  assert.ok(gateAssigneeIssue("whoever is on call"));
+  assert.ok(gateAssigneeIssue("ask the reviewer first"));
+  // A prefix with nothing behind it normalizes to empty, which would silently
+  // reopen the gate to everybody rather than assigning it to anyone.
+  assert.ok(gateAssigneeIssue("seat:"));
+  assert.ok(gateAssigneeIssue("x".repeat(GATE_ASSIGNEE_MAX_CHARS + 1)));
+});
+
+test("a flow cannot declare an assignee the matcher could never match", () => {
+  const named = (assignee: string): FlowDefinition => ({
+    ...def,
+    steps: def.steps.map((s) => (s.id === "signoff" ? { ...s, assignee } : s)),
+  });
+
+  assert.equal(validateFlow(named("seat_42")).ok, true);
+  const bad = validateFlow(named("Ada Lovelace"));
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((e) => e.includes("signoff") && e.includes("assignee")));
 });

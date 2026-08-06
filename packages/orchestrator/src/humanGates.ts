@@ -36,6 +36,12 @@
  * lands on the trail. Named nobody, any human seat with access answers, which
  * is what gates have always done and what a blank field has to keep meaning.
  *
+ * An assignee that could not name anybody — a sentence, a display name with
+ * spaces, a bare `seat:` — fails the step *before* the question is posted.
+ * Opening it would produce a gate that looks assigned, answers to nobody, and
+ * stops the run for a whole deadline before failing closed anyway; failing now
+ * costs the same run and says which step and which value did it.
+ *
  * ## Why the run stops instead of waiting
  *
  * People answer in minutes or hours. A run that blocked for that would pin a
@@ -45,6 +51,7 @@
 
 import {
   FlowWaitingError,
+  gateAssigneeIssue,
   gateAssigneeMatches,
   type FlowResumeState,
   type HumanGateResolution,
@@ -342,6 +349,16 @@ export function createHumanGates(opts: {
         // Consumed: this run already acted on the decision. Re-entering would
         // run the released branch a second time behind one answer.
         throw new Error(`human_gate_spent:${request.stepId}`);
+      }
+
+      // Checked here rather than at the top, so a gate opened by an older build
+      // can still be answered or consumed: refusing on re-entry would strand a
+      // run that a person has already decided.
+      const assigneeIssue = gateAssigneeIssue(request.assignee);
+      if (assigneeIssue) {
+        throw new Error(
+          `human_gate_invalid_assignee:${request.stepId}: "${request.assignee}" ${assigneeIssue}`,
+        );
       }
 
       const principal = request.principal ?? "";

@@ -267,6 +267,35 @@ describe("blocking human gates, end to end", () => {
     assert.equal(h.surface.runs().find((r) => r.runId === parked.runId)?.status, "completed");
   });
 
+  it("refuses to build a flow whose assignee could never name a seat", () => {
+    // Caught at the definition, while the operator is still looking at the
+    // field — long before a run parks on a question nobody can answer.
+    assert.throws(
+      () => harness({ assignee: "whoever is on call" }),
+      /human step "signoff" assignee/,
+    );
+  });
+
+  it("fails the step rather than opening a gate an interpolation assigned to nobody", async () => {
+    // `{{input.…}}` is not knowable at save time, so this is where an assignee
+    // that turns into prose is caught. Opening the question anyway would park
+    // the run for a whole deadline on a gate the matcher can never satisfy,
+    // then fail it closed — the same failure, a day later and unexplained.
+    const h = harness({ assignee: "{{input}}" });
+    await h.surface.save(h.def);
+    const run = await h.surface.run({ id: "shortlist", input: "whoever is on call" });
+
+    assert.equal(run.status, "error");
+    assert.match(
+      String(run.steps.at(-1)?.error),
+      /human_gate_invalid_assignee:signoff/,
+      "the trace names the step and the value that could not be a seat",
+    );
+    assert.equal(h.gates.list().length, 0, "no question was posted");
+    assert.equal(h.runtime.allOpenQuestions().length, 0);
+    assert.equal(h.calls.length, 0, "and nothing downstream ran");
+  });
+
   it("names the gate a non-assignee's answer would be refused by, before it is posted", async () => {
     const h = harness({ assignee: "seat_42" });
     await h.surface.save(h.def);
