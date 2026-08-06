@@ -163,8 +163,7 @@ function printShow(id: string): void {
     if (needsBaseUrl) console.log("  --base-url https://…");
     for (const name of gated) {
       const shared = preset.routes.filter((r) => presetPolicyTargetKey(r) === name);
-      const covers =
-        shared.length > 1 ? `   (admits ${shared.map((r) => r.name).join(", ")})` : "";
+      const covers = shared.length > 1 ? `   (admits ${shared.map((r) => r.name).join(", ")})` : "";
       console.log(`  --policy-target ${name}=0x…${covers}`);
     }
     if (branched.length > 0) console.log("  --branch '<glob>'   (repeatable)");
@@ -236,6 +235,17 @@ type ModeRule = {
   at: string;
 };
 
+/** What one seat's write routes resolve to, and the line they resolved through. */
+type ModeEffective = {
+  principal: string;
+  managers: string[];
+  routes: Array<{
+    route: string;
+    mode: string;
+    source: { kind: "route-default" } | { kind: "rule"; scope: ModeRule["scope"]; route: string };
+  }>;
+};
+
 type AskRow = {
   id: string;
   connector: string;
@@ -294,8 +304,29 @@ function parseScope(raw: string | undefined): ModeRule["scope"] {
   return { level, ref };
 }
 
+/** What decided a seat's mode, said the way an operator would ask about it. */
+function sourceLabel(source: ModeEffective["routes"][number]["source"], seat: string): string {
+  if (source.kind === "route-default") return "the route's own default";
+  const scope = source.scope;
+  if (scope.level === "workspace") return `workspace · ${source.route}`;
+  const own = scope.ref?.trim().toLowerCase() === seat.trim().toLowerCase();
+  return `${own ? "this seat" : `${scope.level} ${scope.ref}`} · ${source.route}`;
+}
+
 async function printModes(args: string[]): Promise<void> {
-  const body = await orchFetch<{ rules: ModeRule[]; modes: string[] }>(args, "/connectors/modes");
+  // Same `--as` the UI's scope picker resolves through, and the same answer:
+  // a rule set on a desk applies to everyone under it, so "what does this
+  // worker run under" is not readable from the rule list alone.
+  const seats = (flagValue(args, "--as") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const query = seats.length ? `?as=${seats.map(encodeURIComponent).join(",")}` : "";
+  const body = await orchFetch<{
+    rules: ModeRule[];
+    modes: string[];
+    effective?: ModeEffective[];
+  }>(args, `/connectors/modes${query}`);
   console.log("Connector write policy\n");
   console.log("  auto  admitted by policy, called without asking");
   console.log("  ask   admitted by policy, a human confirms in-thread first");
@@ -307,9 +338,27 @@ async function printModes(args: string[]): Promise<void> {
       console.log(`  ${rule.mode.padEnd(5)} ${rule.route.padEnd(34)} ${scopeLabel(rule.scope)}`);
     }
   }
+  for (const seat of body.effective ?? []) {
+    console.log(`\nEffective for ${seat.principal}`);
+    console.log(
+      `  reporting line: ${seat.managers.length ? seat.managers.join(" → ") : "(none read)"}`,
+    );
+    if (seat.routes.length === 0) {
+      console.log("  No write routes are registered on this orchestrator.");
+      continue;
+    }
+    for (const route of seat.routes) {
+      console.log(
+        `  ${route.mode.padEnd(5)} ${route.route.padEnd(34)} from ${sourceLabel(route.source, seat.principal)}`,
+      );
+    }
+  }
   console.log("\nA rule only narrows: it cannot admit a write the policy stack refuses.");
   console.log("Set one:    lacrew connectors mode github.merge_pull_request ask");
   console.log("Clear one:  lacrew connectors mode github.merge_pull_request --clear");
+  if (!seats.length) {
+    console.log("One seat:   lacrew connectors modes --as 0x… (what that seat actually runs)");
+  }
 }
 
 async function setMode(args: string[]): Promise<void> {
@@ -458,6 +507,7 @@ Offline (a preset is data):
 
 Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
   modes                    Write-mode rules, and what auto/ask/deny mean
+                           (--as 0x… resolves what one seat actually runs under)
   mode <route> <mode>      Narrow a write route (--scope, --clear)
   asks                     Writes waiting on a human (--status)
   answer <askId> yes|no    Confirm or refuse one, as a human seat (--as)
@@ -479,11 +529,17 @@ Flags for config:
   --credential-header <name>    Send a token-mode credential in another header
   --id <name>                   Register under a different connector id
 
-Flags for mode / asks / answer:
+Flags for modes / mode / asks / answer:
   --scope workspace|crew:0x…|agent:0x…   Where a rule applies (default workspace)
   --clear                                Remove the rule instead of setting one
   --status <status>                      pending (default) | approved | declined | expired | consumed
-  --as <identifier>                      The human seat answering
+  --as <identifier>                      The human seat answering; on "modes",
+                                         the seat(s) to resolve (comma-separated)
+
+Scopes name a node, not a label:
+  crew:0x… is the address of the node a team hangs from, so a rule there covers
+  every seat below it. A team's *name* is not an address — expand it to the
+  members you mean and set the rule on each, rather than picking one at random.
 
 Register it:
   export LACREW_CONNECTORS="$(lacrew connectors config github --policy-target merge_pull_request=0x…)"

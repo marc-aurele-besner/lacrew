@@ -238,6 +238,51 @@ describe("lacrew connectors, write policy", () => {
     }
   });
 
+  it("resolves what named seats run under, and says which node decided it", async () => {
+    const stub = stubFetch({
+      "/connectors/modes": {
+        rules: [],
+        modes: ["auto", "ask", "deny"],
+        effective: [
+          {
+            principal: "0xworker",
+            managers: ["0xdesk", "0xroot"],
+            routes: [
+              {
+                route: "github.merge_pull_request",
+                mode: "deny",
+                source: {
+                  kind: "rule",
+                  scope: { level: "crew", ref: "0xdesk" },
+                  route: "github.*",
+                },
+              },
+              {
+                route: "github.create_issue_comment",
+                mode: "auto",
+                source: { kind: "route-default" },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    try {
+      const { out } = await capture(["modes", "--as", "0xworker,0xother"]);
+      // Both seats are asked for in one request: expanding a desk is a list of
+      // members, and one call per member is how that screen becomes the slow one.
+      assert.equal(stub.calls[0]?.url, "/connectors/modes?as=0xworker,0xother");
+      assert.match(out, /Effective for 0xworker/);
+      assert.match(out, /reporting line: 0xdesk → 0xroot/);
+      // A mode inherited from a desk names the desk, rather than saying only
+      // that it came from somewhere above.
+      assert.match(out, /deny\s+github\.merge_pull_request\s+from crew 0xdesk · github\.\*/);
+      assert.match(out, /auto\s+github\.create_issue_comment\s+from the route's own default/);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it("sets a scoped rule and clears it", async () => {
     const stub = stubFetch({
       "/connectors/modes": {

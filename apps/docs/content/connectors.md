@@ -547,6 +547,65 @@ it, so "this desk never publishes" is one rule rather than one per worker.
 Clearing a rule is not the same as setting `auto`: it removes the exception, so
 the route goes back to inheriting.
 
+### A scope is an address, not a name
+
+`crew:` in a scope is the **address of an org-chart node** — the seat a team
+hangs from — and the rule covers everything below it. It is not a team's name,
+and the two are not interchangeable: a name is a label a workspace can rename,
+reuse, or attach to a group of seats that share no manager at all. There is no
+mapping from one to the other that stays true, so nothing here invents one.
+
+If you think of a team by its name, expand it to the seats you mean and set the
+rule on **each of them**. Both the CLI and the Tools drawer do exactly that:
+they show the addresses, and they apply to the ones you picked. Picking one
+member's address on a team's behalf would put a `deny` somewhere nobody chose,
+and the operator would go on believing the whole team was covered.
+
+### What one seat actually runs under
+
+The rule list says what was decided. It does not say what a given worker runs
+under, because a rule set two levels up reaches it without naming it. `?as=`
+answers that question directly, for as many seats as you want to compare (up to
+50 — beyond that it is a scrape, and it is refused rather than truncated):
+
+```bash
+lacrew connectors modes --as 0xworker…
+lacrew connectors modes --as 0xworker…,0xother…      # a whole desk, one request
+curl -s "localhost:8788/connectors/modes?as=0xworker…" | jq .
+```
+
+```json
+{
+  "rules": [{ "scope": { "level": "crew", "ref": "0xdesk…" }, "route": "github.*", "mode": "deny" }],
+  "modes": ["auto", "ask", "deny"],
+  "effective": [
+    {
+      "principal": "0xworker…",
+      "managers": ["0xdesk…", "0xroot…"],
+      "routes": [
+        {
+          "route": "github.merge_pull_request",
+          "mode": "deny",
+          "source": {
+            "kind": "rule",
+            "scope": { "level": "crew", "ref": "0xdesk…" },
+            "route": "github.*"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`managers` is the reporting line the modes resolved through, nearest first, so a
+surface can say **which** ancestor decided a value instead of printing
+"inherited" and leaving the operator to hunt for the rule. `source.kind` is
+`route-default` when nobody has decided anything — which is a different fact
+from somebody having chosen `auto`, and worth showing as one. The chart is read
+once per request, so asking about a whole desk costs what asking about one seat
+does.
+
 ### Working the queue
 
 ```bash
