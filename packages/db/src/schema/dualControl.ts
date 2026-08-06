@@ -26,6 +26,14 @@ export const dualControlRules = pgTable("orchestrator_dual_control_rules", {
   orgMutators: boolean("org_mutators").notNull().default(true),
   /** How long a review waits before the effect fails closed. */
   timeoutMs: integer("timeout_ms").notNull(),
+  /**
+   * `per_effect` | `per_run`: how much one concurrence releases.
+   *
+   * Defaulted to the narrower of the two, so a row written before this column
+   * existed keeps asking per effect rather than being read as a run-wide
+   * agreement nobody gave.
+   */
+  reviewScope: text("review_scope").notNull().default("per_effect"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -50,6 +58,10 @@ export const dualControlReviews = pgTable(
     effect: text("effect").notNull(),
     /** Hash of the call a concurrence would release. */
     fingerprint: text("fingerprint").notNull(),
+    /** `per_effect` | `per_run`, as resolved when the review was opened. */
+    reviewScope: text("review_scope").notNull().default("per_effect"),
+    /** Effects this review has released — more than one only under `per_run`. */
+    released: integer("released").notNull().default(0),
     /** The fields the question showed, already bounded — never a credential. */
     args: jsonb("args").notNull().$type<Record<string, unknown>>(),
     /** Base units of a propose, when this review holds a spend. */

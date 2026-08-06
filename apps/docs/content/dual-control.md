@@ -141,6 +141,40 @@ reviews with different questions, and the concurrence given for one can never
 release the other. A concurrence is also spent exactly once: the run that acted
 on it marks it consumed, so a restart cannot replay the released effect.
 
+### …unless the crew reviews per run
+
+`reviewScope` decides how much one answer releases:
+
+| Scope                  | One concurrence releases                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------- |
+| `per_effect` (default) | this call, with these arguments, and nothing else                                           |
+| `per_run`              | every reviewed effect the **same run** by the **same seat** reaches, until reject or cancel |
+
+Per effect is the only scope where what the reviewer read is what happened, so
+it is the default and the one to leave alone unless the noise is real. A desk
+that proposes in a loop asks the same person the same question a dozen times,
+and a queue nobody can keep up with is a queue that gets rubber-stamped — which
+makes the noisier control the weaker one in practice.
+
+What `per_run` widens is not hidden. The reviewer is agreeing to a _run_ having
+seen its first effect, so the second is released on trust in the run rather than
+on a reading of the call, and the question says exactly that:
+
+> This crew reviews per run: concurring releases every reviewed effect this run
+> still reaches, not only the one above. Reject if you would want to see the next
+> one.
+
+It belongs on a crew whose effects are the same shape repeated. It does not
+belong where the next call could be an order of magnitude larger than the one
+that was reviewed.
+
+The rest of the control is unchanged: the actor still cannot answer, a rejection
+still refuses, and cancelling the run closes the concurrence with it. Each
+released effect leaves its own `DualControlConcurred` row carrying the tool and
+fingerprint of _that_ call, so the trail shows what one answer actually carried.
+A call arriving outside a flow has no run to scope to, and reviews per effect
+whatever the setting says.
+
 ## Restarts and timeouts
 
 The run is parked on durable state rather than blocked in memory, so a redeploy
@@ -176,6 +210,7 @@ lacrew dual-control reviews              # what is holding runs right now
 lacrew dual-control set --workspace --mode risky_writes
 lacrew dual-control set --crew 0xDESK --mode spends_and_writes \
   --reviewer role:human --min-spend 1000000
+lacrew dual-control set --crew 0xDESK --mode spends_and_writes --review-scope per_run
 lacrew dual-control set --agent 0xBOT --mode off      # carve one seat out
 lacrew dual-control clear --agent 0xBOT               # inherit again
 ```
@@ -183,12 +218,13 @@ lacrew dual-control clear --agent 0xBOT               # inherit again
 Or from the environment, for a deployment that wants one setting and no runtime
 edits:
 
-| Variable                          | Meaning                                                       |
-| --------------------------------- | ------------------------------------------------------------- |
-| `LACREW_DUAL_CONTROL`             | `off` (default) \| `risky_writes` \| `spends_and_writes`      |
-| `LACREW_DUAL_CONTROL_REVIEWER`    | `manager` \| `seat:0x…` \| `role:human` \| `any_peer_in_crew` |
-| `LACREW_DUAL_CONTROL_MIN_SPEND`   | base units; spends below this are not reviewed                |
-| `LACREW_DUAL_CONTROL_TIMEOUT_MIN` | how long a review waits before failing closed                 |
+| Variable                           | Meaning                                                       |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `LACREW_DUAL_CONTROL`              | `off` (default) \| `risky_writes` \| `spends_and_writes`      |
+| `LACREW_DUAL_CONTROL_REVIEWER`     | `manager` \| `seat:0x…` \| `role:human` \| `any_peer_in_crew` |
+| `LACREW_DUAL_CONTROL_MIN_SPEND`    | base units; spends below this are not reviewed                |
+| `LACREW_DUAL_CONTROL_TIMEOUT_MIN`  | how long a review waits before failing closed                 |
+| `LACREW_DUAL_CONTROL_REVIEW_SCOPE` | `per_effect` (default) \| `per_run`                           |
 
 A bad value stops the boot rather than defaulting: an orchestrator whose
 reviewer setting silently became `manager` would be reviewing to a seat nobody
@@ -235,11 +271,11 @@ trail is not the place to publish one.
 
 ## Routes
 
-| Route                                        | What it does                                                                                                                  |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `GET /dual-control[?as=]`                    | rules in force; `?as=` also resolves one seat and the reviewer it would actually get                                          |
-| `PUT /dual-control`                          | set a rule (`{scope, mode, reviewer?, minSpend?, connectorWrites?, orgMutators?, timeoutMs?}`), or clear it with `mode: null` |
-| `GET /dual-control/reviews[?status=&runId=]` | the review queue                                                                                                              |
+| Route                                        | What it does                                                                                                                                |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /dual-control[?as=]`                    | rules in force; `?as=` also resolves one seat and the reviewer it would actually get                                                        |
+| `PUT /dual-control`                          | set a rule (`{scope, mode, reviewer?, minSpend?, connectorWrites?, orgMutators?, timeoutMs?, reviewScope?}`), or clear it with `mode: null` |
+| `GET /dual-control/reviews[?status=&runId=]` | the review queue                                                                                                                            |
 
 Concurring happens through the conversation, never through a route: an endpoint
 that resolved a review directly would be a second way to release an effect, and

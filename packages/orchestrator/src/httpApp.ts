@@ -78,7 +78,9 @@ import { isDualControlRefused, type DualControlSurface } from "./dualControl.js"
 import {
   DUAL_CONTROL_MODES,
   DUAL_CONTROL_REVIEWERS,
+  DUAL_CONTROL_REVIEW_SCOPES,
   PLAN_REQUIRED_MODES,
+  isDualControlReviewScope,
   isFlowWaiting,
   crewBindingScope,
   parseDualControlScope,
@@ -87,6 +89,7 @@ import {
   planRequiredScopeKey,
   dualControlScopeKey,
   type DualControlMode,
+  type DualControlReviewScope,
   type PlanRequiredMode,
 } from "@lacrew/flows";
 import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
@@ -1096,6 +1099,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       rules: dualControl.list(),
       modes: DUAL_CONTROL_MODES,
       reviewers: DUAL_CONTROL_REVIEWERS,
+      reviewScopes: DUAL_CONTROL_REVIEW_SCOPES,
       ...(as
         ? {
             effective: dualControl.resolve({ principal: as, managers: await managersOf(as) }),
@@ -1123,6 +1127,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       connectorWrites?: boolean;
       orgMutators?: boolean;
       timeoutMs?: number;
+      reviewScope?: string;
     }>(c);
     const scope = parseDualControlScope(body.scope);
     if (!scope) return jsonBig(c, { error: "scope_required" }, 400);
@@ -1142,12 +1147,20 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (body.reviewer !== undefined && !reviewer) {
       return jsonBig(c, { error: `reviewer must be ${DUAL_CONTROL_REVIEWERS.join(" | ")}` }, 400);
     }
+    if (body.reviewScope !== undefined && !isDualControlReviewScope(body.reviewScope)) {
+      return jsonBig(
+        c,
+        { error: `reviewScope must be ${DUAL_CONTROL_REVIEW_SCOPES.join(" | ")}` },
+        400,
+      );
+    }
     try {
       const rule = await dualControl.set({
         scope,
         mode: body.mode as DualControlMode,
         ...(reviewer ? { reviewer } : {}),
         ...(typeof body.timeoutMs === "number" ? { timeoutMs: body.timeoutMs } : {}),
+        ...(body.reviewScope ? { reviewScope: body.reviewScope as DualControlReviewScope } : {}),
         threshold: {
           ...(typeof body.minSpend === "string" ? { minSpend: body.minSpend } : {}),
           ...(typeof body.connectorWrites === "boolean"
@@ -1167,6 +1180,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           connectorWrites: rule.threshold.connectorWrites,
           orgMutators: rule.threshold.orgMutators,
           timeoutMs: rule.timeoutMs,
+          reviewScope: rule.reviewScope,
           action: "set",
         },
       });

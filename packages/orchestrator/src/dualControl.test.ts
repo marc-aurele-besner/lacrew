@@ -217,6 +217,178 @@ describe("dual-control durability", () => {
   });
 });
 
+describe("per-run review scope", () => {
+  /** Answer the one open question as the manager. */
+  const concur = (surface: ReturnType<typeof surfaceOn>, chat: ReturnType<typeof thread>): void => {
+    const question = chat.messages.filter((m) => m.kind === "question").at(-1)!;
+    surface.observe(
+      chat.post({
+        threadId: question.threadId,
+        author: MANAGER,
+        authorKind: "agent",
+        kind: "answer",
+        replyTo: question.id,
+        body: "concur",
+      }),
+    );
+  };
+
+  const COMMENT = { ...MERGE, tool: "github.create_comment", args: { number: "7", body: "done" } };
+  const LABEL = { ...MERGE, tool: "github.add_label", args: { number: "7", label: "shipped" } };
+
+  it("asks once for a run that reaches three reviewed effects", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+
+    // The first effect parks the run and asks.
+    assert.ok(isFlowWaiting(await surface.check(MERGE).catch((e: unknown) => e)));
+    assert.equal(chat.messages.filter((m) => m.kind === "question").length, 1);
+    concur(surface, chat);
+
+    // The rest of the run's effects ride that one answer.
+    assert.equal((await surface.check(MERGE)).required, true);
+    assert.equal((await surface.check(COMMENT)).required, true);
+    assert.equal((await surface.check(LABEL)).required, true);
+    assert.equal(
+      chat.messages.filter((m) => m.kind === "question").length,
+      1,
+      "one concurrence, one question",
+    );
+    const review = surface.reviews()[0]!;
+    assert.equal(review.reviewScope, "per_run");
+    assert.equal(review.released, 3, "every released effect is counted, not just the first");
+  });
+
+  it("says in the question that it covers the whole run", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+    await surface.check(MERGE).catch(() => {});
+    const question = chat.messages.find((m) => m.kind === "question")!;
+    // The reviewer is answering for calls they have not been shown, and the
+    // question is the only place that reaches them.
+    assert.match(question.body, /releases every reviewed effect this run still reaches/);
+  });
+
+  it("still asks per effect where the scope is the default", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({ scope: { level: "workspace" }, mode: "risky_writes" });
+    await surface.check(MERGE).catch(() => {});
+    concur(surface, chat);
+    await surface.check(MERGE);
+    // A different call in the same run is a different question.
+    assert.ok(isFlowWaiting(await surface.check(COMMENT).catch((e: unknown) => e)));
+    assert.equal(chat.messages.filter((m) => m.kind === "question").length, 2);
+  });
+
+  it("stops releasing once a run-scoped review is rejected", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+    await surface.check(MERGE).catch(() => {});
+    const question = chat.messages.find((m) => m.kind === "question")!;
+    surface.observe(
+      chat.post({
+        threadId: question.threadId,
+        author: MANAGER,
+        authorKind: "agent",
+        kind: "answer",
+        replyTo: question.id,
+        body: "reject",
+      }),
+    );
+    const err = await surface.check(COMMENT).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(
+      isDualControlRefused(err),
+      "a rejected run-scoped review refuses the next effect too",
+    );
+  });
+
+  it("does not outlive the run it was given for", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+    await surface.check(MERGE).catch(() => {});
+    concur(surface, chat);
+    await surface.cancelRun("run-1", "operator cancelled");
+
+    const err = await surface.check(COMMENT).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    assert.ok(isDualControlRefused(err));
+    assert.equal((err as { reason: string }).reason, "cancelled");
+    // The answer is kept: "cancelled" says the run ended, not that nobody agreed.
+    assert.equal(surface.reviews()[0]?.outcome, "concurred");
+
+    // And a second run asks its own question — a concurrence belongs to one run.
+    const next = { ...MERGE, runId: "run-2" };
+    assert.ok(isFlowWaiting(await surface.check(next).catch((e: unknown) => e)));
+    assert.equal(chat.messages.filter((m) => m.kind === "question").length, 2);
+  });
+
+  it("keys per effect when there is no run to scope to", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const surface = surfaceOn(store, chat);
+    await surface.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+    // An /mcp/call outside a flow: "this run" would otherwise mean "everything
+    // this seat ever does".
+    const loose = { tool: MERGE.tool, args: MERGE.args, principal: WORKER, managers: [MANAGER] };
+    await surface.check(loose).catch(() => {});
+    assert.equal(surface.reviews()[0]?.reviewScope, "per_effect");
+  });
+
+  it("survives a restart as the scope it was opened under", async () => {
+    const store = createMemoryRuntimeStore();
+    const chat = thread();
+    const before = surfaceOn(store, chat);
+    await before.set({
+      scope: { level: "workspace" },
+      mode: "risky_writes",
+      reviewScope: "per_run",
+    });
+    await before.check(MERGE).catch(() => {});
+    concur(before, chat);
+
+    const after = surfaceOn(store, chat);
+    await after.hydrate();
+    assert.equal(after.resolve({ principal: WORKER, managers: [MANAGER] }).reviewScope, "per_run");
+    assert.equal((await after.check(COMMENT)).required, true);
+    assert.equal(chat.messages.filter((m) => m.kind === "question").length, 1);
+  });
+});
+
 describe("dual control from the environment", () => {
   it("is off unless an operator asks for it", () => {
     assert.equal(dualControlFromEnv({}), null);
@@ -233,6 +405,25 @@ describe("dual control from the environment", () => {
     assert.deepEqual(rule?.reviewer, { kind: "seat", account: MANAGER.toLowerCase() });
     assert.equal(rule?.threshold?.minSpend, "1000000");
     assert.equal(rule?.timeoutMs, 45 * 60_000);
+  });
+
+  it("carries the review scope, and refuses one it cannot enforce", () => {
+    assert.equal(
+      dualControlFromEnv({
+        LACREW_DUAL_CONTROL: "risky_writes",
+        LACREW_DUAL_CONTROL_REVIEW_SCOPE: "per_run",
+      })?.reviewScope,
+      "per_run",
+    );
+    // Defaulting would run a deployment at a different scope than it asked for.
+    assert.throws(
+      () =>
+        dualControlFromEnv({
+          LACREW_DUAL_CONTROL: "risky_writes",
+          LACREW_DUAL_CONTROL_REVIEW_SCOPE: "per_plan",
+        }),
+      /expected per_effect/,
+    );
   });
 
   it("stops the boot on a value it cannot enforce", () => {

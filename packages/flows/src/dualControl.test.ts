@@ -63,6 +63,16 @@ describe("dual-control rules", () => {
     assert.throws(() => rule({ reviewer: { kind: "seat", account: "trader" } }), /address/);
   });
 
+  it("defaults to the scope where one answer releases one call", () => {
+    assert.equal(rule().reviewScope, "per_effect");
+    assert.equal(rule({ reviewScope: "per_run" }).reviewScope, "per_run");
+    assert.throws(() => rule({ reviewScope: "per_plan" as never }), /reviewScope must be/);
+    // A rule stored before the setting existed reads as the narrower of the
+    // two: an inherited value nobody chose must not be the one releasing more.
+    const legacy = { ...rule(), reviewScope: undefined } as never;
+    assert.equal(resolveDualControl([legacy], { principal: WORKER }).reviewScope, "per_effect");
+  });
+
   it("resolves narrowest-first, and a crew rule may name the seat itself", () => {
     const rules = [
       rule({ scope: { level: "workspace" }, mode: "risky_writes" }),
