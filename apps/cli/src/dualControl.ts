@@ -16,10 +16,13 @@
 import {
   DUAL_CONTROL_MODES,
   DUAL_CONTROL_REVIEWERS,
+  DUAL_CONTROL_REVIEW_SCOPES,
   formatReviewer,
+  isDualControlReviewScope,
   parseReviewer,
   type DualControlMode,
   type DualControlRecord,
+  type DualControlReviewScope,
 } from "@lacrew/flows";
 
 type Resolution = {
@@ -27,6 +30,7 @@ type Resolution = {
   reviewer: Parameters<typeof formatReviewer>[0];
   threshold: { minSpend: string; connectorWrites: boolean; orgMutators: boolean };
   timeoutMs: number;
+  reviewScope: DualControlReviewScope;
   source: { kind: "default" } | { kind: "rule"; scope: { level: string; ref?: string } };
 };
 
@@ -133,7 +137,14 @@ function printRule(rule: DualControlRecord): void {
     `  ${scopeLabel(rule.scope).padEnd(52)}  ${rule.mode.padEnd(18)}  ` +
       `reviewer ${formatReviewer(rule.reviewer).padEnd(20)}  ${minutes(rule.timeoutMs)}`,
   );
-  console.log(`  ${" ".repeat(52)}  covers: ${coverage(rule)}`);
+  console.log(
+    `  ${" ".repeat(52)}  covers: ${coverage(rule)}` +
+      // Said on its own line rather than as a flag among the others: it is the
+      // only setting that changes how much one answer releases.
+      (rule.reviewScope === "per_run"
+        ? "  ·  one concurrence covers the whole run"
+        : "  ·  one concurrence covers one call"),
+  );
 }
 
 export async function cmdDualControl(args: string[]): Promise<void> {
@@ -163,7 +174,8 @@ export async function cmdDualControl(args: string[]): Promise<void> {
           : "nothing configured";
       console.log(
         `\n${as} runs under ${body.effective.mode} (from ${source}), ` +
-          `reviewer ${formatReviewer(body.effective.reviewer)}, timeout ${minutes(body.effective.timeoutMs)}`,
+          `reviewer ${formatReviewer(body.effective.reviewer)}, timeout ${minutes(body.effective.timeoutMs)}, ` +
+          `${body.effective.reviewScope === "per_run" ? "one answer per run" : "one answer per call"}`,
       );
       if (body.reviewer) {
         const who = body.reviewer.human
@@ -219,6 +231,10 @@ export async function cmdDualControl(args: string[]): Promise<void> {
       throw new Error(`--reviewer must be ${DUAL_CONTROL_REVIEWERS.join(" | ")}`);
     }
     const timeoutMin = numberFlag(args, "--timeout-min");
+    const reviewScope = flagValue(args, "--review-scope");
+    if (reviewScope && !isDualControlReviewScope(reviewScope)) {
+      throw new Error(`--review-scope must be ${DUAL_CONTROL_REVIEW_SCOPES.join(" | ")}`);
+    }
     const body = await orchFetch<{ rule: DualControlRecord }>(args, "/dual-control", {
       method: "PUT",
       body: JSON.stringify({
@@ -229,6 +245,7 @@ export async function cmdDualControl(args: string[]): Promise<void> {
         ...(flagValue(args, "--min-spend") ? { minSpend: flagValue(args, "--min-spend") } : {}),
         ...(args.includes("--no-connector-writes") ? { connectorWrites: false } : {}),
         ...(args.includes("--no-org-mutators") ? { orgMutators: false } : {}),
+        ...(reviewScope ? { reviewScope } : {}),
       }),
     });
     console.log(`${scopeLabel(scope)} → ${body.rule.mode}`);
@@ -242,6 +259,12 @@ export async function cmdDualControl(args: string[]): Promise<void> {
       if (formatReviewer(body.rule.reviewer) !== "role:human") {
         console.log(
           "Reviewer is an agent: that is review, not trust. High-tier treasury changes still need people.",
+        );
+      }
+      if (body.rule.reviewScope === "per_run") {
+        console.log(
+          "Per run: one concurrence releases every reviewed effect that run reaches, including calls" +
+            " the reviewer was never shown. The question says so; the setting is yours.",
         );
       }
     }
@@ -274,6 +297,10 @@ export async function cmdDualControl(args: string[]): Promise<void> {
       [--no-connector-writes]        Leave connector + MCP writes unreviewed
       [--no-org-mutators]            Leave org/budget/governance unreviewed
       [--timeout-min 1440]           After this, the effect fails closed
+      [--review-scope per_effect|per_run]
+                                     What one concurrence releases: this call
+                                     (default), or every reviewed effect in the
+                                     same run until it is rejected or expires
   clear --workspace|--crew 0x…|--agent 0x…
 
 Modes

@@ -133,6 +133,36 @@ export type DualControlScope =
   { level: "workspace" } | { level: "crew"; ref: string } | { level: "agent"; ref: string };
 
 /**
+ * How much one concurrence releases.
+ *
+ * `per_effect` — one answer, one call. The reviewer is shown the exact
+ *   arguments that will go out and releases those and nothing else. This is the
+ *   default, and it is the only setting where what the reviewer read is what
+ *   happened.
+ * `per_run` — one answer covers every reviewed effect of the *same run* by the
+ *   same seat, until it is rejected, expires, or the run ends. For a desk that
+ *   proposes in a loop, per-effect asks the same person the same question a
+ *   dozen times, and a queue nobody can keep up with is a queue that gets
+ *   rubber-stamped — so the noisier control is the weaker one in practice.
+ *
+ * What `per_run` widens is real and is never hidden: the reviewer agrees to a
+ * run's *plan* having seen its first effect, so the second one is released on
+ * trust in the run rather than on a reading of the call. It belongs on a crew
+ * whose effects are the same shape repeated, not on one where the next call
+ * could be an order of magnitude larger than the one that was reviewed.
+ */
+export type DualControlReviewScope = "per_effect" | "per_run";
+
+export const DUAL_CONTROL_REVIEW_SCOPES: DualControlReviewScope[] = ["per_effect", "per_run"];
+
+export function isDualControlReviewScope(value: unknown): value is DualControlReviewScope {
+  return (
+    typeof value === "string" &&
+    DUAL_CONTROL_REVIEW_SCOPES.includes(value as DualControlReviewScope)
+  );
+}
+
+/**
  * How long a review waits before the effect fails closed.
  *
  * A day, matching the human gate, because the reviewer is often a person and a
@@ -150,6 +180,8 @@ export type DualControlRule = {
   threshold?: DualControlThreshold;
   /** Deadline in ms. Defaults to `DUAL_CONTROL_DEFAULT_TIMEOUT_MS`. */
   timeoutMs?: number;
+  /** How much one concurrence releases. Defaults to `per_effect`. */
+  reviewScope?: DualControlReviewScope;
 };
 
 /**
@@ -163,6 +195,7 @@ export type DualControlRecord = {
   reviewer: DualControlReviewer;
   threshold: Required<DualControlThreshold>;
   timeoutMs: number;
+  reviewScope: DualControlReviewScope;
   at: string;
 };
 
@@ -171,6 +204,7 @@ export type DualControlSettings = {
   reviewer: DualControlReviewer;
   threshold: Required<DualControlThreshold>;
   timeoutMs: number;
+  reviewScope: DualControlReviewScope;
 };
 
 export type DualControlResolution = DualControlSettings & {
@@ -208,6 +242,10 @@ export const DUAL_CONTROL_DEFAULT: DualControlSettings = {
   reviewer: DUAL_CONTROL_DEFAULT_REVIEWER,
   threshold: { minSpend: "0", connectorWrites: true, orgMutators: true },
   timeoutMs: DUAL_CONTROL_DEFAULT_TIMEOUT_MS,
+  // Per effect, because it is the only scope where the call the reviewer read
+  // is the call that goes out. A run-wide concurrence is something an operator
+  // chooses knowing what it widens, never something they inherit.
+  reviewScope: "per_effect",
 };
 
 /** A decimal base-units amount, or null when it is not one. */
@@ -248,6 +286,12 @@ export function normalizeDualControlRule(input: DualControlRule, at: string): Du
       `invalid_dual_control: timeoutMs must be ${DUAL_CONTROL_MIN_TIMEOUT_MS}–${DUAL_CONTROL_MAX_TIMEOUT_MS}`,
     );
   }
+  const reviewScope = input.reviewScope ?? DUAL_CONTROL_DEFAULT.reviewScope;
+  if (!isDualControlReviewScope(reviewScope)) {
+    throw new Error(
+      `invalid_dual_control: reviewScope must be ${DUAL_CONTROL_REVIEW_SCOPES.join(" | ")}`,
+    );
+  }
   const minSpendRaw = input.threshold?.minSpend;
   const minSpend = minSpendRaw === undefined ? 0n : parseBaseUnits(minSpendRaw);
   if (minSpend === null) {
@@ -264,6 +308,7 @@ export function normalizeDualControlRule(input: DualControlRule, at: string): Du
       orgMutators: input.threshold?.orgMutators !== false,
     },
     timeoutMs,
+    reviewScope,
     at,
   };
 }
@@ -288,6 +333,10 @@ export function resolveDualControl(
     reviewer: rule.reviewer,
     threshold: rule.threshold,
     timeoutMs: rule.timeoutMs,
+    // A rule stored before this setting existed reviews per effect, which is
+    // the narrower reading: a stored value nobody chose must never be the one
+    // that releases more.
+    reviewScope: rule.reviewScope ?? DUAL_CONTROL_DEFAULT.reviewScope,
     source: { kind: "rule", scope: rule.scope },
   });
 

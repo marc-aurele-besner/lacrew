@@ -439,6 +439,8 @@ function reviewToRow(record: DualControlReviewRecord): DualControlReviewRow {
     tool: record.tool,
     effect: record.effect,
     fingerprint: record.fingerprint,
+    reviewScope: record.reviewScope,
+    released: record.released ?? 0,
     args: record.args,
     value: record.value ?? null,
     actor: record.actor,
@@ -468,6 +470,10 @@ function reviewFromRow(row: DualControlReviewRow): DualControlReviewRecord {
     tool: row.tool,
     effect: row.effect === "spend" ? "spend" : "write",
     fingerprint: row.fingerprint,
+    // A row stored before the scope existed released one effect and nothing
+    // else, which is what `per_effect` says.
+    reviewScope: row.reviewScope === "per_run" ? "per_run" : "per_effect",
+    ...(row.released ? { released: row.released } : {}),
     args: row.args ?? {},
     ...(row.value ? { value: row.value } : {}),
     actor: row.actor,
@@ -1006,6 +1012,7 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
                 orgMutators: row.orgMutators,
               },
               timeoutMs: row.timeoutMs,
+              reviewScope: row.reviewScope === "per_run" ? "per_run" : "per_effect",
               at: row.updatedAt,
             } satisfies DualControlRecord,
           ];
@@ -1029,6 +1036,7 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
           connectorWrites: record.threshold.connectorWrites,
           orgMutators: record.threshold.orgMutators,
           timeoutMs: record.timeoutMs,
+          reviewScope: record.reviewScope,
           updatedAt: record.at,
         });
       } catch (err) {

@@ -52,6 +52,7 @@ import {
   dualControlRequired,
   dualControlScopeKey,
   formatReviewer,
+  isDualControlReviewScope,
   normalizeDualControlRule,
   parseReviewer,
   readReviewAnswer,
@@ -61,6 +62,7 @@ import {
   type DualControlMode,
   type DualControlRecord,
   type DualControlResolution,
+  type DualControlReviewScope,
   type DualControlRule,
   type DualControlScope,
   type DualControlSeat,
@@ -80,7 +82,10 @@ export type DualControlReviewStatus =
  *
  * `consumed` is separate from the outcome on purpose — it records that the run
  * has already acted on this decision, which is what stops one concurrence from
- * releasing the same effect twice.
+ * releasing the same effect twice. A `per_run` review is never consumed while
+ * its run is alive: releasing the run's remaining effects is what the operator
+ * asked that scope for, and `released` counts them so the trail shows how much
+ * one answer actually carried.
  */
 export type DualControlReviewRecord = {
   /** Deterministic per (run, actor, call): re-entering finds this review, never a second. */
@@ -89,6 +94,15 @@ export type DualControlReviewRecord = {
   effect: "spend" | "write";
   /** Hash of the call a concurrence would release; see the note on blank cheques. */
   fingerprint: string;
+  /**
+   * How much this concurrence releases (F2.32).
+   *
+   * `per_effect` — this call and nothing else. `per_run` — every reviewed
+   * effect of this run by this seat, which is why the question says so.
+   */
+  reviewScope: DualControlReviewScope;
+  /** Effects this review has released. 1 for a per-effect review that was used. */
+  released?: number;
   /** The fields the question shows. Never a credential — see `summarizeArgs`. */
   args: Record<string, unknown>;
   /** Base units of a propose, as a decimal string, when this is a spend. */
@@ -263,12 +277,22 @@ export function dualControlFromEnv(
   }
   const minutes = Number(env.LACREW_DUAL_CONTROL_TIMEOUT_MIN ?? "");
   const minSpend = (env.LACREW_DUAL_CONTROL_MIN_SPEND ?? "").trim();
+  const scopeRaw = (env.LACREW_DUAL_CONTROL_REVIEW_SCOPE ?? "").trim().toLowerCase();
+  // A bad value stops the boot rather than falling back to per-effect: the two
+  // settings release different amounts of work, and a deployment that asked for
+  // one and silently got the other is reviewing something else than it says.
+  if (scopeRaw && !isDualControlReviewScope(scopeRaw)) {
+    throw new Error(
+      `invalid LACREW_DUAL_CONTROL_REVIEW_SCOPE "${scopeRaw}": expected per_effect | per_run`,
+    );
+  }
   return {
     scope: { level: "workspace" },
     mode: raw,
     ...(reviewer ? { reviewer } : {}),
     ...(Number.isFinite(minutes) && minutes > 0 ? { timeoutMs: minutes * 60_000 } : {}),
     ...(minSpend ? { threshold: { minSpend } } : {}),
+    ...(scopeRaw ? { reviewScope: scopeRaw as DualControlReviewScope } : {}),
   };
 }
 
@@ -417,6 +441,7 @@ export function createDualControl(opts: {
     actor: string;
     args: Record<string, unknown>;
     target: ReviewerTarget;
+    reviewScope: DualControlReviewScope;
   }): string => {
     const fields = Object.entries(input.args)
       .map(([k, v]) => `  ${k}: ${String(v)}`)
@@ -436,6 +461,17 @@ export function createDualControl(opts: {
       // will read the amount rather than the plan.
       "Concurring releases a paused step only: it approves no spend, changes no policy and signs nothing onchain." +
         " The policy stack, the escalation path and human approvals all still apply.",
+      // The one sentence a per-run reviewer must not miss: they are answering
+      // for calls they have not been shown. Said here rather than in the
+      // settings screen, because the person answering is often not the person
+      // who chose the scope.
+      ...(input.reviewScope === "per_run"
+        ? [
+            "",
+            "This crew reviews per run: concurring releases every reviewed effect this run still" +
+              " reaches, not only the one above. Reject if you would want to see the next one.",
+          ]
+        : []),
       ...(input.target.escalated
         ? ["", "The configured reviewer was unavailable, so this came to you instead."]
         : []),
@@ -460,14 +496,22 @@ export function createDualControl(opts: {
     actor: string;
     tool: string;
     fingerprint: string;
+    reviewScope: DualControlReviewScope;
   }): string => {
     // Keyed by the run and the call, so a resume — or two replicas racing the
     // same parked run — converges on one question rather than asking twice. A
     // *different* run doing the same thing gets its own review: a concurrence
     // belongs to the run it was given for.
-    const seed = [input.runId ?? "", input.actor.toLowerCase(), input.tool, input.fingerprint].join(
-      "|",
-    );
+    //
+    // A `per_run` review drops the call from the key, which is precisely what
+    // makes one answer cover the run's later effects. It needs a run to be
+    // scoped to: a call arriving outside one (the MCP route with no flow) keys
+    // per effect regardless of the setting, because "this run" would otherwise
+    // mean "every effect this seat ever takes".
+    const runScoped = input.reviewScope === "per_run" && Boolean(input.runId);
+    const seed = runScoped
+      ? [input.runId, input.actor.toLowerCase(), "run"].join("|")
+      : [input.runId ?? "", input.actor.toLowerCase(), input.tool, input.fingerprint].join("|");
     return `review_${createHash("sha256").update(seed).digest("hex").slice(0, 24)}`;
   };
 
@@ -524,6 +568,7 @@ export function createDualControl(opts: {
         actor: input.principal,
         tool: input.tool,
         fingerprint,
+        reviewScope: settings.reviewScope,
       });
       const existing = reviews.get(id);
 
@@ -533,8 +578,25 @@ export function createDualControl(opts: {
           audit("DualControlTimedOut", existing, { expiresAt: existing.expiresAt });
         }
         if (existing.status === "concurred") {
-          existing.status = "consumed";
+          // A run-scoped concurrence stays live: consuming it here would make
+          // the second effect of the run ask again, which is the noise the
+          // scope exists to remove. Every release is still recorded, with the
+          // tool and the fingerprint of *this* call rather than the one the
+          // reviewer read, so the trail shows what one answer carried.
+          const runScoped = existing.reviewScope === "per_run" && Boolean(input.runId);
+          existing.released = (existing.released ?? 0) + 1;
+          if (!runScoped) existing.status = "consumed";
           await persist(existing);
+          if (runScoped && existing.released > 1) {
+            audit("DualControlConcurred", existing, {
+              tool: input.tool,
+              fingerprint,
+              released: existing.released,
+              reviewScope: existing.reviewScope,
+              reused: true,
+              ...(existing.decidedBy ? { decidedBy: existing.decidedBy } : {}),
+            });
+          }
           return {
             required: true,
             mode: settings.mode,
@@ -588,6 +650,7 @@ export function createDualControl(opts: {
           actor: input.principal,
           args: shown,
           target,
+          reviewScope: settings.reviewScope,
         }),
         options: [...DUAL_CONTROL_OPTIONS],
         ...(target.accounts.length === 1 ? { to: target.accounts[0]! } : {}),
@@ -598,6 +661,10 @@ export function createDualControl(opts: {
         tool: input.tool,
         effect: effect.effect,
         fingerprint,
+        // Recorded as it was resolved, not as it is configured now: a rule
+        // changed mid-run must not retroactively widen what an answer already
+        // given releases.
+        reviewScope: input.runId ? settings.reviewScope : "per_effect",
         args: shown,
         ...(effect.effect === "spend" && effect.value !== null
           ? { value: effect.value.toString() }
@@ -620,6 +687,7 @@ export function createDualControl(opts: {
       audit("DualControlOpened", review, {
         mode: settings.mode,
         expiresAt: review.expiresAt,
+        reviewScope: review.reviewScope,
       });
 
       throw new FlowWaitingError({
@@ -716,13 +784,23 @@ export function createDualControl(opts: {
     cancelRun: async (runId, reason) => {
       const closed: DualControlReviewRecord[] = [];
       for (const review of reviews.values()) {
-        if (review.runId !== runId || review.status !== "pending") continue;
+        if (review.runId !== runId) continue;
+        // A run-scoped concurrence dies with its run. It is the one review that
+        // is still live after being answered, so leaving it open would let an
+        // effect released *after* the operator ended the run ride an agreement
+        // given before they did.
+        const liveRunScope = review.status === "concurred" && review.reviewScope === "per_run";
+        if (review.status !== "pending" && !liveRunScope) continue;
         review.status = "cancelled";
-        review.outcome = "cancelled";
+        // A review that was answered keeps the answer: "cancelled" says the run
+        // ended, and overwriting a concurrence with it would erase the fact
+        // that somebody agreed and how many effects that agreement released.
+        if (!review.outcome) review.outcome = "cancelled";
         review.resolvedAt = now().toISOString();
         await persist(review);
         audit("DualControlRejected", review, {
           outcome: "cancelled",
+          ...(review.released ? { released: review.released } : {}),
           ...(reason ? { reason } : {}),
         });
         closed.push(review);

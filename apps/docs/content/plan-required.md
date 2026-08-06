@@ -103,6 +103,18 @@ Precedence is narrowest-first: an `agent` rule beats the nearest `crew` rule,
 which beats `workspace`. That ordering is what lets you write one broad rule and
 carve exceptions out of it.
 
+## From a blueprint
+
+A [crew blueprint](./crews.md#recommended-supervision) can carry the mode it
+recommends, and an install that asks for it applies the rule with no CLI at all:
+
+```bash
+lacrew crews plan github-experts --apply-recommended-controls
+```
+
+Recommended, never implied: a blueprint that turned this on for whoever picked
+it would be requiring a plan from a crew whose operator never agreed to it.
+
 ## Delegation
 
 When a manager delegates to a worker, the **worker** is the seat that must have

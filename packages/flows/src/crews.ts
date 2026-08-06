@@ -136,6 +136,56 @@ export type CrewGuardrail = {
   residualRisk?: string;
 };
 
+/**
+ * Which seat a recommended control lands on.
+ *
+ * `crew` is the crew's own manager node, so the rule covers every seat under
+ * it; `agent` names one blueprint role, for the one seat whose effects are the
+ * reason the control exists (a desk's executor, a repo crew's merger). Written
+ * as a role id rather than an address because a blueprint cannot know the
+ * accounts an install will mint — the same reason its flows bind by id.
+ */
+export type CrewControlScope = { level: "crew" } | { level: "agent"; role: string };
+
+/**
+ * The supervision an installed crew is *offered*, not the one it gets.
+ *
+ * A blueprint's guardrails have always recommended plan-required and dual
+ * control in prose, and prose is not a setting: the crew stood up with neither,
+ * and the recommendation was only ever read by whoever went looking for it.
+ * This is the same recommendation in a form the install can apply — behind an
+ * explicit opt-in, because turning a fail-closed control on for somebody is not
+ * a default anyone should inherit silently.
+ *
+ * What it may never become is authority. Every control here only *narrows* what
+ * a crew may do on its own: the caps, the whitelist, the escalation ladder and
+ * governance are unchanged by any of it, and an operator who unchecks the box
+ * gets exactly the crew they got before this field existed.
+ */
+export type CrewRecommendedControls = {
+  planRequired?: {
+    scope: CrewControlScope;
+    /** `spends_only` or `side_effects`; `off` here would be a recommendation of nothing. */
+    mode: "spends_only" | "side_effects";
+    windowMs?: number;
+    minPlanChars?: number;
+    /** Why this crew in particular, in the operator's vocabulary. One sentence. */
+    why: string;
+  };
+  dualControl?: {
+    scope: CrewControlScope;
+    mode: "risky_writes" | "spends_and_writes";
+    /** `manager` | `role:human` | `any_peer_in_crew` | `seat:<role>` — a *role* id, bound at install. */
+    reviewer?: string;
+    /** Base units. Proposes at or above this need a second seat. */
+    minSpend?: string;
+    timeoutMs?: number;
+    /** `per_effect` unless the crew's effects are the same shape repeated. */
+    reviewScope?: "per_effect" | "per_run";
+    why: string;
+  };
+};
+
 /** A human seat. More than one means the org's high tier is genuinely shared. */
 export type CrewHumanSeat = {
   id: string;
@@ -252,6 +302,13 @@ export type CrewBlueprint = {
   escalation: CrewEscalation[];
   governance: CrewGovernanceRule[];
   guardrails: CrewGuardrail[];
+  /**
+   * Supervision this blueprint recommends, applied only when the installer asks
+   * for it. Absent means the blueprint recommends nothing beyond the caps and
+   * the ladder above — not that its guardrails are weaker, but that no
+   * runtime control narrows them further in a way its author would stand behind.
+   */
+  recommendedControls?: CrewRecommendedControls;
   /** Flow definition ids the crew ships with. */
   flows: string[];
   /** What this crew deliberately does not do, and what LaCrew cannot enforce for it. */
@@ -430,6 +487,48 @@ export function validateCrewBlueprint(
           `connector "${need.id}.${route}" is declared as called by a flow, but no shipped flow calls it (mark it usedBy: "operator" if the operator wires it themselves)`,
         );
       }
+    }
+  }
+
+  /*
+    Recommended controls (F2.31 / F2.32).
+
+    Every seat named here is a role id this blueprint's install will mint an
+    account for. A typo would be found at install time, on a control the
+    operator explicitly asked for — the one moment they are entitled to assume
+    supervision landed — so it is caught here instead.
+  */
+  const controls = bp.recommendedControls;
+  const namesRole = (id: string | undefined, what: string): void => {
+    if (id && !roleById.has(id)) {
+      errors.push(`recommended ${what} names role "${id}", which this blueprint does not hire`);
+    }
+  };
+  if (controls?.planRequired) {
+    const scope = controls.planRequired.scope;
+    namesRole(scope.level === "agent" ? scope.role : undefined, "plan-required scope");
+    if (!controls.planRequired.why?.trim()) {
+      // Without it the install checkbox can only say "apply recommended
+      // controls", which is an operator agreeing to a setting nobody explained.
+      errors.push("recommended plan-required must say why this crew needs it");
+    }
+  }
+  if (controls?.dualControl) {
+    const scope = controls.dualControl.scope;
+    namesRole(scope.level === "agent" ? scope.role : undefined, "dual-control scope");
+    const reviewer = controls.dualControl.reviewer;
+    if (reviewer?.startsWith("seat:")) {
+      namesRole(reviewer.slice("seat:".length), "dual-control reviewer");
+    } else if (reviewer && !["manager", "role:human", "any_peer_in_crew"].includes(reviewer)) {
+      errors.push(
+        `recommended dual-control reviewer "${reviewer}" must be manager | role:human | any_peer_in_crew | seat:<role>`,
+      );
+    }
+    if (controls.dualControl.minSpend && !isBaseUnits(controls.dualControl.minSpend)) {
+      errors.push("recommended dual-control minSpend must be USDC base units");
+    }
+    if (!controls.dualControl.why?.trim()) {
+      errors.push("recommended dual control must say why this crew needs it");
     }
   }
 
@@ -651,7 +750,7 @@ export function bindCrewFlow(def: FlowDefinition, bindings: CrewBindings): FlowD
 
 export type CrewPlanStep = {
   order: number;
-  kind: "hire" | "set-cap" | "bind-policy" | "whitelist" | "grant" | "install-flow";
+  kind: "hire" | "set-cap" | "bind-policy" | "whitelist" | "grant" | "install-flow" | "set-control";
   /**
    * How the step reaches the orchestrator: an MCP tool call, or its HTTP
    * surface. Flows are saved over `/flows`, not by an MCP tool, and a plan that
@@ -686,8 +785,37 @@ export type CrewPlanStep = {
  * Nothing here executes. Each step carries the bindings it still needs, because
  * a hire's address only exists once the hire has landed — a plan generated
  * before that is a plan with holes, and it says so rather than inventing one.
+ *
+ * `applyRecommendedControls` adds the blueprint's own supervision settings
+ * (F2.31 / F2.32) to the end of the plan. Off unless asked for: a control that
+ * turned itself on because a template mentioned it would park a crew's first
+ * merge on a question the operator never agreed to be asked.
  */
-export function crewPlan(bp: CrewBlueprint, bindings: CrewBindings = {}): CrewPlanStep[] {
+export type CrewPlanOptions = {
+  /** Emit the blueprint's `recommendedControls` as plan steps. */
+  applyRecommendedControls?: boolean;
+};
+
+/**
+ * The role that stands for the crew as a whole.
+ *
+ * Its shallowest manager, because that is the node the runtime attributes the
+ * crew's work to when it resolves a `crew:` rule — a control keyed to anything
+ * else would bind a different set of seats than the one an operator thinks they
+ * are supervising. A flat blueprint with no manager falls back to its first
+ * role, which is the whole crew in that case anyway.
+ */
+export function crewControlRole(bp: CrewBlueprint): string | undefined {
+  const roles = bp.roles ?? [];
+  const manager = roles.find((r) => r.kind === "manager_agent" && r.reportsTo === "root");
+  return (manager ?? roles.find((r) => r.kind === "manager_agent") ?? roles[0])?.id;
+}
+
+export function crewPlan(
+  bp: CrewBlueprint,
+  bindings: CrewBindings = {},
+  options: CrewPlanOptions = {},
+): CrewPlanStep[] {
   const steps: CrewPlanStep[] = [];
   const roleAddr = (id: string): { value: string; pending: string[] } => {
     const hit = bindings.roles?.[id];
@@ -804,6 +932,82 @@ export function crewPlan(bp: CrewBlueprint, bindings: CrewBindings = {}): CrewPl
       tier: "high",
       pending: addr.pending,
     });
+  }
+
+  /*
+    Supervision before work.
+
+    Emitted ahead of the flows on purpose: these two settings decide whether the
+    crew's first run may act at all, and a plan that installed the pipeline
+    first would describe a window — however short — in which the crew is running
+    unsupervised and the operator believes otherwise.
+  */
+  if (options.applyRecommendedControls && bp.recommendedControls) {
+    const controlSeat = (
+      scope: CrewControlScope,
+    ): { value: string; pending: string[]; label: string } => {
+      const roleId = scope.level === "agent" ? scope.role : crewControlRole(bp);
+      if (!roleId) return { value: "", pending: [], label: "the crew" };
+      const addr = roleAddr(roleId);
+      const label = bp.roles.find((r) => r.id === roleId)?.label ?? roleId;
+      return { ...addr, label: scope.level === "agent" ? label : `${label}'s crew` };
+    };
+
+    const plan = bp.recommendedControls.planRequired;
+    if (plan) {
+      const seat = controlSeat(plan.scope);
+      push({
+        kind: "set-control",
+        via: "http",
+        tool: "PUT /plan-required",
+        args: {
+          scope: { level: plan.scope.level, ref: seat.value },
+          mode: plan.mode,
+          ...(plan.windowMs === undefined ? {} : { windowMs: plan.windowMs }),
+          ...(plan.minPlanChars === undefined ? {} : { minPlanChars: plan.minPlanChars }),
+        },
+        summary: `Require a plan from ${seat.label} before ${
+          plan.mode === "spends_only" ? "spends" : "any side effect"
+        } — ${plan.why}`,
+        pending: seat.pending,
+        ...(plan.scope.level === "agent" ? { role: plan.scope.role } : {}),
+      });
+    }
+
+    const dual = bp.recommendedControls.dualControl;
+    if (dual) {
+      const seat = controlSeat(dual.scope);
+      // A `seat:` reviewer names a blueprint role, so it binds like any other
+      // reference: a blueprint that pasted an address would be recommending a
+      // reviewer from somebody else's org.
+      const reviewerRole = dual.reviewer?.startsWith("seat:")
+        ? dual.reviewer.slice("seat:".length)
+        : undefined;
+      const reviewer = reviewerRole ? roleAddr(reviewerRole) : undefined;
+      push({
+        kind: "set-control",
+        via: "http",
+        tool: "PUT /dual-control",
+        args: {
+          scope: { level: dual.scope.level, ref: seat.value },
+          mode: dual.mode,
+          ...(dual.reviewer
+            ? { reviewer: reviewer ? `seat:${reviewer.value}` : dual.reviewer }
+            : {}),
+          ...(dual.minSpend === undefined ? {} : { minSpend: dual.minSpend }),
+          ...(dual.timeoutMs === undefined ? {} : { timeoutMs: dual.timeoutMs }),
+          ...(dual.reviewScope === undefined ? {} : { reviewScope: dual.reviewScope }),
+        },
+        summary:
+          `Require a second seat before ${
+            dual.mode === "risky_writes" ? "risky writes" : "spends and writes"
+          } by ${seat.label}` +
+          (dual.minSpend ? ` at or above ${formatUsdc(dual.minSpend)}` : "") +
+          ` — ${dual.why}`,
+        pending: [...seat.pending, ...(reviewer?.pending ?? [])],
+        ...(dual.scope.level === "agent" ? { role: dual.scope.role } : {}),
+      });
+    }
   }
 
   for (const flowId of bp.flows) {

@@ -13,6 +13,7 @@ export interface DualControlRuleRow {
   connectorWrites: boolean;
   orgMutators: boolean;
   timeoutMs: number;
+  reviewScope: string;
   updatedAt: string;
 }
 
@@ -29,6 +30,7 @@ export async function upsertDualControlRule(
     connectorWrites: row.connectorWrites,
     orgMutators: row.orgMutators,
     timeoutMs: row.timeoutMs,
+    reviewScope: row.reviewScope,
     updatedAt: new Date(row.updatedAt),
   };
   await handle.db
@@ -57,6 +59,7 @@ export async function listDualControlRules(handle: DbHandle): Promise<DualContro
     connectorWrites: row.connectorWrites,
     orgMutators: row.orgMutators,
     timeoutMs: row.timeoutMs,
+    reviewScope: row.reviewScope,
     updatedAt: row.updatedAt.toISOString(),
   }));
 }
@@ -66,6 +69,8 @@ export interface DualControlReviewRow {
   tool: string;
   effect: string;
   fingerprint: string;
+  reviewScope: string;
+  released: number;
   args: Record<string, unknown>;
   value?: string | null;
   actor: string;
@@ -97,6 +102,8 @@ export async function upsertDualControlReview(
     tool: row.tool,
     effect: row.effect,
     fingerprint: row.fingerprint,
+    reviewScope: row.reviewScope,
+    released: row.released,
     args: row.args,
     value: row.value ?? null,
     actor: row.actor,
@@ -146,6 +153,8 @@ export async function recentDualControlReviews(
     tool: row.tool,
     effect: row.effect,
     fingerprint: row.fingerprint,
+    reviewScope: row.reviewScope,
+    released: row.released,
     args: row.args ?? {},
     value: row.value,
     actor: row.actor,
