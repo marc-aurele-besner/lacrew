@@ -64,6 +64,7 @@ import {
   type McpClient,
   type McpDiscoveredTool,
 } from "./mcpClient.js";
+import type { McpSecretsSurface } from "./mcpSecrets.js";
 import {
   checkMcpEgress,
   checkMcpEgressResolves,
@@ -73,11 +74,31 @@ import {
   type McpServerOrigin,
 } from "./mcpEgress.js";
 
-/** Auth for an HTTP server. Same shape as a connector's, for the same reasons. */
+/**
+ * Auth for an HTTP server.
+ *
+ * `bearer` and `header` name an **environment variable**, the same shape a
+ * connector uses and for the same reason: the config is then safe to store,
+ * serve and log. They assume whoever writes the config owns the process's
+ * environment, which is true of a self-host and false of a shared worker.
+ *
+ * `secret` is the shared-worker answer. It names a credential in the
+ * orchestrator's own sealed store (`mcpSecrets.ts`) rather than in its
+ * environment, so a workspace can bring its own token without an operator
+ * provisioning an env var per tenant. Still a *name*: the value is resolved at
+ * call time, is never returned by any route, and is scoped to whoever wrote it.
+ */
 export type ExternalMcpAuth =
   | { kind: "none" }
   | { kind: "bearer"; tokenEnv: string }
-  | { kind: "header"; header: string; valueEnv: string };
+  | { kind: "header"; header: string; valueEnv: string }
+  | {
+      kind: "secret";
+      /** Ref in the sealed store, resolved against this server's own owner. */
+      secretRef: string;
+      /** Header to send it in. Absent means `authorization: Bearer <value>`. */
+      header?: string;
+    };
 
 export type ExternalMcpServer = {
   /** Namespace a tool is called under: `mcp__<id>__<tool>`. */
@@ -226,6 +247,9 @@ export type ExternalMcpServerView = {
     kind: ExternalMcpAuth["kind"];
     /** Env vars this server reads — names only, never values. */
     envVars: string[];
+    /** Sealed-store ref this server reads, when it uses one. A name, never a value. */
+    secretRef?: string;
+    /** Whether the credential this config names is actually there. */
     ready: boolean;
   };
   tools: ExternalMcpToolView[];
@@ -338,6 +362,13 @@ export type ExternalMcpRegistryOptions = {
    */
   egress?: McpEgressPolicy;
   /**
+   * Sealed credentials an attached server may reference (`mcpSecrets.ts`).
+   * Absent, a `secret` auth resolves to nothing and the call fails with
+   * `mcp_missing_credential` — never with an unauthenticated request, which the
+   * far side would answer with an empty list that reads like a real answer.
+   */
+  secrets?: Pick<McpSecretsSurface, "read" | "has">;
+  /**
    * Hostname → addresses, for the pre-connect private-address check. Defaults
    * to the system resolver; injected in tests, and skipped entirely when the
    * policy is not hosted (a self-host reaching its own LAN is the normal case).
@@ -378,11 +409,24 @@ function isLoopback(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
 }
 
+/**
+ * Environment variables this config reads.
+ *
+ * A `secret` auth contributes none — that is the whole point of it: the
+ * credential lives in the sealed store, so attaching such a server asks nothing
+ * of the worker's environment and passes an egress policy that offers no env
+ * var at all.
+ */
 export function externalMcpEnvVars(server: ExternalMcpServer): string[] {
   const auth = server.auth ?? { kind: "none" as const };
   const authVars =
     auth.kind === "bearer" ? [auth.tokenEnv] : auth.kind === "header" ? [auth.valueEnv] : [];
   return [...authVars, ...(server.env ?? [])];
+}
+
+/** The sealed-store ref this config reads, when it uses one. */
+export function externalMcpSecretRef(server: ExternalMcpServer): string | undefined {
+  return server.auth?.kind === "secret" ? server.auth.secretRef : undefined;
 }
 
 /**
@@ -424,12 +468,20 @@ export function validateExternalMcpServer(server: ExternalMcpServer): string[] {
     if (!server.auth.header?.trim()) errors.push(`mcp server "${server.id}" needs a header name`);
     if (!server.auth.valueEnv?.trim()) errors.push(`mcp server "${server.id}" needs valueEnv`);
   }
+  if (server.auth?.kind === "secret") {
+    if (!server.auth.secretRef?.trim()) errors.push(`mcp server "${server.id}" needs a secretRef`);
+    if (server.auth.header !== undefined && !/^[A-Za-z0-9-]+$/.test(server.auth.header)) {
+      errors.push(`mcp server "${server.id}" secret header is not a header name`);
+    }
+  }
   const authHeaderName =
     server.auth?.kind === "bearer"
       ? "authorization"
       : server.auth?.kind === "header"
         ? server.auth.header?.trim().toLowerCase()
-        : undefined;
+        : server.auth?.kind === "secret"
+          ? (server.auth.header?.trim().toLowerCase() ?? "authorization")
+          : undefined;
   for (const [name, value] of Object.entries(server.headers ?? {})) {
     if (!/^[A-Za-z0-9-]+$/.test(name)) {
       errors.push(`mcp server "${server.id}" header "${name}" is not a header name`);
@@ -567,6 +619,7 @@ export function resolveExternalTool(
 function defaultClientFor(
   server: ExternalMcpServer,
   env: Record<string, string | undefined>,
+  secrets?: Pick<McpSecretsSurface, "read">,
 ): McpClient {
   const timeoutMs = server.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS;
   const maxResponseBytes = server.maxResponseBytes ?? DEFAULT_MCP_MAX_RESPONSE_BYTES;
@@ -601,6 +654,15 @@ function defaultClientFor(
         const value = env[auth.valueEnv]?.trim();
         if (!value) throw new Error(`mcp_missing_credential:${auth.valueEnv}`);
         return { [auth.header.toLowerCase()]: value };
+      }
+      if (auth.kind === "secret") {
+        // Resolved against **this server's** owner, so a config cannot reference
+        // a credential a different workspace stored under the same name.
+        const value = secrets?.read(auth.secretRef, server.owner)?.trim();
+        if (!value) throw new Error(`mcp_missing_credential:${auth.secretRef}`);
+        return auth.header
+          ? { [auth.header.toLowerCase()]: value }
+          : { authorization: `Bearer ${value}` };
       }
       return {};
     },
@@ -659,7 +721,7 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
   const clientOf = (server: ExternalMcpServer): McpClient => {
     const existing = clients.get(server.id);
     if (existing) return existing;
-    const client = opts.clientFor?.(server) ?? defaultClientFor(server, env);
+    const client = opts.clientFor?.(server) ?? defaultClientFor(server, env, opts.secrets);
     clients.set(server.id, client);
     return client;
   };
@@ -827,6 +889,7 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
   const viewOf = (entry: Attached, subject: ExternalMcpCallContext): ExternalMcpServerView => {
     const server = entry.server;
     const envVars = externalMcpEnvVars(server);
+    const secretRef = externalMcpSecretRef(server);
     const found = discovery.get(server.id);
     const tools = toolsOf(server, subject);
     return {
@@ -844,10 +907,14 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
       auth: {
         kind: (server.auth ?? { kind: "none" as const }).kind,
         envVars,
+        ...(secretRef ? { secretRef } : {}),
         // Presence only, exactly as connectors report it: "is my token there?"
         // is answerable without reading it, and a status surface that reads it
-        // is an exfiltration route.
-        ready: envVars.every((name) => Boolean(env[name]?.trim())),
+        // is an exfiltration route. A sealed credential is checked the same way
+        // — `has` never decrypts.
+        ready: secretRef
+          ? (opts.secrets?.has(secretRef, server.owner) ?? false)
+          : envVars.every((name) => Boolean(env[name]?.trim())),
       },
       tools,
       blockedCount: tools.filter((t) => !t.enabled && t.present).length,
@@ -1192,10 +1259,16 @@ export function readExternalMcpServer(input: unknown): {
       header: asString(authRaw.header) ?? "",
       valueEnv: asString(authRaw.valueEnv) ?? "",
     };
+  } else if (authRaw.kind === "secret") {
+    auth = {
+      kind: "secret",
+      secretRef: asString(authRaw.secretRef) ?? "",
+      ...(asString(authRaw.header) ? { header: asString(authRaw.header)! } : {}),
+    };
   } else if (authRaw.kind === "none") {
     auth = { kind: "none" };
   } else if (raw.auth !== undefined) {
-    return { errors: ["auth.kind must be none | bearer | header"] };
+    return { errors: ["auth.kind must be none | bearer | header | secret"] };
   }
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries((raw.headers ?? {}) as Record<string, unknown>)) {

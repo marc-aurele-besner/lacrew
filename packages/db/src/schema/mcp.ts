@@ -66,3 +66,34 @@ export const externalMcpServers = pgTable(
   },
   (table) => [index("external_mcp_servers_owner_idx").on(table.ownerKey)],
 );
+
+/**
+ * Sealed credentials an attached MCP server reads (F2.30).
+ *
+ * The one place in this feature where a *value* is stored rather than a name,
+ * and the reason it exists: on a shared worker the workspace attaching a server
+ * cannot set an environment variable, so a bring-your-own-token has nowhere
+ * else to live. Everything about the row is shaped by that.
+ *
+ * `sealed` is an AES-256-GCM envelope (`secretBox.ts`), never cleartext — a
+ * write with no sealing key is refused rather than stored. `hint` is the last
+ * four characters, which is what an operator needs to tell one token from
+ * another and useless to anyone else. `owner_key` is load-bearing: it is the
+ * only thing standing between two workspaces that both called their credential
+ * `gh`, and the resolver looks up by it with no fallback.
+ */
+export const externalMcpSecrets = pgTable(
+  "orchestrator_external_mcp_secrets",
+  {
+    /** `crew:<address>` / `agent:<address>`, or `operator` for the boot config's own. */
+    ownerKey: text("owner_key").notNull(),
+    /** The name a server config references. Unique per owner, not globally. */
+    ref: text("ref").notNull(),
+    /** `secretBox` envelope as JSON. Never a bare value. */
+    sealed: text("sealed").notNull(),
+    /** Last four characters of the credential: which one, never the one. */
+    hint: text("hint").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique("external_mcp_secrets_owner_ref").on(table.ownerKey, table.ref)],
+);

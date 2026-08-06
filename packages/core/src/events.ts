@@ -305,6 +305,17 @@ export type ProtocolEventType =
    */
   | "ExternalMcpServerChanged"
   /**
+   * A sealed credential an attached MCP server reads was stored or cleared
+   * (F2.30).
+   *
+   * Kept apart from the server row because it answers a different question: not
+   * "who did this workspace decide to talk to" but "which credential is it
+   * talking with, and since when". The row carries the ref and the value's last
+   * four characters — enough to tell one token from another during an incident,
+   * and never enough to use one.
+   */
+  | "ExternalMcpSecretChanged"
+  /**
    * A crew's inference cost budget was created, edited, enabled, disabled or
    * removed (F2.28).
    *

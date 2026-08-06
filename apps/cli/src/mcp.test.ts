@@ -297,3 +297,86 @@ describe("lacrew mcp attach / detach", () => {
     }
   });
 });
+
+describe("lacrew mcp secret", () => {
+  it("builds a config that names a sealed credential instead of an env var", () => {
+    const config = buildServerConfig("gh", [
+      "attach",
+      "gh",
+      "--endpoint",
+      "https://mcp.example.com/rpc",
+      "--secret-ref",
+      "gh",
+    ]);
+    assert.deepEqual(config.auth, { kind: "secret", secretRef: "gh" });
+  });
+
+  it("prefers the sealed ref when both are given, and never carries a value", () => {
+    const config = buildServerConfig("gh", [
+      "attach",
+      "gh",
+      "--endpoint",
+      "https://mcp.example.com/rpc",
+      "--secret-ref",
+      "gh",
+      "--token-env",
+      "GH_TOKEN",
+    ]);
+    assert.deepEqual(config.auth, { kind: "secret", secretRef: "gh" });
+    assert.equal(JSON.stringify(config).includes("ghp_"), false);
+  });
+
+  it("takes the value from an env var, never from an argument", async () => {
+    const stub = stubFetch({ "/mcp/secrets": { body: { secret: { ref: "gh", hint: "oken" } } } });
+    process.env.TEST_MCP_TOKEN = "ghp_supersecrettoken";
+    try {
+      const { out } = await capture(["secret", "set", "gh", "--from-env", "TEST_MCP_TOKEN"]);
+      assert.match(out, /Stored gh \(····oken\), sealed at rest/);
+      const sent = stub.calls[0]!.body as { ref: string; value: string };
+      assert.equal(sent.ref, "gh");
+      assert.equal(sent.value, "ghp_supersecrettoken");
+      // The token is in the request body and nowhere in what the user sees.
+      assert.equal(out.includes("ghp_supersecrettoken"), false);
+    } finally {
+      delete process.env.TEST_MCP_TOKEN;
+      stub.restore();
+    }
+  });
+
+  it("says so rather than storing an empty credential", async () => {
+    const stub = stubFetch({ "/mcp/secrets": { body: {} } });
+    try {
+      const { error } = await capture(["secret", "set", "gh", "--from-env", "NOT_SET_ANYWHERE"]);
+      assert.match(error ?? "", /NOT_SET_ANYWHERE is not set/);
+      assert.equal(stub.calls.length, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("lists refs and hints, and says values never come back", async () => {
+    const stub = stubFetch({
+      "/mcp/secrets": {
+        body: { secrets: [{ ref: "gh", hint: "oken", at: "2026-08-06T00:00:00Z" }] },
+      },
+    });
+    try {
+      const { out } = await capture(["secret", "list"]);
+      assert.match(out, /gh {2}····oken/);
+      assert.match(out, /Values are never returned/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("says what clearing one does to the server that reads it", async () => {
+    const stub = stubFetch({ "/mcp/secrets/remove": { body: { cleared: true } } });
+    try {
+      const { out } = await capture(["secret", "rm", "gh"]);
+      assert.match(out, /mcp_missing_credential/);
+      assert.deepEqual(stub.calls[0]!.body, { ref: "gh" });
+    } finally {
+      stub.restore();
+    }
+  });
+});

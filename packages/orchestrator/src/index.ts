@@ -110,6 +110,7 @@ export {
   loadExternalMcpServersFromEnv,
   parseExternalToolName,
   resolveExternalTool,
+  externalMcpSecretRef,
   readExternalMcpScope,
   readExternalMcpServer,
   validateExternalMcpRule,
@@ -131,6 +132,17 @@ export {
   type ExternalMcpToolRule,
   type ExternalMcpToolView,
 } from "./externalMcp.js";
+export {
+  McpSecretSealingUnavailableError,
+  createMcpSecrets,
+  mcpSecretOwnerKey,
+  validateMcpSecretRef,
+  type McpSecretRecord,
+  type McpSecretStore,
+  type McpSecretView,
+  type McpSecretsOptions,
+  type McpSecretsSurface,
+} from "./mcpSecrets.js";
 export {
   OPEN_MCP_EGRESS,
   checkMcpEgress,

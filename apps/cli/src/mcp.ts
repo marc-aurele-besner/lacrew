@@ -203,6 +203,7 @@ export function buildServerConfig(id: string | undefined, args: string[]): Recor
     throw new Error("Name where the server is: --endpoint https://… or --command <bin>.");
   }
   const tokenEnv = flagValue(args, "--token-env");
+  const secretRef = flagValue(args, "--secret-ref");
   const header = flagValue(args, "--header");
   const headerEnv = flagValue(args, "--header-env");
   const passthrough = flagValues(args, "--env");
@@ -214,12 +215,21 @@ export function buildServerConfig(id: string | undefined, args: string[]): Recor
     ...(command ? { command } : {}),
     ...(flagValues(args, "--arg").length > 0 ? { args: flagValues(args, "--arg") } : {}),
     ...(passthrough.length > 0 ? { env: passthrough } : {}),
-    ...(tokenEnv
-      ? { auth: { kind: "bearer", tokenEnv } }
-      : header && headerEnv
-        ? { auth: { kind: "header", header, valueEnv: headerEnv } }
-        : {}),
+    ...(secretRef
+      ? { auth: { kind: "secret", secretRef, ...(header ? { header } : {}) } }
+      : tokenEnv
+        ? { auth: { kind: "bearer", tokenEnv } }
+        : header && headerEnv
+          ? { auth: { kind: "header", header, valueEnv: headerEnv } }
+          : {}),
   };
+}
+
+/** Read a credential from stdin so it never appears in argv or shell history. */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 export async function cmdMcp(args: string[]): Promise<void> {
@@ -264,6 +274,72 @@ export async function cmdMcp(args: string[]): Promise<void> {
       console.log("  it published no tools.");
     }
     return;
+  }
+
+  if (sub === "secret") {
+    const [verb = "list", ref] = rest;
+
+    if (verb === "list") {
+      const body = await orchFetch<{ secrets: Array<{ ref: string; hint: string; at: string }> }>(
+        args,
+        "/mcp/secrets",
+      );
+      if (body.secrets.length === 0) {
+        console.log("No credential is stored. Set one with: lacrew mcp secret set <ref>");
+        return;
+      }
+      for (const secret of body.secrets) {
+        console.log(`  ${secret.ref}  ····${secret.hint}  set ${secret.at}`);
+      }
+      console.log("\nValues are never returned — the last four characters say which token it is.");
+      return;
+    }
+
+    if (verb === "set") {
+      if (!ref) throw new Error("lacrew mcp secret set <ref> --from-env VAR | --stdin");
+      const fromEnv = flagValue(args, "--from-env");
+      // Deliberately not a `--value` flag: a credential typed as an argument
+      // lands in shell history and in every `ps` on the machine.
+      const value = fromEnv ? process.env[fromEnv] : await readStdin();
+      if (!value?.trim()) {
+        throw new Error(
+          fromEnv
+            ? `${fromEnv} is not set, so there is nothing to store.`
+            : "Nothing arrived on stdin. Pipe the credential in, or use --from-env VAR.",
+        );
+      }
+      const body = await orchFetch<{ secret: { ref: string; hint: string } }>(
+        args,
+        "/mcp/secrets",
+        {
+          method: "PUT",
+          body: JSON.stringify({ ref, value: value.trim() }),
+        },
+      );
+      console.log(
+        `Stored ${body.secret.ref} (····${body.secret.hint}), sealed at rest. ` +
+          "It is never returned by any route.",
+      );
+      console.log(
+        `Point a server at it: lacrew mcp attach <id> --endpoint https://… --secret-ref ${ref}`,
+      );
+      return;
+    }
+
+    if (verb === "rm" || verb === "remove") {
+      if (!ref) throw new Error("lacrew mcp secret rm <ref>");
+      await orchFetch(args, "/mcp/secrets/remove", {
+        method: "POST",
+        body: JSON.stringify({ ref }),
+      });
+      console.log(
+        `Cleared ${ref}. A server that reads it now fails with mcp_missing_credential ` +
+          "rather than calling out unauthenticated.",
+      );
+      return;
+    }
+
+    throw new Error("lacrew mcp secret list | set <ref> | rm <ref>");
   }
 
   if (sub === "detach") {
@@ -356,6 +432,9 @@ Against a running orchestrator (ORCH_URL / --url, token via ORCH_TOKEN):
   servers [--as 0x…]        Attached servers and every tool's state
   attach <id>               Attach a server now, no restart (see flags below)
   detach <id>               Forget a server attached at runtime
+  secret list               Stored credentials — refs and last four characters
+  secret set <ref>          Store one (value from stdin or --from-env VAR)
+  secret rm <ref>           Forget one
   refresh [server]          Re-read tool lists; new tools are recorded blocked
   ping <server>             Reachability check, with how many tools it publishes
   allow <server>.<tool>     Admit one tool
@@ -374,6 +453,8 @@ attach flags:
   --command <bin> --arg x   Run it as a subprocess instead (self-host only)
   --title <name>            Label for an operator surface
   --token-env NAME          Env var holding a bearer token — the NAME, never the token
+  --secret-ref NAME         Sealed credential to use instead of an env var, for a
+                            worker whose environment is not yours to set
   --header H --header-env N Custom auth header and the env var holding its value
   --env NAME                Env var to pass a stdio child (repeatable)
   --json '<config>'         The whole config, for shapes the flags do not cover
@@ -386,6 +467,14 @@ tool it finds as blocked.
 
 A hosted orchestrator (LACREW_MCP_HOSTED=1) refuses stdio and reaches only the
 hosts its operator allowlisted; "servers" prints that policy above the list.
+
+On a worker whose environment you do not own, store the credential instead of
+naming an env var: "secret set" seals it at rest and no route ever returns it.
+The value comes from stdin or --from-env, never from an argument, so it does not
+land in shell history:
+
+  printf %s "$GH_TOKEN" | lacrew mcp secret set gh
+  lacrew mcp attach gh --endpoint https://mcp.example.com/rpc --secret-ref gh
 
 Env:
   ORCH_URL     Orchestrator base URL (default http://127.0.0.1:8788)

@@ -28,6 +28,7 @@ import {
   loadExternalMcpServersFromEnv,
 } from "./externalMcp.js";
 import { loadMcpEgressPolicyFromEnv } from "./mcpEgress.js";
+import { createMcpSecrets } from "./mcpSecrets.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { createPlanRequirements, planRequiredFromEnv } from "./planRequired.js";
 import { createCrewBindings } from "./crewBindings.js";
@@ -223,6 +224,12 @@ async function main(): Promise<void> {
     readFileSync(path, "utf8"),
   );
   const mcpEgress = loadMcpEgressPolicyFromEnv();
+  // Sealed credentials for attached servers (F2.30). Built before the registry
+  // because a `secret` auth resolves through it at call time.
+  const mcpSecrets = createMcpSecrets({
+    store: runtime.store,
+    onEvent: (event) => runtime.recordAudit(event),
+  });
   // Built even with no server in the env: servers attach at runtime, and a
   // registry that only existed when one was configured at boot would make
   // "attach without a restart" answer 503 on the deployments that need it most.
@@ -235,6 +242,7 @@ async function main(): Promise<void> {
     asks: connectorAsks,
     auditArgKeys: externalMcpAuditArgKeys(),
     egress: mcpEgress,
+    secrets: mcpSecrets,
     lookup: async (host) => {
       const { lookup } = await import("node:dns/promises");
       const found = await lookup(host, { all: true });
@@ -310,7 +318,7 @@ async function main(): Promise<void> {
     model,
     mcpBackend,
     connectors,
-    ...(externalMcp ? { externalMcp } : {}),
+    ...(externalMcp ? { externalMcp, mcpSecrets } : {}),
     asks: connectorAsks,
     gates: humanGates,
     planRequired,
@@ -403,7 +411,7 @@ async function main(): Promise<void> {
     crewBindings,
     planRequired,
     dualControl,
-    ...(externalMcp ? { externalMcp } : {}),
+    ...(externalMcp ? { externalMcp, mcpSecrets } : {}),
     // The suite ships with @lacrew/flows, so it is always available; the
     // runner spawns a child per run rather than holding anything open.
     evals: createEvalRunner(),
@@ -568,6 +576,22 @@ async function main(): Promise<void> {
     // safe for calls and confusing for an operator whose tools page shows
     // nothing they enabled. Hence the loud line rather than a silent zero.
     if (externalMcp) {
+      try {
+        // Credentials first: a server restored before its token would fail its
+        // boot refresh with `mcp_missing_credential` and read as unreachable.
+        const secrets = await mcpSecrets.hydrate();
+        if (secrets > 0) {
+          console.log(
+            `[@lacrew/orchestrator] external MCP: ${secrets} sealed credential(s) restored`,
+          );
+        }
+      } catch (err) {
+        console.error(
+          "[@lacrew/orchestrator] external MCP credentials could not be read: any server that " +
+            "reads one will fail its calls until the store is fixed.",
+          err,
+        );
+      }
       try {
         const allowed = await externalMcp.hydrate();
         if (allowed > 0) {

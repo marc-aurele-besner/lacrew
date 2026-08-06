@@ -689,6 +689,18 @@ export LACREW_MCP_ALLOW_HOSTS='mcp.example.com,*.tools.example.com'
 export LACREW_MCP_ALLOW_ENV='TENANT_MCP_*'   # env names a runtime attach may read
 ```
 
+A workspace on such a worker cannot set an env var, so it stores its credential
+in the orchestrator's sealed store instead and the config names *that*:
+
+```bash
+printf %s "$GH_TOKEN" | lacrew mcp secret set gh
+lacrew mcp attach gh --endpoint https://mcp.example.com/rpc --secret-ref gh
+```
+
+Sealed under `LACREW_SESSION_KEY`, scoped to whoever wrote it, and never
+returned by any route. Without that key the write is refused rather than stored
+in cleartext.
+
 ## Plan-required mode
 
 Off by default. Turn it on and a side effect refuses unless the acting agent has

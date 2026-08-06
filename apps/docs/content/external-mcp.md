@@ -89,6 +89,53 @@ process, which is the honest behaviour of a runtime with no persistence.
 would be a lie. Detaching keeps the tool rules, so re-attaching under the same
 id cannot silently re-admit a tool somebody denied.
 
+### Bring your own token
+
+Naming an environment variable works because whoever writes the config also owns
+the process's environment. On a shared worker those are different people: a
+workspace cannot set an env var on a runtime other workspaces are using, and an
+operator provisioning one credential per tenant by hand does not scale.
+
+So a credential can live in the orchestrator's own **sealed store** instead, and
+the config still names it rather than carrying it:
+
+```bash
+# The value comes from stdin or --from-env, never an argument: an argument
+# lands in shell history and in every `ps` on the machine.
+printf %s "$GH_TOKEN" | lacrew mcp secret set gh
+lacrew mcp attach gh --endpoint https://mcp.example.com/rpc --secret-ref gh
+```
+
+```json
+{ "kind": "secret", "secretRef": "gh" }
+```
+
+What that buys, and what it costs:
+
+- **Sealed at rest**, AES-256-GCM under `LACREW_SESSION_KEY` — the same envelope
+  and key that seals session keys, because the trust boundary is identical and a
+  second key is a second thing to lose. With **no sealing key the write is
+  refused** (503), never stored in cleartext.
+- **Never readable back.** No route returns a value. `GET /mcp/secrets` gives the
+  ref and the last four characters, which tells one token from another and is
+  useless to anyone else. The audit row carries the same.
+- **Owner-scoped, with no fallback.** A secret belongs to the scope that wrote
+  it, and a server resolves only secrets under its *own* owner. Two workspaces
+  may both call their token `gh`; neither can reach the other's, and a workspace
+  cannot resolve the operator's by guessing its name — that would be the same
+  escalation `LACREW_MCP_ALLOW_ENV` exists to prevent, arriving through a second
+  door. An operator sharing one credential does it with that variable, where the
+  sharing is written down.
+- **It asks nothing of the environment**, which is what lets a secret-backed
+  server attach on a hosted worker that offers no env var at all.
+- The cost, stated plainly: the value crosses the wire once, on the write. That
+  is inherent to bringing your own token, and it is the only moment it exists
+  outside the envelope.
+
+A missing credential fails the call (`mcp_missing_credential`) rather than
+sending an unauthenticated request — a far side answering an unauthenticated
+request with an empty list looks exactly like a real answer.
+
 ## Nothing is callable until you say so
 
 Attaching a server admits nothing. Discovery reads the tool list and **records
@@ -298,6 +345,8 @@ process.
 | `ExternalMcpCalled`            | every call _and every refusal_ — server, tool, effect, mode, duration, whether it went out |
 | `ExternalMcpDiscovered`        | a refresh, with what appeared and what vanished                                            |
 | `ExternalMcpToolPolicyChanged` | somebody allowed, disabled, or re-moded a tool                                             |
+| `ExternalMcpServerChanged`     | a server was attached, replaced, or detached at runtime                                    |
+| `ExternalMcpSecretChanged`     | a sealed credential was stored or cleared — ref and last four characters, never the value  |
 
 No arguments, and no results. A tool argument routinely names a customer or a
 private repository, and a result is unbounded third-party text.
@@ -315,6 +364,9 @@ The same decisions without the JSON:
 lacrew mcp servers                 # every attached server, every tool's state
 lacrew mcp attach gh --endpoint https://mcp.example.com/rpc --token-env GH_MCP_TOKEN
 lacrew mcp detach gh               # forget one attached at runtime
+lacrew mcp secret list             # stored credentials — refs and last four characters
+printf %s "$GH_TOKEN" | lacrew mcp secret set gh   # sealed; no route returns it
+lacrew mcp secret rm gh
 lacrew mcp refresh                 # re-read tool lists; new tools land blocked
 lacrew mcp ping gh                 # reachable? how many tools does it publish?
 

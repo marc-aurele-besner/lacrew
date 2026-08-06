@@ -1,7 +1,7 @@
 /** Query helpers for the external MCP allowlist (keeps Drizzle inside @lacrew/db). */
 
 import { and, eq } from "drizzle-orm";
-import { externalMcpServers, externalMcpTools } from "./schema/mcp.js";
+import { externalMcpSecrets, externalMcpServers, externalMcpTools } from "./schema/mcp.js";
 import type { DbHandle } from "./client.js";
 
 export interface ExternalMcpToolRow {
@@ -128,6 +128,62 @@ export async function listExternalMcpServers(handle: DbHandle): Promise<External
     id: row.id,
     config: row.config ?? {},
     ownerKey: row.ownerKey,
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+export interface ExternalMcpSecretRow {
+  ownerKey: string;
+  ref: string;
+  sealed: string;
+  hint: string;
+  updatedAt: string;
+}
+
+export async function upsertExternalMcpSecret(
+  handle: DbHandle,
+  row: ExternalMcpSecretRow,
+): Promise<void> {
+  const values = {
+    ownerKey: row.ownerKey,
+    ref: row.ref,
+    sealed: row.sealed,
+    hint: row.hint,
+    updatedAt: new Date(row.updatedAt),
+  };
+  await handle.db
+    .insert(externalMcpSecrets)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [externalMcpSecrets.ownerKey, externalMcpSecrets.ref],
+      set: { sealed: values.sealed, hint: values.hint, updatedAt: values.updatedAt },
+    });
+}
+
+export async function deleteExternalMcpSecret(
+  handle: DbHandle,
+  ownerKey: string,
+  ref: string,
+): Promise<void> {
+  await handle.db
+    .delete(externalMcpSecrets)
+    .where(and(eq(externalMcpSecrets.ownerKey, ownerKey), eq(externalMcpSecrets.ref, ref)));
+}
+
+/**
+ * Every sealed credential. Read once at boot, like the allowlist: a server
+ * whose token did not come back would fail every call with
+ * `mcp_missing_credential`, which reads as a rotation nobody performed.
+ */
+export async function listExternalMcpSecrets(
+  handle: DbHandle,
+): Promise<ExternalMcpSecretRow[]> {
+  const rows = await handle.db.select().from(externalMcpSecrets);
+  return rows.map((row) => ({
+    ownerKey: row.ownerKey,
+    ref: row.ref,
+    sealed: row.sealed,
+    hint: row.hint,
     updatedAt: row.updatedAt.toISOString(),
   }));
 }

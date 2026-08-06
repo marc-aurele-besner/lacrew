@@ -55,7 +55,9 @@ import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
 import type { EvalRunnerSurface } from "./evalRunner.js";
+import type { McpSecretsSurface } from "./mcpSecrets.js";
 import {
+  readExternalMcpScope,
   readExternalMcpServer,
   validateExternalMcpRule,
   type ExternalMcpRegistry,
@@ -117,6 +119,12 @@ export interface OrchestratorAppOptions {
   dualControl?: DualControlSurface;
   /** Attached third-party MCP servers (F2.30); absent when none is configured. */
   externalMcp?: ExternalMcpRegistry;
+  /**
+   * Sealed credentials those servers may read (F2.30). Absent leaves the routes
+   * 503 rather than half-working: a workspace told its token was saved when
+   * nothing stored it is worse than one told the feature is off.
+   */
+  mcpSecrets?: McpSecretsSurface;
   /** Eval suite runner (F2.29); absent in embedders that wired none. */
   evals?: EvalRunnerSurface;
   /** Pending and resolved ask-mode confirmations (F2.24). */
@@ -212,6 +220,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     planRequired,
     dualControl,
     externalMcp,
+    mcpSecrets,
     evals,
     connectorAsks,
     humanGates,
@@ -622,6 +631,97 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     } catch (err) {
       return jsonBig(c, { error: msgOf(err, "unknown_mcp_server") }, 404);
     }
+  });
+
+  /**
+   * Store or replace a credential an attached server may read.
+   *
+   * The one route in this feature that takes a *value*, and it exists because
+   * on a shared worker the workspace attaching a server cannot set an
+   * environment variable. Everything about it is shaped by that:
+   *
+   * - The value is sealed before it is stored and is **never** returned by any
+   *   route, including this one. The response carries the ref and the last four
+   *   characters, which is what an operator needs to tell one token from another.
+   * - With no sealing key configured the write is **refused** (503), not stored
+   *   in cleartext. A customer credential in a database column is the outcome
+   *   this exists to prevent.
+   * - It is scoped: a secret belongs to the owner that wrote it, and only a
+   *   server with that owner resolves it. Two workspaces may both call their
+   *   token `gh` without either reaching the other's.
+   */
+  app.put("/mcp/secrets", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ ref?: string; value?: string; owner?: unknown }>(c);
+    const ref = body.ref?.trim() ?? "";
+    const value = typeof body.value === "string" ? body.value : "";
+    if (!ref || !value) return jsonBig(c, { error: "ref_and_value_required" }, 400);
+    const owner = body.owner === undefined ? undefined : readExternalMcpScope(body.owner);
+    if (body.owner !== undefined && !owner) {
+      return jsonBig(c, { error: "owner must be crew:<ref> or agent:<ref>" }, 400);
+    }
+    try {
+      const secret = await mcpSecrets.put({
+        ref,
+        value,
+        ...(owner && owner.level !== "workspace" ? { owner } : {}),
+      });
+      runtime.recordAudit({
+        type: "ExternalMcpSecretChanged",
+        at: secret.at,
+        payload: {
+          action: "set",
+          ref: secret.ref,
+          // The hint, never the value: enough to say which credential is
+          // installed, useless to anyone who reads the trail.
+          hint: secret.hint,
+          ...(secret.owner ? { owner: secret.owner } : {}),
+        },
+      });
+      return jsonBig(c, { secret });
+    } catch (err) {
+      const message = msgOf(err, "mcp_secret_failed");
+      return jsonBig(
+        c,
+        { error: message },
+        message.startsWith("mcp_secret_sealing_unavailable") ? 503 : 400,
+      );
+    }
+  });
+
+  /** Refs and hints for one owner. There is no route that returns a value. */
+  app.get("/mcp/secrets", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const owner = c.req.query("owner");
+    const scope = owner ? readExternalMcpScope(JSON.parse(owner) as unknown) : undefined;
+    return jsonBig(c, { secrets: mcpSecrets.describe(scope) });
+  });
+
+  /**
+   * Forget a credential. The server that referenced it keeps its config and
+   * starts failing with `mcp_missing_credential`, which is the honest state —
+   * silently continuing on a token nobody has is the alternative.
+   */
+  app.post("/mcp/secrets/remove", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ ref?: string; owner?: unknown }>(c);
+    const ref = body.ref?.trim() ?? "";
+    if (!ref) return jsonBig(c, { error: "ref_required" }, 400);
+    const owner = body.owner === undefined ? undefined : readExternalMcpScope(body.owner);
+    if (body.owner !== undefined && !owner) {
+      return jsonBig(c, { error: "owner must be crew:<ref> or agent:<ref>" }, 400);
+    }
+    const removed = await mcpSecrets.remove(
+      ref,
+      owner && owner.level !== "workspace" ? owner : undefined,
+    );
+    if (!removed) return jsonBig(c, { error: `unknown_mcp_secret:${ref}` }, 404);
+    runtime.recordAudit({
+      type: "ExternalMcpSecretChanged",
+      at: new Date().toISOString(),
+      payload: { action: "cleared", ref, ...(owner ? { owner } : {}) },
+    });
+    return jsonBig(c, { cleared: true, ref });
   });
 
   /**

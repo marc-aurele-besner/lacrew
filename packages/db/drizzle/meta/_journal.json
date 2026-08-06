@@ -169,6 +169,13 @@
       "when": 1786016257452,
       "tag": "0023_futuristic_the_enforcers",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786018463365,
+      "tag": "0024_shiny_darkstar",
+      "breakpoints": true
     }
   ]
 }
