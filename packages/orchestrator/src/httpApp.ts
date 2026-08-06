@@ -56,6 +56,7 @@ import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
 import type { EvalRunnerSurface } from "./evalRunner.js";
 import {
+  readExternalMcpServer,
   validateExternalMcpRule,
   type ExternalMcpRegistry,
   type ExternalMcpToolRule,
@@ -353,7 +354,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // learn it from its own health check, not from an incident.
       rootAuth: rootAuth?.status() ?? { required: false, kind: null, configError: null },
       model: { provider: model.name },
-      mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
+      mcp: {
+        tools: listLacrewMcpTools().length,
+        useMock: mcpUseMock,
+        // Whether this process considers itself shared, and what that means for
+        // attaching a server. An operator debugging "attach is refused" should
+        // find the answer on the health check rather than in the source.
+        ...(externalMcp
+          ? {
+              external: {
+                servers: externalMcp.list().length,
+                ...externalMcp.egress(),
+              },
+            }
+          : {}),
+      },
       flows: {
         saved: (await flows.list()).length,
         templates: flows.templates().length,
@@ -476,7 +491,92 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       servers: externalMcp.describe(subject),
       rules: externalMcp.rules(),
       modes: CONNECTOR_WRITE_MODES,
+      // Where this process may reach at all, so a setup form can say "your
+      // operator allows these hosts" instead of offering a field that will be
+      // refused after the operator has typed a URL into it.
+      egress: externalMcp.egress(),
     });
+  });
+
+  /**
+   * Attach a server — or replace one under the same id — without a restart.
+   *
+   * Two refusals matter here and read differently on purpose. An invalid config
+   * is a 400: the operator wrote something this runtime cannot use. An **egress**
+   * refusal is a 403: the config is fine and this deployment will not reach it,
+   * which is a policy answer and names which rule said no.
+   *
+   * Attaching admits nothing. Discovery runs immediately and every tool it
+   * finds is recorded blocked, exactly as a boot-configured server's are, so
+   * "attached" and "callable" stay two separate decisions.
+   */
+  app.post("/mcp/servers/attach", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: unknown }>(c);
+    const read = readExternalMcpServer(body.server ?? body);
+    if (!read.server) return jsonBig(c, { error: "invalid_mcp_server", errors: read.errors }, 400);
+    try {
+      const result = await externalMcp.attach(read.server);
+      runtime.recordAudit({
+        type: "ExternalMcpServerChanged",
+        at: new Date().toISOString(),
+        payload: {
+          server: result.server.id,
+          action: "attached",
+          transport: result.server.transport,
+          endpoint: result.server.endpoint,
+          ...(read.server.owner ? { owner: read.server.owner } : {}),
+          // Named, not counted: an operator reading the trail needs to know
+          // which tools arrived blocked to decide what to allow next.
+          blocked: result.refresh.added,
+        },
+      });
+      return jsonBig(c, {
+        server: result.server,
+        refresh: result.refresh,
+        rules: externalMcp.rules(),
+      });
+    } catch (err) {
+      const message = msgOf(err, "mcp_attach_failed");
+      return jsonBig(c, { error: message }, message.startsWith("mcp_egress_denied") ? 403 : 400);
+    }
+  });
+
+  /**
+   * Detach a runtime-attached server. A boot-configured one is refused (409):
+   * env is its source of truth, and a removal the next restart undoes would be
+   * a lie told by a 200.
+   *
+   * Tool records survive a detach on purpose. A server re-attached under the
+   * same id must not come back with a tool silently still admitted, so the
+   * records stay and the re-attached server's tools resolve against them —
+   * the alternative is an operator's `deny` disappearing because somebody
+   * detached and re-attached.
+   */
+  app.post("/mcp/servers/detach", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: string }>(c);
+    const server = body.server?.trim();
+    if (!server) return jsonBig(c, { error: "server_required" }, 400);
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
+    try {
+      const detached = await externalMcp.detach(server, subject);
+      if (!detached) return jsonBig(c, { error: `unknown_mcp_server:${server}` }, 404);
+      runtime.recordAudit({
+        type: "ExternalMcpServerChanged",
+        at: new Date().toISOString(),
+        payload: { server, action: "detached" },
+      });
+      return jsonBig(c, { detached: true, server });
+    } catch (err) {
+      const message = msgOf(err, "mcp_detach_failed");
+      return jsonBig(
+        c,
+        { error: message },
+        message.startsWith("mcp_server_is_boot_config") ? 409 : 400,
+      );
+    }
   });
 
   /**
@@ -487,8 +587,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.post("/mcp/servers/refresh", async (c) => {
     if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
     const body = await bodyOf<{ server?: string }>(c);
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
     try {
-      const results = await externalMcp.refresh(body.server?.trim() || undefined);
+      const results = await externalMcp.refresh(body.server?.trim() || undefined, subject);
       for (const result of results) {
         if (!result.ok) continue;
         runtime.recordAudit({
@@ -513,8 +615,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
     const body = await bodyOf<{ server?: string }>(c);
     if (!body.server?.trim()) return jsonBig(c, { error: "server_required" }, 400);
+    const pingAs = c.req.query("as");
+    const pingSubject = pingAs ? { principal: pingAs, managers: await managersOf(pingAs) } : {};
     try {
-      return jsonBig(c, await externalMcp.ping(body.server.trim()));
+      return jsonBig(c, await externalMcp.ping(body.server.trim(), pingSubject));
     } catch (err) {
       return jsonBig(c, { error: msgOf(err, "unknown_mcp_server") }, 404);
     }
@@ -576,8 +680,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (rule.mode && !isConnectorWriteMode(rule.mode)) {
       return jsonBig(c, { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` }, 400);
     }
+    const ruleAs = c.req.query("as");
+    const ruleSubject = ruleAs ? { principal: ruleAs, managers: await managersOf(ruleAs) } : {};
     try {
-      const record = await externalMcp.setTool(rule);
+      const record = await externalMcp.setTool(rule, ruleSubject);
       runtime.recordAudit({
         type: "ExternalMcpToolPolicyChanged",
         at: record.at,
@@ -2012,7 +2118,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         tools: ready.flatMap((conn) => conn.routes.map((route) => `${conn.id}.${route.name}`)),
       };
     },
-    listMcpTools: () => listLacrewMcpTools().map((tool) => tool.name),
+    /**
+     * The first-party tools every seat has, plus the external MCP tools this
+     * one may actually call.
+     *
+     * The external half is the seat's admitted slice rather than the servers'
+     * catalogue, for the same reason `listConnectors` filters on credentials: a
+     * `requires` naming a tool that is registered-but-refused would install a
+     * procedure that fails at the step it exists for. And on a shared
+     * orchestrator the process-wide list is another workspace's answer.
+     */
+    listMcpTools: (subject) => [
+      ...listLacrewMcpTools().map((tool) => tool.name),
+      ...(externalMcp?.toolNames(subject ?? {}) ?? []),
+    ],
+    subjectFor: async (agent) => ({ principal: agent, managers: await managersOf(agent) }),
   });
 
   /**
@@ -2030,7 +2150,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * approve text nobody can read here.
    */
   app.get("/skills/packs", async (c) => {
-    const available = await skillPacks.availability();
+    // `?as=` for the same reason the tools page takes it: whether a pack is
+    // installable depends on which external tools that seat may call.
+    const packsAs = c.req.query("as");
+    const available = await skillPacks.availability(
+      packsAs ? { principal: packsAs, managers: await managersOf(packsAs) } : undefined,
+    );
     return jsonBig(c, {
       packs: firstPartySkillPacks.map((pack) => {
         const missing = missingRequirements(pack, available);

@@ -32,6 +32,8 @@ import {
 import {
   externalMcpScopeKey,
   type ExternalMcpScope,
+  type ExternalMcpServer,
+  type ExternalMcpServerRecord,
   type ExternalMcpStore,
   type ExternalMcpToolRecord,
 } from "./externalMcp.js";
@@ -42,12 +44,14 @@ import {
   deleteConnectorMode,
   deleteCrewBinding,
   deleteDualControlRule,
+  deleteExternalMcpServer,
   deleteExternalMcpTool,
   deletePlanRequirement,
   insertMessageRow,
   listConnectorModes,
   listCrewBindings,
   listDualControlRules,
+  listExternalMcpServers,
   listExternalMcpTools,
   listPlanRequirements,
   recentConnectorAsks,
@@ -66,6 +70,7 @@ import {
   upsertCrewBinding,
   upsertDualControlReview,
   upsertDualControlRule,
+  upsertExternalMcpServer,
   upsertExternalMcpTool,
   upsertHumanGate,
   upsertPlanRequirement,
@@ -140,6 +145,7 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const connectorAsks = new Map<string, ConnectorAskRecord>();
   const humanGates = new Map<string, HumanGateRecord>();
   const externalMcpTools = new Map<string, ExternalMcpToolRecord>();
+  const externalMcpServers = new Map<string, ExternalMcpServerRecord>();
   const planRequirements = new Map<string, PlanRequiredRecord>();
   const dualControlRules = new Map<string, DualControlRecord>();
   const dualControlReviews = new Map<string, DualControlReviewRecord>();
@@ -203,6 +209,17 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     },
     removeExternalMcpTool: async (scopeKey, server, tool) => {
       externalMcpTools.delete(`${scopeKey}|${server.trim().toLowerCase()}|${tool}`);
+    },
+    // Attached servers, one row each. In memory these live exactly as long as
+    // the process does, which is the honest behaviour for a runtime with no
+    // database: an attach is real now and gone on restart, and the boot log
+    // says which servers came back.
+    loadExternalMcpServers: async () => [...externalMcpServers.values()],
+    saveExternalMcpServer: async (record) => {
+      externalMcpServers.set(record.server.id, record);
+    },
+    removeExternalMcpServer: async (id) => {
+      externalMcpServers.delete(id);
     },
     // One row per configured scope, so unbounded like the allowlist above: a
     // trimmed row is a crew that silently stops being asked to plan.
@@ -713,6 +730,46 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await deleteExternalMcpTool(db(), scopeKey, server, tool);
       } catch (err) {
         warn("external mcp tool delete", err);
+      }
+    },
+    loadExternalMcpServers: async () => {
+      try {
+        const rows = await listExternalMcpServers(db());
+        return rows.flatMap((row) => {
+          const config = row.config as ExternalMcpServer | undefined;
+          if (!config || typeof config !== "object" || config.id !== row.id) {
+            warn("external mcp server load", new Error(`unreadable config for ${row.id}`));
+            return [];
+          }
+          return [
+            { server: config, origin: "runtime", at: row.updatedAt } as ExternalMcpServerRecord,
+          ];
+        });
+      } catch (err) {
+        // Rethrown for the same reason the allowlist is: a restart that comes
+        // back with no attached servers because the store was unreadable must
+        // say so, not read as "nobody ever attached one".
+        warn("external mcp servers load", err);
+        throw err;
+      }
+    },
+    saveExternalMcpServer: async (record) => {
+      try {
+        await upsertExternalMcpServer(db(), {
+          id: record.server.id,
+          config: record.server as unknown as Record<string, unknown>,
+          ownerKey: record.server.owner ? externalMcpScopeKey(record.server.owner) : null,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("external mcp server save", err);
+      }
+    },
+    removeExternalMcpServer: async (id) => {
+      try {
+        await deleteExternalMcpServer(db(), id);
+      } catch (err) {
+        warn("external mcp server delete", err);
       }
     },
     loadPlanRequirements: async () => {

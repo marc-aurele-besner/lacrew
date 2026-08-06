@@ -1,7 +1,7 @@
 /** Query helpers for the external MCP allowlist (keeps Drizzle inside @lacrew/db). */
 
 import { and, eq } from "drizzle-orm";
-import { externalMcpTools } from "./schema/mcp.js";
+import { externalMcpServers, externalMcpTools } from "./schema/mcp.js";
 import type { DbHandle } from "./client.js";
 
 export interface ExternalMcpToolRow {
@@ -84,6 +84,50 @@ export async function listExternalMcpTools(handle: DbHandle): Promise<ExternalMc
     mode: row.mode,
     description: row.description,
     discoveredAt: row.discoveredAt ? row.discoveredAt.toISOString() : null,
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+export interface ExternalMcpServerRow {
+  id: string;
+  config: Record<string, unknown>;
+  ownerKey?: string | null;
+  updatedAt: string;
+}
+
+export async function upsertExternalMcpServer(
+  handle: DbHandle,
+  row: ExternalMcpServerRow,
+): Promise<void> {
+  const values = {
+    id: row.id,
+    config: row.config,
+    ownerKey: row.ownerKey ?? null,
+    updatedAt: new Date(row.updatedAt),
+  };
+  await handle.db
+    .insert(externalMcpServers)
+    .values(values)
+    .onConflictDoUpdate({
+      target: externalMcpServers.id,
+      set: { config: values.config, ownerKey: values.ownerKey, updatedAt: values.updatedAt },
+    });
+}
+
+export async function deleteExternalMcpServer(handle: DbHandle, id: string): Promise<void> {
+  await handle.db.delete(externalMcpServers).where(eq(externalMcpServers.id, id));
+}
+
+/**
+ * Every runtime-attached server. Read once at boot, before the first refresh
+ * sweep, so a restart restores what was attached rather than quietly losing it.
+ */
+export async function listExternalMcpServers(handle: DbHandle): Promise<ExternalMcpServerRow[]> {
+  const rows = await handle.db.select().from(externalMcpServers);
+  return rows.map((row) => ({
+    id: row.id,
+    config: row.config ?? {},
+    ownerKey: row.ownerKey,
     updatedAt: row.updatedAt.toISOString(),
   }));
 }

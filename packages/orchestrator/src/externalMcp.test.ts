@@ -4,6 +4,7 @@ import type { ProtocolEvent } from "@lacrew/core";
 import {
   createExternalMcpRegistry,
   externalMcpRefreshMinutes,
+  readExternalMcpServer,
   externalToolName,
   loadExternalMcpServersFromEnv,
   parseExternalToolName,
@@ -11,6 +12,7 @@ import {
   validateExternalMcpRule,
   validateExternalMcpServer,
   type ExternalMcpServer,
+  type ExternalMcpServerRecord,
   type ExternalMcpToolRecord,
 } from "./externalMcp.js";
 import type { McpClient, McpDiscoveredTool } from "./mcpClient.js";
@@ -617,4 +619,327 @@ test("the refresh cadence is bounded and can be turned off", () => {
   assert.equal(externalMcpRefreshMinutes({ LACREW_MCP_REFRESH_MINUTES: "0" }), 0);
   assert.equal(externalMcpRefreshMinutes({ LACREW_MCP_REFRESH_MINUTES: "0.2" }), 1);
   assert.equal(externalMcpRefreshMinutes({ LACREW_MCP_REFRESH_MINUTES: "nonsense" }), 60);
+});
+
+/* ——— hosted egress + runtime attach (F2.30 tranche 2) ——— */
+
+const HOSTED = {
+  hosted: true,
+  allowHosts: ["mcp.example.com"],
+  allowStdio: false,
+  allowLoopback: false,
+  allowEnv: ["GH_MCP_TOKEN"],
+};
+
+test("a hosted worker refuses to attach a subprocess server", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: HOSTED,
+  });
+  await assert.rejects(
+    registry.attach({ id: "local", transport: "stdio", command: "node", args: ["server.mjs"] }),
+    /mcp_egress_denied:local:stdio_not_allowed/,
+  );
+  assert.deepEqual(registry.list(), []);
+});
+
+test("a hosted worker refuses an http server off the allowlist", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: HOSTED,
+  });
+  await assert.rejects(
+    registry.attach({ id: "evil", transport: "http", url: "https://evil.example.net/rpc" }),
+    /mcp_egress_denied:evil:host_not_allowlisted/,
+  );
+  // The metadata service is refused even when somebody allowlists it by hand.
+  await assert.rejects(
+    registry.attach({ id: "meta", transport: "http", url: "https://169.254.169.254/rpc" }),
+    /host_private_address/,
+  );
+  assert.deepEqual(registry.list(), []);
+});
+
+test("a boot config the egress policy refuses stops the boot rather than vanishing", () => {
+  assert.throws(
+    () =>
+      createExternalMcpRegistry({
+        servers: [{ id: "gh", transport: "http", url: "https://elsewhere.example.net/rpc" }],
+        env: ENV,
+        egress: HOSTED,
+      }),
+    /mcp_egress_denied:gh:host_not_allowlisted/,
+  );
+});
+
+test("a server attached at runtime is discoverable immediately — and every tool blocked", async () => {
+  const far = fakeClient();
+  const events: ProtocolEvent[] = [];
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    onEvent: (event) => events.push(event),
+    egress: HOSTED,
+  });
+  assert.deepEqual(registry.toolNames(), []);
+
+  const attached = await registry.attach(SERVER);
+  // No restart, no sweep: the tools are there the moment the attach returns.
+  assert.deepEqual(attached.refresh.added.sort(), ["create_issue", "search_issues"]);
+  assert.equal(attached.server.origin, "runtime");
+  assert.equal(attached.server.blockedCount, 2);
+  // Discovery admits nothing, so the callable list is still empty.
+  assert.deepEqual(registry.toolNames(), []);
+  await assert.rejects(
+    registry.call("mcp__gh__search_issues", {}),
+    /tool_not_allowlisted:gh.search_issues/,
+  );
+
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "search_issues",
+    enabled: true,
+    effect: "read",
+  });
+  assert.deepEqual(registry.toolNames(), ["mcp__gh__search_issues"]);
+  const result = await registry.call("mcp__gh__search_issues", { q: "open" });
+  assert.equal(result.untrusted, true);
+  assert.equal(far.calls.length, 1);
+
+  const attach = events.find(
+    (e) => e.type === "ExternalMcpServerChanged" && e.payload.action === "attached",
+  );
+  assert.ok(attach, "attaching a third party is on the trail");
+  // The env var is named, never valued: the trail is not an exfiltration route.
+  assert.deepEqual(attach!.payload.envVars, ["GH_MCP_TOKEN"]);
+  assert.equal(JSON.stringify(attach!.payload).includes(ENV.GH_MCP_TOKEN), false);
+});
+
+test("an attached server survives a restart, and a boot config wins over a stored row", async () => {
+  const far = fakeClient();
+  const servers = new Map<string, ExternalMcpServerRecord>();
+  const store = {
+    loadExternalMcpTools: async () => [],
+    saveExternalMcpTool: async () => {},
+    removeExternalMcpTool: async () => {},
+    loadExternalMcpServers: async () => [...servers.values()],
+    saveExternalMcpServer: async (record: ExternalMcpServerRecord) => {
+      servers.set(record.server.id, record);
+    },
+    removeExternalMcpServer: async (id: string) => {
+      servers.delete(id);
+    },
+  };
+
+  const first = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    store,
+    egress: HOSTED,
+  });
+  await first.attach(SERVER);
+  assert.equal(servers.size, 1);
+
+  const restarted = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    store,
+    egress: HOSTED,
+  });
+  await restarted.hydrate();
+  assert.deepEqual(
+    restarted.list().map((s) => s.id),
+    ["gh"],
+  );
+
+  // Env is the source of truth for a boot config: a stored row under the same
+  // id must not shadow the file an operator edits.
+  const withBoot = createExternalMcpRegistry({
+    servers: [{ ...SERVER, title: "from env" }],
+    env: ENV,
+    clientFor: () => far.client,
+    store,
+    egress: HOSTED,
+  });
+  await withBoot.hydrate();
+  assert.equal(withBoot.list()[0]!.title, "from env");
+  assert.equal(withBoot.describe()[0]!.origin, "env");
+});
+
+test("a stored server the current policy refuses does not come back", async () => {
+  const far = fakeClient();
+  const events: ProtocolEvent[] = [];
+  const store = {
+    loadExternalMcpTools: async () => [],
+    saveExternalMcpTool: async () => {},
+    removeExternalMcpTool: async () => {},
+    // Attached while the worker was single-tenant; the operator has since
+    // turned hosted mode on and this host is not on their allowlist.
+    loadExternalMcpServers: async () => [
+      {
+        server: { id: "old", transport: "http" as const, url: "https://elsewhere.example.net/rpc" },
+        origin: "runtime" as const,
+        at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    saveExternalMcpServer: async () => {},
+    removeExternalMcpServer: async () => {},
+  };
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    store,
+    onEvent: (event) => events.push(event),
+    egress: HOSTED,
+  });
+  await registry.hydrate();
+  assert.deepEqual(registry.list(), []);
+  const refusal = events.find((e) => e.payload.action === "refused");
+  assert.ok(refusal, "an operator is told which server did not come back");
+});
+
+test("detaching forgets a runtime server and refuses a boot-configured one", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [SERVER],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: { ...HOSTED, allowHosts: ["mcp.example.com", "other.example.com"] },
+  });
+  await assert.rejects(registry.detach("gh"), /mcp_server_is_boot_config:gh/);
+
+  await registry.attach({ id: "extra", transport: "http", url: "https://other.example.com/rpc" });
+  assert.equal(await registry.detach("extra"), true);
+  assert.deepEqual(
+    registry.list().map((s) => s.id),
+    ["gh"],
+  );
+  assert.equal(await registry.detach("extra"), false);
+});
+
+test("a re-attached server does not resurrect an admitted tool by surprise", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: HOSTED,
+  });
+  await registry.attach(SERVER);
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "create_issue",
+    enabled: false,
+    effect: "write",
+    mode: "deny",
+  });
+  await registry.detach("gh");
+  await registry.attach(SERVER);
+  // The operator's refusal outlives the detach: dropping the records would let
+  // "detach and re-attach" clear a deny nobody meant to clear.
+  const resolved = registry.resolve("gh", "create_issue");
+  assert.equal(resolved.enabled, false);
+  assert.equal(resolved.mode, "deny");
+});
+
+test("one workspace's server is invisible to another seat on the same worker", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: HOSTED,
+  });
+  const OURS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const THEIRS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  await registry.attach({ ...SERVER, owner: { level: "crew", ref: OURS } });
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "search_issues",
+    enabled: true,
+    effect: "read",
+  });
+
+  const ours = { principal: "0xcccccccccccccccccccccccccccccccccccccccc", managers: [OURS] };
+  const theirs = { principal: THEIRS, managers: [] as string[] };
+  assert.deepEqual(
+    registry.describe(ours).map((s) => s.id),
+    ["gh"],
+  );
+  assert.deepEqual(registry.describe(theirs), []);
+  assert.deepEqual(registry.toolNames(ours), ["mcp__gh__search_issues"]);
+  assert.deepEqual(registry.toolNames(theirs), []);
+  // Even with a workspace-scope rule saying the tool is enabled, the seat that
+  // cannot see the server cannot call it — and is told nothing about it.
+  await assert.rejects(
+    registry.call("mcp__gh__search_issues", {}, theirs),
+    /unknown_external_mcp_tool/,
+  );
+  assert.equal(far.calls.length, 0);
+  await assert.rejects(
+    registry.detach("gh", theirs).then((r) => {
+      if (!r) throw new Error("unknown_mcp_server:gh");
+    }),
+    /unknown_mcp_server:gh/,
+  );
+});
+
+test("the policy is re-checked before every call, not trusted from attach time", async () => {
+  const far = fakeClient();
+  const registry = createExternalMcpRegistry({
+    servers: [],
+    env: ENV,
+    clientFor: () => far.client,
+    egress: HOSTED,
+    // The hostname is allowlisted; what it resolves to is not this worker's
+    // business to reach.
+    lookup: async () => ["169.254.169.254"],
+  });
+  await registry.attach(SERVER);
+  await registry.setTool({
+    scope: { level: "workspace" },
+    server: "gh",
+    tool: "search_issues",
+    enabled: true,
+    effect: "read",
+  });
+  await assert.rejects(
+    registry.call("mcp__gh__search_issues", {}),
+    /mcp_egress_denied:gh:host_private_address/,
+  );
+  assert.equal(far.calls.length, 0, "the request never left this process");
+});
+
+test("an attach body is read field by field, never spread from the caller", () => {
+  const read = readExternalMcpServer({
+    id: "GH",
+    transport: "http",
+    url: "https://mcp.example.com/rpc",
+    auth: { kind: "bearer", tokenEnv: "GH_MCP_TOKEN" },
+    owner: { level: "crew", ref: "0xabc" },
+    // Not part of the config shape: it must not survive into what builds the
+    // transport, or a caller would be writing to fields this module reads.
+    clientFor: "pwned",
+  });
+  assert.equal(read.server?.id, "gh");
+  assert.equal((read.server as Record<string, unknown> | undefined)?.clientFor, undefined);
+  assert.deepEqual(read.server?.owner, { level: "crew", ref: "0xabc" });
+
+  assert.deepEqual(readExternalMcpServer({ id: "x", transport: "http", url: "not a url" }).errors, [
+    'mcp server "x" url is not a URL',
+  ]);
+  assert.equal(readExternalMcpServer("gh").errors[0], "a server config must be an object");
 });

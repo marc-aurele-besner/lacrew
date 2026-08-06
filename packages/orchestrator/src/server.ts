@@ -27,6 +27,7 @@ import {
   externalMcpRefreshMinutes,
   loadExternalMcpServersFromEnv,
 } from "./externalMcp.js";
+import { loadMcpEgressPolicyFromEnv } from "./mcpEgress.js";
 import { createHumanGates, humanGateTtlMs } from "./humanGates.js";
 import { createPlanRequirements, planRequiredFromEnv } from "./planRequired.js";
 import { createCrewBindings } from "./crewBindings.js";
@@ -221,22 +222,41 @@ async function main(): Promise<void> {
   const mcpServerDefs = loadExternalMcpServersFromEnv(process.env, (path) =>
     readFileSync(path, "utf8"),
   );
-  const externalMcp =
-    mcpServerDefs.length > 0
-      ? createExternalMcpRegistry({
-          servers: mcpServerDefs,
-          store: runtime.store,
-          onEvent: (event) => runtime.recordAudit(event),
-          // Ask-mode writes ride the same confirmation path connectors use, so
-          // an operator answers one kind of question in one place.
-          asks: connectorAsks,
-          auditArgKeys: externalMcpAuditArgKeys(),
-        })
-      : undefined;
+  const mcpEgress = loadMcpEgressPolicyFromEnv();
+  // Built even with no server in the env: servers attach at runtime, and a
+  // registry that only existed when one was configured at boot would make
+  // "attach without a restart" answer 503 on the deployments that need it most.
+  const externalMcp = createExternalMcpRegistry({
+    servers: mcpServerDefs,
+    store: runtime.store,
+    onEvent: (event) => runtime.recordAudit(event),
+    // Ask-mode writes ride the same confirmation path connectors use, so
+    // an operator answers one kind of question in one place.
+    asks: connectorAsks,
+    auditArgKeys: externalMcpAuditArgKeys(),
+    egress: mcpEgress,
+    lookup: async (host) => {
+      const { lookup } = await import("node:dns/promises");
+      const found = await lookup(host, { all: true });
+      return found.map((entry) => entry.address);
+    },
+  });
   if (mcpServerDefs.length > 0) {
     console.log(
       `[@lacrew/orchestrator] ${mcpServerDefs.length} external MCP server(s): ` +
         mcpServerDefs.map((s) => `${s.id} (${s.transport})`).join(", "),
+    );
+  }
+  if (mcpEgress.hosted) {
+    // Said at boot because it is the difference between "attaching a server
+    // works" and "attaching a server is refused", and an operator debugging the
+    // second should not have to read the source to find out which.
+    console.log(
+      "[@lacrew/orchestrator] external MCP egress: hosted — " +
+        `stdio ${mcpEgress.allowStdio ? "allowed" : "refused"}, hosts ` +
+        (mcpEgress.allowHosts.length > 0
+          ? mcpEgress.allowHosts.join(", ")
+          : "none (set LACREW_MCP_ALLOW_HOSTS)"),
     );
   }
   // Inference cost budgets (F2.28). Built before the flows surface, because

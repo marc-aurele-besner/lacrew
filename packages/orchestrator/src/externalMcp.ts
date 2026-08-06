@@ -64,6 +64,14 @@ import {
   type McpClient,
   type McpDiscoveredTool,
 } from "./mcpClient.js";
+import {
+  checkMcpEgress,
+  checkMcpEgressResolves,
+  describeMcpEgress,
+  OPEN_MCP_EGRESS,
+  type McpEgressPolicy,
+  type McpServerOrigin,
+} from "./mcpEgress.js";
 
 /** Auth for an HTTP server. Same shape as a connector's, for the same reasons. */
 export type ExternalMcpAuth =
@@ -94,6 +102,14 @@ export type ExternalMcpServer = {
   auth?: ExternalMcpAuth;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  /**
+   * Who attached this server. Absent — the shape every boot config has — means
+   * the operator's own, visible to every seat in the process. A scope means one
+   * workspace attached it at runtime, and no seat outside that scope may see
+   * it, refresh it, call it, or detach it: on a shared worker, another tenant's
+   * endpoint and the env vars it reads are not this one's business.
+   */
+  owner?: ExternalMcpScope;
 };
 
 /** Where a tool rule applies — the org-chart scoping connectors already use. */
@@ -124,11 +140,28 @@ export type ExternalMcpToolRecord = ExternalMcpToolRule & {
   discoveredAt?: string;
 };
 
-/** Bounded, durable set of tool records. */
+/** A server config as it was attached at runtime, for the store to keep. */
+export type ExternalMcpServerRecord = {
+  server: ExternalMcpServer;
+  /** Always `runtime` in the store: a boot config is re-read from env instead. */
+  origin: McpServerOrigin;
+  at: string;
+};
+
+/**
+ * Bounded, durable set of tool records, and the servers attached at runtime.
+ *
+ * The server methods are optional so a deployment with no store still attaches
+ * — it just forgets on restart, which is the honest behaviour for a runtime
+ * with no persistence rather than a refusal at the point of attach.
+ */
 export interface ExternalMcpStore {
   loadExternalMcpTools(): Promise<ExternalMcpToolRecord[]>;
   saveExternalMcpTool(record: ExternalMcpToolRecord): Promise<void>;
   removeExternalMcpTool(scopeKey: string, server: string, tool: string): Promise<void>;
+  loadExternalMcpServers?(): Promise<ExternalMcpServerRecord[]>;
+  saveExternalMcpServer?(record: ExternalMcpServerRecord): Promise<void>;
+  removeExternalMcpServer?(id: string): Promise<void>;
 }
 
 export type ExternalMcpCallContext = {
@@ -181,6 +214,10 @@ export type ExternalMcpServerView = {
   id: string;
   title?: string;
   transport: "http" | "stdio";
+  /** `env` — the operator's boot config; `runtime` — attached through the API. */
+  origin: McpServerOrigin;
+  /** The scope that attached it, when one did. Absent = the operator's own. */
+  owner?: ExternalMcpScope;
   /** The endpoint, or the command line. Neither is secret; both are decisions. */
   endpoint: string;
   timeoutMs: number;
@@ -209,8 +246,15 @@ export type ExternalMcpRefreshResult = {
   error?: string;
 };
 
+export type ExternalMcpAttachResult = {
+  server: ExternalMcpServerView;
+  /** Discovery ran on attach: what it found, all of it blocked. */
+  refresh: ExternalMcpRefreshResult;
+};
+
 export type ExternalMcpRegistry = {
-  list(): ExternalMcpServer[];
+  /** Every attached server, or only the ones a subject may see. */
+  list(subject?: ExternalMcpCallContext): ExternalMcpServer[];
   /** Tool names this subject may actually call, as `mcp__<server>__<tool>`. */
   toolNames(subject?: ExternalMcpCallContext): string[];
   /** Whether `name` names a tool on a registered server (allowlisted or not). */
@@ -234,14 +278,35 @@ export type ExternalMcpRegistry = {
     subject?: ExternalMcpCallContext,
   ): ExternalMcpToolResolution;
   /** Re-read tool lists; new tools are recorded blocked. Omit id for all servers. */
-  refresh(serverId?: string): Promise<ExternalMcpRefreshResult[]>;
+  refresh(serverId?: string, subject?: ExternalMcpCallContext): Promise<ExternalMcpRefreshResult[]>;
   /** Reachability check for a setup drawer: does it answer, and with how many tools. */
   ping(
     serverId: string,
+    subject?: ExternalMcpCallContext,
   ): Promise<{ server: string; ok: boolean; ms: number; tools?: number; error?: string }>;
   rules(): ExternalMcpToolRecord[];
-  setTool(rule: ExternalMcpToolRule): Promise<ExternalMcpToolRecord>;
+  /** `subject` limits the rule to a server that seat may see, as `call` does. */
+  setTool(
+    rule: ExternalMcpToolRule,
+    subject?: ExternalMcpCallContext,
+  ): Promise<ExternalMcpToolRecord>;
   clearTool(scope: ExternalMcpScope, server: string, tool: string): Promise<boolean>;
+  /**
+   * Attach or replace a server while the process runs, and discover its tools
+   * immediately — every one of them blocked, exactly as a boot-configured
+   * server's are. Refused when the config is invalid or the egress policy will
+   * not reach it, so an operator learns at the point of attach rather than at
+   * the first call inside a funded run.
+   */
+  attach(server: ExternalMcpServer): Promise<ExternalMcpAttachResult>;
+  /**
+   * Detach a runtime-attached server. A boot-configured one is refused — env is
+   * the source of truth for those, and a "removal" the next restart undoes is
+   * worse than a plain no.
+   */
+  detach(serverId: string, subject?: ExternalMcpCallContext): Promise<boolean>;
+  /** The egress policy in force, for a status surface or a setup form. */
+  egress(): ReturnType<typeof describeMcpEgress>;
   hydrate(): Promise<number>;
   close(): Promise<void>;
 };
@@ -265,6 +330,19 @@ export type ExternalMcpRegistryOptions = {
    * customer name or a private repo, and the trail is not the place for one.
    */
   auditArgKeys?: boolean;
+  /**
+   * Where this orchestrator may reach. Defaults to the self-host policy, which
+   * refuses nothing — a machine the operator owns already lets them run what
+   * they like, and a default that broke existing single-tenant deployments
+   * would be a security feature nobody could upgrade into.
+   */
+  egress?: McpEgressPolicy;
+  /**
+   * Hostname → addresses, for the pre-connect private-address check. Defaults
+   * to the system resolver; injected in tests, and skipped entirely when the
+   * policy is not hosted (a self-host reaching its own LAN is the normal case).
+   */
+  lookup?: (host: string) => Promise<string[]>;
   now?: () => Date;
 };
 
@@ -531,14 +609,50 @@ function defaultClientFor(
   });
 }
 
+/** Whether a subject may see a server at all — visibility, before any tool policy. */
+function serverVisibleTo(server: ExternalMcpServer, subject: ExternalMcpCallContext): boolean {
+  if (!server.owner || server.owner.level === "workspace") return true;
+  // No principal is the operator asking about their own process (a CLI, a
+  // self-host console): they configured it, so they see all of it.
+  if (!subject.principal) return true;
+  const owner = norm(server.owner.ref);
+  if (norm(subject.principal) === owner) return true;
+  for (const manager of subject.managers ?? []) {
+    if (norm(manager) === owner) return true;
+  }
+  return false;
+}
+
 export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): ExternalMcpRegistry {
   const env = opts.env ?? process.env;
   const now = opts.now ?? (() => new Date());
-  const byId = new Map<string, ExternalMcpServer>();
-  for (const server of opts.servers) {
+  const egress = opts.egress ?? OPEN_MCP_EGRESS;
+  type Attached = { server: ExternalMcpServer; origin: McpServerOrigin; at: string };
+  const byId = new Map<string, Attached>();
+
+  const admit = (server: ExternalMcpServer, origin: McpServerOrigin): Attached => {
     const errors = validateExternalMcpServer(server);
     if (errors.length > 0) throw new Error(`invalid_mcp_server: ${errors.join("; ")}`);
-    byId.set(server.id, server);
+    const verdict = checkMcpEgress(
+      {
+        transport: server.transport,
+        ...(server.url ? { url: server.url } : {}),
+        envVars: externalMcpEnvVars(server),
+      },
+      egress,
+      origin,
+    );
+    if (!verdict.ok) {
+      throw new Error(`mcp_egress_denied:${server.id}:${verdict.reason}: ${verdict.detail}`);
+    }
+    return { server, origin, at: now().toISOString() };
+  };
+
+  for (const server of opts.servers) {
+    // A boot config that the egress policy refuses is a startup error, not a
+    // server quietly dropped: an operator who wrote both deserves to know they
+    // contradict rather than to find the tools missing later.
+    byId.set(server.id, admit(server, "env"));
   }
 
   const clients = new Map<string, McpClient>();
@@ -549,6 +663,43 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
     clients.set(server.id, client);
     return client;
   };
+
+  /**
+   * The policy check that runs before a socket, every time.
+   *
+   * Re-checked rather than trusted from attach time because the policy is read
+   * once at boot but a stored server outlives it: a config persisted while the
+   * worker was single-tenant must not keep its reach after the operator turned
+   * hosted mode on.
+   */
+  const ensureEgress = async (entry: Attached): Promise<void> => {
+    const target = {
+      transport: entry.server.transport,
+      ...(entry.server.url ? { url: entry.server.url } : {}),
+      envVars: externalMcpEnvVars(entry.server),
+    };
+    const verdict = checkMcpEgress(target, egress, entry.origin);
+    if (!verdict.ok) {
+      throw new Error(`mcp_egress_denied:${entry.server.id}:${verdict.reason}: ${verdict.detail}`);
+    }
+    if (!egress.hosted || !opts.lookup) return;
+    const resolved = await checkMcpEgressResolves(target, egress, opts.lookup);
+    if (!resolved.ok) {
+      throw new Error(
+        `mcp_egress_denied:${entry.server.id}:${resolved.reason}: ${resolved.detail}`,
+      );
+    }
+  };
+
+  /** The entry a subject is allowed to act on, or nothing. */
+  const entryFor = (id: string, subject: ExternalMcpCallContext = {}): Attached | undefined => {
+    const entry = byId.get(id);
+    if (!entry) return undefined;
+    return serverVisibleTo(entry.server, subject) ? entry : undefined;
+  };
+
+  const visibleEntries = (subject: ExternalMcpCallContext = {}): Attached[] =>
+    [...byId.values()].filter((entry) => serverVisibleTo(entry.server, subject));
 
   const records = new Map<string, ExternalMcpToolRecord>();
   const recordKey = (scope: ExternalMcpScope, server: string, tool: string): string =>
@@ -565,10 +716,14 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
     await opts.store?.saveExternalMcpTool(record);
   };
 
-  const refreshOne = async (server: ExternalMcpServer): Promise<ExternalMcpRefreshResult> => {
+  const refreshOne = async (entry: Attached): Promise<ExternalMcpRefreshResult> => {
+    const server = entry.server;
     const at = now().toISOString();
     let tools: McpDiscoveredTool[];
     try {
+      // Egress first: a server the policy will not reach must read as
+      // unreachable-with-a-reason, not as a server that publishes no tools.
+      await ensureEgress(entry);
       tools = await clientOf(server).listTools();
     } catch (err) {
       const error = err instanceof Error ? err.message : "mcp_refresh_failed";
@@ -668,9 +823,43 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
     });
   };
 
+  /** One server as it is safe to publish: policy and shape, never a credential. */
+  const viewOf = (entry: Attached, subject: ExternalMcpCallContext): ExternalMcpServerView => {
+    const server = entry.server;
+    const envVars = externalMcpEnvVars(server);
+    const found = discovery.get(server.id);
+    const tools = toolsOf(server, subject);
+    return {
+      id: server.id,
+      ...(server.title ? { title: server.title } : {}),
+      transport: server.transport,
+      origin: entry.origin,
+      ...(server.owner ? { owner: server.owner } : {}),
+      endpoint:
+        server.transport === "http"
+          ? (server.url ?? "")
+          : [server.command, ...(server.args ?? [])].join(" ").trim(),
+      timeoutMs: server.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
+      maxResponseBytes: server.maxResponseBytes ?? DEFAULT_MCP_MAX_RESPONSE_BYTES,
+      auth: {
+        kind: (server.auth ?? { kind: "none" as const }).kind,
+        envVars,
+        // Presence only, exactly as connectors report it: "is my token there?"
+        // is answerable without reading it, and a status surface that reads it
+        // is an exfiltration route.
+        ready: envVars.every((name) => Boolean(env[name]?.trim())),
+      },
+      tools,
+      blockedCount: tools.filter((t) => !t.enabled && t.present).length,
+      ...(found?.at ? { lastRefreshAt: found.at } : {}),
+      ...(found?.error ? { lastRefreshError: found.error } : {}),
+    };
+  };
+
   return {
-    list: () => [...byId.values()],
+    list: (subject) => visibleEntries(subject).map((entry) => entry.server),
     rules: () => [...records.values()],
+    egress: () => describeMcpEgress(egress),
     resolve: (server, tool, subject) =>
       resolveExternalTool(server, tool, [...records.values()], subject),
 
@@ -686,53 +875,27 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
     },
 
     toolNames: (subject = {}) =>
-      [...byId.values()].flatMap((server) => {
-        // A tool the server no longer publishes is dropped from the list — but
-        // only when there *is* a trustworthy list. With no successful discovery
-        // in this process, `present` is false for everything, and filtering on
-        // it would tell an operator their agent can call nothing while its
-        // flows call the allowlisted tools perfectly well.
-        const listed = discovery.get(server.id);
-        const trust = Boolean(listed && !listed.error);
-        return toolsOf(server, subject)
-          .filter((tool) => tool.enabled && (tool.present || !trust))
-          .map((tool) => externalToolName(server.id, tool.name));
-      }),
+      visibleEntries(subject)
+        .map((entry) => entry.server)
+        .flatMap((server) => {
+          // A tool the server no longer publishes is dropped from the list — but
+          // only when there *is* a trustworthy list. With no successful discovery
+          // in this process, `present` is false for everything, and filtering on
+          // it would tell an operator their agent can call nothing while its
+          // flows call the allowlisted tools perfectly well.
+          const listed = discovery.get(server.id);
+          const trust = Boolean(listed && !listed.error);
+          return toolsOf(server, subject)
+            .filter((tool) => tool.enabled && (tool.present || !trust))
+            .map((tool) => externalToolName(server.id, tool.name));
+        }),
 
-    describe: (subject = {}) =>
-      [...byId.values()].map((server) => {
-        const envVars = externalMcpEnvVars(server);
-        const found = discovery.get(server.id);
-        const tools = toolsOf(server, subject);
-        return {
-          id: server.id,
-          ...(server.title ? { title: server.title } : {}),
-          transport: server.transport,
-          endpoint:
-            server.transport === "http"
-              ? (server.url ?? "")
-              : [server.command, ...(server.args ?? [])].join(" ").trim(),
-          timeoutMs: server.timeoutMs ?? DEFAULT_MCP_TIMEOUT_MS,
-          maxResponseBytes: server.maxResponseBytes ?? DEFAULT_MCP_MAX_RESPONSE_BYTES,
-          auth: {
-            kind: (server.auth ?? { kind: "none" as const }).kind,
-            envVars,
-            // Presence only, exactly as connectors report it: "is my token
-            // there?" is answerable without reading it, and a status surface
-            // that reads it is an exfiltration route.
-            ready: envVars.every((name) => Boolean(env[name]?.trim())),
-          },
-          tools,
-          blockedCount: tools.filter((t) => !t.enabled && t.present).length,
-          ...(found?.at ? { lastRefreshAt: found.at } : {}),
-          ...(found?.error ? { lastRefreshError: found.error } : {}),
-        };
-      }),
+    describe: (subject = {}) => visibleEntries(subject).map((entry) => viewOf(entry, subject)),
 
-    setTool: async (rule) => {
+    setTool: async (rule, subject = {}) => {
       const errors = validateExternalMcpRule(rule);
       if (errors.length > 0) throw new Error(`invalid_mcp_tool_rule: ${errors.join("; ")}`);
-      if (!byId.has(rule.server)) throw new Error(`unknown_mcp_server:${rule.server}`);
+      if (!entryFor(rule.server, subject)) throw new Error(`unknown_mcp_server:${rule.server}`);
       const existing = records.get(recordKey(rule.scope, rule.server, rule.tool));
       const record: ExternalMcpToolRecord = {
         ...rule,
@@ -754,22 +917,23 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
       return existed;
     },
 
-    refresh: async (serverId) => {
+    refresh: async (serverId, subject = {}) => {
       const targets = serverId
-        ? [byId.get(serverId)].filter((s): s is ExternalMcpServer => Boolean(s))
-        : [...byId.values()];
+        ? [entryFor(serverId, subject)].filter((e): e is Attached => Boolean(e))
+        : visibleEntries(subject);
       if (serverId && targets.length === 0) throw new Error(`unknown_mcp_server:${serverId}`);
       const results: ExternalMcpRefreshResult[] = [];
-      for (const server of targets) results.push(await refreshOne(server));
+      for (const entry of targets) results.push(await refreshOne(entry));
       return results;
     },
 
-    ping: async (serverId) => {
-      const server = byId.get(serverId);
-      if (!server) throw new Error(`unknown_mcp_server:${serverId}`);
+    ping: async (serverId, subject = {}) => {
+      const entry = entryFor(serverId, subject);
+      if (!entry) throw new Error(`unknown_mcp_server:${serverId}`);
       const started = Date.now();
       try {
-        const tools = await clientOf(server).listTools();
+        await ensureEgress(entry);
+        const tools = await clientOf(entry.server).listTools();
         return { server: serverId, ok: true, ms: Date.now() - started, tools: tools.length };
       } catch (err) {
         return {
@@ -781,10 +945,71 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
       }
     },
 
+    attach: async (server) => {
+      const entry = admit(server, "runtime");
+      // Replacing means the old transport must go, or a live subprocess or
+      // session keeps answering for a config nobody has any more.
+      await clients
+        .get(server.id)
+        ?.close()
+        .catch(() => {});
+      clients.delete(server.id);
+      byId.set(server.id, entry);
+      await opts.store?.saveExternalMcpServer?.({
+        server,
+        origin: "runtime",
+        at: entry.at,
+      });
+      audit("ExternalMcpServerChanged", {
+        server: server.id,
+        action: "attached",
+        transport: server.transport,
+        // The endpoint is a decision, not a secret — and an operator reading
+        // the trail after an incident needs to know where this pointed.
+        ...(server.url ? { url: server.url } : {}),
+        ...(server.owner ? { owner: externalMcpScopeKey(server.owner) } : {}),
+        envVars: externalMcpEnvVars(server),
+      });
+      // Discovery on attach is what makes this "no restart" rather than "no
+      // restart, then wait an hour for the sweep". It admits nothing.
+      const refresh = await refreshOne(entry);
+      return { server: viewOf(entry, {}), refresh };
+    },
+
+    detach: async (serverId, subject = {}) => {
+      const entry = entryFor(serverId, subject);
+      if (!entry) return false;
+      if (entry.origin === "env") {
+        // Env is the source of truth for a boot config; forgetting it here
+        // would last exactly until the next restart and read as a bug.
+        throw new Error(`mcp_server_is_boot_config:${serverId}`);
+      }
+      byId.delete(serverId);
+      await clients
+        .get(serverId)
+        ?.close()
+        .catch(() => {});
+      clients.delete(serverId);
+      discovery.delete(serverId);
+      await opts.store?.removeExternalMcpServer?.(serverId);
+      // Tool records are deliberately kept: a server re-attached under the same
+      // id must not come back with a tool silently re-admitted, and a record
+      // for a server nobody has is inert.
+      audit("ExternalMcpServerChanged", {
+        server: serverId,
+        action: "detached",
+        ...(entry.server.owner ? { owner: externalMcpScopeKey(entry.server.owner) } : {}),
+      });
+      return true;
+    },
+
     call: async (name, args, ctx = {}) => {
       const parsed = parseExternalToolName(name);
-      const server = parsed ? byId.get(parsed.server) : undefined;
-      if (!parsed || !server) throw new Error(`unknown_external_mcp_tool:${name}`);
+      // A server this seat may not see reads exactly like one that does not
+      // exist. Saying "not yours" would confirm another workspace attached it.
+      const entry = parsed ? entryFor(parsed.server, ctx) : undefined;
+      if (!parsed || !entry) throw new Error(`unknown_external_mcp_tool:${name}`);
+      const server = entry.server;
       const { tool } = parsed;
 
       const policy = resolveExternalTool(server.id, tool, [...records.values()], ctx);
@@ -851,6 +1076,10 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
       const started = Date.now();
       let result: ExternalMcpCallResult;
       try {
+        // Re-checked here rather than trusted from attach: the policy is the
+        // last thing between an allowlisted tool and a socket the operator
+        // never meant this process to open.
+        await ensureEgress(entry);
         const raw = await clientOf(server).callTool(tool, args);
         result = {
           server: server.id,
@@ -894,6 +1123,26 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
 
     hydrate: async () => {
       if (!opts.store) return 0;
+      // Servers first: a tool record for a server nobody attached is inert, and
+      // the allowlist has to be in place before the first refresh sweep runs.
+      const servers = (await opts.store.loadExternalMcpServers?.()) ?? [];
+      for (const record of servers) {
+        // A boot config wins over a stored one under the same id: env is what
+        // the operator edits, and a stale row must not shadow it.
+        if (byId.get(record.server.id)?.origin === "env") continue;
+        try {
+          byId.set(record.server.id, admit(record.server, "runtime"));
+        } catch (err) {
+          // Kept out of the registry rather than dropped silently: a server the
+          // current policy refuses is exactly the one an operator needs told
+          // about, and admitting it would honour a policy that no longer holds.
+          audit("ExternalMcpServerChanged", {
+            server: record.server.id,
+            action: "refused",
+            error: err instanceof Error ? err.message : "mcp_server_unrestorable",
+          });
+        }
+      }
       const loaded = await opts.store.loadExternalMcpTools();
       for (const record of loaded) {
         records.set(recordKey(record.scope, record.server, record.tool), record);
@@ -906,6 +1155,90 @@ export function createExternalMcpRegistry(opts: ExternalMcpRegistryOptions): Ext
       clients.clear();
     },
   };
+}
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const asStringArray = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? (value as string[])
+    : undefined;
+
+/**
+ * Read a server config out of an untrusted body.
+ *
+ * Fields are copied one by one rather than spread: a caller that could set an
+ * arbitrary key on the config would be writing to whatever this module — or a
+ * later version of it — reads, and the transport is built from exactly these.
+ * `validateExternalMcpServer` then judges what came through.
+ */
+export function readExternalMcpServer(input: unknown): {
+  server?: ExternalMcpServer;
+  errors: string[];
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return { errors: ["a server config must be an object"] };
+  }
+  const raw = input as Record<string, unknown>;
+  const transport = raw.transport === "stdio" ? "stdio" : "http";
+  const authRaw = (raw.auth ?? {}) as Record<string, unknown>;
+  let auth: ExternalMcpAuth | undefined;
+  if (authRaw.kind === "bearer") {
+    auth = { kind: "bearer", tokenEnv: asString(authRaw.tokenEnv) ?? "" };
+  } else if (authRaw.kind === "header") {
+    auth = {
+      kind: "header",
+      header: asString(authRaw.header) ?? "",
+      valueEnv: asString(authRaw.valueEnv) ?? "",
+    };
+  } else if (authRaw.kind === "none") {
+    auth = { kind: "none" };
+  } else if (raw.auth !== undefined) {
+    return { errors: ["auth.kind must be none | bearer | header"] };
+  }
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries((raw.headers ?? {}) as Record<string, unknown>)) {
+    if (typeof value !== "string") return { errors: [`header "${name}" must be a string`] };
+    headers[name] = value;
+  }
+  const numeric = (key: "timeoutMs" | "maxResponseBytes"): number | undefined => {
+    const value = raw[key];
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+  };
+  const owner = raw.owner === undefined ? undefined : readExternalMcpScope(raw.owner);
+  if (raw.owner !== undefined && !owner) {
+    return { errors: ["owner must be workspace, crew:<ref>, or agent:<ref>"] };
+  }
+  const server: ExternalMcpServer = {
+    id: (asString(raw.id) ?? "").toLowerCase(),
+    transport,
+    ...(asString(raw.title) ? { title: asString(raw.title)! } : {}),
+    ...(asString(raw.url) ? { url: asString(raw.url)! } : {}),
+    ...(asString(raw.command) ? { command: asString(raw.command)! } : {}),
+    ...(asStringArray(raw.args) ? { args: asStringArray(raw.args)! } : {}),
+    ...(asString(raw.cwd) ? { cwd: asString(raw.cwd)! } : {}),
+    ...(asStringArray(raw.env) ? { env: asStringArray(raw.env)! } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(auth ? { auth } : {}),
+    ...(numeric("timeoutMs") ? { timeoutMs: numeric("timeoutMs")! } : {}),
+    ...(numeric("maxResponseBytes") ? { maxResponseBytes: numeric("maxResponseBytes")! } : {}),
+    ...(owner && owner.level !== "workspace" ? { owner } : {}),
+  };
+  const errors = validateExternalMcpServer(server);
+  return errors.length > 0 ? { errors } : { server, errors: [] };
+}
+
+/** `{ level, ref }` out of an untrusted body, or nothing when it is malformed. */
+export function readExternalMcpScope(input: unknown): ExternalMcpScope | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const raw = input as Record<string, unknown>;
+  if (raw.level === "workspace") return { level: "workspace" };
+  if (raw.level === "crew" || raw.level === "agent") {
+    const ref = asString(raw.ref);
+    return ref ? { level: raw.level, ref } : undefined;
+  }
+  return undefined;
 }
 
 /**

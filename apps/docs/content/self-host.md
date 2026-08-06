@@ -629,7 +629,7 @@ The mapping lives in the orchestrator's own store — Postgres when
 survives a restart and does not depend on you still having the plan file you
 installed from. `GET /org` then carries a `roleId` on every bound seat, and a
 seat renamed afterwards still resolves. Details, including what the record is
-*not*, are in [Crew blueprints](./crews.md#naming-the-seats).
+_not_, are in [Crew blueprints](./crews.md#naming-the-seats).
 
 `pnpm golden-path` goes further: it stands the whole stack up on Anvil, hires
 seats through real governance proposals, registers the `github` preset against a
@@ -666,10 +666,28 @@ lacrew mcp allow gh.search_issues --effect read   # admit one tool by name
 lacrew mcp servers                                # what is allowed, and what is not
 ```
 
-A **stdio** server is a subprocess of this orchestrator, so it is self-host
-territory — the hosted plane admits HTTP MCP first. Its child gets only the env
-vars you name in `env`, never this process's environment. Put egress controls
-around the worker: an attached server is a host your orchestrator now talks to.
+`LACREW_MCP_SERVERS` is re-read at every boot, so it is the right home for a
+server you own. To attach one **without a restart** — and have it persist —
+`lacrew mcp attach gh --endpoint https://… --token-env GH_MCP_TOKEN`. It admits
+nothing either: discovery runs at once and records every tool blocked.
+
+A **stdio** server is a subprocess of this orchestrator: code execution on this
+machine, which is a reasonable trade when you own it. Its child gets only the env
+vars you name in `env`, never this process's environment.
+
+If this orchestrator serves more than one workspace, say so with
+`LACREW_MCP_HOSTED=1`. Every default flips to deny: stdio is refused, loopback is
+refused, and an http server may only live on a host in
+`LACREW_MCP_ALLOW_HOSTS` — with no allowlist it reaches nothing. Private and
+link-local addresses are refused in both modes, allowlist or not, because an
+orchestrator can reach your database and your cloud's metadata service and an
+attached URL is a request it makes on somebody else's say-so.
+
+```bash
+export LACREW_MCP_HOSTED=1
+export LACREW_MCP_ALLOW_HOSTS='mcp.example.com,*.tools.example.com'
+export LACREW_MCP_ALLOW_ENV='TENANT_MCP_*'   # env names a runtime attach may read
+```
 
 ## Plan-required mode
 

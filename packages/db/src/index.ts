@@ -98,7 +98,11 @@ export {
   upsertExternalMcpTool,
   deleteExternalMcpTool,
   listExternalMcpTools,
+  upsertExternalMcpServer,
+  deleteExternalMcpServer,
+  listExternalMcpServers,
   type ExternalMcpToolRow,
+  type ExternalMcpServerRow,
 } from "./mcp.js";
 export {
   upsertPlanRequirement,

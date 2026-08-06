@@ -294,6 +294,17 @@ export type ProtocolEventType =
    */
   | "ExternalMcpToolPolicyChanged"
   /**
+   * An external MCP server was attached, replaced, or detached at runtime, or
+   * refused when a stored one was restored (F2.30).
+   *
+   * Attaching a server is naming a third party the orchestrator will talk to,
+   * which is a bigger decision than admitting one of its tools and the one that
+   * has to be answerable first: the row carries the endpoint, the transport,
+   * the scope that attached it, and the env var *names* the config reads —
+   * never a value.
+   */
+  | "ExternalMcpServerChanged"
+  /**
    * A crew's inference cost budget was created, edited, enabled, disabled or
    * removed (F2.28).
    *

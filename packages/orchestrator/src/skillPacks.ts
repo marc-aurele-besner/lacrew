@@ -72,11 +72,21 @@ export type SkillPackInstallReport = {
   layers: BriefLayer[];
 };
 
+/**
+ * Whose tools a requirements check is about.
+ *
+ * A `lacrew_*` tool is the same for everyone, but an external MCP tool is
+ * admitted per seat: on a shared orchestrator the process-wide list is some
+ * other workspace's answer. Omitted, the check reads the process default —
+ * which is the right answer for a self-host and the wrong one to guess with.
+ */
+export type SkillPackSubject = { principal?: string; managers?: Iterable<string> };
+
 export type SkillPacksSurface = {
   /** What is registered here, for a requirements check or a library listing. */
-  availability(): Promise<SkillPackAvailability>;
+  availability(subject?: SkillPackSubject): Promise<SkillPackAvailability>;
   /** Unmet requirements for one pack; empty arrays mean it can be installed. */
-  check(pack: SkillPack): Promise<MissingRequirements>;
+  check(pack: SkillPack, subject?: SkillPackSubject): Promise<MissingRequirements>;
   install(
     agent: `0x${string}`,
     pack: SkillPack,
@@ -92,11 +102,18 @@ export type SkillPacksDeps = {
   listFlowIds: () => Promise<string[]>;
   /** Registered connector ids and their `<connector>.<route>` tool names. */
   listConnectors: () => { ids: string[]; tools: string[] };
-  listMcpTools: () => string[];
+  /**
+   * Callable tool names for one subject: the first-party `lacrew_*` set plus
+   * whatever external MCP tools that seat is allowed to call. Not the servers'
+   * tool lists — a tool nobody admitted is not a tool this pack can use.
+   */
+  listMcpTools: (subject?: SkillPackSubject) => string[];
+  /** The agent a pack is being installed onto, as a requirements subject. */
+  subjectFor?: (agent: `0x${string}`) => Promise<SkillPackSubject>;
 };
 
 export function createSkillPacksSurface(deps: SkillPacksDeps): SkillPacksSurface {
-  const availability = async (): Promise<SkillPackAvailability> => {
+  const availability = async (subject?: SkillPackSubject): Promise<SkillPackAvailability> => {
     // A registry that cannot be read is reported as empty rather than skipped:
     // `missingRequirements` treats an absent dimension as nothing registered,
     // so a probe failure refuses the install instead of waving it through.
@@ -111,19 +128,23 @@ export function createSkillPacksSurface(deps: SkillPacksDeps): SkillPacksSurface
       flows,
       connectors: connectors.ids,
       connectorTools: connectors.tools,
-      mcpTools: deps.listMcpTools(),
+      mcpTools: deps.listMcpTools(subject),
     };
   };
 
-  const check = async (pack: SkillPack): Promise<MissingRequirements> =>
-    missingRequirements(pack, await availability());
+  const check = async (pack: SkillPack, subject?: SkillPackSubject) =>
+    missingRequirements(pack, await availability(subject));
 
   return {
     availability,
     check,
 
     async install(agent, pack, opts = {}) {
-      const missing = await check(pack);
+      // Checked as the agent being installed onto, not as the process: a pack
+      // naming `mcp__gh__search_issues` must be refused when *this* seat cannot
+      // call it, even where another workspace on the same orchestrator can.
+      const subject = (await deps.subjectFor?.(agent)) ?? { principal: agent };
+      const missing = await check(pack, subject);
       if (hasMissingRequirements(missing)) throw new SkillPackRequirementsError(pack.id, missing);
 
       const before = deps.runtime.agentBrief(agent)?.layers ?? [];
