@@ -14,6 +14,7 @@
  */
 
 import { crewSampleInputText, crewSampleRun } from "./crewSamples.js";
+import { evalAddress } from "./evals.js";
 import type { FlowEvalScenario } from "./evals.js";
 
 /**
@@ -23,6 +24,37 @@ import type { FlowEvalScenario } from "./evals.js";
  * after the fixture drifted into a brief the flow reads badly.
  */
 const CONTENT_STUDIO_BRIEF = crewSampleInputText(crewSampleRun("content-studio")!);
+
+/**
+ * The account `risk-watch`'s `desk-executor` reference resolves to.
+ *
+ * Derived from the *desk's* seed rather than written down here, so the
+ * assertion is that the halt named the address the desk's executor holds
+ * everywhere else in this suite — not an address this file made up, which would
+ * match whatever the binding happened to produce.
+ */
+const DESK_EXECUTOR = evalAddress("defi-desk:crew:executor");
+
+/** A stable that has lost its peg, as the price route returns one. */
+const depegPrice = {
+  ok: true,
+  status: 200,
+  body: { "ethena-usde": { usd: 0.94 } },
+};
+
+/** The protocol's TVL, mid-outflow. */
+const protocolTvl = {
+  ok: true,
+  status: 200,
+  body: { name: "Ethena", tvl: 1_900_000_000, change_1d: -31.4 },
+};
+
+/** Chain totals, so "money is leaving" is separable from "money is leaving everywhere". */
+const chainTotals = {
+  ok: true,
+  status: 200,
+  body: [{ name: "Ethereum", tvl: 61_000_000_000, change_1d: -1.2 }],
+};
 
 /** A dependency-bump pull request, as the GitHub connector would return one. */
 const botPullRequest = {
@@ -579,6 +611,77 @@ const scenarios: FlowEvalScenario[] = [
       notRan: ["rationale", "instruction", "abstain-note"],
       port: { route: "human-note" },
       notCalled: ["lacrew_governance", "lacrew_propose_intent"],
+    },
+  },
+  /* --------------------------------------------------------------- *
+   * Protocol risk watch — the halt that crosses a crew boundary.
+   *
+   * The seat this deactivates is not a run input any more: it is the
+   * blueprint's declared `desk-executor` reference, bound at install
+   * to the desk crew's own executor. The scenario asserts the address
+   * the halt named, because "it deactivated something" is exactly the
+   * claim the run input version could also make.
+   * --------------------------------------------------------------- */
+  {
+    id: "risk-watch/depeg-halts-the-bound-desk-seat",
+    describe:
+      "A depeg deactivates the desk executor the blueprint's external reference resolved to, and the alert says the seat is only a proposal away from stopping. No address was handed to the run.",
+    flow: "risk-sweep",
+    blueprint: "risk-watch",
+    asAgent: "risk-lead",
+    input: { ids: "ethena-usde", protocol: "ethena" },
+    mocks: {
+      tools: {
+        "coingecko.simple_price": { result: depegPrice },
+        "defillama.get_protocol_tvl": { result: protocolTvl },
+        "defillama.list_chains": { result: chainTotals },
+      },
+      model: [{ when: "DEPEG, FLIGHT, PARAM, or CLEAR", reply: "DEPEG" }],
+    },
+    expect: {
+      status: "completed",
+      ran: ["price", "tvl", "chains", "org", "assess", "route", "halt-sibling", "notify"],
+      notRan: ["clear-note", "escalate-note"],
+      port: { route: "halt-sibling", "halt-sibling": "notify" },
+      // Once. A watch that proposed the same deactivation twice would read as
+      // two independent findings to whoever votes on them.
+      called: { lacrew_org_action: 1 },
+      // The assertion the whole issue is about: the seat that was named.
+      auditIncludes: [DESK_EXECUTOR],
+      // Detection, not remediation — no venue is admitted and none is reached.
+      notCalled: ["lacrew_propose_intent"],
+    },
+  },
+  {
+    id: "risk-watch/all-clear-halts-nobody",
+    describe:
+      "The peg holds, so the sweep logs what it read and the desk's executor is left alone. The reference being bound is not a licence to use it.",
+    flow: "risk-sweep",
+    blueprint: "risk-watch",
+    asAgent: "risk-lead",
+    input: { ids: "ethena-usde", protocol: "ethena" },
+    mocks: {
+      tools: {
+        "coingecko.simple_price": {
+          result: { ok: true, status: 200, body: { "ethena-usde": { usd: 1.0 } } },
+        },
+        "defillama.get_protocol_tvl": {
+          result: {
+            ok: true,
+            status: 200,
+            body: { name: "Ethena", tvl: 5_400_000_000, change_1d: -0.4 },
+          },
+        },
+        "defillama.list_chains": { result: chainTotals },
+      },
+      model: [{ when: "DEPEG, FLIGHT, PARAM, or CLEAR", reply: "CLEAR" }],
+    },
+    expect: {
+      status: "completed",
+      ran: ["assess", "route", "clear-note"],
+      notRan: ["halt-sibling", "notify"],
+      port: { route: "clear-note" },
+      notCalled: ["lacrew_org_action"],
     },
   },
 ];

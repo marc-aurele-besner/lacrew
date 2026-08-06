@@ -236,17 +236,29 @@ export function evalAddress(seed: string): string {
   return `0x${out}`;
 }
 
-/** Every seat, target, and dedicated policy of a blueprint, as fake addresses. */
+/**
+ * Every seat, target, dedicated policy and external reference of a blueprint,
+ * as fake addresses.
+ *
+ * External references are derived here from the *sibling* blueprint's own seed,
+ * so a scenario asserting "the halt named the desk's executor" is comparing
+ * against the address that blueprint's executor gets everywhere else in the
+ * suite, rather than a fresh number that would match by construction.
+ */
 export function evalCrewBindings(bp: CrewBlueprint): Required<CrewBindings> {
   const roles: Record<string, string> = {};
   const targets: Record<string, string> = {};
   const policies: Record<string, string> = {};
+  const external: Record<string, string> = {};
   for (const role of bp.roles) {
     roles[role.id] = evalAddress(`${bp.id}:crew:${role.id}`);
     if (role.dedicatedPolicy) policies[role.id] = evalAddress(`${bp.id}:policy:${role.id}`);
   }
   for (const target of bp.targets) targets[target.id] = evalAddress(`${bp.id}:target:${target.id}`);
-  return { roles, targets, policies };
+  for (const seat of bp.externalSeats ?? []) {
+    external[seat.id] = evalAddress(`${seat.crewBlueprintId ?? bp.id}:crew:${seat.roleId}`);
+  }
+  return { roles, targets, policies, external };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -349,6 +361,10 @@ function createEvalBackend(
         case "lacrew_org_action":
           return verdictResult(policy(args.target as string | undefined), {
             action: String(args.action ?? ""),
+            // Recorded because *which* node an org action names is the whole
+            // claim of a cross-crew halt: a scenario has to be able to assert
+            // the seat that was deactivated, not just that one was.
+            ...(args.node ? { node: String(args.node) } : {}),
           });
         case "lacrew_set_budget":
           return verdictResult(policy(args.node as string | undefined), {
@@ -486,11 +502,14 @@ function prepare(scenario: FlowEvalScenario): Prepared {
     };
   }
 
-  const derived = bp ? evalCrewBindings(bp) : { roles: {}, targets: {}, policies: {} };
+  const derived = bp
+    ? evalCrewBindings(bp)
+    : { roles: {}, targets: {}, policies: {}, external: {} };
   const bindings: CrewBindings = {
     roles: { ...derived.roles, ...scenario.bindings?.roles },
     targets: { ...derived.targets, ...scenario.bindings?.targets },
     policies: { ...derived.policies, ...scenario.bindings?.policies },
+    external: { ...derived.external, ...scenario.bindings?.external },
   };
   try {
     def = bindCrewFlow(def, bindings);

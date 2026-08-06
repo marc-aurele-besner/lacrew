@@ -496,7 +496,7 @@ const depFixLoop: FlowTemplate = {
     .model("patch", {
       label: "Write the patch",
       system:
-        "You repair a CI failure on a dependency-bump branch. Reply with a JSON array and nothing else: [{\"path\":\"src/index.ts\",\"content\":\"<the complete new file>\"}]. Each entry replaces that file in full, so only include a file whose current contents you were given, and change nothing the failure does not require. No fences, no commentary.",
+        'You repair a CI failure on a dependency-bump branch. Reply with a JSON array and nothing else: [{"path":"src/index.ts","content":"<the complete new file>"}]. Each entry replaces that file in full, so only include a file whose current contents you were given, and change nothing the failure does not require. No fences, no commentary.',
       prompt:
         "Budget cleared: {{steps.patch-budget.json}}\nFailure: {{input}}\nDiagnosis: {{steps.diagnose.text}}\nWhat the bump changed: {{steps.read-changed.json.body}}\nCurrent {{input.path}} on {{input.branch}}: {{steps.read-source.json.body}}\n\nReply with the JSON array of files to write.",
       next: "read-head",
@@ -986,11 +986,14 @@ const yieldRotationCheck: FlowTemplate = {
 /* ------------------------------------------------------------------ *
  * Protocol risk watch (author-drafted pattern)
  *
- * The sibling crew's executor arrives as a run input rather than a
- * `{{crew.*}}` placeholder. A seat in another crew is not a role this
- * blueprint has, and binding cannot resolve one it does not own — so the
- * account this sweep may halt is handed to it, which is also the more
- * honest shape: the crew is given the authority, it does not assume it.
+ * The seat this sweep may halt belongs to another crew, so it is not a
+ * `{{crew.*}}` placeholder — the blueprint does not own it. It is
+ * `{{external.desk-executor}}`: a reference the blueprint *declares*
+ * (`externalSeats`), resolved at install time against the desk crew the
+ * workspace actually has. The crew is still given the authority rather
+ * than assuming it; what changed is that the account is now derived from
+ * a seat somebody hired instead of pasted into a run input where nothing
+ * could check it was the one intended.
  * ------------------------------------------------------------------ */
 
 const riskSweep: FlowTemplate = {
@@ -1002,7 +1005,7 @@ const riskSweep: FlowTemplate = {
   author: "LaCrew",
   definition: flow("risk-sweep", "Risk: protocol sweep")
     .describe(
-      'Run input is JSON: {"ids":"…","protocol":"…","executor":"0x…"} — the coin ids to price, the protocol to read TVL for, and the account to deactivate if this goes bad. The executor is an input because it belongs to another crew, and a blueprint can only bind seats it owns.',
+      'Run input is JSON: {"ids":"…","protocol":"…"} — the coin ids to price and the protocol to read TVL for. The seat this halts is not an input: it is the blueprint\'s declared `desk-executor` reference, bound at install to the executor of the desk crew this watch was installed beside, so a run cannot be aimed at an account nobody hired.',
     )
     .trigger("cron")
     .schedule("*/30 * * * *")
@@ -1047,9 +1050,9 @@ const riskSweep: FlowTemplate = {
       onDefault: "halt-sibling",
     })
     .org("halt-sibling", {
-      label: "Deactivate the seat that trades it",
+      label: "Deactivate the desk seat that trades it",
       action: "deactivate",
-      node: "{{input.executor}}",
+      node: "{{external.desk-executor}}",
       onAllow: "notify",
       onEscalate: "notify",
       onDeny: "escalate-note",

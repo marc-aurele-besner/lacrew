@@ -176,6 +176,43 @@ export type CrewConnectorNeed = {
   note: string;
 };
 
+/**
+ * A seat in **another** crew that this crew's flows may act on.
+ *
+ * A blueprint binds its own seats with `{{crew.<roleId>}}`, and validation
+ * rejects a placeholder naming a seat it does not own — correctly, because the
+ * blueprint has no idea what that role is or whether it exists. But a watchdog
+ * whose whole job is to stop somebody else's executor has to name that account
+ * somehow, and the shape it reached for was a run input: a free-form address,
+ * checked by nobody, that the flow deactivates on sight.
+ *
+ * Declaring the reference is what makes it checkable. The blueprint says *which
+ * seat of which crew* it expects — `{ crewBlueprintId: "defi-desk", roleId:
+ * "executor" }` — and the address comes from resolving that against the crews
+ * the workspace actually has (`resolveExternalSeats`). Nothing is typed, so
+ * nothing can be mistyped; a reference that resolves to no seat, or to two,
+ * binds nothing and stops the install rather than halting a plausible stranger.
+ *
+ * A declaration is not authority. Whoever installs this crew beside the desk is
+ * the one handing over the ability to deactivate that seat, and the chain still
+ * decides whether the deactivation lands.
+ */
+export type CrewExternalSeat = {
+  /** Reference id, used in flows as `{{external.<id>}}`. */
+  id: string;
+  label: string;
+  /**
+   * Blueprint the sibling crew is expected to be installed from. Present when
+   * the blueprint knows the shape of the crew it works beside, which is what
+   * lets resolution refuse a seat that merely happens to share a role id.
+   */
+  crewBlueprintId?: string;
+  /** Role id of the seat inside that crew. */
+  roleId: string;
+  /** What this crew will do with it, in the operator's terms. */
+  authority: string;
+};
+
 export type CrewBlueprint = {
   id: string;
   name: string;
@@ -206,6 +243,12 @@ export type CrewBlueprint = {
   externalScopes: CrewExternalScope[];
   /** Connectors the crew's flows call. Empty means the crew never leaves LaCrew. */
   connectors: CrewConnectorNeed[];
+  /**
+   * Seats in other crews this crew's flows act on, declared so the binding can
+   * be resolved and checked instead of pasted. Omitted by every crew that only
+   * ever touches its own org.
+   */
+  externalSeats?: CrewExternalSeat[];
   escalation: CrewEscalation[];
   governance: CrewGovernanceRule[];
   guardrails: CrewGuardrail[];
@@ -289,12 +332,29 @@ export function crewMonthlyGrantUsd(bp: CrewBlueprint): number {
 }
 
 /**
+ * What validation can check beyond the blueprint in front of it.
+ *
+ * An external seat names a role in *another* blueprint, and whether that role
+ * exists is a fact about the catalog rather than about this document. Passing
+ * the catalog turns "risk-watch expects defi-desk's executor" from prose into a
+ * checked claim; omitting it leaves the reference structurally valid and
+ * unresolved, which is what a caller holding one blueprint can honestly say.
+ */
+export type CrewValidationOptions = {
+  /** Blueprints an external reference may name. Omitted skips that check. */
+  crews?: readonly CrewBlueprint[];
+};
+
+/**
  * Structural validation. A blueprint that fails here would stand up an org whose
  * escalation ladder dead-ends, whose seats can pay targets nobody listed, or
  * whose flows do not exist — all of which surface as confusing chain reverts
  * long after the mistake was made.
  */
-export function validateCrewBlueprint(bp: CrewBlueprint): CrewValidationResult {
+export function validateCrewBlueprint(
+  bp: CrewBlueprint,
+  options: CrewValidationOptions = {},
+): CrewValidationResult {
   const errors: string[] = [];
   if (!bp.id?.trim()) errors.push("blueprint id is required");
   if (!bp.name?.trim()) errors.push("blueprint name is required");
@@ -373,6 +433,64 @@ export function validateCrewBlueprint(bp: CrewBlueprint): CrewValidationResult {
     }
   }
 
+  // External seats: a reference to somebody else's crew has to be declared, and
+  // a declaration has to be reachable. Held in both directions for the same
+  // reason the connector rules are — an undeclared `{{external.*}}` renders as
+  // an empty account at run time, and a declared reference nothing uses asks an
+  // operator to hand over authority over a seat for no reason.
+  const externalById = new Map<string, CrewExternalSeat>();
+  for (const seat of bp.externalSeats ?? []) {
+    if (!seat.id?.trim()) errors.push("every external seat needs an id");
+    else if (externalById.has(seat.id)) errors.push(`duplicate external seat id "${seat.id}"`);
+    else externalById.set(seat.id, seat);
+    if (!seat.roleId?.trim()) errors.push(`external seat "${seat.id}" needs a role id`);
+    if (!seat.label?.trim()) errors.push(`external seat "${seat.id}" needs a label`);
+    // Without this the install form asks for authority over another crew's seat
+    // and cannot say what it is for.
+    if (!seat.authority?.trim()) {
+      errors.push(`external seat "${seat.id}" must state what this crew does with it`);
+    }
+    if (seat.crewBlueprintId === bp.id) {
+      errors.push(
+        `external seat "${seat.id}" names this blueprint — a seat this crew owns binds as {{crew.${seat.roleId}}}`,
+      );
+    }
+    // A reference nothing can resolve fails closed at install, which is a worse
+    // place to learn that a role id was renamed in the sibling blueprint.
+    const sibling = seat.crewBlueprintId
+      ? options.crews?.find((c) => c.id === seat.crewBlueprintId)
+      : undefined;
+    if (seat.crewBlueprintId && options.crews && !sibling) {
+      errors.push(`external seat "${seat.id}" names unknown blueprint "${seat.crewBlueprintId}"`);
+    }
+    if (sibling && !sibling.roles.some((r) => r.id === seat.roleId)) {
+      errors.push(
+        `external seat "${seat.id}" names role "${seat.roleId}", which "${sibling.id}" does not have`,
+      );
+    }
+  }
+
+  const externalUsed = new Set<string>();
+  for (const flowId of bp.flows ?? []) {
+    const def = getFlowTemplate(flowId)?.definition;
+    if (!def) continue;
+    for (const ref of crewFlowPlaceholders(def)) {
+      const [kind, id] = ref.split(".") as [string, string];
+      if (kind !== "external") continue;
+      externalUsed.add(id);
+      if (!externalById.has(id)) {
+        errors.push(
+          `flow "${flowId}" binds "{{external.${id}}}", which the blueprint does not declare as an external seat`,
+        );
+      }
+    }
+  }
+  for (const seat of externalById.values()) {
+    if (!externalUsed.has(seat.id)) {
+      errors.push(`external seat "${seat.id}" is declared but no shipped flow binds it`);
+    }
+  }
+
   // Reporting lines: every seat reaches the human root, and only managers manage.
   for (const role of bp.roles ?? []) {
     if (role.reportsTo === "root") continue;
@@ -435,9 +553,25 @@ export function validateCrewBlueprint(bp: CrewBlueprint): CrewValidationResult {
  * Binding: blueprint flows reference seats and targets by id, not address.
  * ------------------------------------------------------------------------- */
 
-const PLACEHOLDER = /\{\{\s*(crew|target)\.([\w-]+)\s*\}\}/g;
+const PLACEHOLDER = /\{\{\s*(crew|target|external)\.([\w-]+)\s*\}\}/g;
 
-/** Placeholders a flow still needs bound, as `crew.<roleId>` / `target.<targetId>`. */
+/**
+ * Whether a string still carries a reference an install was supposed to resolve.
+ *
+ * Its own non-global copy: `.test` on a `/g` regex carries `lastIndex` between
+ * calls, and a matcher that answers differently the second time it is asked is
+ * not one to guard an org action with.
+ */
+const UNBOUND = /\{\{\s*(crew|target|external)\.[\w-]+\s*\}\}/;
+
+export function hasCrewPlaceholder(value: string): boolean {
+  return UNBOUND.test(value);
+}
+
+/**
+ * Placeholders a flow still needs bound, as `crew.<roleId>`,
+ * `target.<targetId>` or `external.<refId>`.
+ */
 export function crewFlowPlaceholders(def: FlowDefinition): string[] {
   const found = new Set<string>();
   const walk = (value: unknown): void => {
@@ -464,10 +598,17 @@ export type CrewBindings = {
   targets?: Record<string, string>;
   /** Role id → the policy stack deployed for a seat that needs its own. */
   policies?: Record<string, string>;
+  /**
+   * External seat id → the account of the sibling crew's seat it resolved to.
+   * Produced by `resolveExternalSeats`, never typed in: the point of declaring
+   * the reference is that the address is derived from a seat somebody hired.
+   */
+  external?: Record<string, string>;
 };
 
 /**
- * Resolve a crew flow's `{{crew.*}}` / `{{target.*}}` placeholders to addresses.
+ * Resolve a crew flow's `{{crew.*}}` / `{{target.*}}` / `{{external.*}}`
+ * placeholders to addresses.
  *
  * Throws on anything unbound rather than leaving the placeholder in place: the
  * run-time interpolator renders an unknown reference as an empty string, which
@@ -477,7 +618,8 @@ export type CrewBindings = {
 export function bindCrewFlow(def: FlowDefinition, bindings: CrewBindings): FlowDefinition {
   const missing = new Set<string>();
   const resolve = (kind: string, id: string): string => {
-    const table = kind === "crew" ? bindings.roles : bindings.targets;
+    const table =
+      kind === "crew" ? bindings.roles : kind === "external" ? bindings.external : bindings.targets;
     const hit = table?.[id];
     if (!hit) {
       missing.add(`${kind}.${id}`);
@@ -669,7 +811,13 @@ export function crewPlan(bp: CrewBlueprint, bindings: CrewBindings = {}): CrewPl
     const placeholders = def ? crewFlowPlaceholders(def) : [];
     const unbound = placeholders.filter((p) => {
       const [kind, id] = p.split(".") as [string, string];
-      return !(kind === "crew" ? bindings.roles?.[id] : bindings.targets?.[id]);
+      const table =
+        kind === "crew"
+          ? bindings.roles
+          : kind === "external"
+            ? bindings.external
+            : bindings.targets;
+      return !table?.[id];
     });
     push({
       kind: "install-flow",

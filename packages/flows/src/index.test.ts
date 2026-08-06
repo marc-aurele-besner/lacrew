@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { flow } from "./builder.js";
 import { flowRunSnippet, flowToCode } from "./codegen.js";
+import { bindCrewFlow, crewFlowPlaceholders } from "./crews.js";
 import { createMockFlowBackend, interpolate, runFlow } from "./run.js";
 import { flowTemplates } from "./templates.js";
 import { validateFlow } from "./validate.js";
@@ -182,12 +183,36 @@ test("runFlow rejects invalid definitions with a trace, not a throw", async () =
   assert.ok(run.steps[0]!.error?.includes("unknown step"));
 });
 
+/**
+ * Stand-in addresses for a template's seat, target and external references.
+ *
+ * A template carrying `{{crew.executor}}` is an install-time artifact rather
+ * than a runnable definition — `bindCrewFlow` resolves those at install and the
+ * runtime refuses an org action still carrying one. Running the raw template
+ * would assert that an unbound flow works, which is the thing that must not.
+ */
+function boundForRun(def: FlowDefinition): FlowDefinition {
+  const refs = crewFlowPlaceholders(def);
+  if (refs.length === 0) return def;
+  const table = (kind: string): Record<string, string> =>
+    Object.fromEntries(
+      refs
+        .filter((ref) => ref.startsWith(`${kind}.`))
+        .map((ref, i) => [ref.slice(kind.length + 1), `0x${String(i + 1).padStart(40, "a")}`]),
+    );
+  return bindCrewFlow(def, {
+    roles: table("crew"),
+    targets: table("target"),
+    external: table("external"),
+  });
+}
+
 test("all shipped templates validate and run on the mock backend", async () => {
   assert.ok(flowTemplates.length >= 4);
   for (const tpl of flowTemplates) {
     const check = validateFlow(tpl.definition);
     assert.ok(check.ok, `${tpl.id}: ${check.errors.join("; ")}`);
-    const run = await runFlow(tpl.definition, createMockFlowBackend(), {
+    const run = await runFlow(boundForRun(tpl.definition), createMockFlowBackend(), {
       input: "unit test",
       mocked: true,
     });

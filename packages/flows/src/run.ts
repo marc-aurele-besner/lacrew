@@ -1,3 +1,4 @@
+import { hasCrewPlaceholder } from "./crews.js";
 import type {
   FlowAttempt,
   FlowAttemptOutcome,
@@ -176,6 +177,23 @@ export function interpolate(template: string, ctx: { input?: string; steps: Step
     if (into?.[1] && into[2]) return stepField(into[1], into[2]);
     return "";
   });
+}
+
+/**
+ * Refuse an org or budget call whose subject is still a crew reference.
+ *
+ * `{{crew.executor}}` / `{{external.desk-executor}}` are bound at install
+ * (`bindCrewFlow`), which throws on anything unbound. A definition that reached
+ * the runtime with one intact was saved some other way — by hand, by an older
+ * install, by an editor — and `interpolate` would render it as an empty string,
+ * which is an account. Deactivating, capping or funding "" is not a no-op worth
+ * finding out about from a chain revert, so the step stops and names the
+ * reference nobody bound.
+ */
+function requireBound(step: string, field: string, template: string | undefined): void {
+  if (template && hasCrewPlaceholder(template)) {
+    throw new Error(`unbound_crew_placeholder:${step}.${field}:${template.trim()}`);
+  }
 }
 
 function interpolateArgs(
@@ -568,6 +586,9 @@ export async function runFlow(
           break;
         }
         case "org": {
+          requireBound(step.id, "node", step.node);
+          requireBound(step.id, "parent", step.parent);
+          requireBound(step.id, "target", step.target);
           const result = (await backend.callTool("lacrew_org_action", {
             action: step.action,
             ...(step.node ? { node: interpolate(step.node, ctx) } : {}),
@@ -584,6 +605,7 @@ export async function runFlow(
           break;
         }
         case "budget": {
+          requireBound(step.id, "node", step.node);
           const result = (await backend.callTool("lacrew_set_budget", {
             action: step.action,
             ...(step.node ? { node: interpolate(step.node, ctx) } : {}),

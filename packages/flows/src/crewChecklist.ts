@@ -74,6 +74,17 @@ export type CrewChecklistFacts = {
   installedFlows: readonly string[] | null;
   /** Flow definition ids the blueprint ships. Empty when it ships none. */
   blueprintFlows: readonly string[];
+  /**
+   * External seat references the blueprint declares that nothing has bound —
+   * the labels, not the ids, since this is read by whoever has to decide which
+   * sibling crew this one may act on.
+   *
+   * A flow naming an unbound reference cannot be installed at all
+   * (`bindCrewFlow` throws), so leaving this out would report the flows step as
+   * blocked on seats and addresses and send an operator to check the two things
+   * that are fine. Empty or omitted means nothing is outstanding.
+   */
+  externalUnbound?: readonly string[];
   /** Runs recorded for this workspace. */
   runs: number | null;
   /** Messages in this crew's thread. */
@@ -295,12 +306,23 @@ function flowsStep(facts: CrewChecklistFacts): CrewCheck {
   */
   const blockedOnSeats = facts.seats.withAccount === 0;
   const count = `${installed.length} of ${facts.blueprintFlows.length} installed`;
+  /*
+    An unbound external reference leads, because it is the one outstanding
+    answer that is about another crew: the operator has to say which sibling
+    seat this crew may act on, and until they do the flow that acts on it
+    cannot be saved. Reporting it as a missing address would send them looking
+    for something to paste, which is the shape this replaced.
+  */
+  const unbound = facts.externalUnbound ?? [];
   return {
     id: "flows",
     title: "Flows",
-    detail: blockedOnSeats
-      ? `${count}. Flows bind to seat addresses, so they cannot be installed until at least one hire has executed.`
-      : `${count}. Install flows binds the rest to the seats and to the addresses this crew spends against.`,
+    detail:
+      unbound.length > 0
+        ? `${count}. ${unbound.join(", ")} ${unbound.length === 1 ? "is" : "are"} not bound to a seat in another crew yet, and a flow that acts on one cannot be installed until it is.`
+        : blockedOnSeats
+          ? `${count}. Flows bind to seat addresses, so they cannot be installed until at least one hire has executed.`
+          : `${count}. Install flows binds the rest to the seats and to the addresses this crew spends against.`,
     state: "blocked",
   };
 }
