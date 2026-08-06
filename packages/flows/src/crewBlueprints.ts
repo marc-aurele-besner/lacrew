@@ -2003,6 +2003,16 @@ const riskWatch: CrewBlueprint = {
       note: "Reserve caps, LTV and liquidation thresholds — the parameter drift the event watch is looking for on a lending protocol. Public, no credential. Not called by the shipped sweep, which reads price and TVL.",
     },
   ],
+  externalSeats: [
+    {
+      id: "desk-executor",
+      label: "The desk seat this watch may halt",
+      crewBlueprintId: "defi-desk",
+      roleId: "executor",
+      authority:
+        "Deactivating the executor of the trading desk this watch was installed beside, when a protocol it trades goes bad. Reversible, and a proposal whenever policy escalates it — but it stops a crew that is working, so the account is resolved from the desk's own hired seat rather than typed in.",
+    },
+  ],
   externalScopes: [
     {
       id: "data-keys",
@@ -2014,7 +2024,7 @@ const riskWatch: CrewBlueprint = {
       id: "sibling-authority",
       label: "Authority over another crew's seat",
       boundary:
-        "Granted by whoever passes this crew an executor address to halt. LaCrew bounds whether the deactivation lands; it does not decide whose seat was handed over.",
+        "Granted at install by whoever binds the `desk-executor` reference to a desk crew in the workspace. LaCrew resolves which account that is and bounds whether the deactivation lands; it does not decide whose crew should be haltable.",
     },
   ],
   escalation: [
@@ -2056,7 +2066,7 @@ const riskWatch: CrewBlueprint = {
     {
       never: "A flagged protocol keeps being traded by a sibling crew",
       enforcedBy: "escalation",
-      how: "The sweep proposes deactivating the seat that trades it. Deactivation is reversible, so the flow reaches for it rather than for firing anyone.",
+      how: "The sweep proposes deactivating the seat that trades it — the desk executor the `desk-executor` reference was bound to at install, not an address a run was handed. Deactivation is reversible, so the flow reaches for it rather than for firing anyone.",
       residualRisk:
         "Deactivation is a proposal whenever policy escalates it, so the sibling crew keeps trading until somebody votes. The gap between the flag and the vote is the exposure, and the alert names which of the two states it is in for exactly that reason.",
     },
@@ -2094,7 +2104,7 @@ const riskWatch: CrewBlueprint = {
     "Remediation. The crew can stop a seat from trading; unwinding the position is the operator's, and the alert is written on the assumption that a person is about to do it.",
     "Paging. Deciding who to wake and how is a rota tool's job. This crew decides that someone should be.",
     "Root cause. The sweep writes what changed and when — an explanation of why would be a claim the readings do not support.",
-    "The executor accounts themselves. The seat this crew may halt is handed to it as a run input, because a blueprint can only bind seats it owns. Halting across crews has no first-class shape yet.",
+    "Choosing whose seat is haltable. The `desk-executor` reference says which seat of which crew this watch expects; which desk crew that is, and whether to hand over the authority at all, is answered at install by the operator. An unbound reference stops the sweep from installing rather than defaulting to somebody.",
   ],
 };
 

@@ -36,7 +36,9 @@ function fullBindings(bp: CrewBlueprint) {
 
 test("every first-party blueprint validates", () => {
   for (const bp of crewBlueprints) {
-    const result = validateCrewBlueprint(bp);
+    // With the catalog, so an external reference naming a role no sibling
+    // blueprint has fails here rather than at an install that cannot resolve it.
+    const result = validateCrewBlueprint(bp, { crews: crewBlueprints });
     assert.deepEqual(result.errors, [], `${bp.id}: ${result.errors.join("; ")}`);
     assert.equal(result.ok, true);
   }
@@ -142,12 +144,21 @@ test("every seat placeholder in a crew flow names a role in a blueprint that shi
   for (const bp of crewBlueprints) {
     const roleIds = new Set(bp.roles.map((r) => r.id));
     const targetIds = new Set(bp.targets.map((t) => t.id));
+    // A seat in another crew is the one reference a blueprint resolves against
+    // something it does not own, so it has to be declared before a flow may
+    // name it — the whole point of `externalSeats`.
+    const externalIds = new Set((bp.externalSeats ?? []).map((s) => s.id));
     for (const flowId of bp.flows) {
       const def = getFlowTemplate(flowId)?.definition;
       assert.ok(def, `${bp.id} ships unknown flow ${flowId}`);
       for (const ref of crewFlowPlaceholders(def!)) {
         const [kind, id] = ref.split(".") as [string, string];
-        const known = kind === "crew" ? roleIds.has(id) : targetIds.has(id);
+        const known =
+          kind === "crew"
+            ? roleIds.has(id)
+            : kind === "external"
+              ? externalIds.has(id)
+              : targetIds.has(id);
         assert.ok(known, `${bp.id}/${flowId} references unknown ${ref}`);
       }
     }
@@ -286,6 +297,141 @@ test("the advisory crew has nowhere to trade and nowhere to withdraw", () => {
     crewFlowPlaceholders(def).includes("target.dex-router"),
     "the review flow never asks policy about the venue it must not reach",
   );
+});
+
+test("the seat the risk watch may halt is declared, not handed to a run", () => {
+  const bp = getCrewBlueprint("risk-watch")!;
+  const def = getFlowTemplate("risk-sweep")!.definition;
+
+  // The halt names the blueprint's declared reference. A run input here is the
+  // shape this replaced: an address nothing checks, deactivated on sight.
+  const halt = def.steps.find((s) => s.id === "halt-sibling");
+  assert.equal(halt?.kind === "org" && halt.node, "{{external.desk-executor}}");
+  assert.ok(crewFlowPlaceholders(def).includes("external.desk-executor"));
+  assert.ok(
+    !JSON.stringify(def.steps).includes("{{input.executor}}"),
+    "the sweep still takes an executor address as a run input",
+  );
+
+  // And binding resolves it like any other reference — the address comes from
+  // the desk's own seat, wherever the caller read that from.
+  const bound = bindCrewFlow(def, {
+    ...fullBindings(bp),
+    external: { "desk-executor": ADDR(900) },
+  });
+  const boundHalt = bound.steps.find((s) => s.id === "halt-sibling");
+  assert.equal(boundHalt?.kind === "org" && boundHalt.node, ADDR(900));
+
+  assert.throws(
+    () => bindCrewFlow(def, fullBindings(bp)),
+    /unbound_crew_placeholders: external.desk-executor/,
+  );
+});
+
+test("a plan reports an unbound external reference as work still outstanding", () => {
+  const bp = getCrewBlueprint("risk-watch")!;
+  const install = crewPlan(bp, fullBindings(bp)).find((s) => s.kind === "install-flow");
+  assert.deepEqual(install?.pending, ["external.desk-executor"]);
+
+  const bound = crewPlan(bp, {
+    ...fullBindings(bp),
+    external: { "desk-executor": ADDR(900) },
+  }).find((s) => s.kind === "install-flow");
+  assert.deepEqual(bound?.pending, []);
+});
+
+test("validation refuses an external reference nothing declares", () => {
+  const bp = structuredClone(getCrewBlueprint("risk-watch")!);
+  delete bp.externalSeats;
+  const result = validateCrewBlueprint(bp);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /does not declare as an external seat/.test(e)));
+});
+
+test("validation refuses a declared external reference no flow binds", () => {
+  // The mirror rule. Without it, a blueprint could ask an operator to hand over
+  // authority over another crew's seat that nothing was ever going to use.
+  const bp = structuredClone(getCrewBlueprint("risk-watch")!);
+  bp.externalSeats!.push({
+    id: "unused-seat",
+    label: "A seat nothing acts on",
+    crewBlueprintId: "defi-desk",
+    roleId: "rebalancer",
+    authority: "Nothing at all.",
+  });
+  const result = validateCrewBlueprint(bp);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /no shipped flow binds it/.test(e)));
+});
+
+test("validation refuses a reference to a role the sibling blueprint does not have", () => {
+  const bp = structuredClone(getCrewBlueprint("risk-watch")!);
+  bp.externalSeats![0]!.roleId = "trader";
+  const result = validateCrewBlueprint(bp, { crews: crewBlueprints });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /"defi-desk" does not have/.test(e)));
+
+  // Without the catalog the claim is simply uncheckable, and validation says
+  // what it can rather than inventing an answer.
+  assert.ok(
+    !validateCrewBlueprint(bp).errors.some((e) => /does not have/.test(e)),
+    "a lone blueprint claimed to know another one's roles",
+  );
+
+  const unknown = structuredClone(getCrewBlueprint("risk-watch")!);
+  unknown.externalSeats![0]!.crewBlueprintId = "no-such-crew";
+  assert.ok(
+    validateCrewBlueprint(unknown, { crews: crewBlueprints }).errors.some((e) =>
+      /unknown blueprint/.test(e),
+    ),
+  );
+});
+
+test("validation refuses a blueprint declaring one of its own seats as external", () => {
+  const bp = structuredClone(getCrewBlueprint("risk-watch")!);
+  bp.externalSeats![0]!.crewBlueprintId = "risk-watch";
+  bp.externalSeats![0]!.roleId = "peg-watch";
+  const result = validateCrewBlueprint(bp, { crews: crewBlueprints });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => /binds as \{\{crew\./.test(e)));
+});
+
+test("an external reference must say what the crew does with it", () => {
+  const bp = structuredClone(getCrewBlueprint("risk-watch")!);
+  bp.externalSeats![0]!.authority = "  ";
+  assert.ok(
+    validateCrewBlueprint(bp).errors.some((e) => /must state what this crew does with it/.test(e)),
+  );
+});
+
+test("the runtime refuses an org action still carrying a reference nobody bound", async () => {
+  // Belt to the install's braces. `bindCrewFlow` throws at install, but a
+  // definition saved some other way would reach the runtime, where an
+  // unresolved reference interpolates to "" — an account, and one nobody
+  // chose. Deactivating it is not a no-op to learn about from a chain revert.
+  const def = getFlowTemplate("risk-sweep")!.definition;
+  const halt = def.steps.find((s) => s.id === "halt-sibling");
+  assert.equal(halt?.kind, "org");
+  const run = await runFlow(
+    {
+      id: "unbound",
+      name: "unbound",
+      steps: [
+        {
+          id: "halt-sibling",
+          kind: "org",
+          action: "deactivate",
+          node: halt?.kind === "org" ? halt.node : "",
+          onAllow: null,
+          onEscalate: null,
+          onDeny: null,
+        },
+      ],
+    },
+    createMockFlowBackend(),
+  );
+  assert.equal(run.status, "error");
+  assert.match(run.steps[0]!.error!, /unbound_crew_placeholder:halt-sibling.node/);
 });
 
 test("the risk watch states the residual risk on every guardrail it has", () => {

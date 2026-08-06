@@ -107,7 +107,7 @@ const stablecoinYieldDesk: SkillPack = {
       trigger:
         "Before proposing a rotation, and whenever a peg or a protocol's health is questioned.",
       body: [
-        "Run the `risk-sweep` flow with the coin ids to price, the protocol to read TVL for, and the account to deactivate if the assessment goes bad.",
+        "Run the `risk-sweep` flow with the coin ids to price and the protocol to read TVL for. The seat it halts is not an input: it is the desk executor the crew's `desk-executor` reference was bound to at install.",
         "An unreadable assessment halts the seat that trades the protocol. That is deliberate: a watch that fails open is not a watch, so treat a missing reading as a reason to stop, never as an all-clear.",
       ].join("\n"),
     },

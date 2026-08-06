@@ -73,15 +73,16 @@ const bp = getCrewBlueprint("github-experts")!;
 validateCrewBlueprint(bp); // { ok: true, errors: [] }
 ```
 
-| Field            | What it answers                                                                                       |
-| ---------------- | ----------------------------------------------------------------------------------------------------- |
-| `roles`          | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc` |
-| `targets`        | Where money may go, and which targets are deliberately **not** whitelisted                            |
-| `externalScopes` | Credentials LaCrew does not govern — a GitHub App, a draft-only social token                          |
-| `escalation`     | The "ask me first" ladder, and which layer carries each rung                                          |
-| `governance`     | Which changes are constitutional, and at which tier                                                   |
-| `guardrails`     | Each "must never happen", its enforcement layer, and its residual risk                                |
-| `outOfScope`     | What the crew deliberately does not do                                                                |
+| Field            | What it answers                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `roles`          | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc`                      |
+| `targets`        | Where money may go, and which targets are deliberately **not** whitelisted                                                 |
+| `externalScopes` | Credentials LaCrew does not govern — a GitHub App, a draft-only social token                                               |
+| `externalSeats`  | Seats in **other** crews this one's flows may act on — see [crews that act on other crews](#crews-that-act-on-other-crews) |
+| `escalation`     | The "ask me first" ladder, and which layer carries each rung                                                               |
+| `governance`     | Which changes are constitutional, and at which tier                                                                        |
+| `guardrails`     | Each "must never happen", its enforcement layer, and its residual risk                                                     |
+| `outOfScope`     | What the crew deliberately does not do                                                                                     |
 
 ### Enforcement layers
 
@@ -134,6 +135,80 @@ Binding throws rather than leaving a placeholder in place: the run-time
 interpolator renders an unknown reference as an empty string, and "delegate to
 the risk manager" quietly becoming "delegate to ''" is not a failure anyone
 would notice in time.
+
+## Crews that act on other crews
+
+A blueprint may only bind seats it owns. `{{crew.executor}}` names a role in
+_this_ blueprint, and validation rejects a placeholder naming anything else —
+correctly, since the blueprint has no idea whether that role exists or who
+holds it.
+
+That leaves a real job unserved. `risk-watch` watches the protocols an org
+already has money in, and the useful thing it can do about a depeg is stop the
+seat that trades it — a seat belonging to the trading desk beside it. Handing
+the address in as a run input made the crew's whole claim rest on a paste that
+nothing checked.
+
+An **external seat** is that reference, declared:
+
+```ts
+externalSeats: [
+  {
+    id: "desk-executor",
+    label: "The desk seat this watch may halt",
+    crewBlueprintId: "defi-desk",
+    roleId: "executor",
+    authority: "Deactivating the executor of the trading desk this watch was installed beside…",
+  },
+],
+```
+
+Flows bind it like any other reference — `{{external.desk-executor}}` — and
+three rules keep it honest:
+
+- A flow may only name a reference the blueprint declares, and a declared
+  reference no flow names is rejected. Neither direction may drift.
+- With the catalog in hand
+  (`validateCrewBlueprint(bp, { crews: crewBlueprints })`), a reference naming a
+  role its sibling blueprint does not have fails there, rather than at an
+  install that cannot resolve it.
+- A blueprint cannot name **itself** — a seat this crew owns binds as
+  `{{crew.<roleId>}}`.
+
+### Resolution fails closed
+
+`resolveExternalSeats` turns a declaration into an address by looking up seats
+the workspace already recorded — role id, the blueprint the crew was installed
+from, the account its hire landed on. It never takes an address:
+
+```ts
+import { resolveExternalSeats, externalSeatRefusal } from "@lacrew/flows";
+
+const resolved = resolveExternalSeats(bp, orchestratorBindings);
+resolved.external; // { "desk-executor": "0x…" }
+resolved.missing; // refs nothing bound — the install stops for these
+resolved.ambiguous; // more than one candidate: nothing bound, on purpose
+```
+
+Nothing matched means the sibling crew is not installed (or its seat has not
+landed). More than one match — two desks from the same blueprint — binds
+nothing and asks the operator which crew, because picking one halts somebody at
+random. Passing a choice narrows to that crew and only that crew; a stale pick
+resolves to nothing rather than quietly retargeting the halt.
+
+A declaration is not authority. Whoever installs the watch beside the desk is
+the one handing over the ability to deactivate that seat, and the chain still
+decides whether the deactivation lands — `risk-watch` treats it as a high-tier
+governance change, so the desk keeps trading until somebody votes.
+
+### The runtime refuses an unresolved reference
+
+`bindCrewFlow` throws at install, and the runtime holds the same line: an `org`
+or `budget` step whose `node`, `parent` or `target` still carries a
+`{{crew.*}}` / `{{target.*}}` / `{{external.*}}` reference fails with
+`unbound_crew_placeholder:<step>.<field>`. Interpolation would otherwise render
+it as `""`, which is an account — and deactivating it is not a mistake to learn
+about from a chain revert.
 
 ## The plan
 
@@ -206,15 +281,15 @@ at a crew nobody has finished configuring, and a driver that proves the path on
 a local chain. `crewSampleRun` answers nothing for the rest, and every surface
 says so rather than inventing an input.
 
-| Blueprint         | Certified flow              | What its first run needs                                   | What it proves                                                    |
-| ----------------- | --------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------ |
-| `github-experts`  | `bot-pr-triage`             | a model key and the `github` connector                     | a merge refused, because nothing admitted the merge authority     |
-| `content-studio`  | `content-weekly-brief`      | a model key, and nothing else                              | a publication refused, because the endpoint is off the whitelist  |
-| `governance-desk` | `governance-proposal-sweep` | a model key and the `snapshot` connector, which needs no key | a crew that finds its own work, and still cannot cast the vote |
+| Blueprint         | Certified flow              | What its first run needs                                     | What it proves                                                   |
+| ----------------- | --------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `github-experts`  | `bot-pr-triage`             | a model key and the `github` connector                       | a merge refused, because nothing admitted the merge authority    |
+| `content-studio`  | `content-weekly-brief`      | a model key, and nothing else                                | a publication refused, because the endpoint is off the whitelist |
+| `governance-desk` | `governance-proposal-sweep` | a model key and the `snapshot` connector, which needs no key | a crew that finds its own work, and still cannot cast the vote   |
 
 The three are deliberately different shapes. `github-experts` needs a connector,
 a credential and an admitted address. `content-studio` leaves LaCrew not at all,
-so it drives the checklist's *connector not needed* answer. `governance-desk`
+so it drives the checklist's _connector not needed_ answer. `governance-desk`
 needs a connector that costs nothing to wire, because the surface is public and
 read-only — which makes it the cheapest of the three to actually run.
 
@@ -289,7 +364,7 @@ difference between a spend that escalates to a manager and one that should never
 have been attempted. Two seats sharing a label bind neither, for the same
 reason.
 
-None of this is authority. A stored role id *finds* a seat whose readiness is
+None of this is authority. A stored role id _finds_ a seat whose readiness is
 still derived live, every time; it admits no target, grants no budget and
 approves no spend. That is also why an unreadable binding store is not an
 outage: seats fall back to matching by label with the misses named, which is
@@ -297,10 +372,10 @@ exactly how a self-host behaved before the map existed.
 
 The routes underneath, for a self-host driving the orchestrator directly:
 
-| Route | What it does |
-| --- | --- |
-| `GET /crew/bindings[?blueprint=&crew=]` | the bindings in force, plus `roles` in the shape a flow install takes |
-| `PUT /crew/bindings` | record `{blueprintId?, crewId?, roles, labels?}`; merges, and a blank address forgets one seat |
+| Route                                   | What it does                                                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `GET /crew/bindings[?blueprint=&crew=]` | the bindings in force, plus `roles` in the shape a flow install takes                          |
+| `PUT /crew/bindings`                    | record `{blueprintId?, crewId?, roles, labels?}`; merges, and a blank address forgets one seat |
 
 The hosted control plane stores the same mapping per crew and writes it through
 to the tenant's orchestrator on install, so the two agree. Where they disagree,
@@ -382,3 +457,23 @@ Which seats to hire and which spend targets to bind are read off the sample
 flow's own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains
 a delegate gains the hire in the same commit rather than leaving the driver
 bound to a list somebody has to remember to update.
+
+### The cross-crew halt, checked
+
+```bash
+pnpm cross-crew-halt
+```
+
+The same shape for the claim in [crews that act on other
+crews](#crews-that-act-on-other-crews): it hires a **desk** executor through
+governance, records that seat on the orchestrator, and resolves `risk-watch`'s
+`desk-executor` reference against what the orchestrator serves — no address is
+typed anywhere in the driver. Before the desk seat exists, it asserts the
+reference resolves to nothing, the flow refuses to install, and the checklist
+blocks on the reference by name. Then it runs the real sweep and votes the
+resulting proposal through, after which the chain itself reports that seat
+inactive and every other seat untouched.
+
+With no model key the assessment comes back as stub text, and `risk-sweep`
+routes an unreadable assessment to the halt rather than past it — the
+blueprint's own fail-closed guardrail, and what lets this run unattended.

@@ -23,15 +23,18 @@ import {
   crewSampleInputText,
   crewSampleNeeds,
   crewSampleRun,
+  externalSeatRefusal,
   formatUsdc,
   getCrewBlueprint,
   getFlowTemplate,
   resolveCrewSeats,
+  resolveExternalSeats,
   validateCrewBlueprint,
   type CrewBlueprint,
   type CrewBindings,
   type CrewCheck,
   type CrewChecklistFacts,
+  type CrewExternalCandidate,
   type CrewRole,
 } from "@lacrew/flows";
 
@@ -69,7 +72,9 @@ function printOrgTree(bp: CrewBlueprint): void {
 }
 
 function printBlueprint(bp: CrewBlueprint): void {
-  const check = validateCrewBlueprint(bp);
+  // The catalog, so an external reference naming a role no sibling blueprint
+  // has is reported here rather than at an install that cannot resolve it.
+  const check = validateCrewBlueprint(bp, { crews: crewBlueprints });
   console.log(`${bp.name}  (${bp.id} · ${bp.vertical})`);
   console.log(`  ${bp.summary}`);
   console.log(`  From ${bp.intake.file}`);
@@ -102,6 +107,23 @@ function printBlueprint(bp: CrewBlueprint): void {
   for (const rail of bp.guardrails) {
     console.log(`  ✗ ${rail.never}\n      ${rail.enforcedBy}: ${rail.how}`);
     if (rail.residualRisk) console.log(`      residual: ${rail.residualRisk}`);
+  }
+
+  // Printed before the guardrails' neighbours because it is the one section
+  // that is about somebody else's crew: an operator reading this has to decide
+  // whether to hand over the authority at all.
+  if (bp.externalSeats?.length) {
+    console.log("\nSeats in other crews this one may act on");
+    for (const seat of bp.externalSeats) {
+      console.log(
+        `  ${seat.id}  → ${seat.crewBlueprintId ? `${seat.crewBlueprintId}.` : "any crew's "}${seat.roleId}`,
+      );
+      console.log(`     ${seat.label} — ${seat.authority}`);
+    }
+    console.log(
+      "     Bound at install from the sibling crew's own seat, never typed:  lacrew crews checklist " +
+        `${bp.id}`,
+    );
   }
 
   console.log("\nOutside LaCrew's reach");
@@ -232,6 +254,17 @@ function printPlan(bp: CrewBlueprint, bindings: CrewBindings): void {
       `\n${unbound.size} address${unbound.size === 1 ? "" : "es"} still unbound. A seat's address ` +
         `exists once its hire lands; bind them with --bind <role>=0x… and --bind target:<id>=0x….`,
     );
+    // Deliberately not a --bind flag: an external reference resolves from a
+    // seat some sibling crew actually hired, and a flag would put the pasted
+    // address back — the exact thing the reference exists to replace.
+    const external = [...unbound].filter((p) => p.startsWith("external."));
+    if (external.length > 0) {
+      console.log(
+        `${external.join(", ")} ${external.length === 1 ? "names a seat" : "name seats"} in another crew. ` +
+          "There is no flag for those: install the sibling crew, record its seats " +
+          "(lacrew crews bind <blueprint> --from-org), and the reference resolves to the seat it names.",
+      );
+    }
   } else {
     console.log("\nEvery address is bound. Run the steps in order against your orchestrator.");
   }
@@ -343,10 +376,12 @@ async function probeFacts(
   missingSeats: string[];
   /** Seats that only a typed label found, so nothing has persisted their id. */
   byLabel: string[];
+  /** One sentence per external reference nothing bound, in the operator's terms. */
+  externalRefusals: string[];
 }> {
   const sample = crewSampleRun(bp.id);
   const needs = sample ? crewSampleNeeds(sample) : undefined;
-  const [health, connectors, flows, runs, messages, org] = await Promise.all([
+  const [health, connectors, flows, runs, messages, org, bindings] = await Promise.all([
     probe<HealthProbe>(args, "/health"),
     probe<ConnectorProbe>(args, "/connectors"),
     probe<FlowsProbe>(args, "/flows"),
@@ -356,6 +391,10 @@ async function probeFacts(
       `/messages?limit=5&thread=${encodeURIComponent(threadOf(bp, args))}`,
     ),
     probe<OrgProbe>(args, "/org"),
+    // Unscoped on purpose: an external reference is answered by *another*
+    // crew's seats, so narrowing to this blueprint's scope would hide the only
+    // rows that could bind it.
+    bp.externalSeats?.length ? probe<BindingsResponse>(args, "/crew/bindings") : null,
   ]);
 
   /*
@@ -377,10 +416,32 @@ async function probeFacts(
     return roleId ? { ...n, roleId } : n;
   });
   const seats = nodes ? resolveCrewSeats(bp, nodes) : null;
+
+  /*
+    External references resolve from what the orchestrator has recorded about
+    *other* crews: role id, the blueprint they were installed from, and the
+    account their hire landed on. Nothing here reads an address off the command
+    line — a reference that cannot be resolved from a hired seat is reported
+    unbound, because the whole point of declaring it was to stop this crew
+    halting an account nobody vouched for.
+  */
+  const candidates: CrewExternalCandidate[] = (bindings?.bindings ?? []).map((b) => ({
+    roleId: b.roleId,
+    account: b.account,
+    ...(b.blueprintId ? { blueprintId: b.blueprintId } : {}),
+    ...(b.crewId ? { crewId: b.crewId } : {}),
+    ...(b.label ? { label: b.label } : {}),
+  }));
+  const external = resolveExternalSeats(bp, candidates);
+  const externalRefusals = (bp.externalSeats ?? [])
+    .map((seat) => externalSeatRefusal(seat, external))
+    .filter((line): line is string => Boolean(line));
+
   return {
     seatsReadable: Boolean(seats),
     missingSeats: seats?.missing ?? [],
     byLabel: seats?.bindings.filter((b) => b.boundBy === "label").map((b) => b.role) ?? [],
+    externalRefusals,
     facts: {
       // An unreadable chart reports zero seats, which the seats step renders as
       // the one blocker worth naming: nothing can run as a principal nobody can
@@ -409,6 +470,9 @@ async function probeFacts(
       runs: runs?.runs ? runs.runs.length : null,
       threadMessages: messages?.messages ? messages.messages.length : null,
       sample: sample && needs ? { flow: sample.flow, needs } : null,
+      externalUnbound: (bp.externalSeats ?? [])
+        .filter((seat) => external.missing.includes(seat.id))
+        .map((seat) => seat.label),
     },
   };
 }
@@ -418,7 +482,15 @@ async function probeFacts(
  * ------------------------------------------------------------------------- */
 
 type BindingsResponse = {
-  bindings?: Array<{ roleId: string; account: string; label?: string; at?: string }>;
+  bindings?: Array<{
+    roleId: string;
+    account: string;
+    label?: string;
+    /** Present when the writer knew which crew the seat belongs to. */
+    blueprintId?: string;
+    crewId?: string;
+    at?: string;
+  }>;
   roles?: Record<string, string>;
   cleared?: string[];
 };
@@ -524,7 +596,9 @@ async function cmdBind(bp: CrewBlueprint, args: string[]): Promise<void> {
 
 function printBindings(bp: CrewBlueprint, body: BindingsResponse): void {
   const bindings = body.bindings ?? [];
-  console.log(`${bp.name} — seats bound on the orchestrator  ${bindings.length}/${bp.roles.length}`);
+  console.log(
+    `${bp.name} — seats bound on the orchestrator  ${bindings.length}/${bp.roles.length}`,
+  );
   for (const role of bp.roles) {
     const hit = bindings.find((b) => b.roleId === role.id);
     console.log(
@@ -560,7 +634,10 @@ const MARK: Record<CrewCheck["state"], string> = {
  * refuse every first run there has ever been.
  */
 async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> {
-  const { facts, seatsReadable, missingSeats, byLabel } = await probeFacts(bp, args);
+  const { facts, seatsReadable, missingSeats, byLabel, externalRefusals } = await probeFacts(
+    bp,
+    args,
+  );
   const steps = crewChecklist(facts);
   const blocker = crewChecklistBlocker(steps);
   const progress = crewChecklistProgress(steps);
@@ -574,6 +651,7 @@ async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> 
           steps,
           blocker: blocker?.id ?? null,
           progress,
+          ...(externalRefusals.length > 0 ? { externalRefusals } : {}),
         },
         null,
         2,
@@ -607,6 +685,12 @@ async function printChecklist(bp: CrewBlueprint, args: string[]): Promise<void> 
           `list loses it — persist the mapping with:  lacrew crews bind ${bp.id} --from-org`,
       );
     }
+  }
+  // A reference to another crew's seat is the one refusal a human has to
+  // resolve by deciding, not by fixing: which crew this one may act on, and
+  // whether it should be allowed to at all.
+  for (const line of externalRefusals) {
+    console.log(`\n  Unbound seat in another crew — ${line}`);
   }
   if (blocker) {
     console.log(`\n  ${blocker.title} is what stands between this crew and its first run.`);
