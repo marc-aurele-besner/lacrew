@@ -826,7 +826,9 @@ export function crewPlan(bp: CrewBlueprint, bindings: CrewBindings = {}): CrewPl
       tool: "POST /flows",
       args: { id: flowId },
       summary: `Install flow "${def?.name ?? flowId}"${
-        placeholders.length > 0 ? ` (binds ${placeholders.length} seat/target refs)` : ""
+        placeholders.length > 0
+          ? ` (binds ${placeholders.length} reference${placeholders.length === 1 ? "" : "s"})`
+          : ""
       }`,
       pending: unbound,
     });
