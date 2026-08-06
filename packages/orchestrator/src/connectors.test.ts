@@ -1216,15 +1216,32 @@ test("a tree entry is held to the same rules a single write would be", async () 
   const { calls, impl } = recordingFetch();
   const registry = treeRegistry(impl);
   const cases: Array<[string, unknown, RegExp]> = [
-    ["a path the operator refused", [{ path: ".github/workflows/ci.yml", content: "x" }], /connector_arg_refused:github\.create_tree:tree\[0\]\.path/],
-    ["a path that walks out", [{ path: "src/../../etc/passwd", content: "x" }], /connector_arg_refused:github\.create_tree:tree\[0\]\.path/],
-    ["a file over the cap", [{ path: "a.ts", content: "y".repeat(65) }], /connector_arg_too_large:github\.create_tree:tree\[0\]\.content:64/],
+    [
+      "a path the operator refused",
+      [{ path: ".github/workflows/ci.yml", content: "x" }],
+      /connector_arg_refused:github\.create_tree:tree\[0\]\.path/,
+    ],
+    [
+      "a path that walks out",
+      [{ path: "src/../../etc/passwd", content: "x" }],
+      /connector_arg_refused:github\.create_tree:tree\[0\]\.path/,
+    ],
+    [
+      "a file over the cap",
+      [{ path: "a.ts", content: "y".repeat(65) }],
+      /connector_arg_too_large:github\.create_tree:tree\[0\]\.content:64/,
+    ],
     ["an entry with no content", [{ path: "a.ts" }], /connector_missing_arg:tree\[0\]\.content/],
     ["an entry that is not an object", ["a.ts"], /connector_arg_refused:github\.create_tree:tree/],
   ];
   for (const [what, tree, expected] of cases) {
     await assert.rejects(
-      registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: JSON.stringify(tree) }),
+      registry.call("github.create_tree", {
+        owner: "o",
+        repo: "r",
+        base_tree: "t",
+        tree: JSON.stringify(tree),
+      }),
       expected,
       `${what} must be refused`,
     );
@@ -1255,11 +1272,21 @@ test("a list argument that is not JSON fails the call rather than going out as a
   const { calls, impl } = recordingFetch();
   const registry = treeRegistry(impl);
   await assert.rejects(
-    registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: "sorry, I can't" }),
+    registry.call("github.create_tree", {
+      owner: "o",
+      repo: "r",
+      base_tree: "t",
+      tree: "sorry, I can't",
+    }),
     /connector_arg_not_json:github\.create_tree:tree/,
   );
   await assert.rejects(
-    registry.call("github.create_tree", { owner: "o", repo: "r", base_tree: "t", tree: '{"path":"a"}' }),
+    registry.call("github.create_tree", {
+      owner: "o",
+      repo: "r",
+      base_tree: "t",
+      tree: '{"path":"a"}',
+    }),
     /connector_arg_refused:github\.create_tree:tree/,
   );
   assert.equal(calls.length, 0);

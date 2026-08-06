@@ -693,9 +693,7 @@ describe("a credential the workspace brought itself", () => {
       clientFor: (server) => ({
         serverId: server.id,
         transport: "http",
-        listTools: async () => [
-          { name: "search_issues", annotations: { readOnlyHint: true } },
-        ],
+        listTools: async () => [{ name: "search_issues", annotations: { readOnlyHint: true } }],
         callTool: async () => {
           // Resolve exactly as the real transport does, so the assertion is
           // about the credential path and not about a fake that stands in for it.

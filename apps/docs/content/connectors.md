@@ -94,25 +94,25 @@ preset can be registered read-only with `--omit`. `lacrew connectors show <id>`
 prints the routes, the args each takes, the credential modes it supports, and
 what is still unbound.
 
-| Preset             | What a crew uses it for                                          | Writes (need an address)                                       | Credential modes                              |
-| ------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
-| `github`           | Pull requests, files, CI state, file contents, git refs and trees | `merge_pull_request`, `create_issue_comment`, and the push (`update_file`, `create_tree`, `create_commit`, `update_ref`, which bind one address between them) | `github-app` (default) · `token` → `GH_TOKEN` |
-| `gitlab`           | Merge requests, diffs, pipelines — gitlab.com or self-hosted     | `merge_merge_request`                                          | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`)    |
-| `npm`              | Published versions, dist-tags, deprecations                      | —                                                              | `none`                                        |
-| `pypi`             | Release history, requires-python, yanked releases                | —                                                              | `none`                                        |
-| `twitter`          | Search, timelines, one post                                      | `create_tweet`                                                 | `token` → `TWITTER_BEARER_TOKEN`              |
-| `typefully`        | Draft queue and scheduling                                       | `schedule_draft` (`create_draft` files a draft and needs none) | `token` → `TYPEFULLY_API_KEY`                 |
-| `ghost`            | The site's posts; files new ones                                 | `create_post`, `update_post`                                   | `token` → `GHOST_ADMIN_TOKEN`                 |
-| `medium`           | Alternate publish surface                                        | `create_post`                                                  | `token` → `MEDIUM_INTEGRATION_TOKEN`          |
-| `notion`           | Brand voice docs and past posts, read-only                       | —                                                              | `token` → `NOTION_TOKEN`                      |
-| `uniswap`          | Pool state and liquidity via the v3 subgraph                     | —                                                              | `token` → `GRAPH_API_KEY`                     |
-| `tenderly`         | Dry-run a call before proposing it                               | —                                                              | `token` → `TENDERLY_ACCESS_KEY`               |
-| `coingecko`        | Prices and market context                                        | —                                                              | `token` → `COINGECKO_API_KEY`                 |
-| `defillama`        | Protocol and chain TVL — money leaving before a headline says so | —                                                              | `none`                                        |
-| `defillama-yields` | Pool-level APY and its history                                   | —                                                              | `none`                                        |
-| `aave`             | Aave v3 reserve data: supply and borrow rates, liquidity, caps   | —                                                              | `none`                                        |
-| `snapshot`         | Off-chain governance: a space's open proposals, and the votes cast on them | —                                                  | `none`                                        |
-| `tally`            | Onchain governor proposals for the organisations Tally indexes   | —                                                              | `token` → `TALLY_API_KEY` (`api-key`)         |
+| Preset             | What a crew uses it for                                                    | Writes (need an address)                                                                                                                                      | Credential modes                              |
+| ------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `github`           | Pull requests, files, CI state, file contents, git refs and trees          | `merge_pull_request`, `create_issue_comment`, and the push (`update_file`, `create_tree`, `create_commit`, `update_ref`, which bind one address between them) | `github-app` (default) · `token` → `GH_TOKEN` |
+| `gitlab`           | Merge requests, diffs, pipelines — gitlab.com or self-hosted               | `merge_merge_request`                                                                                                                                         | `token` → `GITLAB_TOKEN` (`PRIVATE-TOKEN`)    |
+| `npm`              | Published versions, dist-tags, deprecations                                | —                                                                                                                                                             | `none`                                        |
+| `pypi`             | Release history, requires-python, yanked releases                          | —                                                                                                                                                             | `none`                                        |
+| `twitter`          | Search, timelines, one post                                                | `create_tweet`                                                                                                                                                | `token` → `TWITTER_BEARER_TOKEN`              |
+| `typefully`        | Draft queue and scheduling                                                 | `schedule_draft` (`create_draft` files a draft and needs none)                                                                                                | `token` → `TYPEFULLY_API_KEY`                 |
+| `ghost`            | The site's posts; files new ones                                           | `create_post`, `update_post`                                                                                                                                  | `token` → `GHOST_ADMIN_TOKEN`                 |
+| `medium`           | Alternate publish surface                                                  | `create_post`                                                                                                                                                 | `token` → `MEDIUM_INTEGRATION_TOKEN`          |
+| `notion`           | Brand voice docs and past posts, read-only                                 | —                                                                                                                                                             | `token` → `NOTION_TOKEN`                      |
+| `uniswap`          | Pool state and liquidity via the v3 subgraph                               | —                                                                                                                                                             | `token` → `GRAPH_API_KEY`                     |
+| `tenderly`         | Dry-run a call before proposing it                                         | —                                                                                                                                                             | `token` → `TENDERLY_ACCESS_KEY`               |
+| `coingecko`        | Prices and market context                                                  | —                                                                                                                                                             | `token` → `COINGECKO_API_KEY`                 |
+| `defillama`        | Protocol and chain TVL — money leaving before a headline says so           | —                                                                                                                                                             | `none`                                        |
+| `defillama-yields` | Pool-level APY and its history                                             | —                                                                                                                                                             | `none`                                        |
+| `aave`             | Aave v3 reserve data: supply and borrow rates, liquidity, caps             | —                                                                                                                                                             | `none`                                        |
+| `snapshot`         | Off-chain governance: a space's open proposals, and the votes cast on them | —                                                                                                                                                             | `none`                                        |
+| `tally`            | Onchain governor proposals for the organisations Tally indexes             | —                                                                                                                                                             | `token` → `TALLY_API_KEY` (`api-key`)         |
 
 GitHub is the only one that offers an App today, and it is the only one whose
 service supports the shape. Where a service has something closer to it than a
@@ -221,17 +221,17 @@ one call, no sha juggling, same authority and same allowlist.
 
 **It cannot:**
 
-|                                     |                                                                                                                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Force-push or rewrite history**   | There is no field to do it with. `update_ref` takes one argument, the commit — a flow cannot pass `force`, and an undeclared arg is dropped, not sent. Without it GitHub refuses anything that is not a fast-forward, so a branch that moved underneath loses the fix rather than clobbering it. |
-| **Write a merge or an orphan commit** | `parents` is one value that goes out as a list of one. Two parents is a merge and none is an orphan; neither is expressible.                                          |
-| **Add a symlink or a submodule**    | A tree entry's `mode` and `type` are *fixed* at registration, not allowlisted — `100644` and `blob`. The values that mean symlink (`120000`) and submodule pointer (`160000`) are not values a call can carry. A `sha` field is dropped, so an entry cannot point at a blob nobody wrote. |
-| **Push to a branch nobody admitted** | The `branch` arg is pinned to the globs you registered, and it is *required*: GitHub commits to the default branch when a write omits it, so a missing branch is a refused call rather than a commit on `main`. |
-| **Escape the repo it named**        | `path` is encoded a segment at a time, and `.`, `..`, and empty segments are refused — inside a tree entry as well as in a URL. So is a branch name containing a `..` component, ahead of the allowlist. |
-| **Touch the workflow files**        | `.github/workflows/` is refused as a path prefix by default, on every route that writes a path. `--deny-path` replaces the list; `--deny-path ''` keeps only branch protection and CODEOWNERS. |
-| **Delete anything**                 | The DELETE routes on those endpoints are not registered, and no preset ships them.                                                                                    |
-| **Upload something enormous**       | A file is capped at 256 KB, a tree at 20 files and 512 KB, and the whole request body at 1 MB. All of them refuse rather than truncate.                                |
-| **Push without being admitted**     | `push-authority` is an ordinary whitelist entry. Revoking that one address stops every push the crew can make, org-wide, without touching GitHub.                      |
+|                                       |                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Force-push or rewrite history**     | There is no field to do it with. `update_ref` takes one argument, the commit — a flow cannot pass `force`, and an undeclared arg is dropped, not sent. Without it GitHub refuses anything that is not a fast-forward, so a branch that moved underneath loses the fix rather than clobbering it. |
+| **Write a merge or an orphan commit** | `parents` is one value that goes out as a list of one. Two parents is a merge and none is an orphan; neither is expressible.                                                                                                                                                                     |
+| **Add a symlink or a submodule**      | A tree entry's `mode` and `type` are _fixed_ at registration, not allowlisted — `100644` and `blob`. The values that mean symlink (`120000`) and submodule pointer (`160000`) are not values a call can carry. A `sha` field is dropped, so an entry cannot point at a blob nobody wrote.        |
+| **Push to a branch nobody admitted**  | The `branch` arg is pinned to the globs you registered, and it is _required_: GitHub commits to the default branch when a write omits it, so a missing branch is a refused call rather than a commit on `main`.                                                                                  |
+| **Escape the repo it named**          | `path` is encoded a segment at a time, and `.`, `..`, and empty segments are refused — inside a tree entry as well as in a URL. So is a branch name containing a `..` component, ahead of the allowlist.                                                                                         |
+| **Touch the workflow files**          | `.github/workflows/` is refused as a path prefix by default, on every route that writes a path. `--deny-path` replaces the list; `--deny-path ''` keeps only branch protection and CODEOWNERS.                                                                                                   |
+| **Delete anything**                   | The DELETE routes on those endpoints are not registered, and no preset ships them.                                                                                                                                                                                                               |
+| **Upload something enormous**         | A file is capped at 256 KB, a tree at 20 files and 512 KB, and the whole request body at 1 MB. All of them refuse rather than truncate.                                                                                                                                                          |
+| **Push without being admitted**       | `push-authority` is an ordinary whitelist entry. Revoking that one address stops every push the crew can make, org-wide, without touching GitHub.                                                                                                                                                |
 
 What it can still get wrong, and what bounds it: an entry naming a file the run
 never read replaces that file in full. Nothing structural prevents that — the
@@ -252,8 +252,8 @@ org chart bounds money and authority, not repository access.
 
 ## Constraining what an argument may say
 
-The param allowlist answers *which* fields a flow may set. `argRules` answers
-*what they may say*, per route:
+The param allowlist answers _which_ fields a flow may set. `argRules` answers
+_what they may say_, per route:
 
 ```json
 {
@@ -270,19 +270,19 @@ The param allowlist answers *which* fields a flow may set. `argRules` answers
 }
 ```
 
-| Field          | What it does                                                                                                           |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `required`     | The call fails without the argument. Body args are optional by default, which is occasionally dangerous.                |
-| `pattern`      | A regex the value must match **whole** — it is anchored for you, so a prefix cannot slip past `dependabot/.+`.          |
-| `oneOf`        | The complete set of accepted values.                                                                                    |
-| `maxBytes`     | A ceiling on the value as the flow supplied it, checked before any encoding.                                            |
-| `multiSegment` | The value is a `/`-separated path: `.`, `..`, and empty segments are refused. On a path arg it also encodes per segment so the slashes survive. |
-| `encode`       | Body args only: send the value base64-encoded, so a model can emit plain text for an endpoint that takes base64.        |
-| `fixed`        | The value is set at registration and replaces whatever the caller passed. Removes a choice rather than narrowing one.   |
+| Field          | What it does                                                                                                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `required`     | The call fails without the argument. Body args are optional by default, which is occasionally dangerous.                                                                                             |
+| `pattern`      | A regex the value must match **whole** — it is anchored for you, so a prefix cannot slip past `dependabot/.+`.                                                                                       |
+| `oneOf`        | The complete set of accepted values.                                                                                                                                                                 |
+| `maxBytes`     | A ceiling on the value as the flow supplied it, checked before any encoding.                                                                                                                         |
+| `multiSegment` | The value is a `/`-separated path: `.`, `..`, and empty segments are refused. On a path arg it also encodes per segment so the slashes survive.                                                      |
+| `encode`       | Body args only: send the value base64-encoded, so a model can emit plain text for an endpoint that takes base64.                                                                                     |
+| `fixed`        | The value is set at registration and replaces whatever the caller passed. Removes a choice rather than narrowing one.                                                                                |
 | `json`         | Body args only: parse the value as JSON first, so a route whose body takes a list can be called from a flow at all. A fenced code block is unwrapped; anything else that is not JSON fails the call. |
-| `items`        | With `json`: each entry is an object **rebuilt** from these rules. Undeclared keys are dropped, exactly as an undeclared arg is. |
-| `maxItems`     | With `items`: how many entries the list may carry.                                                                      |
-| `wrap`         | Send the value as a single-element array — when "exactly one" is the property worth having.                            |
+| `items`        | With `json`: each entry is an object **rebuilt** from these rules. Undeclared keys are dropped, exactly as an undeclared arg is.                                                                     |
+| `maxItems`     | With `items`: how many entries the list may carry.                                                                                                                                                   |
+| `wrap`         | Send the value as a single-element array — when "exactly one" is the property worth having.                                                                                                          |
 
 A refused value fails the step with `connector_arg_refused:<tool>:<arg>` (or
 `connector_arg_too_large:<tool>:<arg>:<limit>`) **before the request is built**,
@@ -342,16 +342,16 @@ completion retyped.
 Flow definitions arrive as untrusted JSON — from the visual builder, from a
 marketplace listing. The registry is built on that assumption:
 
-|                                           |                                                                                                                                                        |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Routes are an allowlist, not a URL**    | A flow names a route the operator wrote down. It cannot compose a URL, change the method, or reach a host nobody admitted.                             |
-| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment. A `multiSegment` arg keeps its slashes but still refuses `.`, `..`, and empties. |
-| **Undeclared args are dropped**           | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described. |
-| **Credentials never enter the flow**      | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one.                        |
-| **`http://` is refused**                  | Except for loopback, so a local tool server still works in development.                                                                                |
+|                                           |                                                                                                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Routes are an allowlist, not a URL**    | A flow names a route the operator wrote down. It cannot compose a URL, change the method, or reach a host nobody admitted.                                                         |
+| **Path args cannot escape their segment** | `{placeholder}` values are percent-encoded, so `../../user/repos` stays one segment. A `multiSegment` arg keeps its slashes but still refuses `.`, `..`, and empties.              |
+| **Undeclared args are dropped**           | Only names in the route's `params` reach the query string or body. A definition cannot smuggle `admin_override` into a request the operator described.                             |
+| **Credentials never enter the flow**      | Auth is read from the environment at call time. A missing credential fails the call rather than sending an unauthenticated one.                                                    |
+| **`http://` is refused**                  | Except for loopback, so a local tool server still works in development.                                                                                                            |
 | **Argument values can be pinned**         | A route's `argRules` hold a value to a pattern, a set, or a size before the request is built. See [Constraining what an argument may say](#constraining-what-an-argument-may-say). |
-| **Responses have a ceiling**              | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit).                              |
-| **Requests have one too**                 | A body over 1 MB is refused with `connector_request_too_large`. What a crew sends is bounded by the registration, not by what a model happened to emit. |
+| **Responses have a ceiling**              | A body over the route's limit is refused, not truncated. See [Responses have a size limit](#responses-have-a-size-limit).                                                          |
+| **Requests have one too**                 | A body over 1 MB is refused with `connector_request_too_large`. What a crew sends is bounded by the registration, not by what a model happened to emit.                            |
 
 An invalid connector is rejected at registration, and the orchestrator refuses
 to boot with one — a silently dropped connector reads to a flow author as "the
@@ -547,6 +547,67 @@ it, so "this desk never publishes" is one rule rather than one per worker.
 Clearing a rule is not the same as setting `auto`: it removes the exception, so
 the route goes back to inheriting.
 
+### A scope is an address, not a name
+
+`crew:` in a scope is the **address of an org-chart node** — the seat a team
+hangs from — and the rule covers everything below it. It is not a team's name,
+and the two are not interchangeable: a name is a label a workspace can rename,
+reuse, or attach to a group of seats that share no manager at all. There is no
+mapping from one to the other that stays true, so nothing here invents one.
+
+If you think of a team by its name, expand it to the seats you mean and set the
+rule on **each of them**. Both the CLI and the Tools drawer do exactly that:
+they show the addresses, and they apply to the ones you picked. Picking one
+member's address on a team's behalf would put a `deny` somewhere nobody chose,
+and the operator would go on believing the whole team was covered.
+
+### What one seat actually runs under
+
+The rule list says what was decided. It does not say what a given worker runs
+under, because a rule set two levels up reaches it without naming it. `?as=`
+answers that question directly, for as many seats as you want to compare (up to
+50 — beyond that it is a scrape, and it is refused rather than truncated):
+
+```bash
+lacrew connectors modes --as 0xworker…
+lacrew connectors modes --as 0xworker…,0xother…      # a whole desk, one request
+curl -s "localhost:8788/connectors/modes?as=0xworker…" | jq .
+```
+
+```json
+{
+  "rules": [
+    { "scope": { "level": "crew", "ref": "0xdesk…" }, "route": "github.*", "mode": "deny" }
+  ],
+  "modes": ["auto", "ask", "deny"],
+  "effective": [
+    {
+      "principal": "0xworker…",
+      "managers": ["0xdesk…", "0xroot…"],
+      "routes": [
+        {
+          "route": "github.merge_pull_request",
+          "mode": "deny",
+          "source": {
+            "kind": "rule",
+            "scope": { "level": "crew", "ref": "0xdesk…" },
+            "route": "github.*"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`managers` is the reporting line the modes resolved through, nearest first, so a
+surface can say **which** ancestor decided a value instead of printing
+"inherited" and leaving the operator to hunt for the rule. `source.kind` is
+`route-default` when nobody has decided anything — which is a different fact
+from somebody having chosen `auto`, and worth showing as one. The chart is read
+once per request, so asking about a whole desk costs what asking about one seat
+does.
+
 ### Working the queue
 
 ```bash
@@ -664,19 +725,19 @@ connector serves.
 ## How discovery reaches a run
 
 A connector call needs arguments, and the run input is where they come from. For
-most flows that is a detail; for a crew whose job is to *find* work it is the
+most flows that is a detail; for a crew whose job is to _find_ work it is the
 whole shape, so the governance desk is worth walking through.
 
 Before the `snapshot` preset, `governance-vote-cycle` took the proposal itself:
 
 ```jsonc
 // run input — a human had already found this and pasted it in
-{ "proposalId": "42" }   // plus the proposal text as the run's prose input
+{ "proposalId": "42" } // plus the proposal text as the run's prose input
 ```
 
 That flow still ships, and it is the right one when somebody is already looking
 at a proposal. What it cannot do is start. `governance-proposal-sweep` takes the
-*place to look* instead:
+_place to look_ instead:
 
 ```jsonc
 // run input — the space, and nothing about any particular proposal

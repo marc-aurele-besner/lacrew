@@ -7,6 +7,7 @@ import { MemoryModelProvider } from "./model/index.js";
 import { createOrchestratorApp } from "./httpApp.js";
 import { buildConnectorPreset, createConnectorRegistry, type ConnectorRegistry } from "./index.js";
 import { createLacrewClient } from "@lacrew/sdk/testing";
+import { MOCK_MANAGER, MOCK_WORKER } from "@lacrew/core";
 import { BRIEF_MAX_CHARS } from "./agentControls.js";
 import { createConnectorModes } from "./connectorPolicy.js";
 import { createConnectorAsks } from "./connectorAsks.js";
@@ -158,13 +159,13 @@ describe("orchestrator Hono app", () => {
         buildConnectorPreset("github", {
           authMode: "token",
           omitRoutes: [
-          "merge_pull_request",
-          "create_issue_comment",
-          "update_file",
-          "create_tree",
-          "create_commit",
-          "update_ref",
-        ],
+            "merge_pull_request",
+            "create_issue_comment",
+            "update_file",
+            "create_tree",
+            "create_commit",
+            "update_ref",
+          ],
         }),
       ],
       env: {},
@@ -1093,6 +1094,88 @@ describe("connector write policy routes (F2.24)", () => {
     const body = (await res.json()) as { asks: unknown[]; answerVia: string };
     assert.deepEqual(body.asks, []);
     assert.match(body.answerVia, /POST \/messages/);
+  });
+
+  it("resolves what several seats actually run under, and names the rule that decided it", async () => {
+    const connectors = createConnectorRegistry({
+      connectors: [
+        buildConnectorPreset("github", {
+          policyTargets: {
+            merge_pull_request: "0x00000000000000000000000000000000000000aa",
+            create_issue_comment: "0x00000000000000000000000000000000000000bb",
+            push_authority: "0x00000000000000000000000000000000000000cc",
+          },
+          branches: ["dependabot/**"],
+        }),
+      ],
+      env: { GITHUB_TOKEN: "ghp_x" },
+    });
+    const a = buildApp(undefined, connectors);
+    // A rule on the desk, not on the worker: the whole point of a crew scope is
+    // that nobody has to write one rule per seat under it.
+    await a.request("/connectors/modes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: { level: "crew", ref: MOCK_MANAGER },
+        route: "github.create_issue_comment",
+        mode: "deny",
+      }),
+    });
+
+    const res = await a.request(
+      `/connectors/modes?as=${MOCK_WORKER},0x00000000000000000000000000000000000000ff`,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      effective: Array<{
+        principal: string;
+        managers: string[];
+        routes: Array<{ route: string; mode: string; source: Record<string, unknown> }>;
+      }>;
+    };
+    assert.equal(body.effective.length, 2);
+
+    const worker = body.effective[0]!;
+    assert.ok(
+      worker.managers.some((m) => m.toLowerCase() === MOCK_MANAGER.toLowerCase()),
+      "the reporting line comes back so a surface can name where a mode was inherited from",
+    );
+    const comment = worker.routes.find((r) => r.route === "github.create_issue_comment")!;
+    assert.equal(comment.mode, "deny", "a rule on the desk reaches the seat below it");
+    assert.deepEqual(comment.source, {
+      kind: "rule",
+      scope: { level: "crew", ref: MOCK_MANAGER },
+      route: "github.create_issue_comment",
+    });
+    // Untouched routes still say where their value came from, so a surface can
+    // tell "nobody decided this" from "somebody chose auto".
+    const merge = worker.routes.find((r) => r.route === "github.merge_pull_request")!;
+    assert.equal(merge.mode, "ask");
+    assert.deepEqual(merge.source, { kind: "route-default" });
+    assert.ok(
+      !worker.routes.some((r) => r.route === "github.get_pull_request"),
+      "reads carry no mode, so they are not part of this answer",
+    );
+
+    // A seat nobody manages resolves through no line at all rather than through
+    // a guess about who it might report to.
+    const stranger = body.effective[1]!;
+    assert.deepEqual(stranger.managers, []);
+    assert.equal(
+      stranger.routes.find((r) => r.route === "github.create_issue_comment")!.mode,
+      "auto",
+    );
+  });
+
+  it("refuses a seat list long enough to be a scrape rather than a screen", async () => {
+    const seats = Array.from(
+      { length: 51 },
+      (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`,
+    ).join(",");
+    const res = await app().request(`/connectors/modes?as=${seats}`);
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error: string }).error, /at most 50 seats/);
   });
 
   it("describes each write route with its default and effective mode", async () => {

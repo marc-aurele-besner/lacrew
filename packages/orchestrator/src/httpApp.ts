@@ -69,6 +69,7 @@ import {
   isConnectorWriteMode,
   parseModeScope,
   validateModeRoute,
+  type ConnectorModeResolution,
   type ConnectorModesSurface,
 } from "./connectorPolicy.js";
 import { isPlanRequired, type PlanRequirementsSurface } from "./planRequired.js";
@@ -201,6 +202,16 @@ function heartbeatErrorStatus(err: unknown): number {
 /** One standard cron field: `*`, numbers, ranges, lists, and steps. */
 const CRON_FIELD = /^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/;
 
+/**
+ * Seats one `/connectors/modes?as=` may resolve at once.
+ *
+ * A desk a surface expands is a handful of people; a query naming hundreds is
+ * a scrape, not a screen, and it would build a response quadratic in routes ×
+ * seats. Refusing is better than truncating: a page told it received every
+ * member would show a partial answer as the whole one.
+ */
+const MAX_MODE_SUBJECTS = 50;
+
 /** Cheap 5-field cron pre-check; the durable queue is the semantic backstop. */
 function isValidCron(expr: string): boolean {
   const fields = expr.split(" ").filter(Boolean);
@@ -247,6 +258,51 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     } catch {
       return [];
     }
+  };
+
+  /**
+   * The write mode every registered write route resolves to, for each seat.
+   *
+   * The chart is read **once** for the whole batch: the answer for a desk's
+   * members is the same walk repeated, and re-reading the org per seat would
+   * make the cost of an honest screen grow with the size of the team it is
+   * being honest about. An unreadable chart yields no ancestors, so every seat
+   * falls back to the workspace rule or the route's default rather than to a
+   * guess about who manages whom.
+   */
+  const resolveModesFor = async (
+    seats: readonly string[],
+    modes: ConnectorModesSurface,
+  ): Promise<
+    Array<{
+      principal: string;
+      managers: string[];
+      routes: Array<{ route: string } & ConnectorModeResolution>;
+    }>
+  > => {
+    let nodes: OrgNode[] = [];
+    try {
+      nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+    } catch {
+      nodes = [];
+    }
+    const writes = (connectors?.list() ?? []).flatMap((connector) =>
+      connector.routes
+        .filter((route) => route.effect === "write")
+        .map((route) => ({ connectorId: connector.id, route })),
+    );
+    return seats.map((principal) => {
+      const managers = [...ancestorsOf(nodes, principal)];
+      const subject = { principal, managers };
+      return {
+        principal,
+        managers,
+        routes: writes.map(({ connectorId, route }) => ({
+          route: `${connectorId}.${route.name}`,
+          ...modes.resolve(route, connectorId, subject),
+        })),
+      };
+    });
   };
 
   /**
@@ -877,12 +933,32 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * Served whole rather than per-connector: a rule may name a route whose
    * connector is not registered in this process, and hiding those would make an
    * operator's own configuration invisible to them.
+   *
+   * `?as=<address>[,<address>…]` also answers the question a surface actually
+   * has — "what does *this* seat run under, and did anyone here decide that?" —
+   * by resolving every registered write route the way a call would, against the
+   * live chart. Several seats at once because a rule is addressed by one node
+   * while an operator thinks in desks: expanding a team to its members is a
+   * list of seats, and asking one request per member would make the honest
+   * version of that screen the slow one. The reporting line comes back too, so
+   * a surface can name the ancestor a mode was inherited from rather than
+   * printing "inherited" and leaving the operator to guess from where.
    */
-  app.get("/connectors/modes", (c) =>
-    connectorModes
-      ? jsonBig(c, { rules: connectorModes.list(), modes: CONNECTOR_WRITE_MODES })
-      : jsonBig(c, { error: "connector_modes_unavailable" }, 503),
-  );
+  app.get("/connectors/modes", async (c) => {
+    if (!connectorModes) return jsonBig(c, { error: "connector_modes_unavailable" }, 503);
+    const seats = (c.req.query("as") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (seats.length > MAX_MODE_SUBJECTS) {
+      return jsonBig(c, { error: `at most ${MAX_MODE_SUBJECTS} seats per request` }, 400);
+    }
+    return jsonBig(c, {
+      rules: connectorModes.list(),
+      modes: CONNECTOR_WRITE_MODES,
+      ...(seats.length ? { effective: await resolveModesFor(seats, connectorModes) } : {}),
+    });
+  });
 
   /**
    * Set or clear one rule. `mode` absent clears it, falling the route back to

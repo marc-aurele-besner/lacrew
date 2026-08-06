@@ -814,7 +814,10 @@ function checkSegments(tool: string, arg: string, raw: string): void {
  * would reach the far side as a field that looks filled in.
  */
 function parseJsonArg(tool: string, arg: string, raw: string): unknown {
-  const unfenced = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const unfenced = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
   try {
     return JSON.parse(unfenced);
   } catch {
@@ -1082,9 +1085,7 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
           continue;
         }
         const built = payload[key];
-        const empty = Array.isArray(built)
-          ? built.length === 0
-          : String(built ?? "").trim() === "";
+        const empty = Array.isArray(built) ? built.length === 0 : String(built ?? "").trim() === "";
         if (empty) throw new Error(`connector_missing_arg:${key}`);
       }
       const hasBody = sendsBody(route.method);

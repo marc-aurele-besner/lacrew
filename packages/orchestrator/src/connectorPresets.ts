@@ -1307,7 +1307,7 @@ const snapshot: ConnectorPreset = {
       method: "POST",
       path: "/graphql",
       description:
-        'GraphQL against the hub. `proposals(where: { space_in: [...], state: "active" })` is the desk\'s queue, `proposal(id: ...)` one in full, `space(id: ...)` its voting period and strategies, `votes(where: { proposal: ... })` what has already been cast. Which space a desk reads rides in the query rather than the route, and GraphQL projects fields, so a queue comes back without every proposal\'s body attached.',
+        "GraphQL against the hub. `proposals(where: { space_in: [...], state: \"active\" })` is the desk's queue, `proposal(id: ...)` one in full, `space(id: ...)` its voting period and strategies, `votes(where: { proposal: ... })` what has already been cast. Which space a desk reads rides in the query rather than the route, and GraphQL projects fields, so a queue comes back without every proposal's body attached.",
       effect: "read",
       params: ["query", "variables", "operationName"],
     },
@@ -1458,7 +1458,10 @@ function applyGuards(
       // The globs as the operator typed them. An operator reading "may push to
       // dependabot/**" on a status page should not have to recognise it in a
       // compiled regex.
-      label: (options.branches ?? []).map((b) => b.trim()).filter(Boolean).join(", "),
+      label: (options.branches ?? [])
+        .map((b) => b.trim())
+        .filter(Boolean)
+        .join(", "),
     };
   }
   if (guards.pathArg) {
@@ -1572,9 +1575,7 @@ export function buildConnectorPreset(id: string, options: ConnectorPresetOptions
     const key = presetPolicyTargetKey(route);
     const bound = options.policyTargets?.[key ?? route.name];
     if (policyTarget?.required && !bound) {
-      throw new Error(
-        `connector_preset_unbound_policy_target:${id}.${key} — ${policyTarget.note}`,
-      );
+      throw new Error(`connector_preset_unbound_policy_target:${id}.${key} — ${policyTarget.note}`);
     }
     if (bound && !policyTarget?.required) {
       // A read cannot carry one at all, and a write the preset did not mark is

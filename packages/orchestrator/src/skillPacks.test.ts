@@ -40,14 +40,16 @@ async function buildApp(
             buildConnectorPreset("github", {
               authMode: "token",
               ...(github === "read"
-                ? { omitRoutes: [
-          "merge_pull_request",
-          "create_issue_comment",
-          "update_file",
-          "create_tree",
-          "create_commit",
-          "update_ref",
-        ] }
+                ? {
+                    omitRoutes: [
+                      "merge_pull_request",
+                      "create_issue_comment",
+                      "update_file",
+                      "create_tree",
+                      "create_commit",
+                      "update_ref",
+                    ],
+                  }
                 : {
                     policyTargets: {
                       merge_pull_request: MERGE_AUTHORITY,

@@ -690,7 +690,7 @@ export LACREW_MCP_ALLOW_ENV='TENANT_MCP_*'   # env names a runtime attach may re
 ```
 
 A workspace on such a worker cannot set an env var, so it stores its credential
-in the orchestrator's sealed store instead and the config names *that*:
+in the orchestrator's sealed store instead and the config names _that_:
 
 ```bash
 printf %s "$GH_TOKEN" | lacrew mcp secret set gh

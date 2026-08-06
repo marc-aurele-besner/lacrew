@@ -120,7 +120,7 @@ What that buys, and what it costs:
   ref and the last four characters, which tells one token from another and is
   useless to anyone else. The audit row carries the same.
 - **Owner-scoped, with no fallback.** A secret belongs to the scope that wrote
-  it, and a server resolves only secrets under its *own* owner. Two workspaces
+  it, and a server resolves only secrets under its _own_ owner. Two workspaces
   may both call their token `gh`; neither can reach the other's, and a workspace
   cannot resolve the operator's by guessing its name — that would be the same
   escalation `LACREW_MCP_ALLOW_ENV` exists to prevent, arriving through a second

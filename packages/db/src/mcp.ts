@@ -175,9 +175,7 @@ export async function deleteExternalMcpSecret(
  * whose token did not come back would fail every call with
  * `mcp_missing_credential`, which reads as a rotation nobody performed.
  */
-export async function listExternalMcpSecrets(
-  handle: DbHandle,
-): Promise<ExternalMcpSecretRow[]> {
+export async function listExternalMcpSecrets(handle: DbHandle): Promise<ExternalMcpSecretRow[]> {
   const rows = await handle.db.select().from(externalMcpSecrets);
   return rows.map((row) => ({
     ownerKey: row.ownerKey,

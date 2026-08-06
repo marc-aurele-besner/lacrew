@@ -109,8 +109,16 @@ describe("lacrew intents approve — Safe roots", () => {
     responder = (call) =>
       call.path === "/root-auth/challenge"
         ? { body: safeChallenge }
-        : { body: { authorizedBy: "root:safe-passkey", txHash: "0xabc", safeTxHash: SAFE_TX_HASH } };
-    const proof = { kind: "passkey", credentialId: "c", authenticatorData: "a", clientDataJSON: "c", signature: "s" };
+        : {
+            body: { authorizedBy: "root:safe-passkey", txHash: "0xabc", safeTxHash: SAFE_TX_HASH },
+          };
+    const proof = {
+      kind: "passkey",
+      credentialId: "c",
+      authenticatorData: "a",
+      clientDataJSON: "c",
+      signature: "s",
+    };
     const { out } = await capture(["approve", "7", "--root-proof", JSON.stringify(proof)]);
     const resolve = calls.find((c) => c.path === "/intents/resolve")!;
     assert.deepEqual(resolve.body, {
@@ -176,10 +184,7 @@ describe("lacrew intents approve — other roots", () => {
     assert.equal(resolve.rootProof.kind, "wallet");
     assert.equal(resolve.rootProof.address, account.address);
     // The challenge was minted for a denial; approving would need its own.
-    assert.equal(
-      (calls[0]!.body as { action: string }).action,
-      "intent:deny",
-    );
+    assert.equal((calls[0]!.body as { action: string }).action, "intent:deny");
   });
 
   it("says who a manager-depth intent awaits, and asks for no proof", async () => {
