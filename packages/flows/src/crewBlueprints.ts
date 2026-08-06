@@ -2141,7 +2141,7 @@ const governanceDesk: CrewBlueprint = {
       grantUsdc: usdc(32),
       spends: ["model-api", "rpc-provider", "governor-contract", "treasury-payout"],
       tools: ["lacrew_governance", "lacrew_list_pending_intents", "lacrew_say"],
-      flows: ["governance-vote-cycle"],
+      flows: ["governance-proposal-sweep", "governance-vote-cycle"],
     },
     {
       id: "proposal-scout",
@@ -2149,12 +2149,12 @@ const governanceDesk: CrewBlueprint = {
       kind: "worker_agent",
       reportsTo: "delegate-lead",
       charter:
-        "Reads a proposal and states what it changes rather than what its author says it changes. Refuses to summarise an executable payload it cannot decode.",
+        "Finds the open proposals in the spaces the desk votes in, and states what each changes rather than what its author says it changes. Refuses to summarise an executable payload it cannot decode.",
       capUsdc: usdc(10),
       grantUsdc: usdc(25),
       spends: ["model-api", "data-feed"],
       tools: ["lacrew_read_thread", "lacrew_say"],
-      flows: ["governance-vote-cycle"],
+      flows: ["governance-proposal-sweep", "governance-vote-cycle"],
     },
     {
       id: "rationale-writer",
@@ -2167,7 +2167,7 @@ const governanceDesk: CrewBlueprint = {
       grantUsdc: usdc(25),
       spends: ["model-api"],
       tools: ["lacrew_say"],
-      flows: ["governance-vote-cycle"],
+      flows: ["governance-proposal-sweep", "governance-vote-cycle"],
     },
     {
       id: "conflict-checker",
@@ -2220,7 +2220,20 @@ const governanceDesk: CrewBlueprint = {
       note: "Deliberately unadmitted. A proposal that would route funds to this org can be voted on; the funds cannot be received by this crew.",
     },
   ],
-  connectors: [],
+  connectors: [
+    {
+      id: "snapshot",
+      routes: ["query"],
+      usedBy: "flow",
+      note: "The hub's GraphQL, which is where the desk's proposals come from — `governance-proposal-sweep` reads a space's open queue with it. Public and unauthenticated, so this is the one thing a desk needs to start discovering work and it costs nothing to wire. Read-only, and not as a narrowing: a Snapshot vote is a message signed by the delegate's key, which no HTTP credential could stand in for.",
+    },
+    {
+      id: "tally",
+      routes: ["query"],
+      usedBy: "operator",
+      note: "The same job for the protocols whose votes are onchain governor calls rather than signed messages — Compound, Uniswap, Arbitrum. No shipped flow calls it: which venue a desk watches is the mandate's decision, and the sweep ships pointed at the free one. TALLY_API_KEY, and read-only for the stronger reason — casting a Tally vote is a transaction, which is an intent through the policy stack rather than an HTTP call.",
+    },
+  ],
   externalScopes: [
     {
       id: "delegation",
@@ -2306,9 +2319,10 @@ const governanceDesk: CrewBlueprint = {
         "The cap bounds the money. It says nothing about a vote, which is the only thing this desk does that matters — a compromised seat here votes wrong rather than spends.",
     },
   ],
-  flows: ["governance-vote-cycle"],
+  flows: ["governance-proposal-sweep", "governance-vote-cycle"],
   outOfScope: [
-    "Finding the proposals. No Snapshot or Tally connector ships, so a proposal is handed to the flow rather than discovered by it. A desk that claimed to watch every forum would be claiming a surface that does not exist yet.",
+    "Casting the off-chain vote. The sweep finds the proposal, decides against the mandate and writes the instruction; a human presses the button, because a Snapshot vote is a message signed by the delegate's key and no connector ships a route to the sequencer. One that did would be an authority path beside the policy stack rather than through it.",
+    "Watching every venue. The sweep reads the Snapshot spaces the operator names. A protocol governed anywhere else is discovered by wiring the Tally connector, or not at all — a desk that claimed to watch every forum would be claiming a surface that does not exist.",
     "Writing proposals for other organisations. Drafting is a different job from voting, and it carries a reputational exposure none of these rails touch.",
     "Forum engagement. The desk publishes a rationale; arguing for it in a thread is a person's work.",
     "Treating the vote as enforced. It is not, and the guardrails say so rather than implying the policy stack covers it.",

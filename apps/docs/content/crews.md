@@ -40,10 +40,11 @@ authority to a guess.
 
 The first three ship no flows, because how a support desk or an on-call rota
 actually works is the part most specific to one team, and inventing it would be
-the same fabrication one level down. The four DeFi patterns each ship one,
-because there the pipeline _is_ the claim: "this crew can only advise" is not a
-sentence in a summary, it is a policy check `lp-range-review` performs against a
-router nobody admitted — and it is only checkable because the flow runs it.
+the same fabrication one level down. The four DeFi patterns each ship at least
+one, because there the pipeline _is_ the claim: "this crew can only advise" is
+not a sentence in a summary, it is a policy check `lp-range-review` performs
+against a router nobody admitted — and it is only checkable because the flow
+runs it.
 
 Each of the four is built around a different layer:
 
@@ -53,6 +54,15 @@ Each of the four is built around a different layer:
 | `yield-desk`      | Admission as the risk control. It carries an unadmitted-market entry so the refusal path is exercised, and its allocator holds a dedicated stack because the org-wide whitelist admits a market for every seat at once |
 | `risk-watch`      | Detection is not prevention. Every guardrail states its residual risk, not only the `monitoring` ones validation demands it of                                                                                         |
 | `governance-desk` | An onchain action that moves no value. The cap, the whitelist and the allowance all answer ALLOW on a vote, and the blueprint says so instead of implying the policy stack covers it                                   |
+
+`governance-desk` ships two flows rather than one, and the pair is the point.
+`governance-vote-cycle` reasons about a proposal handed to it, which is right
+when a human is already looking at one. `governance-proposal-sweep` starts from
+a Snapshot space instead and finds the proposal itself — the difference between
+a desk that watches a protocol and a desk that waits to be told. It ends in the
+instruction a mandate owner casts, because a Snapshot vote is a message signed
+by the delegate's key and no connector ships a route that could send one. See
+[how discovery reaches a run](/docs/connectors#how-discovery-reaches-a-run).
 
 ## What a blueprint holds
 
@@ -191,15 +201,22 @@ works. `crews checklist` closes that gap for a self-host: it probes a running
 orchestrator for the seven things a first supervised action needs, and exits
 non-zero while any of them is outstanding — so a script can gate on it.
 
-Two blueprints are **certified**: they ship a run input the product will fire at
-a crew nobody has finished configuring, and a driver that proves the path on a
-local chain. `crewSampleRun` answers nothing for the rest, and every surface
+Three blueprints are **certified**: they ship a run input the product will fire
+at a crew nobody has finished configuring, and a driver that proves the path on
+a local chain. `crewSampleRun` answers nothing for the rest, and every surface
 says so rather than inventing an input.
 
-| Blueprint        | Certified flow         | What its first run needs               | What it proves                                                   |
-| ---------------- | ---------------------- | -------------------------------------- | ---------------------------------------------------------------- |
-| `github-experts` | `bot-pr-triage`        | a model key and the `github` connector | a merge refused, because nothing admitted the merge authority    |
-| `content-studio` | `content-weekly-brief` | a model key, and nothing else          | a publication refused, because the endpoint is off the whitelist |
+| Blueprint         | Certified flow              | What its first run needs                                   | What it proves                                                    |
+| ----------------- | --------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------ |
+| `github-experts`  | `bot-pr-triage`             | a model key and the `github` connector                     | a merge refused, because nothing admitted the merge authority     |
+| `content-studio`  | `content-weekly-brief`      | a model key, and nothing else                              | a publication refused, because the endpoint is off the whitelist  |
+| `governance-desk` | `governance-proposal-sweep` | a model key and the `snapshot` connector, which needs no key | a crew that finds its own work, and still cannot cast the vote |
+
+The three are deliberately different shapes. `github-experts` needs a connector,
+a credential and an admitted address. `content-studio` leaves LaCrew not at all,
+so it drives the checklist's *connector not needed* answer. `governance-desk`
+needs a connector that costs nothing to wire, because the surface is public and
+read-only — which makes it the cheapest of the three to actually run.
 
 ```bash
 ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
@@ -341,6 +358,25 @@ the deployed stack answers `DENY` because nothing admitted that address, and the
 run assembles the human sign-off package instead of publishing. With a model key
 the driver asserts exactly that: the `signoff` step ran, `publish` and
 `published` did not.
+
+### The third path, whose connector costs nothing
+
+```bash
+pnpm golden-path --blueprint governance-desk
+```
+
+A connector again, but the opposite end of the setup burden from the first path:
+the Snapshot hub is public, so the preset takes no credential, there is no
+stand-in host, and the driver registers it against the real hub. The connector
+step reaches **done** on a workspace where nobody has set a variable — which is
+the answer that makes this the cheapest certified path to run for real.
+
+Its refusal is the withdrawal address the blueprint deliberately leaves off the
+whitelist: a proposal that would route funds to this org can be voted on, and
+the funds cannot be received by this crew. The driver asks the deployed stack
+about it and reads `DENY`. With a model key it also asserts where the run ended
+— the `queue` step reached, and neither vote step touched, because casting a
+Snapshot vote is a signed message this crew cannot produce.
 
 Which seats to hire and which spend targets to bind are read off the sample
 flow's own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains
