@@ -213,6 +213,8 @@ export interface MessageRow {
   threadId: string;
   at: string;
   author: string;
+  /** Seat id the posting surface authenticated; what a gate is matched on. */
+  authorId?: string;
   authorKind: string;
   kind: string;
   body: string;
@@ -221,6 +223,8 @@ export interface MessageRow {
   recipient?: string;
   refs?: unknown[];
   blocks?: unknown[];
+  /** Channel this was bridged in from, when it was not the app. */
+  via?: string;
 }
 
 /** Insert-only: a message is a statement someone made, and editing one would rewrite the record. */
@@ -232,6 +236,7 @@ export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promi
       threadId: row.threadId,
       at: new Date(row.at),
       author: row.author,
+      authorId: row.authorId ?? null,
       authorKind: row.authorKind,
       kind: row.kind,
       body: row.body,
@@ -240,6 +245,7 @@ export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promi
       recipient: row.recipient ?? null,
       refs: row.refs ?? null,
       blocks: row.blocks ?? null,
+      via: row.via ?? null,
     })
     .onConflictDoNothing();
 }
@@ -256,6 +262,7 @@ export async function recentMessageRows(handle: DbHandle, limit: number): Promis
     threadId: row.threadId,
     at: row.at.toISOString(),
     author: row.author,
+    authorId: row.authorId ?? undefined,
     authorKind: row.authorKind,
     kind: row.kind,
     body: row.body,
@@ -264,5 +271,6 @@ export async function recentMessageRows(handle: DbHandle, limit: number): Promis
     recipient: row.recipient ?? undefined,
     refs: Array.isArray(row.refs) ? row.refs : undefined,
     blocks: Array.isArray(row.blocks) ? row.blocks : undefined,
+    via: row.via ?? undefined,
   }));
 }

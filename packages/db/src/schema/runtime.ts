@@ -120,6 +120,13 @@ export const runtimeMessages = pgTable(
     threadId: text("thread_id").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull(),
     author: text("author").notNull(),
+    /**
+     * Stable id of the seat the posting surface authenticated (F2.27). Stored
+     * beside the rendered name because that name is renameable and an assigned
+     * gate is matched on this: a resolved gate whose message kept only the
+     * display name stops being attributable the moment somebody is renamed.
+     */
+    authorId: text("author_id"),
     /** "agent" | "human" — who is speaking, which the UI must never guess. */
     authorKind: text("author_kind").notNull(),
     kind: text("kind").notNull(),
@@ -131,6 +138,13 @@ export const runtimeMessages = pgTable(
     refs: jsonb("refs").$type<unknown[]>(),
     /** Rich content — links, fields, code, internal references (F1.7). */
     blocks: jsonb("blocks").$type<unknown[]>(),
+    /**
+     * Channel this line was bridged in from, when it was not the app (F2.19).
+     * Provenance survives the restart with the sentence it labels: a message
+     * that came back from storage looking app-native would be presenting a
+     * chat line and a signed-in post as the same thing.
+     */
+    via: text("via"),
   },
   (table) => [index("messages_thread_idx").on(table.threadId, table.at)],
 );

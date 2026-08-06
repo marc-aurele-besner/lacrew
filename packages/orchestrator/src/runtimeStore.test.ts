@@ -104,6 +104,7 @@ describe("message row mapping", () => {
     threadId: "crew:trading",
     at: "2026-07-28T12:00:00.000Z",
     author: "0xabc",
+    authorId: "seat_42",
     authorKind: "agent",
     kind: "result",
     body: "done",
@@ -115,6 +116,7 @@ describe("message row mapping", () => {
       { kind: "fields", items: [{ label: "repo", value: "owner/repo" }] },
       { kind: "ref", ref: "intent", id: "12" },
     ],
+    via: "telegram",
   };
 
   it("round-trips every field a message can carry", () => {
@@ -144,10 +146,29 @@ describe("message row mapping", () => {
       body: "hi",
     };
     const row = messageToRow(bare) as Record<string, unknown>;
-    for (const key of ["options", "replyTo", "recipient", "refs", "blocks"]) {
+    for (const key of ["authorId", "options", "replyTo", "recipient", "refs", "blocks", "via"]) {
       assert.equal(key in row, false, `${key} was stored for a message without one`);
     }
     assert.deepEqual(messageFromRow(row as never), bare);
+  });
+
+  it("keeps the answering seat's id, so a resolved gate stays attributable", () => {
+    // The point of persisting `authorId` (F2.27): the audit event already
+    // carries the seat that released a run, but the *message* it was made in
+    // kept only a display name — and a rename then left the record naming
+    // somebody who may no longer be that person.
+    const answer: Message = {
+      id: "msg_3",
+      threadId: "agent:0xabc",
+      at: full.at,
+      author: "Grace Hopper",
+      authorId: "seat_7",
+      authorKind: "human",
+      kind: "answer",
+      replyTo: "msg_q",
+      body: "yes",
+    };
+    assert.equal(messageFromRow(messageToRow(answer)).authorId, "seat_7");
   });
 });
 

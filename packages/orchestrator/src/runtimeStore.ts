@@ -508,6 +508,7 @@ export type StoredMessageRow = {
   threadId: string;
   at: string;
   author: string;
+  authorId?: string;
   authorKind: string;
   kind: string;
   body: string;
@@ -516,6 +517,7 @@ export type StoredMessageRow = {
   recipient?: string;
   refs?: unknown[];
   blocks?: unknown[];
+  via?: string;
 };
 
 /**
@@ -532,6 +534,10 @@ export function messageFromRow(row: StoredMessageRow): Message {
     threadId: row.threadId,
     at: row.at,
     author: row.author,
+    // The seat id the surface authenticated, kept beside the rendered name so a
+    // gate resolved months ago is still attributable to a seat rather than to
+    // whatever that person is called now (F2.27).
+    ...(row.authorId ? { authorId: row.authorId } : {}),
     authorKind: row.authorKind === "human" ? "human" : "agent",
     kind: row.kind as Message["kind"],
     body: row.body,
@@ -540,6 +546,7 @@ export function messageFromRow(row: StoredMessageRow): Message {
     ...(row.recipient ? { to: row.recipient } : {}),
     ...(row.refs?.length ? { refs: row.refs as Message["refs"] } : {}),
     ...(row.blocks?.length ? { blocks: row.blocks as Message["blocks"] } : {}),
+    ...(row.via ? { via: row.via } : {}),
   };
 }
 
@@ -550,6 +557,7 @@ export function messageToRow(message: Message): StoredMessageRow {
     threadId: message.threadId,
     at: message.at,
     author: message.author,
+    ...(message.authorId ? { authorId: message.authorId } : {}),
     authorKind: message.authorKind,
     kind: message.kind,
     body: message.body,
@@ -558,6 +566,7 @@ export function messageToRow(message: Message): StoredMessageRow {
     ...(message.to ? { recipient: message.to } : {}),
     ...(message.refs?.length ? { refs: message.refs } : {}),
     ...(message.blocks?.length ? { blocks: message.blocks } : {}),
+    ...(message.via ? { via: message.via } : {}),
   };
 }
 
