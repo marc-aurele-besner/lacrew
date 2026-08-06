@@ -294,6 +294,28 @@ export type ProtocolEventType =
    */
   | "ExternalMcpToolPolicyChanged"
   /**
+   * An external MCP server was attached, replaced, or detached at runtime, or
+   * refused when a stored one was restored (F2.30).
+   *
+   * Attaching a server is naming a third party the orchestrator will talk to,
+   * which is a bigger decision than admitting one of its tools and the one that
+   * has to be answerable first: the row carries the endpoint, the transport,
+   * the scope that attached it, and the env var *names* the config reads —
+   * never a value.
+   */
+  | "ExternalMcpServerChanged"
+  /**
+   * A sealed credential an attached MCP server reads was stored or cleared
+   * (F2.30).
+   *
+   * Kept apart from the server row because it answers a different question: not
+   * "who did this workspace decide to talk to" but "which credential is it
+   * talking with, and since when". The row carries the ref and the value's last
+   * four characters — enough to tell one token from another during an incident,
+   * and never enough to use one.
+   */
+  | "ExternalMcpSecretChanged"
+  /**
    * A crew's inference cost budget was created, edited, enabled, disabled or
    * removed (F2.28).
    *

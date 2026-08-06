@@ -29,9 +29,12 @@ import {
   type PlanRequiredMode,
   type PlanRequiredRecord,
 } from "@lacrew/flows";
+import { mcpSecretOwnerKey, type McpSecretRecord, type McpSecretStore } from "./mcpSecrets.js";
 import {
   externalMcpScopeKey,
   type ExternalMcpScope,
+  type ExternalMcpServer,
+  type ExternalMcpServerRecord,
   type ExternalMcpStore,
   type ExternalMcpToolRecord,
 } from "./externalMcp.js";
@@ -42,12 +45,16 @@ import {
   deleteConnectorMode,
   deleteCrewBinding,
   deleteDualControlRule,
+  deleteExternalMcpSecret,
+  deleteExternalMcpServer,
   deleteExternalMcpTool,
   deletePlanRequirement,
   insertMessageRow,
   listConnectorModes,
   listCrewBindings,
   listDualControlRules,
+  listExternalMcpSecrets,
+  listExternalMcpServers,
   listExternalMcpTools,
   listPlanRequirements,
   recentConnectorAsks,
@@ -66,6 +73,8 @@ import {
   upsertCrewBinding,
   upsertDualControlReview,
   upsertDualControlRule,
+  upsertExternalMcpSecret,
+  upsertExternalMcpServer,
   upsertExternalMcpTool,
   upsertHumanGate,
   upsertPlanRequirement,
@@ -89,6 +98,7 @@ export interface RuntimeStore
     CrewBindingStore,
     HumanGateStore,
     ExternalMcpStore,
+    McpSecretStore,
     PlanRequiredStore,
     DualControlStore {
   readonly name: string;
@@ -140,6 +150,8 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   const connectorAsks = new Map<string, ConnectorAskRecord>();
   const humanGates = new Map<string, HumanGateRecord>();
   const externalMcpTools = new Map<string, ExternalMcpToolRecord>();
+  const externalMcpServers = new Map<string, ExternalMcpServerRecord>();
+  const externalMcpSecrets = new Map<string, McpSecretRecord>();
   const planRequirements = new Map<string, PlanRequiredRecord>();
   const dualControlRules = new Map<string, DualControlRecord>();
   const dualControlReviews = new Map<string, DualControlReviewRecord>();
@@ -203,6 +215,27 @@ export function createMemoryRuntimeStore(): RuntimeStore {
     },
     removeExternalMcpTool: async (scopeKey, server, tool) => {
       externalMcpTools.delete(`${scopeKey}|${server.trim().toLowerCase()}|${tool}`);
+    },
+    // Attached servers, one row each. In memory these live exactly as long as
+    // the process does, which is the honest behaviour for a runtime with no
+    // database: an attach is real now and gone on restart, and the boot log
+    // says which servers came back.
+    loadExternalMcpServers: async () => [...externalMcpServers.values()],
+    saveExternalMcpServer: async (record) => {
+      externalMcpServers.set(record.server.id, record);
+    },
+    removeExternalMcpServer: async (id) => {
+      externalMcpServers.delete(id);
+    },
+    // Sealed even in memory: `put` seals before it reaches a store, so there is
+    // no path here that holds a cleartext credential even for a process that
+    // never persists anything.
+    loadMcpSecrets: async () => [...externalMcpSecrets.values()],
+    saveMcpSecret: async (record) => {
+      externalMcpSecrets.set(`${mcpSecretOwnerKey(record.owner)}|${record.ref}`, record);
+    },
+    removeMcpSecret: async (ownerKey, ref) => {
+      externalMcpSecrets.delete(`${ownerKey}|${ref}`);
     },
     // One row per configured scope, so unbounded like the allowlist above: a
     // trimmed row is a crew that silently stops being asked to plan.
@@ -278,6 +311,21 @@ function modeKey(scope: ConnectorModeScope, route: string): string {
 /** Same identity the Postgres unique constraint uses (scope + server + tool). */
 function mcpToolKey(scope: ExternalMcpScope, server: string, tool: string): string {
   return `${externalMcpScopeKey(scope)}|${server.trim().toLowerCase()}|${tool}`;
+}
+
+/**
+ * The scope a secret's `owner_key` names.
+ *
+ * `crew:0x…` / `agent:0x…` round-trip; anything else is treated as the
+ * operator's own (no owner), which is the only other value the writer produces.
+ */
+function mcpSecretScope(ownerKey: string): ExternalMcpScope | undefined {
+  const split = ownerKey.indexOf(":");
+  if (split <= 0) return undefined;
+  const level = ownerKey.slice(0, split);
+  const ref = ownerKey.slice(split + 1);
+  if ((level !== "crew" && level !== "agent") || !ref) return undefined;
+  return { level, ref };
 }
 
 function modeScopeFromRow(raw: unknown): ConnectorModeScope | null {
@@ -713,6 +761,87 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         await deleteExternalMcpTool(db(), scopeKey, server, tool);
       } catch (err) {
         warn("external mcp tool delete", err);
+      }
+    },
+    loadExternalMcpServers: async () => {
+      try {
+        const rows = await listExternalMcpServers(db());
+        return rows.flatMap((row) => {
+          const config = row.config as ExternalMcpServer | undefined;
+          if (!config || typeof config !== "object" || config.id !== row.id) {
+            warn("external mcp server load", new Error(`unreadable config for ${row.id}`));
+            return [];
+          }
+          return [
+            { server: config, origin: "runtime", at: row.updatedAt } as ExternalMcpServerRecord,
+          ];
+        });
+      } catch (err) {
+        // Rethrown for the same reason the allowlist is: a restart that comes
+        // back with no attached servers because the store was unreadable must
+        // say so, not read as "nobody ever attached one".
+        warn("external mcp servers load", err);
+        throw err;
+      }
+    },
+    saveExternalMcpServer: async (record) => {
+      try {
+        await upsertExternalMcpServer(db(), {
+          id: record.server.id,
+          config: record.server as unknown as Record<string, unknown>,
+          ownerKey: record.server.owner ? externalMcpScopeKey(record.server.owner) : null,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("external mcp server save", err);
+      }
+    },
+    removeExternalMcpServer: async (id) => {
+      try {
+        await deleteExternalMcpServer(db(), id);
+      } catch (err) {
+        warn("external mcp server delete", err);
+      }
+    },
+    loadMcpSecrets: async () => {
+      try {
+        const rows = await listExternalMcpSecrets(db());
+        return rows.map(
+          (row) =>
+            ({
+              ref: row.ref,
+              ...(row.ownerKey === "operator" ? {} : { owner: mcpSecretScope(row.ownerKey) }),
+              sealed: row.sealed,
+              hint: row.hint,
+              at: row.updatedAt,
+            }) as McpSecretRecord,
+        );
+      } catch (err) {
+        // Rethrown: a credential that did not come back makes every call on its
+        // server fail with `mcp_missing_credential`, which reads as a rotation
+        // nobody performed. The caller says the store is unreadable instead.
+        warn("external mcp secrets load", err);
+        throw err;
+      }
+    },
+    saveMcpSecret: async (record) => {
+      try {
+        await upsertExternalMcpSecret(db(), {
+          ownerKey: mcpSecretOwnerKey(record.owner),
+          ref: record.ref,
+          sealed: record.sealed,
+          hint: record.hint,
+          updatedAt: record.at,
+        });
+      } catch (err) {
+        warn("external mcp secret save", err);
+      }
+    },
+    removeMcpSecret: async (ownerKey, ref) => {
+      try {
+        await deleteExternalMcpSecret(db(), ownerKey, ref);
+      } catch (err) {
+        warn("external mcp secret delete", err);
       }
     },
     loadPlanRequirements: async () => {

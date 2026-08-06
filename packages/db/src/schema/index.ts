@@ -3,7 +3,7 @@ export { auditEvents } from "./audit.js";
 export { flowDefinitions, flowRuns, flowRunState, flowCheckpoints, humanGates } from "./flows.js";
 export { webhookTriggers, webhookDeliveries } from "./webhooks.js";
 export { connectorWriteModes, connectorAsks } from "./connectors.js";
-export { externalMcpTools } from "./mcp.js";
+export { externalMcpSecrets, externalMcpServers, externalMcpTools } from "./mcp.js";
 export { planRequirements } from "./planRequired.js";
 export { crewBindings } from "./crewBindings.js";
 export { dualControlRules, dualControlReviews } from "./dualControl.js";

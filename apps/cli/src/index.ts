@@ -791,9 +791,10 @@ Commands:
   skills <sub>              Installable directive skills — list, show <id>,
                             diff <id> --agent 0x…, install <id> --agent 0x…,
                             installed, remove, export
-  mcp <sub>                 Attached MCP servers — servers, refresh, ping,
-                            allow/deny/clear <server>.<tool> (every tool is
-                            blocked until allowed; see: lacrew mcp help)
+  mcp <sub>                 Attached MCP servers — servers, attach/detach,
+                            refresh, ping, allow/deny/clear <server>.<tool>
+                            (every tool is blocked until allowed, and attaching
+                            admits nothing; see: lacrew mcp help)
   heartbeat <sub>           A crew's standing checklist — presets, list, show,
                             set --crew <id> --schedule '<cron>' --flow a,b,
                             on/off, run, ticks (see: lacrew heartbeat help)

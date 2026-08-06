@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cmdMcp, parseScope, parseToolRef } from "./mcp.js";
+import { buildServerConfig, cmdMcp, parseScope, parseToolRef } from "./mcp.js";
 
 async function capture(args: string[]): Promise<{ out: string; error?: string }> {
   const out: string[] = [];
@@ -196,5 +196,187 @@ describe("lacrew mcp", () => {
     assert.deepEqual(parseToolRef("gh.search_issues"), { server: "gh", tool: "search_issues" });
     assert.deepEqual(parseScope(undefined), { level: "workspace" });
     assert.throws(() => parseScope("team:0xabc"), /--scope takes workspace/);
+  });
+});
+
+describe("lacrew mcp attach / detach", () => {
+  it("names a credential's env var and never carries the credential", () => {
+    const config = buildServerConfig("gh", [
+      "attach",
+      "gh",
+      "--endpoint",
+      "https://mcp.example.com/rpc",
+      "--title",
+      "GitHub MCP",
+      "--token-env",
+      "GH_MCP_TOKEN",
+    ]);
+    assert.deepEqual(config, {
+      id: "gh",
+      transport: "http",
+      title: "GitHub MCP",
+      url: "https://mcp.example.com/rpc",
+      auth: { kind: "bearer", tokenEnv: "GH_MCP_TOKEN" },
+    });
+  });
+
+  it("builds a stdio config with repeatable args and passthrough env names", () => {
+    const config = buildServerConfig("local", [
+      "attach",
+      "local",
+      "--command",
+      "node",
+      "--arg",
+      "server.mjs",
+      "--arg",
+      "--verbose",
+      "--env",
+      "HOME_DIR",
+    ]);
+    assert.equal(config.transport, "stdio");
+    assert.deepEqual(config.args, ["server.mjs"]);
+    assert.deepEqual(config.env, ["HOME_DIR"]);
+  });
+
+  it("refuses to guess where a server is", () => {
+    assert.throws(() => buildServerConfig("gh", ["attach", "gh"]), /--endpoint|--command/);
+    assert.throws(() => buildServerConfig(undefined, ["attach"]), /lacrew mcp attach/);
+  });
+
+  it("says the tools it found are blocked, because they are", async () => {
+    const stub = stubFetch({
+      "/mcp/servers/attach": {
+        body: {
+          server: { id: "gh", transport: "http", endpoint: "https://mcp.example.com/rpc" },
+          refresh: { ok: true, added: ["search_issues", "create_issue"] },
+        },
+      },
+    });
+    try {
+      const { out } = await capture(["attach", "gh", "--endpoint", "https://mcp.example.com/rpc"]);
+      assert.match(out, /No restart needed/);
+      assert.match(out, /all blocked: search_issues, create_issue/);
+      assert.match(out, /lacrew mcp allow gh\.<tool>/);
+      assert.equal(stub.calls[0]!.method, "POST");
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("prints the hosted egress policy above the list", async () => {
+    const stub = stubFetch({
+      "/mcp/servers": {
+        body: {
+          servers: [],
+          egress: {
+            hosted: true,
+            allowHosts: ["mcp.example.com"],
+            allowStdio: false,
+            allowLoopback: false,
+            allowEnv: [],
+          },
+        },
+      },
+    });
+    try {
+      const { out } = await capture(["servers"]);
+      assert.match(out, /Hosted worker: stdio refused, hosts mcp\.example\.com/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("says the tool rules survive a detach", async () => {
+    const stub = stubFetch({ "/mcp/servers/detach": { body: { detached: true, server: "gh" } } });
+    try {
+      const { out } = await capture(["detach", "gh"]);
+      assert.match(out, /re-attaching it does not silently re-admit one/);
+      assert.deepEqual(stub.calls[0]!.body, { server: "gh" });
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe("lacrew mcp secret", () => {
+  it("builds a config that names a sealed credential instead of an env var", () => {
+    const config = buildServerConfig("gh", [
+      "attach",
+      "gh",
+      "--endpoint",
+      "https://mcp.example.com/rpc",
+      "--secret-ref",
+      "gh",
+    ]);
+    assert.deepEqual(config.auth, { kind: "secret", secretRef: "gh" });
+  });
+
+  it("prefers the sealed ref when both are given, and never carries a value", () => {
+    const config = buildServerConfig("gh", [
+      "attach",
+      "gh",
+      "--endpoint",
+      "https://mcp.example.com/rpc",
+      "--secret-ref",
+      "gh",
+      "--token-env",
+      "GH_TOKEN",
+    ]);
+    assert.deepEqual(config.auth, { kind: "secret", secretRef: "gh" });
+    assert.equal(JSON.stringify(config).includes("ghp_"), false);
+  });
+
+  it("takes the value from an env var, never from an argument", async () => {
+    const stub = stubFetch({ "/mcp/secrets": { body: { secret: { ref: "gh", hint: "oken" } } } });
+    process.env.TEST_MCP_TOKEN = "ghp_supersecrettoken";
+    try {
+      const { out } = await capture(["secret", "set", "gh", "--from-env", "TEST_MCP_TOKEN"]);
+      assert.match(out, /Stored gh \(····oken\), sealed at rest/);
+      const sent = stub.calls[0]!.body as { ref: string; value: string };
+      assert.equal(sent.ref, "gh");
+      assert.equal(sent.value, "ghp_supersecrettoken");
+      // The token is in the request body and nowhere in what the user sees.
+      assert.equal(out.includes("ghp_supersecrettoken"), false);
+    } finally {
+      delete process.env.TEST_MCP_TOKEN;
+      stub.restore();
+    }
+  });
+
+  it("says so rather than storing an empty credential", async () => {
+    const stub = stubFetch({ "/mcp/secrets": { body: {} } });
+    try {
+      const { error } = await capture(["secret", "set", "gh", "--from-env", "NOT_SET_ANYWHERE"]);
+      assert.match(error ?? "", /NOT_SET_ANYWHERE is not set/);
+      assert.equal(stub.calls.length, 0);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("lists refs and hints, and says values never come back", async () => {
+    const stub = stubFetch({
+      "/mcp/secrets": {
+        body: { secrets: [{ ref: "gh", hint: "oken", at: "2026-08-06T00:00:00Z" }] },
+      },
+    });
+    try {
+      const { out } = await capture(["secret", "list"]);
+      assert.match(out, /gh {2}····oken/);
+      assert.match(out, /Values are never returned/);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("says what clearing one does to the server that reads it", async () => {
+    const stub = stubFetch({ "/mcp/secrets/remove": { body: { cleared: true } } });
+    try {
+      const { out } = await capture(["secret", "rm", "gh"]);
+      assert.match(out, /mcp_missing_credential/);
+      assert.deepEqual(stub.calls[0]!.body, { ref: "gh" });
+    } finally {
+      stub.restore();
+    }
   });
 });

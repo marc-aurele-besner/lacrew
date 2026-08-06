@@ -55,7 +55,10 @@ import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
 import type { EvalRunnerSurface } from "./evalRunner.js";
+import type { McpSecretsSurface } from "./mcpSecrets.js";
 import {
+  readExternalMcpScope,
+  readExternalMcpServer,
   validateExternalMcpRule,
   type ExternalMcpRegistry,
   type ExternalMcpToolRule,
@@ -116,6 +119,12 @@ export interface OrchestratorAppOptions {
   dualControl?: DualControlSurface;
   /** Attached third-party MCP servers (F2.30); absent when none is configured. */
   externalMcp?: ExternalMcpRegistry;
+  /**
+   * Sealed credentials those servers may read (F2.30). Absent leaves the routes
+   * 503 rather than half-working: a workspace told its token was saved when
+   * nothing stored it is worse than one told the feature is off.
+   */
+  mcpSecrets?: McpSecretsSurface;
   /** Eval suite runner (F2.29); absent in embedders that wired none. */
   evals?: EvalRunnerSurface;
   /** Pending and resolved ask-mode confirmations (F2.24). */
@@ -211,6 +220,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     planRequired,
     dualControl,
     externalMcp,
+    mcpSecrets,
     evals,
     connectorAsks,
     humanGates,
@@ -353,7 +363,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // learn it from its own health check, not from an incident.
       rootAuth: rootAuth?.status() ?? { required: false, kind: null, configError: null },
       model: { provider: model.name },
-      mcp: { tools: listLacrewMcpTools().length, useMock: mcpUseMock },
+      mcp: {
+        tools: listLacrewMcpTools().length,
+        useMock: mcpUseMock,
+        // Whether this process considers itself shared, and what that means for
+        // attaching a server. An operator debugging "attach is refused" should
+        // find the answer on the health check rather than in the source.
+        ...(externalMcp
+          ? {
+              external: {
+                servers: externalMcp.list().length,
+                ...externalMcp.egress(),
+              },
+            }
+          : {}),
+      },
       flows: {
         saved: (await flows.list()).length,
         templates: flows.templates().length,
@@ -476,7 +500,92 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       servers: externalMcp.describe(subject),
       rules: externalMcp.rules(),
       modes: CONNECTOR_WRITE_MODES,
+      // Where this process may reach at all, so a setup form can say "your
+      // operator allows these hosts" instead of offering a field that will be
+      // refused after the operator has typed a URL into it.
+      egress: externalMcp.egress(),
     });
+  });
+
+  /**
+   * Attach a server — or replace one under the same id — without a restart.
+   *
+   * Two refusals matter here and read differently on purpose. An invalid config
+   * is a 400: the operator wrote something this runtime cannot use. An **egress**
+   * refusal is a 403: the config is fine and this deployment will not reach it,
+   * which is a policy answer and names which rule said no.
+   *
+   * Attaching admits nothing. Discovery runs immediately and every tool it
+   * finds is recorded blocked, exactly as a boot-configured server's are, so
+   * "attached" and "callable" stay two separate decisions.
+   */
+  app.post("/mcp/servers/attach", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: unknown }>(c);
+    const read = readExternalMcpServer(body.server ?? body);
+    if (!read.server) return jsonBig(c, { error: "invalid_mcp_server", errors: read.errors }, 400);
+    try {
+      const result = await externalMcp.attach(read.server);
+      runtime.recordAudit({
+        type: "ExternalMcpServerChanged",
+        at: new Date().toISOString(),
+        payload: {
+          server: result.server.id,
+          action: "attached",
+          transport: result.server.transport,
+          endpoint: result.server.endpoint,
+          ...(read.server.owner ? { owner: read.server.owner } : {}),
+          // Named, not counted: an operator reading the trail needs to know
+          // which tools arrived blocked to decide what to allow next.
+          blocked: result.refresh.added,
+        },
+      });
+      return jsonBig(c, {
+        server: result.server,
+        refresh: result.refresh,
+        rules: externalMcp.rules(),
+      });
+    } catch (err) {
+      const message = msgOf(err, "mcp_attach_failed");
+      return jsonBig(c, { error: message }, message.startsWith("mcp_egress_denied") ? 403 : 400);
+    }
+  });
+
+  /**
+   * Detach a runtime-attached server. A boot-configured one is refused (409):
+   * env is its source of truth, and a removal the next restart undoes would be
+   * a lie told by a 200.
+   *
+   * Tool records survive a detach on purpose. A server re-attached under the
+   * same id must not come back with a tool silently still admitted, so the
+   * records stay and the re-attached server's tools resolve against them —
+   * the alternative is an operator's `deny` disappearing because somebody
+   * detached and re-attached.
+   */
+  app.post("/mcp/servers/detach", async (c) => {
+    if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ server?: string }>(c);
+    const server = body.server?.trim();
+    if (!server) return jsonBig(c, { error: "server_required" }, 400);
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
+    try {
+      const detached = await externalMcp.detach(server, subject);
+      if (!detached) return jsonBig(c, { error: `unknown_mcp_server:${server}` }, 404);
+      runtime.recordAudit({
+        type: "ExternalMcpServerChanged",
+        at: new Date().toISOString(),
+        payload: { server, action: "detached" },
+      });
+      return jsonBig(c, { detached: true, server });
+    } catch (err) {
+      const message = msgOf(err, "mcp_detach_failed");
+      return jsonBig(
+        c,
+        { error: message },
+        message.startsWith("mcp_server_is_boot_config") ? 409 : 400,
+      );
+    }
   });
 
   /**
@@ -487,8 +596,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.post("/mcp/servers/refresh", async (c) => {
     if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
     const body = await bodyOf<{ server?: string }>(c);
+    const as = c.req.query("as");
+    const subject = as ? { principal: as, managers: await managersOf(as) } : {};
     try {
-      const results = await externalMcp.refresh(body.server?.trim() || undefined);
+      const results = await externalMcp.refresh(body.server?.trim() || undefined, subject);
       for (const result of results) {
         if (!result.ok) continue;
         runtime.recordAudit({
@@ -513,11 +624,104 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!externalMcp) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
     const body = await bodyOf<{ server?: string }>(c);
     if (!body.server?.trim()) return jsonBig(c, { error: "server_required" }, 400);
+    const pingAs = c.req.query("as");
+    const pingSubject = pingAs ? { principal: pingAs, managers: await managersOf(pingAs) } : {};
     try {
-      return jsonBig(c, await externalMcp.ping(body.server.trim()));
+      return jsonBig(c, await externalMcp.ping(body.server.trim(), pingSubject));
     } catch (err) {
       return jsonBig(c, { error: msgOf(err, "unknown_mcp_server") }, 404);
     }
+  });
+
+  /**
+   * Store or replace a credential an attached server may read.
+   *
+   * The one route in this feature that takes a *value*, and it exists because
+   * on a shared worker the workspace attaching a server cannot set an
+   * environment variable. Everything about it is shaped by that:
+   *
+   * - The value is sealed before it is stored and is **never** returned by any
+   *   route, including this one. The response carries the ref and the last four
+   *   characters, which is what an operator needs to tell one token from another.
+   * - With no sealing key configured the write is **refused** (503), not stored
+   *   in cleartext. A customer credential in a database column is the outcome
+   *   this exists to prevent.
+   * - It is scoped: a secret belongs to the owner that wrote it, and only a
+   *   server with that owner resolves it. Two workspaces may both call their
+   *   token `gh` without either reaching the other's.
+   */
+  app.put("/mcp/secrets", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ ref?: string; value?: string; owner?: unknown }>(c);
+    const ref = body.ref?.trim() ?? "";
+    const value = typeof body.value === "string" ? body.value : "";
+    if (!ref || !value) return jsonBig(c, { error: "ref_and_value_required" }, 400);
+    const owner = body.owner === undefined ? undefined : readExternalMcpScope(body.owner);
+    if (body.owner !== undefined && !owner) {
+      return jsonBig(c, { error: "owner must be crew:<ref> or agent:<ref>" }, 400);
+    }
+    try {
+      const secret = await mcpSecrets.put({
+        ref,
+        value,
+        ...(owner && owner.level !== "workspace" ? { owner } : {}),
+      });
+      runtime.recordAudit({
+        type: "ExternalMcpSecretChanged",
+        at: secret.at,
+        payload: {
+          action: "set",
+          ref: secret.ref,
+          // The hint, never the value: enough to say which credential is
+          // installed, useless to anyone who reads the trail.
+          hint: secret.hint,
+          ...(secret.owner ? { owner: secret.owner } : {}),
+        },
+      });
+      return jsonBig(c, { secret });
+    } catch (err) {
+      const message = msgOf(err, "mcp_secret_failed");
+      return jsonBig(
+        c,
+        { error: message },
+        message.startsWith("mcp_secret_sealing_unavailable") ? 503 : 400,
+      );
+    }
+  });
+
+  /** Refs and hints for one owner. There is no route that returns a value. */
+  app.get("/mcp/secrets", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const owner = c.req.query("owner");
+    const scope = owner ? readExternalMcpScope(JSON.parse(owner) as unknown) : undefined;
+    return jsonBig(c, { secrets: mcpSecrets.describe(scope) });
+  });
+
+  /**
+   * Forget a credential. The server that referenced it keeps its config and
+   * starts failing with `mcp_missing_credential`, which is the honest state —
+   * silently continuing on a token nobody has is the alternative.
+   */
+  app.post("/mcp/secrets/remove", async (c) => {
+    if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
+    const body = await bodyOf<{ ref?: string; owner?: unknown }>(c);
+    const ref = body.ref?.trim() ?? "";
+    if (!ref) return jsonBig(c, { error: "ref_required" }, 400);
+    const owner = body.owner === undefined ? undefined : readExternalMcpScope(body.owner);
+    if (body.owner !== undefined && !owner) {
+      return jsonBig(c, { error: "owner must be crew:<ref> or agent:<ref>" }, 400);
+    }
+    const removed = await mcpSecrets.remove(
+      ref,
+      owner && owner.level !== "workspace" ? owner : undefined,
+    );
+    if (!removed) return jsonBig(c, { error: `unknown_mcp_secret:${ref}` }, 404);
+    runtime.recordAudit({
+      type: "ExternalMcpSecretChanged",
+      at: new Date().toISOString(),
+      payload: { action: "cleared", ref, ...(owner ? { owner } : {}) },
+    });
+    return jsonBig(c, { cleared: true, ref });
   });
 
   /**
@@ -576,8 +780,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (rule.mode && !isConnectorWriteMode(rule.mode)) {
       return jsonBig(c, { error: `mode must be ${CONNECTOR_WRITE_MODES.join(" | ")}` }, 400);
     }
+    const ruleAs = c.req.query("as");
+    const ruleSubject = ruleAs ? { principal: ruleAs, managers: await managersOf(ruleAs) } : {};
     try {
-      const record = await externalMcp.setTool(rule);
+      const record = await externalMcp.setTool(rule, ruleSubject);
       runtime.recordAudit({
         type: "ExternalMcpToolPolicyChanged",
         at: record.at,
@@ -2012,7 +2218,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         tools: ready.flatMap((conn) => conn.routes.map((route) => `${conn.id}.${route.name}`)),
       };
     },
-    listMcpTools: () => listLacrewMcpTools().map((tool) => tool.name),
+    /**
+     * The first-party tools every seat has, plus the external MCP tools this
+     * one may actually call.
+     *
+     * The external half is the seat's admitted slice rather than the servers'
+     * catalogue, for the same reason `listConnectors` filters on credentials: a
+     * `requires` naming a tool that is registered-but-refused would install a
+     * procedure that fails at the step it exists for. And on a shared
+     * orchestrator the process-wide list is another workspace's answer.
+     */
+    listMcpTools: (subject) => [
+      ...listLacrewMcpTools().map((tool) => tool.name),
+      ...(externalMcp?.toolNames(subject ?? {}) ?? []),
+    ],
+    subjectFor: async (agent) => ({ principal: agent, managers: await managersOf(agent) }),
   });
 
   /**
@@ -2030,7 +2250,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * approve text nobody can read here.
    */
   app.get("/skills/packs", async (c) => {
-    const available = await skillPacks.availability();
+    // `?as=` for the same reason the tools page takes it: whether a pack is
+    // installable depends on which external tools that seat may call.
+    const packsAs = c.req.query("as");
+    const available = await skillPacks.availability(
+      packsAs ? { principal: packsAs, managers: await managersOf(packsAs) } : undefined,
+    );
     return jsonBig(c, {
       packs: firstPartySkillPacks.map((pack) => {
         const missing = missingRequirements(pack, available);
