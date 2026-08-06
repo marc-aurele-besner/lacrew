@@ -58,6 +58,11 @@ jobs:
       - run: pnpm --filter @lacrew/core sync-abis
       - run: pnpm build
       - run: pnpm lint
+      # Before the suite, because it is the fastest thing here and it is the one
+      # check that decays without enforcement: a repo nobody verifies drifts out
+      # of style, and then `pnpm format` rewrites files a contributor never
+      # touched and buries their diff.
+      - run: pnpm format:check
       - run: pnpm test
 
   # Flow & blueprint regression scenarios (PRD F2.29). Deliberately not path

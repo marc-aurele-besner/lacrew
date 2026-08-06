@@ -47,9 +47,7 @@ import {
 } from "./rootDeploy.js";
 
 /** The router call a root approves or refuses. */
-export const escalationResolveAbi = parseAbi([
-  "function resolve(uint256 intentId, bool approved)",
-]);
+export const escalationResolveAbi = parseAbi(["function resolve(uint256 intentId, bool approved)"]);
 
 const SAFE_TX_ABI = parseAbi([
   "function nonce() view returns (uint256)",
@@ -322,9 +320,7 @@ const FLAG_USER_VERIFIED = 0x04;
  * — an approval that looks granted and moved nothing.
  */
 export function encodeWebAuthnSignature(assertion: WebAuthnAssertionBytes): `0x${string}` {
-  const authenticatorData = new Uint8Array(
-    Buffer.from(assertion.authenticatorData, "base64url"),
-  );
+  const authenticatorData = new Uint8Array(Buffer.from(assertion.authenticatorData, "base64url"));
   if (authenticatorData.length < 37) {
     throw new Error("authenticator_data_too_short");
   }
@@ -359,7 +355,7 @@ export function encodeContractSignature(
   signature: `0x${string}`,
 ): `0x${string}` {
   const ownerWord = getAddress(owner).slice(2).toLowerCase().padStart(64, "0");
-  const offsetWord = (65n).toString(16).padStart(64, "0");
+  const offsetWord = 65n.toString(16).padStart(64, "0");
   const body = signature.slice(2);
   const lengthWord = (BigInt(body.length) / 2n).toString(16).padStart(64, "0");
   return `0x${ownerWord}${offsetWord}00${lengthWord}${body}` as `0x${string}`;

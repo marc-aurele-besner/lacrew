@@ -100,7 +100,9 @@ test("the Safe executes the router's own resolve call", () => {
 });
 
 test("client data splits into the challenge and the fields Safe rebuilds", () => {
-  const parts = splitClientData(b64url(clientDataJson("abc", '"origin":"https://x","crossOrigin":false')));
+  const parts = splitClientData(
+    b64url(clientDataJson("abc", '"origin":"https://x","crossOrigin":false')),
+  );
   assert.equal(parts.challenge, "abc");
   // Everything after the challenge member, minus the braces: what the contract
   // is handed so it can rebuild byte-identical client data.
@@ -213,7 +215,9 @@ test("the matching assertion produces an execTransaction against the Safe", () =
 test("only the root Safe may settle an intent the chain waits on", () => {
   assert.doesNotThrow(() => assertSafeIsAwaitingApprover(SAFE, SAFE));
   // Case is display, not identity.
-  assert.doesNotThrow(() => assertSafeIsAwaitingApprover(SAFE, SAFE.toUpperCase() as `0x${string}`));
+  assert.doesNotThrow(() =>
+    assertSafeIsAwaitingApprover(SAFE, SAFE.toUpperCase() as `0x${string}`),
+  );
   // The orchestrator's own key standing in for the Safe is the substitution
   // this whole path exists to rule out.
   assert.throws(

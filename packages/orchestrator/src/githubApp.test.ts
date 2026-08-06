@@ -216,13 +216,13 @@ function appConnector() {
   return buildConnectorPreset("github", {
     authMode: "github-app",
     omitRoutes: [
-          "merge_pull_request",
-          "create_issue_comment",
-          "update_file",
-          "create_tree",
-          "create_commit",
-          "update_ref",
-        ],
+      "merge_pull_request",
+      "create_issue_comment",
+      "update_file",
+      "create_tree",
+      "create_commit",
+      "update_ref",
+    ],
   });
 }
 

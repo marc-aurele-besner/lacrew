@@ -429,7 +429,10 @@ describe("lacrew crews checklist", () => {
  */
 async function withBindingOrch(
   seed: { nodes: Array<Record<string, unknown>> },
-  run: (url: string, stored: Map<string, { roleId: string; account: string; label?: string }>) => Promise<void>,
+  run: (
+    url: string,
+    stored: Map<string, { roleId: string; account: string; label?: string }>,
+  ) => Promise<void>,
 ): Promise<void> {
   const stored = new Map<string, { roleId: string; account: string; label?: string }>();
   const server: Server = createServer((req, res) => {
@@ -495,7 +498,9 @@ async function withBindingOrch(
 }
 
 /** The chart a hand install leaves: blueprint labels, no role ids anywhere. */
-function ghChart(over: (role: (typeof GH.roles)[number], i: number) => Record<string, unknown> = () => ({})) {
+function ghChart(
+  over: (role: (typeof GH.roles)[number], i: number) => Record<string, unknown> = () => ({}),
+) {
   return {
     nodes: [
       { account: "0x00000000000000000000000000000000000000ff", kind: "HumanRoot", label: "You" },
@@ -560,7 +565,14 @@ describe("lacrew crews bind", () => {
   it("forgets a seat on a blank address", async () => {
     await withBindingOrch(ghChart(), async (url, stored) => {
       await captureAsync(["bind", "github-experts", "--url", url, "--from-org"]);
-      const { out } = await captureAsync(["bind", "github-experts", "--url", url, "--bind", "reviewer="]);
+      const { out } = await captureAsync([
+        "bind",
+        "github-experts",
+        "--url",
+        url,
+        "--bind",
+        "reviewer=",
+      ]);
       assert.match(out, /Forgot: reviewer/);
       assert.equal(stored.has("reviewer"), false);
     });

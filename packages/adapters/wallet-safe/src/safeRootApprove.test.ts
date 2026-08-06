@@ -87,7 +87,21 @@ function credential() {
     privateKey,
     // The COSE_Key blob a registration attestation carries.
     publicKey: Buffer.from([
-      0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...x, 0x22, 0x58, 0x20, ...y,
+      0xa5,
+      0x01,
+      0x02,
+      0x03,
+      0x26,
+      0x20,
+      0x01,
+      0x21,
+      0x58,
+      0x20,
+      ...x,
+      0x22,
+      0x58,
+      0x20,
+      ...y,
     ]).toString("base64url"),
   };
 }
@@ -204,7 +218,11 @@ test(
     // The worker's own cap is what makes a 75 USDC spend escalate at all.
     await send(
       policy,
-      encodeFunctionData({ abi: POLICY_ABI, functionName: "setAgentCap", args: [WORKER, WORKER_CAP] }),
+      encodeFunctionData({
+        abi: POLICY_ABI,
+        functionName: "setAgentCap",
+        args: [WORKER, WORKER_CAP],
+      }),
     );
 
     /** Sign and send one Safe transaction with the credential. */
@@ -247,7 +265,11 @@ test(
     );
     await send(
       usdc,
-      encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [treasury, 1000n * USDC] }),
+      encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [treasury, 1000n * USDC],
+      }),
     );
     await send(
       treasury,
