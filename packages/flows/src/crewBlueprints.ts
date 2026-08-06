@@ -291,9 +291,9 @@ const defiDesk: CrewBlueprint = {
     {
       never: "The executor proposes a trade nobody else looked at",
       enforcedBy: "flow",
-      how: "Recommended: dual control (F2.32) on the executor seat in `spends_and_writes` with a clip-size threshold, so a propose above it parks until the desk manager concurs in the thread. `lacrew dual-control set --agent <executor> --mode spends_and_writes --min-spend <clip>`.",
+      how: 'Dual control (F2.32) on the executor seat in `spends_and_writes` with a clip-size threshold, so a propose above it parks until the desk manager concurs in the thread. Carried in this blueprint\'s `recommendedControls`, so an install that ticks "apply recommended supervision" sets it; otherwise `lacrew dual-control set --agent <executor> --mode spends_and_writes --min-spend <clip>`.',
       residualRisk:
-        "Off-chain and off by default — an operator has to turn it on, and a manager agent concurring is review rather than trust, since whatever compromised the executor may reach it too. Caps, the whitelist and escalation are what actually bound the money.",
+        "Off-chain, and off unless somebody turned it on — the install offers it, it is not implied by picking this blueprint. A manager agent concurring is review rather than trust, since whatever compromised the executor may reach it too. Caps, the whitelist and escalation are what actually bound the money.",
     },
     {
       never: "Unlimited spend from a compromised seat",
@@ -308,6 +308,34 @@ const defiDesk: CrewBlueprint = {
         "The loss is bounded by the epoch, not by the trade. Between two epoch runs the desk can only lose what the clip size and the daily limit allow.",
     },
   ],
+  /*
+    The two guardrails above that say "recommended", as settings an install can
+    apply (F2.31 / F2.32).
+
+    Both land on the executor rather than the whole desk. It is the only seat
+    that proposes, and a requirement in front of the scanner would cost a plan
+    before every read while catching nothing: the guardrail these mirror is
+    "the executor proposes a trade nobody else looked at", not "the desk is
+    quiet". The threshold sits at half the clip because the clip is already the
+    cap — a trade above it escalates to the risk manager on its own, so a review
+    keyed there would only re-ask a question the ladder already asks, and the
+    trades this catches are precisely the ones large enough to matter and small
+    enough to have gone out unseen.
+  */
+  recommendedControls: {
+    planRequired: {
+      scope: { level: "agent", role: "executor" },
+      mode: "spends_only",
+      why: "the executor's proposes are the desk's money path, and a plan in the thread is what makes one legible before it is signed",
+    },
+    dualControl: {
+      scope: { level: "agent", role: "executor" },
+      mode: "spends_and_writes",
+      reviewer: "manager",
+      minSpend: usdc(100),
+      why: "a trade at half the clip or more waits for the risk manager to concur, which is the second reading the desk's own ladder does not give it",
+    },
+  },
   flows: [
     "desk-opportunity-scan",
     "desk-execute-trade",
@@ -587,9 +615,9 @@ const githubExperts: CrewBlueprint = {
     {
       never: "One seat both writes the change and merges it",
       enforcedBy: "flow",
-      how: "Recommended: dual control (F2.32) on the merge path in `risky_writes`, so `github.merge_pull_request` parks until the review lead concurs in the thread. `lacrew dual-control set --crew <review-lead> --mode risky_writes --reviewer manager`.",
+      how: 'Dual control (F2.32) on the merge path in `risky_writes`, so `github.merge_pull_request` parks until the review lead concurs in the thread. Carried in this blueprint\'s `recommendedControls`, so an install that ticks "apply recommended supervision" sets it; otherwise `lacrew dual-control set --crew <review-lead> --mode risky_writes --reviewer manager`.',
       residualRisk:
-        "Off-chain and off by default. A reviewer agent on the same orchestrator is a second reading, not a second trust boundary — set `--reviewer role:human` for repos where a wrong merge is not recoverable.",
+        "Off-chain, and off unless somebody turned it on — the install offers it, it is not implied by picking this blueprint. A reviewer agent on the same orchestrator is a second reading, not a second trust boundary — set `--reviewer role:human` for repos where a wrong merge is not recoverable.",
     },
     {
       never: "A PR from an author impersonating a bot gets merged",
@@ -636,6 +664,29 @@ const githubExperts: CrewBlueprint = {
       how: "The App is not granted review-dismissal; the crew's write scope is comments, merges, and pushes to bot branches.",
     },
   ],
+  /*
+    The "one seat both writes the change and merges it" guardrail, as settings
+    an install can apply (F2.31 / F2.32).
+
+    Dual control covers the crew rather than the merger alone, because the
+    irreversible surface here is wider than the merge: a push to a bot branch
+    and a comment on somebody's PR both leave the org. Plan-required is the
+    narrow one, on the merger — the seat whose effect cannot be taken back, and
+    the one where a sentence in the thread is worth reading.
+  */
+  recommendedControls: {
+    planRequired: {
+      scope: { level: "agent", role: "merger" },
+      mode: "side_effects",
+      why: "a merge is the effect this crew cannot take back, and the merger saying which PR and why is what a maintainer reads afterwards",
+    },
+    dualControl: {
+      scope: { level: "crew" },
+      mode: "risky_writes",
+      reviewer: "manager",
+      why: "the review lead concurs before a merge, a push or a comment leaves the org, so no single seat both writes the change and ships it",
+    },
+  },
   flows: ["bot-pr-triage", "dep-fix-loop", "merge-window-digest"],
   outOfScope: [
     "Repo authority. LaCrew governs the crew's money; what it may do inside GitHub is the App's permission set, and the two must be set up separately.",

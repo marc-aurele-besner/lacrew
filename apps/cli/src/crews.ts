@@ -19,6 +19,7 @@ import {
   crewChecklistProgress,
   crewFlowOwner,
   crewMonthlyGrantUsd,
+  crewControlRole,
   crewPlan,
   crewSampleInputText,
   crewSampleNeeds,
@@ -177,6 +178,39 @@ function printBlueprint(bp: CrewBlueprint): void {
     );
   }
 
+  /*
+    Supervision the blueprint recommends but does not impose (F2.31 / F2.32).
+
+    Printed as an offer with the command that takes it, because the failure of
+    the old shape was exactly that the recommendation lived in a guardrail's
+    prose: true, unread, and never applied.
+  */
+  const controls = bp.recommendedControls;
+  if (controls) {
+    console.log("\nSupervision this blueprint recommends — off unless you apply it");
+    const seatLabel = (scope: { level: string; role?: string }): string => {
+      const roleId = scope.level === "agent" ? scope.role : crewControlRole(bp);
+      return bp.roles.find((r) => r.id === roleId)?.label ?? roleId ?? "the crew";
+    };
+    if (controls.planRequired) {
+      console.log(
+        `  plan-required  ${controls.planRequired.mode} on ${seatLabel(controls.planRequired.scope)}`,
+      );
+      console.log(`     ${controls.planRequired.why}`);
+    }
+    if (controls.dualControl) {
+      const floor = controls.dualControl.minSpend
+        ? ` at or above ${formatUsdc(controls.dualControl.minSpend)}`
+        : "";
+      console.log(
+        `  dual control   ${controls.dualControl.mode}${floor} on ${seatLabel(controls.dualControl.scope)}` +
+          `${controls.dualControl.reviewer ? ` · reviewer ${controls.dualControl.reviewer}` : ""}`,
+      );
+      console.log(`     ${controls.dualControl.why}`);
+    }
+    console.log(`     See the calls:  lacrew crews plan ${bp.id} --apply-recommended-controls`);
+  }
+
   printSample(bp);
 
   if (!check.ok) {
@@ -237,8 +271,8 @@ function parseBindings(args: string[]): CrewBindings {
   return bindings;
 }
 
-function printPlan(bp: CrewBlueprint, bindings: CrewBindings): void {
-  const plan = crewPlan(bp, bindings);
+function printPlan(bp: CrewBlueprint, bindings: CrewBindings, controls = false): void {
+  const plan = crewPlan(bp, bindings, { applyRecommendedControls: controls });
   console.log(`Plan for ${bp.name} — ${plan.length} steps. Nothing here has been called.\n`);
   for (const step of plan) {
     const tier = step.tier ? ` · ${step.tier} tier` : "";
@@ -823,7 +857,7 @@ export async function cmdCrews(args: string[]): Promise<void> {
       const bp = id ? getCrewBlueprint(id) : undefined;
       if (!bp) {
         console.error(
-          `Usage: lacrew crews plan <id> [--bind <role>=0x…] [--json] [--out <file>]  (${crewBlueprints
+          `Usage: lacrew crews plan <id> [--bind <role>=0x…] [--apply-recommended-controls] [--json] [--out <file>]  (${crewBlueprints
             .map((b) => b.id)
             .join(", ")})`,
         );
@@ -831,7 +865,10 @@ export async function cmdCrews(args: string[]): Promise<void> {
         return;
       }
       const bindings = parseBindings(rest);
-      const plan = crewPlan(bp, bindings);
+      // Opt-in, exactly as the install is: printing a plan that quietly
+      // included supervision would misreport what a crew stands up as.
+      const controls = hasFlag(rest, "--apply-recommended-controls");
+      const plan = crewPlan(bp, bindings, { applyRecommendedControls: controls });
       const out = flagValue(rest, "--out");
       if (out) {
         writeFileSync(out, `${JSON.stringify(plan, null, 2)}\n`);
@@ -842,7 +879,7 @@ export async function cmdCrews(args: string[]): Promise<void> {
         console.log(JSON.stringify(plan, null, 2));
         return;
       }
-      printPlan(bp, bindings);
+      printPlan(bp, bindings, controls);
       return;
     }
 
@@ -872,6 +909,11 @@ export async function cmdCrews(args: string[]): Promise<void> {
         [--json]             (--bind <role>=) forgets one seat.
   plan <id> [--bind k=0x…]   The ordered calls that stand the crew up
         [--json] [--out f]   Bind seats as <role>=0x…, targets as target:<id>=0x…
+        [--apply-recommended-controls]
+                             Also emit the blueprint's recommended supervision
+                             (plan-required / dual control). Off by default:
+                             recommending a control and turning one on for
+                             somebody are different acts.
   eval [id…] [--list]        Run the crew's eval scenarios offline; a failure
         [--json]             names the scenario, the assertion, and the diff
 

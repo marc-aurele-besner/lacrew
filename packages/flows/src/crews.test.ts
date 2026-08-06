@@ -736,6 +736,65 @@ test("validation rejects an escalation ladder that never reaches the human", () 
   assert.ok(validateCrewBlueprint(bp).errors.some((e) => /never reaches the human root/.test(e)));
 });
 
+test("a plan carries no supervision unless the install asked for it", () => {
+  const bp = getCrewBlueprint("github-experts")!;
+  assert.ok(bp.recommendedControls, "this blueprint recommends something");
+  // The default is what a crew got before the field existed: recommending a
+  // control and applying one are different acts.
+  assert.equal(
+    crewPlan(bp, fullBindings(bp)).some((s) => s.kind === "set-control"),
+    false,
+  );
+});
+
+test("applying the recommendation writes the controls the guardrails describe", () => {
+  const bp = getCrewBlueprint("github-experts")!;
+  const bindings = fullBindings(bp);
+  const steps = crewPlan(bp, bindings, { applyRecommendedControls: true }).filter(
+    (s) => s.kind === "set-control",
+  );
+  assert.equal(steps.length, 2);
+
+  const plan = steps.find((s) => s.tool === "PUT /plan-required")!;
+  // The merger, not the crew: this is the seat whose effect cannot be undone.
+  assert.deepEqual(plan.args.scope, { level: "agent", ref: bindings.roles.merger });
+  assert.equal(plan.args.mode, "side_effects");
+  assert.deepEqual(plan.pending, []);
+
+  const dual = steps.find((s) => s.tool === "PUT /dual-control")!;
+  assert.deepEqual(dual.args.scope, { level: "crew", ref: bindings.roles["review-lead"] });
+  assert.equal(dual.args.mode, "risky_writes");
+  assert.equal(dual.args.reviewer, "manager");
+
+  // Supervision lands before the pipeline it supervises.
+  const ordered = crewPlan(bp, bindings, { applyRecommendedControls: true });
+  const lastControl = ordered.filter((s) => s.kind === "set-control").at(-1)!.order;
+  const firstFlow = ordered.find((s) => s.kind === "install-flow")!.order;
+  assert.ok(lastControl < firstFlow, "a crew must not be given work before it is supervised");
+});
+
+test("a control step says which seat it is still waiting on", () => {
+  const bp = getCrewBlueprint("defi-desk")!;
+  const step = crewPlan(bp, {}, { applyRecommendedControls: true }).find(
+    (s) => s.tool === "PUT /dual-control",
+  )!;
+  // The executor's account only exists once its hire lands; a plan generated
+  // before that says so rather than inventing an address.
+  assert.deepEqual(step.pending, ["crew.executor"]);
+  assert.equal(step.args.mode, "spends_and_writes");
+  assert.equal(step.args.minSpend, "100000000");
+  assert.match(step.summary, /100 USDC/);
+});
+
+test("validation refuses a recommended control naming a seat nobody hires", () => {
+  const bp = structuredClone(getCrewBlueprint("defi-desk")!);
+  bp.recommendedControls!.dualControl!.scope = { level: "agent", role: "nightwatch" };
+  assert.ok(
+    validateCrewBlueprint(bp).errors.some((e) => /does not hire/.test(e)),
+    "a typo here would be found on the one control the operator explicitly asked for",
+  );
+});
+
 test("formatUsdc renders base units the way a human reads them", () => {
   assert.equal(formatUsdc("200000000"), "200 USDC");
   assert.equal(formatUsdc("1500000"), "1.5 USDC");

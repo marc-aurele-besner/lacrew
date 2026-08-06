@@ -73,16 +73,17 @@ const bp = getCrewBlueprint("github-experts")!;
 validateCrewBlueprint(bp); // { ok: true, errors: [] }
 ```
 
-| Field            | What it answers                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `roles`          | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc`                      |
-| `targets`        | Where money may go, and which targets are deliberately **not** whitelisted                                                 |
-| `externalScopes` | Credentials LaCrew does not govern — a GitHub App, a draft-only social token                                               |
-| `externalSeats`  | Seats in **other** crews this one's flows may act on — see [crews that act on other crews](#crews-that-act-on-other-crews) |
-| `escalation`     | The "ask me first" ladder, and which layer carries each rung                                                               |
-| `governance`     | Which changes are constitutional, and at which tier                                                                        |
-| `guardrails`     | Each "must never happen", its enforcement layer, and its residual risk                                                     |
-| `outOfScope`     | What the crew deliberately does not do                                                                                     |
+| Field                 | What it answers                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `roles`               | The org chart: kind, who it reports to, its charter, its per-call `capUsdc` and per-epoch `grantUsdc`                             |
+| `targets`             | Where money may go, and which targets are deliberately **not** whitelisted                                                        |
+| `externalScopes`      | Credentials LaCrew does not govern — a GitHub App, a draft-only social token                                                      |
+| `externalSeats`       | Seats in **other** crews this one's flows may act on — see [crews that act on other crews](#crews-that-act-on-other-crews)        |
+| `escalation`          | The "ask me first" ladder, and which layer carries each rung                                                                      |
+| `governance`          | Which changes are constitutional, and at which tier                                                                               |
+| `guardrails`          | Each "must never happen", its enforcement layer, and its residual risk                                                            |
+| `recommendedControls` | Supervision the blueprint recommends — see [recommended supervision](#recommended-supervision). Offered at install, never implied |
+| `outOfScope`          | What the crew deliberately does not do                                                                                            |
 
 ### Enforcement layers
 
@@ -104,6 +105,40 @@ chain refuses something it has never seen is worse than no config:
 report's (the escalation would dead-end), a reporting cycle, a worker acting as
 a parent, a seat spending on an unlisted target, a flow the blueprint does not
 ship, and an escalation ladder that never reaches a human.
+
+## Recommended supervision
+
+Some guardrails are enforced by a control an operator has to _turn on_:
+[plan-required](./plan-required.md) and [dual control](./dual-control.md). A
+blueprint carries those as `recommendedControls`, so the recommendation is a
+setting an install can apply rather than a sentence in a guardrail nobody reads.
+
+```ts
+recommendedControls: {
+  planRequired: { scope: { level: "agent", role: "merger" }, mode: "side_effects", why: "…" },
+  dualControl: { scope: { level: "crew" }, mode: "risky_writes", reviewer: "manager", why: "…" },
+}
+```
+
+`scope` names a **role id**, not an address — bound at install like everything
+else a blueprint references. `{ level: "crew" }` lands on the crew's own
+manager, which is the node the runtime attributes the crew's work to; `agent`
+lands on one seat. A `seat:<role>` reviewer binds the same way. `why` is
+required: an install checkbox that could only say "apply recommended controls"
+is an operator agreeing to something nobody explained.
+
+Nothing here is applied unless it is asked for:
+
+```bash
+lacrew crews show github-experts       # what is recommended, and why
+lacrew crews plan github-experts --apply-recommended-controls
+```
+
+The steps land **before** the flow installs, so a crew is never given work in a
+window where the operator believes it is supervised and it is not. And no
+recommended control ever widens anything: the caps, the whitelist, the ladder
+and governance are identical either way — the strictest thing any of them can do
+is make the crew wait.
 
 ## Whitelists are org-wide
 
@@ -212,9 +247,11 @@ about from a chain revert.
 
 ## The plan
 
-`crewPlan(blueprint, bindings)` returns the ordered calls that stand a crew up —
-hires down the tree, caps, policy bindings, whitelists, grants, flow installs.
-It executes nothing. Each step carries:
+`crewPlan(blueprint, bindings, options)` returns the ordered calls that stand a
+crew up — hires down the tree, caps, policy bindings, whitelists, grants, the
+[recommended controls](#recommended-supervision) when
+`applyRecommendedControls` is set, and flow installs. It executes nothing. Each
+step carries:
 
 - `via` + `tool` — the MCP tool (`lacrew_org_action`, `lacrew_set_budget`) or the
   orchestrator route (`POST /flows`) that carries it
