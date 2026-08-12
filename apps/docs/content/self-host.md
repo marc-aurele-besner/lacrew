@@ -37,6 +37,53 @@ pnpm --filter @lacrew/indexer dev
 # INDEXER_PATH=.lacrew/indexer.json lacrew audit --rpc
 ```
 
+### A second human on Anvil
+
+Two humans is the shape agency partners and clubs run: either can veto, firing
+one leaves the other, and firing the last is refused onchain. Two ways to stand
+it up locally.
+
+**At deploy time** — `SECOND_HUMAN` seats a peer as part of `DeployMockOrg`.
+Anvil account #2 is the natural second key:
+
+```bash
+# Terminal B, instead of the plain deploy above
+SECOND_HUMAN=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC \
+  pnpm --filter @lacrew/cli exec tsx src/index.ts deploy --anvil
+
+# Both seats, plus the quorums execute() actually gates on
+pnpm --filter @lacrew/cli exec tsx src/index.ts gov seats --rpc http://127.0.0.1:8545
+```
+
+The script does not write the seat directly — it cannot. It passes a High-tier
+proposal on the module, which the root clears alone only because it is still the
+whole human electorate (the unanimity fast path). It also adds the partner as a
+`HumanRoot` node under the root, which is how one org tree carries two humans.
+
+**On a running org** — the same thing by hand, as a partner would actually be
+admitted once the org already has humans in it:
+
+```bash
+RPC=http://127.0.0.1:8545
+PARTNER=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+# 1. Propose (always high tier — the module refuses seat admin from any key)
+pnpm --filter @lacrew/cli exec tsx src/index.ts gov admit-human $PARTNER 2 --rpc $RPC
+# 2. Every seated human votes; then execute
+pnpm --filter @lacrew/cli exec tsx src/index.ts gov vote <id> yes --rpc $RPC
+pnpm --filter @lacrew/cli exec tsx src/index.ts gov execute <id> --rpc $RPC
+```
+
+With two seats, `PRIVATE_KEY` set to either human can `gov veto <id>` a
+high-tier proposal — that is the shared safety valve, and it needs no quorum and
+no waiting. `gov remove-human <partner>` runs the same propose/vote/execute
+loop in reverse; aimed at the last remaining human it reverts `LastHumanSeat`,
+so the org can never end up with agent seats as its only electorate.
+
+Not covered by this: the org wallet. The session issuer and Safe still key off
+one root address in v1 — a second human is a governance peer, not a co-signer.
+See [Security model](./protocol/security.md).
+
 ### Divergent local chains (long-lived Anvil)
 
 Redeploying onto a used Anvil produces nonce-shifted addresses that no longer

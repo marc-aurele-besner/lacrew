@@ -6,6 +6,18 @@ import {IOrgRegistry} from "./interfaces/IOrgRegistry.sol";
 /// @title OrgRegistry
 /// @notice Stores the organization tree for a single LaCrew org.
 /// @dev Bootstrap: only `root` may mutate until `setGovernor` binds GovernanceModule.
+///
+///      Multi-human orgs are one tree, not a forest: the org keeps a single root node,
+///      and additional humans are `HumanRoot` nodes parented to it. That is what makes
+///      a second partner cheap — no new contract, no virtual org above the root, and
+///      every existing walk (children, reparent, cycle check) already handles it. The
+///      root node is unremovable here, so the tree always retains at least one human;
+///      the seat side of the same guarantee lives in `GovernanceModule.removeHuman`.
+///
+///      Peer humans are peers in authority, not in the tree: the root node is where the
+///      chart hangs from, while who may veto or vote is `GovernanceModule`'s seat
+///      roster. Reading kind `HumanRoot` off this registry tells a UI who to draw as a
+///      human; it does not by itself confer a vote.
 contract OrgRegistry is IOrgRegistry {
     mapping(address => Node) private _nodes;
     mapping(address => address[]) private _children;

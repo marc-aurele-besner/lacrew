@@ -198,4 +198,61 @@ describe("mock electorate", () => {
     const total = seats.reduce((sum, s) => sum + BigInt(s.power), 0n);
     assert.ok(total >= BigInt(config.quorumYes), `${total} < ${config.quorumYes}`);
   });
+
+  it("counts human heads, not only human weight", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const config = await client.readGovernanceConfig();
+    // The fixture is a solo root: one human seat carrying weight 2.
+    assert.equal(config.humanSeatCount, "1");
+    assert.equal(config.totalHumanVotingPower, "2");
+  });
+});
+
+describe("mock seat admin (multi-human orgs)", () => {
+  const partner = "0x00000000000000000000000000000000000000b0" as const;
+
+  it("admitting a human is a high-tier proposal that moves the electorate", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const { proposalId } = await client.proposeAdmitHuman({ account: partner, power: 2n });
+
+    const proposal = await client.getProposal(proposalId);
+    // Not a convention this method picked: the module refuses seat admin from
+    // any caller but itself, and refuses a low-tier proposal aimed at itself.
+    assert.equal(proposal.tier, "high");
+    // Nothing changes until it executes — a staged seat is not a seated human.
+    assert.equal((await client.readGovernanceConfig()).humanSeatCount, "1");
+
+    await client.voteGovernance(proposalId, true);
+    await client.executeGovernance(proposalId);
+
+    const seats = await client.readGovernanceSeats();
+    const seated = seats.find((s) => s.voter.toLowerCase() === partner);
+    assert.equal(seated?.role, "human");
+    assert.equal(seated?.power, "2");
+    const config = await client.readGovernanceConfig();
+    assert.equal(config.humanSeatCount, "2");
+    assert.equal(config.totalHumanVotingPower, "4");
+  });
+
+  it("removes a human once another remains, and refuses the last one", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const admit = await client.proposeAdmitHuman({ account: partner, power: 2n });
+    await client.voteGovernance(admit.proposalId, true);
+    await client.executeGovernance(admit.proposalId);
+
+    const remove = await client.proposeRemoveHuman({ account: partner });
+    await client.voteGovernance(remove.proposalId, true);
+    await client.executeGovernance(remove.proposalId);
+    const afterRemoval = await client.readGovernanceConfig();
+    assert.equal(afterRemoval.humanSeatCount, "1");
+
+    // The last human is not removable: an org with none has handed high-tier
+    // final say to nobody, since agent weight never satisfies it.
+    const last = await client.proposeRemoveHuman({
+      account: afterRemoval.humanRoot,
+    });
+    await client.voteGovernance(last.proposalId, true);
+    await assert.rejects(() => client.executeGovernance(last.proposalId), /last human seat/i);
+    assert.equal((await client.readGovernanceConfig()).humanSeatCount, "1");
+  });
 });

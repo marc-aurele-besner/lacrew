@@ -2957,6 +2957,47 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     return jsonBig(c, { ...result, mode: runtime.mode });
   });
 
+  /**
+   * Seat a human. Always a High-tier proposal — the module refuses seat admin
+   * from any caller but itself, so there is no orchestrator-only route to a
+   * second human and this endpoint cannot invent one.
+   */
+  app.post("/governance/propose-admit-human", async (c) => {
+    const body = await bodyOf<{ account?: `0x${string}`; power?: string | number }>(c);
+    if (!body.account) return jsonBig(c, { error: "account_required" }, 400);
+    let power: bigint | undefined;
+    if (body.power !== undefined && body.power !== "") {
+      try {
+        power = BigInt(body.power);
+      } catch {
+        return jsonBig(c, { error: "power_must_be_an_integer" }, 400);
+      }
+      if (power <= 0n) return jsonBig(c, { error: "power_must_be_positive" }, 400);
+    }
+    try {
+      const result = await runtime.proposeAdmitHuman({ account: body.account, power });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "propose_failed";
+      // A chainless runtime has no electorate to seat into; say so rather than
+      // returning a proposal id for a seat that will never exist.
+      return jsonBig(c, { error: message }, message.endsWith("unsupported_by_client") ? 501 : 400);
+    }
+  });
+
+  /** Revoke a human's seat. The contract refuses the last one (`LastHumanSeat`). */
+  app.post("/governance/propose-remove-human", async (c) => {
+    const body = await bodyOf<{ account?: `0x${string}` }>(c);
+    if (!body.account) return jsonBig(c, { error: "account_required" }, 400);
+    try {
+      const result = await runtime.proposeRemoveHuman({ account: body.account });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "propose_failed";
+      return jsonBig(c, { error: message }, message.endsWith("unsupported_by_client") ? 501 : 400);
+    }
+  });
+
   app.post("/governance/propose-fire", async (c) => {
     const body = await bodyOf<{ account?: `0x${string}`; tier?: "low" | "high" }>(c);
     if (!body.account) return jsonBig(c, { error: "account_required" }, 400);

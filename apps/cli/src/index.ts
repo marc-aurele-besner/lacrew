@@ -605,6 +605,62 @@ async function main(): Promise<void> {
         printJson(await (client as { proposeFire: Function }).proposeFire({ account }));
         return;
       }
+      if (sub === "admit-human") {
+        const account = cleaned[1] as `0x${string}` | undefined;
+        const power = cleaned[2];
+        if (!account) {
+          console.error("Usage: lacrew gov admit-human <address> [power] [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (power !== undefined && !/^\d+$/.test(power)) {
+          console.error("power must be a positive integer (vote weight, not a token amount)");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeAdmitHuman" in client)) {
+          console.error("gov admit-human requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeAdmitHuman: Function }).proposeAdmitHuman({
+            account,
+            power: power === undefined ? 2n : BigInt(power),
+          }),
+        );
+        return;
+      }
+      if (sub === "remove-human") {
+        const account = cleaned[1] as `0x${string}` | undefined;
+        if (!account) {
+          console.error("Usage: lacrew gov remove-human <address> [--rpc]");
+          process.exitCode = 1;
+          return;
+        }
+        if (!("proposeRemoveHuman" in client)) {
+          console.error("gov remove-human requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        printJson(
+          await (client as { proposeRemoveHuman: Function }).proposeRemoveHuman({ account }),
+        );
+        return;
+      }
+      if (sub === "seats") {
+        if (!("readGovernanceSeats" in client) || !("readGovernanceConfig" in client)) {
+          console.error("gov seats requires onchain client");
+          process.exitCode = 1;
+          return;
+        }
+        const [seats, config] = await Promise.all([
+          (client as { readGovernanceSeats: Function }).readGovernanceSeats(),
+          (client as { readGovernanceConfig: Function }).readGovernanceConfig(),
+        ]);
+        printJson({ seats, config });
+        return;
+      }
       if (sub === "reparent") {
         const account = cleaned[1] as `0x${string}` | undefined;
         const newParent = cleaned[2] as `0x${string}` | undefined;
@@ -728,7 +784,7 @@ async function main(): Promise<void> {
         return;
       }
       console.error(
-        "Usage: lacrew gov <propose|hire|fire|reparent|grant|whitelist|cap|policy|vote|veto|execute> …",
+        "Usage: lacrew gov <propose|hire|fire|admit-human|remove-human|seats|reparent|grant|whitelist|cap|policy|vote|veto|execute> …",
       );
       process.exitCode = 1;
       return;
@@ -769,6 +825,9 @@ Commands:
   gov propose <low|high> <target> [data]  Constitutional proposal
   gov hire <label>          Propose OrgRegistry.addNode (--rpc)
   gov fire <account>        Propose OrgRegistry.removeNode (--rpc)
+  gov admit-human <addr> [power]  Propose GovernanceModule.admitHuman — seat a second human (high tier, --rpc)
+  gov remove-human <addr>   Propose GovernanceModule.removeHuman — refused for the last human (high tier, --rpc)
+  gov seats                 Print the electorate and the quorums execute() gates on (--rpc)
   gov reparent <acct> <parent>  Propose OrgRegistry.reparent (--rpc)
   gov grant <acct> <amountWei> [--asset <sym>]  Propose EpochStreamer.setGrant (high tier, --rpc)
   gov whitelist <target> [yes|no]  Propose WhitelistPolicy.setAllowed (--rpc)

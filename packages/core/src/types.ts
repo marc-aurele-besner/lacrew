@@ -51,17 +51,27 @@ export interface GovernanceConfig {
   /** Configured human-seat yes-weight for high tier. */
   quorumHumanYes: string;
   /**
-   * The address that may call `setVotingPower` / `setQuorum*` / `setTiming`
-   * directly. Note this is NOT itself routed through governance: the root can
-   * re-weight the electorate unilaterally, including granting itself
-   * quorum-clearing weight. The module also accepts these calls from itself,
-   * so a High-tier proposal can retune parameters.
+   * The address that may call `setQuorum*` / `setTiming` and administer *agent*
+   * seats directly, without a proposal — and only while it still holds a funded
+   * human seat of its own (or while the org has seated no human at all, the
+   * bootstrap of a module deployed with zero root weight).
+   *
+   * Human seats are not in its gift: creating, re-weighting or revoking one runs
+   * through `admitHuman` / `removeHuman`, which accept the module itself as
+   * caller and nobody else. So the root cannot vote itself more weight, cannot
+   * add a partner unseen, and cannot fire one.
    */
   humanRoot: `0x${string}`;
   /** Sum of all seat weight currently granted. */
   totalVotingPower?: string;
   /** Sum of human-seat weight; also defines unanimity for the fast path. */
   totalHumanVotingPower?: string;
+  /**
+   * How many funded human seats exist — heads, not weight. One means this org
+   * has a single point of human failure; the contract refuses to let it reach
+   * zero, since agent yes-weight never satisfies high-tier final say.
+   */
+  humanSeatCount?: string;
   /**
    * Quorum `execute()` actually enforces: the configured value clamped to the
    * seated weight, so a bootstrap org is never asked for voters that do not

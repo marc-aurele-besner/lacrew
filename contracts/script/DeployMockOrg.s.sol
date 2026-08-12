@@ -166,12 +166,40 @@ contract DeployMockOrg is Script {
         d.gov.setQuorumYes(2);
         d.gov.setQuorumHumanYes(1);
 
+        _seatSecondHuman(d, humanRoot);
+
         d.registry.setGovernor(address(d.gov));
         d.treasury.setGovernor(address(d.gov));
         d.router.setGovernor(address(d.gov));
         d.epochStreamer.setGovernor(address(d.gov));
         d.whitelist.setGovernor(address(d.gov));
         d.spendCap.setGovernor(address(d.gov));
+    }
+
+    /// @notice Seat an optional second human (`SECOND_HUMAN`) as a peer of the root.
+    /// @dev Off by default so the canonical deploy is unchanged. Two things happen,
+    ///      and they are deliberately different mechanisms: the *seat* (vote + veto)
+    ///      is admitted by passing a High-tier proposal, because `GovernanceModule`
+    ///      refuses to let any key hand out human seats — the root here clears it alone
+    ///      only because it is still the whole human electorate, which is exactly the
+    ///      unanimity fast path. The *node* is a `HumanRoot` child of the root node,
+    ///      which is how one org tree carries more than one human (see OrgRegistry).
+    ///      Must run before `setGovernor`, while the deployer can still write the tree.
+    function _seatSecondHuman(Deployed memory d, address humanRoot) private {
+        address secondHuman = vm.envOr("SECOND_HUMAN", address(0));
+        if (secondHuman == address(0) || secondHuman == humanRoot) return;
+
+        uint256 power = vm.envOr("SECOND_HUMAN_POWER", uint256(2));
+        uint256 proposalId = d.gov.propose(
+            GovernanceModule.Tier.High,
+            address(d.gov),
+            abi.encodeCall(GovernanceModule.admitHuman, (secondHuman, power))
+        );
+        d.gov.vote(proposalId, true);
+        d.gov.execute(proposalId);
+
+        d.registry.addNode(secondHuman, IOrgRegistry.NodeKind.HumanRoot, humanRoot);
+        console2.log("secondHuman", secondHuman);
     }
 
     function _workerStack(

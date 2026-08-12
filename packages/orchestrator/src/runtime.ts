@@ -2155,6 +2155,72 @@ export class CrewRuntime {
     return result;
   }
 
+  /**
+   * Propose seating a human — a peer with a vote and a veto, not a delegate.
+   *
+   * High tier is not this method's choice: `GovernanceModule` takes seat admin
+   * from nobody but itself, and refuses a low-tier proposal aimed at itself. The
+   * orchestrator therefore cannot seat a partner on its own authority, which is
+   * the point — a cloud session that could would be a second root key.
+   */
+  async proposeAdmitHuman(input: {
+    account: `0x${string}`;
+    power?: bigint;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    const client = this.client as {
+      proposeAdmitHuman?: (i: {
+        account: `0x${string}`;
+        power: bigint;
+      }) => Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }>;
+    };
+    if (!client.proposeAdmitHuman) throw new Error("seat_admin_unsupported_by_client");
+    // Weight 2 by default: the root is seeded at 2 so humans outweigh agent
+    // seats, and a partner admitted at 1 would be a junior human by accident.
+    const result = await client.proposeAdmitHuman({
+      account: input.account,
+      power: input.power ?? 2n,
+    });
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        power: (input.power ?? 2n).toString(),
+        action: "admit-human",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
+  /**
+   * Propose revoking a human's seat. The contract refuses the last one, so this
+   * lands only while another human remains seated.
+   */
+  async proposeRemoveHuman(input: {
+    account: `0x${string}`;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    const client = this.client as {
+      proposeRemoveHuman?: (i: {
+        account: `0x${string}`;
+      }) => Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }>;
+    };
+    if (!client.proposeRemoveHuman) throw new Error("seat_admin_unsupported_by_client");
+    const result = await client.proposeRemoveHuman({ account: input.account });
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: result.proposalId,
+        account: result.account,
+        action: "remove-human",
+        txHash: result.txHash,
+      },
+    });
+    return result;
+  }
+
   /** Propose firing a node (OrgRegistry.removeNode — children rewire to parent). */
   async proposeFire(input: {
     account: `0x${string}`;

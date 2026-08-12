@@ -373,6 +373,57 @@ describe("orchestrator Hono app", () => {
     );
   });
 
+  it("seats a second human only as a high-tier proposal, and refuses the last removal", async () => {
+    const app = buildApp();
+    const partner = "0x00000000000000000000000000000000000000b0";
+
+    const admit = await app.request("/governance/propose-admit-human", {
+      method: "POST",
+      body: JSON.stringify({ account: partner, power: "2" }),
+    });
+    assert.equal(admit.status, 200);
+    const admitBody = (await admit.json()) as { proposalId: string };
+
+    // The seat exists only once the proposal executes — the orchestrator has no
+    // route that seats a human on its own authority.
+    const before = (await (await app.request("/governance/electorate")).json()) as {
+      config: { humanSeatCount: string };
+    };
+    assert.equal(before.config.humanSeatCount, "1");
+
+    for (const action of ["vote", "execute"]) {
+      const res = await app.request(`/governance/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ proposalId: admitBody.proposalId, support: true }),
+      });
+      assert.equal(res.status, 200, `${action} failed`);
+    }
+
+    const after = (await (await app.request("/governance/electorate")).json()) as {
+      seats: Array<{ voter: string; role: string }>;
+      config: { humanSeatCount: string };
+    };
+    assert.equal(after.config.humanSeatCount, "2");
+    assert.ok(
+      after.seats.some((s) => s.voter.toLowerCase() === partner && s.role === "human"),
+      "the admitted partner must appear as a human seat",
+    );
+
+    const noAccount = await app.request("/governance/propose-admit-human", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    assert.equal(noAccount.status, 400);
+
+    // Weight is a vote count, not an amount: zero would be a revocation wearing
+    // an admission's name, and the contract rejects it.
+    const zeroPower = await app.request("/governance/propose-admit-human", {
+      method: "POST",
+      body: JSON.stringify({ account: partner, power: "0" }),
+    });
+    assert.equal(zeroPower.status, 400);
+  });
+
   it("streams mock epochs and lists governance over HTTP", async () => {
     const app = buildApp();
     const res = await app.request("/epoch", { method: "POST", body: "{}" });
