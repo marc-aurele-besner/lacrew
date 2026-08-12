@@ -20,13 +20,27 @@ contract GovernanceFuzzTest is Test {
         gov = new GovernanceModule(root, 2);
         vm.prank(root);
         registry.setGovernor(address(gov));
-        vm.startPrank(root);
-        gov.setVotingPower(v1, 1, GovernanceModule.SeatRole.Human);
-        gov.setVotingPower(v2, 1, GovernanceModule.SeatRole.Human);
+        vm.prank(root);
         gov.setQuorumHumanYes(1);
-        vm.stopPrank();
+        _admitHuman(v1, 1);
+        _admitHuman(v2, 1);
         vm.warp(1_700_000_000);
 }
+
+    /// Human seats are governance's to hand out, so even a fixture seats them by
+    /// passing a High-tier proposal on the module rather than writing state.
+    function _admitHuman(address who, uint256 power) internal {
+        uint256 id = gov.propose(
+            GovernanceModule.Tier.High,
+            address(gov),
+            abi.encodeCall(GovernanceModule.admitHuman, (who, power))
+        );
+        vm.prank(root);
+        gov.vote(id, true);
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.warp(eta + 1);
+        gov.execute(id);
+    }
 
     function testFuzz_highTierCannotExecuteBeforeEta(uint256 earlyWarp) public {
         address worker = makeAddr("worker");

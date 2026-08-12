@@ -20,13 +20,31 @@ contract GovernanceModuleTest is Test {
         vm.prank(root);
         registry.setGovernor(address(gov));
 
+        _admitHuman(gov, voter1, 1);
+        _admitHuman(gov, voter2, 1);
+
         vm.startPrank(root);
-        gov.setVotingPower(voter1, 1, GovernanceModule.SeatRole.Human);
-        gov.setVotingPower(voter2, 1, GovernanceModule.SeatRole.Human);
         gov.setVotingPower(agent, 1, GovernanceModule.SeatRole.Agent);
         gov.setQuorumYes(2);
         gov.setQuorumHumanYes(1);
         vm.stopPrank();
+    }
+
+    /// Seat a human the only way the module allows once an org has one: a High-tier
+    /// proposal on the module itself, carried by the root's own human weight. Warps
+    /// past the eta rather than relying on the unanimity fast path, so the helper
+    /// works whether or not the humans already seated have all voted.
+    function _admitHuman(GovernanceModule g, address who, uint256 power) internal {
+        uint256 id = g.propose(
+            GovernanceModule.Tier.High,
+            address(g),
+            abi.encodeCall(GovernanceModule.admitHuman, (who, power))
+        );
+        vm.prank(root);
+        g.vote(id, true);
+        (, , , , , , , , , uint256 eta, ) = g.proposals(id);
+        vm.warp(eta + 1);
+        g.execute(id);
     }
 
     function test_proposeVoteAndExecuteAddsNode() public {
@@ -52,8 +70,7 @@ contract GovernanceModuleTest is Test {
 
     function test_weightedVoteCanMeetQuorumAlone() public {
         address heavy = makeAddr("heavy");
-        vm.prank(root);
-        gov.setVotingPower(heavy, 2, GovernanceModule.SeatRole.Human);
+        _admitHuman(gov, heavy, 2);
 
         address worker = makeAddr("solo-hire");
         bytes memory data = abi.encodeCall(
@@ -413,20 +430,209 @@ contract GovernanceModuleTest is Test {
         // setUp: root 2 (constructor) + voter1 1 + voter2 1 humans, agent 1.
         assertEq(gov.totalVotingPower(), 5);
         assertEq(gov.totalHumanVotingPower(), 4);
+        assertEq(gov.humanSeatCount(), 3);
 
-        vm.prank(root);
-        gov.setVotingPower(voter1, 3, GovernanceModule.SeatRole.Human);
+        // Re-weighting a seated human is seat admin too — same governance path.
+        _admitHuman(gov, voter1, 3);
         assertEq(gov.totalVotingPower(), 7);
         assertEq(gov.totalHumanVotingPower(), 6);
+        assertEq(gov.humanSeatCount(), 3);
 
         // Revoke and reclassify.
-        vm.startPrank(root);
-        gov.setVotingPower(voter1, 0, GovernanceModule.SeatRole.None);
-        gov.setVotingPower(agent, 2, GovernanceModule.SeatRole.Human);
-        vm.stopPrank();
+        _removeHuman(gov, voter1);
+        _admitHuman(gov, agent, 2);
         assertEq(gov.totalVotingPower(), 5);
         assertEq(gov.totalHumanVotingPower(), 5);
+        assertEq(gov.humanSeatCount(), 3);
         assertEq(uint8(gov.seatRole(voter1)), uint8(GovernanceModule.SeatRole.None));
+    }
+
+    /// Seat admin over humans is constitutional: a private key — the root's included —
+    /// cannot admit a partner, so nobody joins the electorate unseen by the humans in it.
+    function test_rootCannotAdmitHumanDirectly() public {
+        address partner = makeAddr("partner");
+        vm.prank(root);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.NotGovernance.selector, root));
+        gov.admitHuman(partner, 2);
+
+        vm.prank(root);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.NotGovernance.selector, root));
+        gov.setVotingPower(partner, 2, GovernanceModule.SeatRole.Human);
+
+        // And the root cannot quietly demote one either.
+        vm.prank(root);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.NotGovernance.selector, root));
+        gov.setVotingPower(voter1, 0, GovernanceModule.SeatRole.None);
+    }
+
+    /// Agent seats stay the root's to administer — the bootstrap path this module has
+    /// always had, and the one the seat-admin gate deliberately does not close.
+    function test_rootStillAdministersAgentSeats() public {
+        address helper = makeAddr("agent-helper");
+        vm.prank(root);
+        gov.setVotingPower(helper, 4, GovernanceModule.SeatRole.Agent);
+        assertEq(gov.votingPower(helper), 4);
+        assertEq(gov.humanSeatCount(), 3);
+    }
+
+    /// Two humans, either one enough to stop a proposal: the safety valve is shared,
+    /// not the root's to hold alone.
+    function test_eitherHumanCanVetoHighTier() public {
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (makeAddr("two-human-veto"), IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+
+        uint256 first = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+        vm.prank(voter1);
+        gov.veto(first);
+        (, , , , , , , , , , GovernanceModule.ProposalState s1) = gov.proposals(first);
+        assertEq(uint8(s1), uint8(GovernanceModule.ProposalState.Vetoed));
+
+        uint256 second = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+        vm.prank(voter2);
+        gov.veto(second);
+        (, , , , , , , , , , GovernanceModule.ProposalState s2) = gov.proposals(second);
+        assertEq(uint8(s2), uint8(GovernanceModule.ProposalState.Vetoed));
+    }
+
+    /// Firing one human leaves the others seated — with their veto intact.
+    function test_removeHumanLeavesTheOthersSeated() public {
+        _removeHuman(gov, voter1);
+        assertEq(gov.humanSeatCount(), 2);
+        assertEq(gov.votingPower(voter1), 0);
+        assertEq(uint8(gov.seatRole(voter1)), uint8(GovernanceModule.SeatRole.None));
+
+        uint256 id = gov.propose(
+            GovernanceModule.Tier.High,
+            address(registry),
+            abi.encodeCall(
+                OrgRegistry.addNode,
+                (makeAddr("after-removal"), IOrgRegistry.NodeKind.WorkerAgent, root)
+            )
+        );
+        vm.prank(voter2);
+        gov.veto(id);
+        (, , , , , , , , , , GovernanceModule.ProposalState state) = gov.proposals(id);
+        assertEq(uint8(state), uint8(GovernanceModule.ProposalState.Vetoed));
+
+        // A revoked seat is a stranger: no vote, and no veto either.
+        uint256 next = gov.propose(GovernanceModule.Tier.Low, address(registry), "");
+        vm.prank(voter1);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.NotHumanSeat.selector, voter1)
+        );
+        gov.veto(next);
+    }
+
+    /// The last human cannot be fired — by governance, by the root, or by reclassifying
+    /// the seat into an agent one. Agent seats never satisfy high-tier final say, so an
+    /// org with no human left would be frozen, not merely agent-run.
+    function test_cannotRemoveLastHumanSeat() public {
+        _removeHuman(gov, voter1);
+        _removeHuman(gov, voter2);
+        assertEq(gov.humanSeatCount(), 1);
+
+        uint256 id = gov.propose(
+            GovernanceModule.Tier.High,
+            address(gov),
+            abi.encodeCall(GovernanceModule.removeHuman, (root))
+        );
+        vm.prank(root);
+        gov.vote(id, true);
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.warp(eta + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.ActionFailed.selector, address(gov))
+        );
+        gov.execute(id);
+
+        // Nor by demoting the seat to an agent one through setVotingPower.
+        uint256 demote = gov.propose(
+            GovernanceModule.Tier.High,
+            address(gov),
+            abi.encodeCall(
+                GovernanceModule.setVotingPower,
+                (root, 2, GovernanceModule.SeatRole.Agent)
+            )
+        );
+        vm.prank(root);
+        gov.vote(demote, true);
+        (, , , , , , , , , uint256 eta2, ) = gov.proposals(demote);
+        vm.warp(eta2 + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.ActionFailed.selector, address(gov))
+        );
+        gov.execute(demote);
+
+        assertEq(gov.humanSeatCount(), 1);
+        assertEq(uint8(gov.seatRole(root)), uint8(GovernanceModule.SeatRole.Human));
+    }
+
+    /// High tier still needs a human yes after the roster grows: more humans raise the
+    /// bar for unanimity, they do not let agent weight stand in for a human.
+    function test_secondHumanRaisesUnanimityBarNotAgentAuthority() public {
+        bytes memory data = abi.encodeCall(
+            OrgRegistry.addNode,
+            (makeAddr("still-needs-human"), IOrgRegistry.NodeKind.WorkerAgent, root)
+        );
+        uint256 id = gov.propose(GovernanceModule.Tier.High, address(registry), data);
+
+        vm.prank(agent);
+        gov.vote(id, true);
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.QuorumNotMet.selector, id));
+        gov.execute(id);
+
+        // Root alone is a human yes, but not all of the human weight — the timelock
+        // holds for the partners who have not spoken.
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(GovernanceModule.TimelockNotElapsed.selector, id, eta)
+        );
+        gov.execute(id);
+
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(voter2);
+        gov.vote(id, true);
+        gov.execute(id);
+        assertEq(registry.getNode(makeAddr("still-needs-human")).account, makeAddr("still-needs-human"));
+    }
+
+    /// An org deployed with no seeded root weight still seats its first human: without
+    /// this carve-out a `rootPower_ = 0` module would be born with no one able to act.
+    function test_seatlessOrgLetsRootSeatTheFirstHuman() public {
+        address solo = makeAddr("unseeded-root");
+        GovernanceModule bare = new GovernanceModule(solo, 0);
+        assertEq(bare.humanSeatCount(), 0);
+
+        vm.prank(solo);
+        bare.admitHuman(solo, 2);
+        assertEq(bare.humanSeatCount(), 1);
+        assertEq(bare.totalHumanVotingPower(), 2);
+
+        // The carve-out closes behind it: the next human is governance's to admit.
+        address partner = makeAddr("second-of-two");
+        vm.prank(solo);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.NotGovernance.selector, solo));
+        bare.admitHuman(partner, 1);
+    }
+
+    /// Revoke a human through governance. Root's weight carries it; the warp keeps the
+    /// helper valid whether or not the fast path applies.
+    function _removeHuman(GovernanceModule g, address who) internal {
+        uint256 id = g.propose(
+            GovernanceModule.Tier.High,
+            address(g),
+            abi.encodeCall(GovernanceModule.removeHuman, (who))
+        );
+        vm.prank(root);
+        g.vote(id, true);
+        (, , , , , , , , , uint256 eta, ) = g.proposals(id);
+        vm.warp(eta + 1);
+        g.execute(id);
     }
 
     function test_executeRemoveNodeRewiresViaGovernance() public {

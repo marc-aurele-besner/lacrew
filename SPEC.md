@@ -73,6 +73,31 @@ function setActive(address account, bool active) external;
 
 Events: `NodeAdded`, `NodeRemoved`, `NodeReparented`, `NodeActiveUpdated`.
 
+### 3.1 Multi-human orgs — one tree, several humans
+
+An org with two or more humans (agency partners, a club, a community-funded
+crew) is **one tree, not a forest**: the registry keeps its single `root` node
+and the additional humans are `HumanRoot` nodes parented to it. This is a
+deliberate choice over a virtual org above several roots — it needs no new
+contract, no second registry, and every existing walk (children, `reparent`,
+the cycle check) already handles it. The root node is unremovable, so the tree
+always retains at least one human.
+
+Two things are being modelled and they are not the same:
+
+|               | Where it lives                                | What it answers                                                |
+| ------------- | --------------------------------------------- | -------------------------------------------------------------- |
+| The chart     | `OrgRegistry` node of kind `HumanRoot`        | Who is drawn as a human, and who reports to them               |
+| The authority | `GovernanceModule` seat with `SeatRole.Human` | Who votes, who counts toward high-tier final say, who may veto |
+
+A `HumanRoot` node does not by itself confer a vote, and a human seat does not
+require a node. In practice a partner gets both, and the two are seated by
+different calls — one is a tree write, the other a governance action (§6.1).
+
+Peer humans are peers in authority: no seat outranks another for veto. The
+`humanRoot` address keeps a narrow extra privilege (§6.1), and it keeps it only
+while it holds a seat.
+
 ## 4. Treasury & EpochStreamer — payroll semantics
 
 The `Treasury` holds org funds; nothing pulls from it directly. Allowances
@@ -150,13 +175,65 @@ may veto.
 ```solidity
 function propose(Tier tier, address target, bytes calldata data) external returns (uint256);
 function vote(uint256 proposalId, bool support) external;
-function veto(uint256 proposalId) external;      // high tier, human seats
+function veto(uint256 proposalId) external;      // any funded human seat
 function execute(uint256 proposalId) external;   // after quorum (+ timelock on high)
-function setVotingPower(address voter, uint256 power, SeatRole role) external;  // root
+function setVotingPower(address voter, uint256 power, SeatRole role) external;  // root: agent seats
+function admitHuman(address human, uint256 power) external;                     // governance only
+function removeHuman(address human) external;                                   // governance only
+function humanSeatCount() external view returns (uint256);
 ```
 
 Events: `ProposalCreated`, `Voted`, `ProposalExecuted`, `ProposalVetoed`,
-`ProposalDefeated`.
+`ProposalDefeated`, `VotingPowerUpdated`, `HumanAdmitted`, `HumanRemoved`.
+
+### 6.1 Seat admin — who may change who holds final say
+
+The seat roster is itself constitutional. Changing it splits by seat class:
+
+- **Agent seats** — `setVotingPower(voter, power, Agent)`, callable by the root
+  address directly. Agent weight can never satisfy high tier, so handing it out
+  cannot hand out final say.
+- **Human seats** — `admitHuman` / `removeHuman`, and any `setVotingPower` that
+  creates, re-weights, or revokes a `Human` seat. These accept **the module
+  itself** as caller and nobody else, so they run only as an executed proposal;
+  and because `propose` forces High tier on anything targeting the module,
+  that proposal is always high tier. Admitting a partner therefore passes the
+  humans already seated, any one of whom can veto it.
+
+Two guarantees hold unconditionally:
+
+1. **The last human seat cannot be revoked** (`LastHumanSeat`). Not by
+   `removeHuman`, not by demoting the seat to an agent one. An org with no human
+   seat has handed high-tier final say to nobody at all — agent yes-weight never
+   satisfies it — which freezes the constitution rather than passing it on.
+2. **Agents are never the sole final say.** This is the same guarantee read from
+   the other end, and it is why (1) is a revert rather than a warning.
+
+The one carve-out: while `humanSeatCount == 0`, the root may seat a human
+directly. That state exists only for a module deployed with `rootPower_ = 0`,
+which would otherwise be born ungovernable. The carve-out closes the moment the
+first human is seated.
+
+The root's direct authority — quorums, timing, agent seats, and its veto — is
+the privilege of a **seated human**, not of an address: it holds while the root
+holds a funded `Human` seat (or while nobody does). Governance that revokes the
+root's seat revokes its parameter admin and its veto with it. "Root" is a seat
+that can change hands, not a permanent key.
+
+**Observer seats are not modelled.** A seat with power 0 is a revoked seat —
+`setVotingPower` coerces role `None` at zero weight, and `vote()` reverts
+`NoVotingPower`. A human who should watch without voting is an off-chain
+concern (workspace membership), not a chain-level seat, because the veto right
+this contract grants is derived from _funded_ human seats and a zero-weight
+veto-holder would be a contradiction.
+
+**Session issuer / Safe ownership stays single-holder in v1.** A second human
+gets a governance seat and a veto; the session-issuer and treasury-wallet paths
+still key off one root address. A club that wants two humans to jointly own the
+wallet configures a 2-of-2 Safe at the wallet layer — the protocol does not yet
+model shared root custody, and pretending otherwise in the tree would be the
+dishonest version of this feature. See `SECURITY.md` for what that leaves
+exposed.
 
 ## 7. SessionRegistry — bounded, expiring authority
 

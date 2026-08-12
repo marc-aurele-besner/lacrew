@@ -55,6 +55,8 @@ type MockProposalAction =
   | { kind: "reparent"; account: `0x${string}`; newParent: `0x${string}` }
   | { kind: "setGrant"; account: `0x${string}`; amount: bigint }
   | { kind: "setGrants"; entries: Array<{ account: `0x${string}`; amount: bigint }> }
+  | { kind: "admitHuman"; account: `0x${string}`; power: bigint }
+  | { kind: "removeHuman"; account: `0x${string}` }
   | { kind: "raw" };
 
 export class LacrewClient {
@@ -66,6 +68,11 @@ export class LacrewClient {
   private allowances: Allowance[];
   private proposals: GovernanceProposal[] = [];
   private readonly proposalActions = new Map<string, MockProposalAction>();
+  /** The electorate, as `DeployMockOrg` seats it. Moved by admit/remove proposals. */
+  private seats: GovernanceSeat[] = [
+    { voter: MOCK_ROOT, power: "2", role: "human" },
+    { voter: MOCK_MANAGER, power: "1", role: "agent" },
+  ];
   private epoch = 0;
 
   constructor(options: LacrewClientOptions = {}) {
@@ -504,30 +511,73 @@ export class LacrewClient {
    * root seat with weight 2 (seeded by the constructor so the human outweighs
    * agent seats) and a manager agent seat with weight 1. Labelled `Mocked` —
    * the real values live in `votingPower` / `seatRole` onchain.
+   *
+   * Mutable, because seat admin is now something a caller can exercise offline:
+   * an executed admit/remove proposal moves this list, so a surface driving the
+   * mock sees the same electorate change it would see against a chain.
    */
   async readGovernanceSeats(): Promise<GovernanceSeat[]> {
     this.requireMock("governance");
-    return [
-      { voter: MOCK_ROOT, power: "2", role: "human" },
-      { voter: MOCK_MANAGER, power: "1", role: "agent" },
-    ];
+    return this.seats.map((s) => ({ ...s }));
   }
 
-  /** Mocked quorum and timing, matching the contract's deployed defaults. */
+  /**
+   * Mocked quorum and timing, matching the contract's deployed defaults. The
+   * weight sums and human head count are derived from the seat list rather than
+   * hardcoded, so they stay true after an admit/remove.
+   */
   async readGovernanceConfig(): Promise<GovernanceConfig> {
     this.requireMock("governance");
+    const totalVotingPower = this.seats.reduce((sum, s) => sum + BigInt(s.power), 0n);
+    const humans = this.seats.filter((s) => s.role === "human");
+    const totalHumanVotingPower = humans.reduce((sum, s) => sum + BigInt(s.power), 0n);
+    const clamp = (configured: bigint, available: bigint) =>
+      (available > 0n && available < configured ? available : configured).toString();
     return {
       quorumYes: "2",
       quorumHumanYes: "1",
       humanRoot: MOCK_ROOT,
-      totalVotingPower: "3",
-      totalHumanVotingPower: "2",
-      effectiveQuorumYes: "2",
-      effectiveQuorumHumanYes: "1",
+      totalVotingPower: totalVotingPower.toString(),
+      totalHumanVotingPower: totalHumanVotingPower.toString(),
+      humanSeatCount: humans.length.toString(),
+      effectiveQuorumYes: clamp(2n, totalVotingPower),
+      effectiveQuorumHumanYes: clamp(1n, totalHumanVotingPower),
       votingPeriod: 3 * 24 * 3600,
       highTierTimelock: 24 * 3600,
       unanimityFastPath: true,
     };
+  }
+
+  /**
+   * Propose seating a human. High tier always — the contract accepts seat admin
+   * from nobody but itself, so this is a proposal or it is nothing.
+   */
+  async proposeAdmitHuman(input: {
+    account: `0x${string}`;
+    power: bigint;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      "high",
+      input.account,
+      { kind: "admitHuman", account: input.account, power: input.power },
+      { account: input.account, power: input.power.toString(), action: "admit-human" },
+    );
+    return { proposalId: proposal.id, account: input.account };
+  }
+
+  /** Propose revoking a human's seat. Refused at execute time if it is the last. */
+  async proposeRemoveHuman(input: {
+    account: `0x${string}`;
+  }): Promise<{ proposalId: string; account: `0x${string}` }> {
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      "high",
+      input.account,
+      { kind: "removeHuman", account: input.account },
+      { account: input.account, action: "remove-human" },
+    );
+    return { proposalId: proposal.id, account: input.account };
   }
 
   /**
@@ -626,6 +676,20 @@ export class LacrewClient {
         );
         if (allowance) allowance.cap = entry.amount;
       }
+    } else if (action?.kind === "admitHuman") {
+      const seated = this.seats.find((s) => s.voter.toLowerCase() === action.account.toLowerCase());
+      if (seated) {
+        seated.power = action.power.toString();
+        seated.role = "human";
+      } else {
+        this.seats.push({ voter: action.account, power: action.power.toString(), role: "human" });
+      }
+    } else if (action?.kind === "removeHuman") {
+      // Mirrors the contract's last-human guard: the proposal fails rather than
+      // leaving an org whose high-tier final say nobody can ever satisfy.
+      const humans = this.seats.filter((s) => s.role === "human");
+      if (humans.length <= 1) throw new Error(`Cannot remove the last human seat: ${proposalId}`);
+      this.seats = this.seats.filter((s) => s.voter.toLowerCase() !== action.account.toLowerCase());
     }
 
     proposal.state = "executed";

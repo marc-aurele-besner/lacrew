@@ -1589,6 +1589,24 @@ export const governanceModuleAbi = [
   },
   {
     "type": "function",
+    "name": "admitHuman",
+    "inputs": [
+      {
+        "name": "human",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "power",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "effectiveQuorumHumanYes",
     "inputs": [],
     "outputs": [
@@ -1672,6 +1690,19 @@ export const governanceModuleAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "humanSeatCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1812,6 +1843,19 @@ export const governanceModuleAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "removeHuman",
+    "inputs": [
+      {
+        "name": "human",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -2013,6 +2057,38 @@ export const governanceModuleAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "HumanAdmitted",
+    "inputs": [
+      {
+        "name": "human",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "power",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HumanRemoved",
+    "inputs": [
+      {
+        "name": "human",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -2266,10 +2342,43 @@ export const governanceModuleAbi = [
   },
   {
     "type": "error",
+    "name": "LastHumanSeat",
+    "inputs": [
+      {
+        "name": "human",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoVotingPower",
     "inputs": [
       {
         "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotAHumanSeat",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotGovernance",
+    "inputs": [
+      {
+        "name": "caller",
         "type": "address",
         "internalType": "address"
       }
@@ -2343,6 +2452,11 @@ export const governanceModuleAbi = [
   {
     "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroPower",
     "inputs": []
   },
   {

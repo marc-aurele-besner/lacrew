@@ -13,6 +13,22 @@ pragma solidity ^0.8.28;
 ///      behind a quorum sized for seats that do not exist yet. And when every human seat
 ///      has voted yes, the high-tier timelock is skippable (`unanimityFastPath`) — the
 ///      delay protects humans who have not weighed in, and there are none left.
+///
+///      **Multi-human orgs.** An org may seat any number of Human seats, and the seat
+///      roster itself is constitutional property: `admitHuman` / `removeHuman` (and any
+///      `setVotingPower` that creates, re-weights, or revokes a Human seat) execute only
+///      as governance, which `propose` forces to High tier when the target is this module.
+///      A partner therefore cannot be added or fired from a private key — every change to
+///      who holds final say passes the humans already seated, any one of whom can veto it.
+///      The last Human seat can never be revoked: an org whose humans have all been
+///      removed would leave agent seats as the only electorate, which is the one outcome
+///      the tier split exists to prevent.
+///
+///      The root address keeps its direct admin over the non-seat parameters (quorums,
+///      timing, agent seats) only while it holds a funded Human seat — or while nobody
+///      does, the bootstrap of an org deployed with `rootPower_ = 0`. Governance that
+///      revokes the root's seat revokes its veto and its parameter admin with it, so
+///      "root" is a seat that can change hands, not a permanent key.
 contract GovernanceModule {
     enum Tier {
         Low,
@@ -61,6 +77,10 @@ contract GovernanceModule {
     /// @notice Sum of human-seat weight. Caps the effective high-tier quorum and
     ///         defines unanimity for the timelock fast path.
     uint256 public totalHumanVotingPower;
+    /// @notice How many funded Human seats exist. Weight answers "how much say";
+    ///         this answers "how many humans" — the number the last-human guard
+    ///         and every multi-human UI are actually about.
+    uint256 public humanSeatCount;
     /// @notice Yes-weight required to execute low-tier proposals (all seats).
     uint256 public quorumYes = 2;
     /// @notice Human yes-weight required to execute high-tier proposals.
@@ -92,6 +112,8 @@ contract GovernanceModule {
     event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer);
     event ProposalDefeated(uint256 indexed proposalId);
     event VotingPowerUpdated(address indexed voter, uint256 power, SeatRole role);
+    event HumanAdmitted(address indexed human, uint256 power);
+    event HumanRemoved(address indexed human);
     event QuorumYesUpdated(uint256 quorumYes);
     event QuorumHumanYesUpdated(uint256 quorumHumanYes);
     event TimingUpdated(uint256 votingPeriod, uint256 highTierTimelock);
@@ -104,6 +126,12 @@ contract GovernanceModule {
     error TimelockNotElapsed(uint256 proposalId, uint256 eta);
     error NotHumanRoot(address caller);
     error NotHumanSeat(address caller);
+    /// @dev Seat admin over humans is constitutional: only an executed proposal
+    ///      (or the root of an org with no human seated yet) may change it.
+    error NotGovernance(address caller);
+    error LastHumanSeat(address human);
+    error NotAHumanSeat(address account);
+    error ZeroPower();
     error ActionFailed(address target);
     error ZeroAddress();
     error ZeroQuorum();
@@ -114,10 +142,20 @@ contract GovernanceModule {
     /// @dev Root acts directly; the module itself qualifies so an executed High-tier
     ///      proposal targeting this contract can retune parameters through governance.
     modifier onlyRootOrGovernance() {
-        if (msg.sender != humanRoot && msg.sender != address(this)) {
+        if (msg.sender != address(this) && !_rootMayAct()) {
             revert NotHumanRoot(msg.sender);
         }
         _;
+    }
+
+    /// @dev The root's direct authority is the privilege of a seated human, not of an
+    ///      address. It holds while the root has a funded Human seat, and — so an org
+    ///      deployed with `rootPower_ = 0` is not born ungovernable — while no human is
+    ///      seated at all. Once governance revokes the root's seat, the root is a
+    ///      stranger to this module.
+    function _rootMayAct() private view returns (bool) {
+        if (msg.sender != humanRoot) return false;
+        return humanSeatCount == 0 || seatRole[humanRoot] == SeatRole.Human;
     }
 
     /// @param humanRoot_ The org's root human; sole direct admin of seats and params.
@@ -133,23 +171,76 @@ contract GovernanceModule {
             seatRole[humanRoot_] = SeatRole.Human;
             totalVotingPower = rootPower_;
             totalHumanVotingPower = rootPower_;
+            humanSeatCount = 1;
             emit VotingPowerUpdated(humanRoot_, rootPower_, SeatRole.Human);
         }
     }
 
     /// @notice Configure a seat's voting weight and role. Pass power 0 to revoke.
-    function setVotingPower(address voter, uint256 power, SeatRole role)
-        external
-        onlyRootOrGovernance
-    {
+    /// @dev Agent seats are root-or-governance, as before. Anything that touches a
+    ///      Human seat — creating one, re-weighting one, or revoking one — is seat
+    ///      admin and takes the governance path (see `admitHuman`).
+    function setVotingPower(address voter, uint256 power, SeatRole role) external {
         if (voter == address(0)) revert ZeroAddress();
         if (power == 0) {
             role = SeatRole.None;
         } else if (role == SeatRole.None) {
             revert InvalidSeatRole(role);
         }
+        if (role == SeatRole.Human || seatRole[voter] == SeatRole.Human) {
+            _authorizeSeatAdmin();
+        } else if (msg.sender != address(this) && !_rootMayAct()) {
+            revert NotHumanRoot(msg.sender);
+        }
+        _setSeat(voter, power, role);
+    }
+
+    /// @notice Seat a human (or re-weight one already seated). Governance only.
+    /// @dev This is the multi-human primitive: an org admits a partner by passing a
+    ///      High-tier proposal, so the humans already seated see it, can vote it down,
+    ///      and can veto it. `power` is the weight the new seat votes with — it also
+    ///      raises the unanimity bar, since the fast path needs every human's yes.
+    function admitHuman(address human, uint256 power) external {
+        if (human == address(0)) revert ZeroAddress();
+        // A human seat is by definition funded: power 0 is a revocation, and
+        // revocation has its own governance-checked entry point.
+        if (power == 0) revert ZeroPower();
+        _authorizeSeatAdmin();
+        _setSeat(human, power, SeatRole.Human);
+        emit HumanAdmitted(human, power);
+    }
+
+    /// @notice Revoke a human's seat — their vote and their veto. Governance only.
+    /// @dev Refuses the last one. An org with no human seat has handed high-tier final
+    ///      say to nobody at all (agent yes-weight never satisfies it), which would
+    ///      freeze the constitution permanently rather than pass it on.
+    function removeHuman(address human) external {
+        if (seatRole[human] != SeatRole.Human) revert NotAHumanSeat(human);
+        _authorizeSeatAdmin();
+        _setSeat(human, 0, SeatRole.None);
+        emit HumanRemoved(human);
+    }
+
+    /// @dev Who may change the human roster: an executed proposal, or — while the org
+    ///      has no human seat to consult — the root, which is how a `rootPower_ = 0`
+    ///      deployment seats its first human.
+    function _authorizeSeatAdmin() private view {
+        if (msg.sender == address(this)) return;
+        if (humanSeatCount == 0 && msg.sender == humanRoot) return;
+        revert NotGovernance(msg.sender);
+    }
+
+    /// @dev Single writer for seat state, so the weight sums and the human head count
+    ///      cannot drift apart, and the last-human guard has exactly one place to sit.
+    function _setSeat(address voter, uint256 power, SeatRole role) private {
         uint256 prevPower = votingPower[voter];
         SeatRole prevRole = seatRole[voter];
+        if (prevRole == SeatRole.Human && role != SeatRole.Human) {
+            if (humanSeatCount == 1) revert LastHumanSeat(voter);
+            humanSeatCount -= 1;
+        } else if (prevRole != SeatRole.Human && role == SeatRole.Human) {
+            humanSeatCount += 1;
+        }
         totalVotingPower = totalVotingPower - prevPower + power;
         if (prevRole == SeatRole.Human) totalHumanVotingPower -= prevPower;
         if (role == SeatRole.Human) totalHumanVotingPower += power;
@@ -262,11 +353,13 @@ contract GovernanceModule {
         emit Voted(proposalId, msg.sender, support, weight);
     }
 
-    /// @notice Veto an active proposal before execution. Root always may; so may
-    ///         any funded Human seat — multi-human orgs share the safety valve.
+    /// @notice Veto an active proposal before execution. Any funded Human seat may —
+    ///         multi-human orgs share the safety valve, and no seat outranks another
+    ///         in holding it. The root qualifies through its own seat (or, before any
+    ///         human is seated, as the bootstrap holder of one).
     function veto(uint256 proposalId) external {
         bool humanSeat = votingPower[msg.sender] > 0 && seatRole[msg.sender] == SeatRole.Human;
-        if (msg.sender != humanRoot && !humanSeat) revert NotHumanSeat(msg.sender);
+        if (!humanSeat && !_rootMayAct()) revert NotHumanSeat(msg.sender);
         Proposal storage p = proposals[proposalId];
         if (p.state != ProposalState.Active) revert ProposalNotActive(proposalId);
         p.state = ProposalState.Vetoed;

@@ -2008,6 +2008,58 @@ export class OnchainLacrewClient {
     return { ...result, agent: input.agent };
   }
 
+  /**
+   * Propose seating a human — `GovernanceModule.admitHuman`.
+   *
+   * Always high tier, and not by convention: the module refuses seat admin from
+   * any address but itself, and `propose` refuses a low-tier proposal that
+   * targets the module. So this is the only route by which an org gains a second
+   * human, and the humans already seated get to vote on it and can veto it.
+   *
+   * `power` is the weight the seat votes with. It also raises the unanimity bar,
+   * since the timelock fast path needs every human's yes — one more partner
+   * means one more person whose silence keeps the delay in place.
+   */
+  async proposeAdmitHuman(input: {
+    account: `0x${string}`;
+    power: bigint;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: governanceModuleAbi,
+      functionName: "admitHuman",
+      args: [input.account, input.power],
+    });
+    const result = await this.proposeGovernance({
+      tier: "high",
+      target: this.addresses.governanceModule,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
+  /**
+   * Propose revoking a human's seat — their vote and their veto with it.
+   *
+   * The contract refuses the last one, so this proposal executes only while
+   * another human remains seated. A caller that wants to warn first can compare
+   * `humanSeatCount` from `readGovernanceConfig()`.
+   */
+  async proposeRemoveHuman(input: {
+    account: `0x${string}`;
+  }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
+    const data = encodeFunctionData({
+      abi: governanceModuleAbi,
+      functionName: "removeHuman",
+      args: [input.account],
+    });
+    const result = await this.proposeGovernance({
+      tier: "high",
+      target: this.addresses.governanceModule,
+      data,
+    });
+    return { ...result, account: input.account };
+  }
+
   /** Propose a constitutional action (target + calldata). */
   async proposeGovernance(input: {
     tier: GovernanceTier;
@@ -2092,6 +2144,7 @@ export class OnchainLacrewClient {
         | "humanRoot"
         | "totalVotingPower"
         | "totalHumanVotingPower"
+        | "humanSeatCount"
         | "effectiveQuorumYes"
         | "effectiveQuorumHumanYes"
         | "votingPeriod"
@@ -2109,6 +2162,7 @@ export class OnchainLacrewClient {
       humanRoot,
       totalVotingPower,
       totalHumanVotingPower,
+      humanSeatCount,
       effectiveQuorumYes,
       effectiveQuorumHumanYes,
       votingPeriod,
@@ -2120,6 +2174,7 @@ export class OnchainLacrewClient {
       read<`0x${string}`>("humanRoot"),
       read<bigint>("totalVotingPower"),
       read<bigint>("totalHumanVotingPower"),
+      read<bigint>("humanSeatCount"),
       read<bigint>("effectiveQuorumYes"),
       read<bigint>("effectiveQuorumHumanYes"),
       read<bigint>("votingPeriod"),
@@ -2132,6 +2187,7 @@ export class OnchainLacrewClient {
       humanRoot,
       totalVotingPower: totalVotingPower.toString(),
       totalHumanVotingPower: totalHumanVotingPower.toString(),
+      humanSeatCount: humanSeatCount.toString(),
       effectiveQuorumYes: effectiveQuorumYes.toString(),
       effectiveQuorumHumanYes: effectiveQuorumHumanYes.toString(),
       votingPeriod: Number(votingPeriod),
