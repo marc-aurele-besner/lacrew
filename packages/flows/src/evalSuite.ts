@@ -145,6 +145,13 @@ const lpPositions = {
 const GOVERNANCE_DESK_SPACE = crewSampleRun("governance-desk")!.input;
 
 /**
+ * The certified first-run input for `defi-desk`: one candidate, from the same
+ * fixture the product fires. The scanner's screen reads it whole, so this is
+ * the prose and not a JSON body.
+ */
+const DEFI_DESK_CANDIDATE = crewSampleInputText(crewSampleRun("defi-desk")!);
+
+/**
  * That space's open queue, recorded from `hub.snapshot.org` rather than
  * invented. The desk's whole claim is that it finds work by itself, and a
  * fixture somebody typed would pin the flow against a payload shape the hub
@@ -532,7 +539,111 @@ const scenarios: FlowEvalScenario[] = [
 
   /* --------------------------------------------------------------- *
    * DeFi desk — the escalation loop, as a pipeline.
+   *
+   * The four below are the certified path (F2.25) and the three
+   * verdicts the seat at the end of it can read. One thing to know
+   * before reading them: the size in a plan is prose, and the gate
+   * proposes the executor's clip size whatever the plan says. So
+   * "under cap" and "over cap" are pinned as the verdict the policy
+   * stack returned, which is where that decision actually lives — a
+   * scenario that varied the input text and asserted a different port
+   * would be testing the model's arithmetic instead.
    * --------------------------------------------------------------- */
+  {
+    id: "defi-desk/scanner-hands-the-trade-down",
+    describe:
+      "The certified first run: the scanner screens one candidate, writes the plan, and hands it to the executor. It proposes nothing itself — the flow has no gate and the seat has no propose tool — so the money path is the delegate's, under the delegate's own stack.",
+    flow: "desk-opportunity-scan",
+    blueprint: "defi-desk",
+    asAgent: "scanner",
+    input: DEFI_DESK_CANDIDATE,
+    mocks: {
+      model: [{ when: "TRADE or PASS", reply: "TRADE" }],
+      // What the delegated run came back with. Scripted rather than left to
+      // the default so the scanner's log step is reading a real outcome, and
+      // so this scenario states which one: the desk's own ladder took it.
+      tools: {
+        lacrew_invoke_agent: {
+          result: {
+            agent: DESK_EXECUTOR,
+            runId: "eval-desk-child",
+            status: "completed",
+            text: "escalated up the reporting line (intent eval-intent-1)",
+          },
+        },
+      },
+    },
+    expect: {
+      status: "completed",
+      ran: ["screen", "worth-it", "plan", "hand-off", "log"],
+      notRan: ["pass-note"],
+      port: { "worth-it": "plan", "hand-off": "log" },
+      // Once, to the executor the blueprint's own seat map resolves.
+      called: { lacrew_invoke_agent: 1 },
+      auditIncludes: [DESK_EXECUTOR],
+      /*
+        The assertion this scenario exists for. A scanner that proposed would
+        be refused by its own 5 USDC cap, but "refused" is not the claim — the
+        claim is that it never asks, so a compromised scanner has no path to
+        the money that a policy module has to catch.
+      */
+      notCalled: ["lacrew_propose_intent", "lacrew_check_policy"],
+      noConnectorCalls: true,
+    },
+  },
+  {
+    id: "defi-desk/clip-size-trade-executes",
+    describe:
+      "The other end of the executor's cap: a trade the policy stack allows is proposed once and the receipt is filed. The risk memo is not written, because nobody is being asked.",
+    flow: "desk-execute-trade",
+    blueprint: "defi-desk",
+    asAgent: "executor",
+    input:
+      "Route: USDC→WETH on the admitted router, 150 USDC, 0.3% max slippage, 60s deadline. Simulation: +0.38% net of gas.",
+    mocks: {
+      model: [{ when: "SEND or FIX", reply: "SEND" }],
+      policy: { targets: { "dex-router": "ALLOW" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["preflight", "ready", "venue-check", "admitted", "trade", "receipt"],
+      notRan: ["risk-memo", "stand-down", "fix-note"],
+      verdict: { trade: "ALLOW" },
+      port: { admitted: "trade", trade: "receipt" },
+      called: { lacrew_propose_intent: 1 },
+      noConnectorCalls: true,
+    },
+  },
+  {
+    id: "defi-desk/unadmitted-venue-stands-down",
+    describe:
+      "A route through a venue nobody admitted. The desk asks before it proposes, reads DENY, and stands down having spent nothing and filed nothing — a DENY is not an escalation and waits for no one.",
+    flow: "desk-execute-trade",
+    blueprint: "defi-desk",
+    asAgent: "executor",
+    input:
+      "Route: USDC→WETH on a router the desk has not admitted, 150 USDC, 0.3% max slippage, 60s deadline. Simulation: +1.10% net of gas.",
+    mocks: {
+      model: [{ when: "SEND or FIX", reply: "SEND" }],
+      policy: { targets: { "dex-router": "DENY" } },
+    },
+    expect: {
+      status: "completed",
+      ran: ["preflight", "ready", "venue-check", "admitted", "stand-down"],
+      notRan: ["trade", "receipt", "risk-memo"],
+      port: { admitted: "stand-down" },
+      called: { lacrew_check_policy: 1 },
+      /*
+        The strongest form of "the venue was not paid": nothing was proposed at
+        all. `EscalationRouter.propose` reverts on DENY, so a flow that reached
+        the gate anyway would end in an errored run rather than in the note the
+        operator is supposed to read — which is why the check comes first and
+        why this assertion is about the call that never happened.
+      */
+      notCalled: ["lacrew_propose_intent"],
+      noConnectorCalls: true,
+    },
+  },
   {
     id: "defi-desk/oversized-trade-escalates",
     describe:
@@ -548,10 +659,13 @@ const scenarios: FlowEvalScenario[] = [
     },
     expect: {
       status: "completed",
-      ran: ["preflight", "ready", "trade", "risk-memo"],
+      ran: ["preflight", "ready", "venue-check", "admitted", "trade", "risk-memo"],
       notRan: ["receipt", "stand-down"],
       verdict: { trade: "ESCALATE" },
-      port: { trade: "risk-memo" },
+      // The check must not read an escalation as a refusal: the ladder is what
+      // the desk is for, and stopping here would be the crew declining to use
+      // the one path its own blueprint says a large trade takes.
+      port: { admitted: "trade", trade: "risk-memo" },
       called: { lacrew_propose_intent: 1 },
       auditIncludes: ["escalated up the reporting line"],
     },
