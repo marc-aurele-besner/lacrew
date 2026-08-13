@@ -4,6 +4,8 @@
  *
  *   pnpm golden-path                              # github-experts
  *   pnpm golden-path --blueprint content-studio   # the second certified path
+ *   pnpm golden-path --blueprint governance-desk  # the third
+ *   pnpm golden-path --blueprint defi-desk        # the fourth
  *
  * Everything the first-run checklist claims is derived from a probe, and every
  * probe in the test suites is a fixture. That is the right trade for a unit
@@ -32,7 +34,7 @@
  *    the flow's write path would spend against, which nothing has admitted, and
  *    the DENY comes off the deployed policy stack.
  *
- * ## Three paths, deliberately different shapes
+ * ## Four paths, deliberately different shapes
  *
  * `github-experts` needs a connector, a credential and an admitted address
  * before its run means anything. `content-studio` calls nothing outside LaCrew
@@ -41,13 +43,17 @@
  * drives the checklist branch the first path never reaches: the connector step
  * answered *not needed* rather than blocked. `governance-desk` is the third
  * shape: a connector that is genuinely required and costs nothing to wire,
- * because the surface is public and read-only. Certifying three GitHub-shaped
- * verticals would leave both of those answers unproved on the surface
- * operators read.
+ * because the surface is public and read-only. `defi-desk` is the fourth, and
+ * the only one whose certified run crosses a seat boundary: the scanner that
+ * starts it holds no propose tool, so the money path exists only in the child
+ * run its handoff starts, under the executor's own cap and stack. Certifying
+ * four GitHub-shaped verticals would leave every one of those answers unproved
+ * on the surface operators read.
  *
- * Which seats to hire and which targets to bind are read off the sample flow's
- * own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains a
- * delegate gains the hire here in the same commit.
+ * Which seats to hire and which targets to bind are read off the certified
+ * flow's own `{{crew.*}}` / `{{target.*}}` placeholders — and off the flows it
+ * delegates to, since those bind addresses of their own — so a template that
+ * gains a delegate gains the hire here in the same commit.
  *
  * What is optional: a model key. Without one the run's completions come back as
  * the orchestrator's stub, so the checklist correctly *blocks on the model*,
@@ -157,6 +163,32 @@ const PROFILES = {
       claim: "it ended in an instruction for a human, and voted nothing anywhere",
       ran: ["queue"],
       notRan: ["cast-for", "cast-against"],
+    },
+  },
+  "defi-desk": {
+    // The admitted-router target the executor's gate spends against. On a fresh
+    // deployment nothing admitted the address it binds to, so this is at once
+    // the target the flow's own write path names and the venue the desk is not
+    // admitted to — the refusal the whole path exists to show.
+    refuses: "dex-router",
+    endsIn: {
+      claim: "the scanner delegated the trade rather than proposing it",
+      ran: ["screen", "plan", "hand-off", "log"],
+      notRan: ["pass-note"],
+    },
+    /*
+      The run this path is actually about is not the one the driver fired. The
+      scanner cannot spend, so the money path only exists in the child run the
+      handoff started — and asserting the parent alone would report a delegation
+      that could have paid anybody. `delegated` reads that child off the run log
+      and holds it to the verdict its gate got and the receipt it must not have
+      filed.
+    */
+    delegated: {
+      flow: "desk-execute-trade",
+      claim: "and the delegated propose was refused, so the desk paid nobody",
+      verdict: { trade: "DENY" },
+      notRan: ["receipt"],
     },
   },
 };
@@ -387,6 +419,7 @@ async function main() {
   const {
     getCrewBlueprint,
     bindCrewFlow,
+    crewFlowDelegates,
     crewFlowOwner,
     crewFlowPlaceholders,
     crewSampleInputText,
@@ -414,7 +447,16 @@ async function main() {
     binding, in the same commit that added the step.
   */
   const sampleDef = getFlowTemplate(sample.flow).definition;
-  const placeholders = crewFlowPlaceholders(sampleDef);
+  /*
+    A certified run can cross a seat boundary: `desk-opportunity-scan` reaches
+    the money only through `desk-execute-trade`, run as another seat under
+    another stack. Both have to be installed, both contribute the seats to hire
+    and the targets to bind, and neither is listed here — a template that gains
+    a handoff gains all of that in the same commit.
+  */
+  const delegateIds = crewFlowDelegates(sampleDef);
+  const flowDefs = [sampleDef, ...delegateIds.map((id) => getFlowTemplate(id).definition)];
+  const placeholders = [...new Set(flowDefs.flatMap((def) => crewFlowPlaceholders(def)))].sort();
   const owner = crewFlowOwner(bp, sample.flow);
   const needs = crewSampleNeeds(sample);
   const wanted = [
@@ -433,7 +475,10 @@ async function main() {
 
   if (!(await rpcReady(RPC))) {
     log("anvil", "starting");
-    spawnService("anvil", "anvil", ["--host", "127.0.0.1"]);
+    // On the port `ANVIL_RPC` actually names. Spawning on the default while the
+    // script talks to another one starts a chain nothing uses, and on a machine
+    // already running a chain it collides with that one instead.
+    spawnService("anvil", "anvil", ["--host", "127.0.0.1", "--port", new URL(RPC).port || "8545"]);
     await waitFor("anvil", () => rpcReady(RPC));
   } else {
     log("anvil", `reusing the chain already listening on ${RPC}`);
@@ -650,16 +695,23 @@ async function main() {
   );
 
   console.log("\nFlows");
-  const bound = bindCrewFlow(sampleDef, {
-    roles: { ...seats.roles },
-    targets,
-  });
-  await orch("/flows", { method: "POST", body: JSON.stringify({ flow: bound }) });
+  for (const def of flowDefs) {
+    const bound = bindCrewFlow(def, { roles: { ...seats.roles }, targets });
+    await orch("/flows", { method: "POST", body: JSON.stringify({ flow: bound }) });
+  }
   const saved = await orch("/flows");
+  const installedIds = (saved.flows ?? []).map((f) => f.id);
   check(
     `${sample.flow} is installed against real seat addresses`,
-    (saved.flows ?? []).some((f) => f.id === sample.flow),
+    installedIds.includes(sample.flow),
   );
+  if (delegateIds.length > 0) {
+    check(
+      "and so is every flow it hands work down to",
+      delegateIds.every((id) => installedIds.includes(id)),
+      delegateIds.join(", "),
+    );
+  }
 
   console.log("\nChecklist");
   const thread = `crew:${BLUEPRINT}`;
@@ -677,9 +729,10 @@ async function main() {
       model: { configured: Boolean(h.model?.provider && h.model.provider !== "memory") },
       connectors: (conn.connectors ?? []).map((c) => ({ id: c.id, ready: c.auth?.ready === true })),
       installedFlows: (fl.flows ?? []).map((f) => f.id),
-      // Only the sample's own flow: the script installs one, so asserting all
-      // three would fail on work it deliberately did not do.
-      blueprintFlows: [sample.flow],
+      // Only what the certified run needs installed — its own flow and the ones
+      // it delegates to. Asserting every flow the blueprint ships would fail on
+      // work this script deliberately did not do.
+      blueprintFlows: [sample.flow, ...delegateIds],
       runs: (runs.runs ?? []).length,
       threadMessages: (msgs.messages ?? []).length,
       // The flow's own requirements, not a repeat of them: a path that calls
@@ -752,6 +805,31 @@ async function main() {
         claim,
         must.every((id) => ran.has(id)) && notRan.every((id) => !ran.has(id)),
         [...ran].join(", ").slice(0, 200),
+      );
+    }
+    if (profile.delegated) {
+      /*
+        The child run, read off the run log rather than the parent's trace: a
+        delegating step reports that it delegated and what came back, and the
+        verdict the delegate's own gate got is a step in a run of its own. That
+        run is where the money would have moved, so it is the one to hold.
+      */
+      const { flow: childFlow, claim, verdict, notRan } = profile.delegated;
+      const all = (await orch("/flows/runs")).runs ?? [];
+      const child = all.filter((r) => r.flowId === childFlow).at(-1);
+      const steps = child?.steps ?? [];
+      const childRan = new Set(steps.map((s) => s.stepId));
+      const read = (id) => steps.find((s) => s.stepId === id)?.verdict;
+      check(
+        claim,
+        Boolean(child) &&
+          Object.entries(verdict).every(([id, want]) => read(id) === want) &&
+          notRan.every((id) => !childRan.has(id)),
+        child
+          ? `${childFlow}: ${Object.keys(verdict)
+              .map((id) => `${id}=${read(id) ?? "unread"}`)
+              .join(" ")}`
+          : `no ${childFlow} run was started`,
       );
     }
     const after = crewChecklist(await facts());

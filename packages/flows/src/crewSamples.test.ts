@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { getCrewBlueprint } from "./crewBlueprints.js";
 import {
+  crewFlowDelegates,
   crewFlowNeeds,
   crewFlowOwner,
   crewSampleInputText,
@@ -156,6 +157,67 @@ test("the content-studio sample's write path aims at an unadmitted target", () =
   const checks = def.steps.filter((s) => s.kind === "tool" && s.tool === "lacrew_check_policy");
   assert.equal(checks.length, 1, "the flow no longer asks policy before publishing");
   assert.ok(JSON.stringify(checks[0]).includes("{{target.publish-endpoint}}"));
+});
+
+/*
+  The third shape (F2.25 / #114): a certified run whose principal is not the
+  principal that reaches the money. The scanner starts it and the executor
+  finishes it, so an operator firing this fixture sees the delegation before
+  they see a trade — which is the desk's actual structure and not a detail of
+  the flow.
+*/
+test("the defi-desk sample runs as the scanner and hands the trade down", () => {
+  const sample = crewSampleRun("defi-desk");
+  assert.ok(sample);
+  // Model work only. Every venue read the desk declares a connector for is
+  // still context an operator supplies, so this path's checklist reaches the
+  // connector step's *not needed* answer rather than sending them to wire one.
+  assert.deepEqual(crewSampleNeeds(sample), { model: true, connectors: [] });
+
+  const bp = getCrewBlueprint("defi-desk")!;
+  assert.equal(crewFlowOwner(bp, sample.flow)?.id, "scanner");
+
+  const def = getFlowTemplate(sample.flow)!.definition;
+  assert.deepEqual(crewFlowDelegates(def), ["desk-execute-trade"]);
+  assert.ok(
+    bp.flows.includes("desk-execute-trade"),
+    "the blueprint must ship the flow its certified run delegates to",
+  );
+});
+
+/*
+  The thesis the fixture exists to demonstrate, read off the blueprint and the
+  template rather than asserted in prose. Two halves, and the second is the one
+  that would rot quietly: the scanner holds no propose tool at all, and the size
+  the handoff proposes is the executor's own cap — so a trade at clip size is
+  the largest one this path can take without the risk manager, and the seat that
+  screened it could not have taken it at any size.
+*/
+test("the defi-desk sample's scanner cannot spend, and the handoff proposes at the clip size", () => {
+  const bp = getCrewBlueprint("defi-desk")!;
+  const scanner = bp.roles.find((r) => r.id === "scanner")!;
+  const executor = bp.roles.find((r) => r.id === "executor")!;
+
+  assert.ok(
+    !(scanner.tools ?? []).includes("lacrew_propose_intent"),
+    "the scanner seat must not hold the propose tool",
+  );
+  assert.ok((executor.tools ?? []).includes("lacrew_propose_intent"));
+  assert.ok(
+    BigInt(scanner.capUsdc) < BigInt(executor.capUsdc),
+    "a scanner that could carry the executor's clip size is not a scanner",
+  );
+
+  const scan = getFlowTemplate(crewSampleRun("defi-desk")!.flow)!.definition;
+  const proposes = scan.steps.filter((s) => s.kind === "gate");
+  assert.equal(proposes.length, 0, "the scanner's own flow no longer proposes anything");
+
+  const trade = getFlowTemplate("desk-execute-trade")!.definition.steps.find(
+    (s) => s.id === "trade",
+  );
+  assert.ok(trade && trade.kind === "gate");
+  assert.equal(trade.value, executor.capUsdc);
+  assert.equal(trade.target, "{{target.dex-router}}");
 });
 
 test("crewFlowNeeds ignores the orchestrator's own MCP surface", () => {

@@ -395,6 +395,64 @@ test("content-studio pins the publish verdict in both directions", async () => {
   assert.ok(result.failures.some((f) => f.assertion === "port" || f.assertion === "ran"));
 });
 
+/*
+  The desk's thesis, held from both ends (F2.25). Two separate claims live in
+  these scenarios and both are load-bearing:
+
+  - The scanner never reaches the money. Its cap would refuse the size, but
+    "refused" is not the claim — the claim is that it never asks, which is what
+    survives a policy module being misconfigured.
+  - The executor reads a verdict rather than taking a port. ALLOW files a
+    receipt, ESCALATE writes the memo, DENY stands down; a gate rewired so the
+    refusal lands on the receipt would pass any suite that only asserted the run
+    completed.
+*/
+test("defi-desk pins the scanner's silence and the executor's verdicts", async () => {
+  const ids = [
+    "defi-desk/scanner-hands-the-trade-down",
+    "defi-desk/clip-size-trade-executes",
+    "defi-desk/unadmitted-venue-stands-down",
+    "defi-desk/oversized-trade-escalates",
+  ];
+  const scenarios = ids.map((id) => firstPartyEvals.find((s) => s.id === id));
+  for (const [i, s] of scenarios.entries()) assert.ok(s, `missing scenario "${ids[i]}"`);
+  const suite = await runFlowEvals(scenarios as FlowEvalScenario[]);
+  assert.equal(suite.ok, true, formatEvalReport(suite));
+
+  // A scanner that proposed for itself instead of delegating.
+  const spends = mutate("desk-opportunity-scan", "hand-off", {
+    kind: "gate",
+    target: "{{target.dex-router}}",
+    value: "200000000",
+    onAllow: "log",
+    onEscalate: "log",
+    onDeny: "log",
+  });
+  const grabby = await runFlowEval({
+    ...clone(firstPartyEvals.find((s) => s.id === "defi-desk/scanner-hands-the-trade-down")!),
+    id: "mutant/scanner-proposes-for-itself",
+    flow: undefined,
+    definition: spends,
+  } as FlowEvalScenario);
+  assert.equal(grabby.ok, false, "a scanner that proposes must fail the eval");
+  assert.ok(grabby.failures.some((f) => f.assertion === "notCalled"));
+
+  // A refusal that files a receipt anyway: the venue check reads DENY and the
+  // branch carries on regardless, which is the edge the whole thesis lives in.
+  const paysAnyway = mutate("desk-execute-trade", "admitted", { onTrue: "receipt" });
+  const result = await runFlowEval({
+    ...clone(firstPartyEvals.find((s) => s.id === "defi-desk/unadmitted-venue-stands-down")!),
+    id: "mutant/deny-files-a-receipt",
+    flow: undefined,
+    definition: paysAnyway,
+  } as FlowEvalScenario);
+  assert.equal(result.ok, false, "a DENY that still files a receipt must fail the eval");
+  assert.ok(
+    result.failures.some((f) => ["port", "ran", "notRan"].includes(f.assertion)),
+    result.failures.map((f) => f.assertion).join(", "),
+  );
+});
+
 test("the report names the scenario, the assertion, and the coverage warning", async () => {
   const suite = await runFlowEvals([
     {

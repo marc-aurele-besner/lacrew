@@ -128,6 +128,23 @@ describe("lacrew crews", () => {
   });
 
   /*
+    The fourth certified path. Its first run also calls nothing outside LaCrew,
+    so the connector line must stay off — but the reason it is worth showing is
+    the seat: this flow is the scanner's, and the trade belongs to a seat it
+    delegates to. A "runs as" line naming the executor would tell an operator
+    that the principal firing the sample is the one holding the clip size.
+  */
+  it("shows the desk's certified first run as the scanner's, not the executor's", () => {
+    const { out } = capture(["show", "defi-desk"]);
+    assert.match(out, /desk-opportunity-scan · runs as Market scanner/);
+    assert.match(out, /Wire first: a model provider key/);
+    assert.doesNotMatch(out, /Wire first:.*connector/);
+    // What the operator has to be told before firing it: the money is on the
+    // other side of a handoff, and it is refused there.
+    assert.match(out, /delegated to the executor/);
+  });
+
+  /*
     A `{{input}}` flow interpolates its input verbatim, so the brief goes on the
     wire as itself. Serialized, the model would read a quoted string with its
     own escapes in it and the "pipe it straight into a run" promise would break.
@@ -135,6 +152,12 @@ describe("lacrew crews", () => {
   it("emits a whole-input sample as the brief itself, not as a JSON string", () => {
     const { out } = capture(["sample", "content-studio", "--json"]);
     assert.match(out, /^Account: the LaCrew org blog\./);
+    assert.doesNotMatch(out, /^"/);
+  });
+
+  it("emits the desk's candidate as prose too", () => {
+    const { out } = capture(["sample", "defi-desk", "--json"]);
+    assert.match(out, /^Candidate: Uniswap v3, USDC\/WETH 0\.05% pool\./);
     assert.doesNotMatch(out, /^"/);
   });
 

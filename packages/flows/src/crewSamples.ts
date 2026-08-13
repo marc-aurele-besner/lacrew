@@ -20,21 +20,30 @@
  *    pull request on LaCrew's own repo — the one the connector was first
  *    verified against — so firing it needs no repo they own and leaks nothing.
  *    `content-studio` reads nothing at all: its subject is a brief written here,
- *    and the run never leaves LaCrew.
+ *    and the run never leaves LaCrew. `defi-desk` reads nothing either: its
+ *    subject is one candidate written here, and no step of it quotes a pool.
  * 3. **Its write path can only refuse.** `bot-pr-triage` may merge, and on a
  *    fresh crew nothing has admitted the merge-authority address, so the flow
  *    asks `lacrew_check_policy`, reads DENY and writes the refusal note.
  *    `content-weekly-brief` asks the same question about a publishing endpoint
  *    its own blueprint leaves off the whitelist, reads DENY and assembles the
- *    human sign-off package. That is the enforcement story working, not a
- *    degraded run — and it is why these beat read-only flows as golden paths:
- *    they teach the operator what the crew cannot do.
+ *    human sign-off package. `desk-opportunity-scan` cannot even ask: its own
+ *    seat holds no propose tool, so the trade is delegated to the executor,
+ *    whose gate reads DENY off a router nobody admitted. That is the
+ *    enforcement story working, not a degraded run — and it is why these beat
+ *    read-only flows as golden paths: they teach the operator what the crew
+ *    cannot do.
  *
- * The two certified paths are deliberately different shapes. One needs a
- * connector and a credential before it means anything; the other calls nothing
- * outside LaCrew, so its checklist reports the connector step as *not needed*
- * rather than blocked. A golden path that only ever exercised the connector
- * branch would leave that answer untested on the surface operators read.
+ * The certified paths are deliberately different shapes, because the checklist
+ * has more than one answer and a suite of one shape would leave the rest
+ * unproved on the surface operators read. `github-experts` needs a connector, a
+ * credential and an admitted address before its run means anything;
+ * `governance-desk` needs a connector that costs nothing to wire, because the
+ * surface is public and read-only; `content-studio` and `defi-desk` call
+ * nothing outside LaCrew at all, so their checklists report the connector step
+ * as *not needed* rather than blocked. `defi-desk` is the only one whose run
+ * crosses a seat boundary: the principal that starts it is not the principal
+ * that reaches the money, which is the shape a desk actually has.
  *
  * Not every blueprint has one, and `crewSampleRun` returns `undefined` rather
  * than inventing an input. A surface with no fixture should say the blueprint
@@ -111,6 +120,24 @@ const samples: CrewSampleRun[] = [
     safety:
       "The read is one unauthenticated GraphQL query against a public governance forum, so it needs no credential and touches nothing of yours — this is the cheapest certified sample to actually run. Nothing is voted anywhere: the desk holds no key that could sign a Snapshot message and no route on the connector could send one, so the run ends in an instruction for a human rather than a record of a vote. If the space has nothing open the flow says so and hands it to a human, which is the honest answer rather than a manufactured decision.",
   },
+  {
+    blueprint: "defi-desk",
+    flow: "desk-opportunity-scan",
+    // One candidate, whole: `desk-opportunity-scan` reads `{{input}}` rather
+    // than keyed fields, because what the scanner is handed is whatever the
+    // watcher wrote down about a pool, and there is no schema for that.
+    //
+    // Written to be screenable rather than to be taken: it states a venue, a
+    // pair, a size, a depth and an edge, which is exactly what the screen step
+    // asks about. A candidate missing the gas line would be passed on for a
+    // reason that is about the fixture rather than about the desk.
+    input:
+      "Candidate: Uniswap v3, USDC/WETH 0.05% pool. Direction USDC→WETH, size 200 USDC. Pool depth around $4.1M with $9.8M of 24h volume, so 200 USDC moves the mid by well under a basis point. Expected edge +0.42% net of gas at ~$0.35 a leg. Max slippage 0.30%, deadline 60s. The venue is on the desk's admitted router list; nothing here has been simulated yet.",
+    summary:
+      "Runs the scanner's screen on one candidate, writes the route plan, and hands it down to the executor — which is the seat that carries the clip size.",
+    safety:
+      "The run reads nothing outside LaCrew: the candidate is prose written here, and no step of this flow quotes a pool or calls a venue. The scanner cannot buy anything either — its cap is 5 USDC and its seat holds no propose tool at all, so the trade is delegated to the executor and runs under the executor's own policy stack, never the scanner's. That is where the money would be, and on a crew nobody has finished configuring the router address is not admitted: the executor asks policy before it proposes, reads DENY, and stands down having proposed nothing. A trade over the clip size does not become allowed by being escalated either — it parks as an intent for the risk manager, who approves it inside their own bounds or not at all.",
+  },
 ];
 
 /** The certified sample run for a blueprint, or nothing when it has none. */
@@ -181,6 +208,29 @@ export function crewFlowNeeds(def: FlowDefinition): CrewSampleNeeds {
 export function crewSampleNeeds(sample: CrewSampleRun): CrewSampleNeeds | undefined {
   const def = getFlowTemplate(sample.flow)?.definition;
   return def ? crewFlowNeeds(def) : undefined;
+}
+
+/**
+ * Flow ids a definition hands work down to, sorted.
+ *
+ * A delegating step names another flow by id and the runtime resolves it
+ * against what is installed, so a run that crosses a seat boundary needs both
+ * flows there before it can do anything — `desk-opportunity-scan` reaches the
+ * money only through `desk-execute-trade`, and a workspace holding one of them
+ * fails at the handoff rather than at install. Read off the steps for the same
+ * reason the rest of this module is: a template that gains a handoff gains the
+ * requirement in the same commit that added the step.
+ *
+ * One level, deliberately. This answers "what else must be installed for the
+ * certified run", and the engine already refuses a delegation cycle; walking
+ * the graph here would duplicate that judgement in a second place.
+ */
+export function crewFlowDelegates(def: FlowDefinition): string[] {
+  const ids = new Set<string>();
+  for (const step of def.steps) {
+    if (step.kind === "agent" && step.flowId) ids.add(step.flowId);
+  }
+  return [...ids].sort();
 }
 
 /** Every string anywhere in a flow's steps, so a scan cannot miss a nested one. */

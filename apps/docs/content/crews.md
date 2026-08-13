@@ -313,7 +313,7 @@ works. `crews checklist` closes that gap for a self-host: it probes a running
 orchestrator for the seven things a first supervised action needs, and exits
 non-zero while any of them is outstanding — so a script can gate on it.
 
-Three blueprints are **certified**: they ship a run input the product will fire
+Four blueprints are **certified**: they ship a run input the product will fire
 at a crew nobody has finished configuring, and a driver that proves the path on
 a local chain. `crewSampleRun` answers nothing for the rest, and every surface
 says so rather than inventing an input.
@@ -323,12 +323,15 @@ says so rather than inventing an input.
 | `github-experts`  | `bot-pr-triage`             | a model key and the `github` connector                       | a merge refused, because nothing admitted the merge authority    |
 | `content-studio`  | `content-weekly-brief`      | a model key, and nothing else                                | a publication refused, because the endpoint is off the whitelist |
 | `governance-desk` | `governance-proposal-sweep` | a model key and the `snapshot` connector, which needs no key | a crew that finds its own work, and still cannot cast the vote   |
+| `defi-desk`       | `desk-opportunity-scan`     | a model key, and nothing else                                | a trade refused at a venue nobody admitted, one seat down        |
 
-The three are deliberately different shapes. `github-experts` needs a connector,
+The four are deliberately different shapes. `github-experts` needs a connector,
 a credential and an admitted address. `content-studio` leaves LaCrew not at all,
 so it drives the checklist's _connector not needed_ answer. `governance-desk`
 needs a connector that costs nothing to wire, because the surface is public and
-read-only — which makes it the cheapest of the three to actually run.
+read-only — which makes it the cheapest of the four to actually run. `defi-desk`
+is the only one whose certified run crosses a seat boundary: the seat that fires
+it cannot spend at all, and the money path exists only in the run it delegates.
 
 ```bash
 ORCH_URL=http://127.0.0.1:8788 lacrew crews checklist github-experts
@@ -490,10 +493,38 @@ about it and reads `DENY`. With a model key it also asserts where the run ended
 — the `queue` step reached, and neither vote step touched, because casting a
 Snapshot vote is a signed message this crew cannot produce.
 
-Which seats to hire and which spend targets to bind are read off the sample
-flow's own `{{crew.*}}` / `{{target.*}}` placeholders, so a template that gains
+Which seats to hire and which spend targets to bind are read off the certified
+flow's own `{{crew.*}}` / `{{target.*}}` placeholders — and off the flows it
+delegates to, since those bind addresses of their own — so a template that gains
 a delegate gains the hire in the same commit rather than leaving the driver
 bound to a list somebody has to remember to update.
+
+### The fourth path, where the run changes seats
+
+```bash
+pnpm golden-path --blueprint defi-desk
+```
+
+The desk's certified run starts as the **market scanner**, and the scanner
+cannot buy anything: its cap is 5 USDC and its seat holds no propose tool at
+all. So the flow screens one candidate, writes the route plan, and delegates to
+the **executor**, which is the seat carrying the desk's clip size. That delegate
+runs under its own principal and its own policy stack — a flow cannot borrow
+authority by handing work to a seat that has more of it.
+
+That is why the driver installs `desk-execute-trade` alongside the certified
+flow, and why the check that matters is on the child run rather than the one it
+fired: the parent reports that it delegated, and the money would have moved in
+the delegate. Nothing admitted the router address the executor's gate spends
+against, so the propose comes back `DENY`, no receipt is filed, and the desk
+paid nobody. The driver reads that child run off the run log and asserts exactly
+that — the `trade` gate's verdict, and the `receipt` step that must not exist.
+
+A trade the desk _has_ admitted a venue for is not automatically taken either.
+Over the executor's clip size the propose escalates, the intent parks for the
+risk manager onchain, and the run writes the memo they read before approving —
+which the eval suite pins alongside the refusal
+(`lacrew flows eval --blueprint defi-desk`).
 
 ### The cross-crew halt, checked
 
