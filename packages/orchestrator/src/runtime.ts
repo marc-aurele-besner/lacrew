@@ -56,7 +56,12 @@ import {
 } from "@lacrew/core";
 import { createPublicClient, http, parseEther, parseEventLogs, type Hex, type Log } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Verdict } from "@lacrew/flows";
+import {
+  policyModuleAddressOn,
+  validatePolicyModulePayload,
+  type PolicyModuleListing,
+  type Verdict,
+} from "@lacrew/flows";
 import type {
   BudgetActionInput,
   GovernanceActionInput,
@@ -2531,6 +2536,126 @@ export class CrewRuntime {
       proposalId: recorder.proposalId,
       txHash: recorder.txHash,
     };
+  }
+
+  /**
+   * Attach a marketplace policy module to a node's stack (PRD F3.1).
+   *
+   * This is what a bought `policyModule` listing installs, and the whole design
+   * is in what it refuses to do: it never calls `setNodePolicy`. It reads the
+   * stack the chain binds today, appends the listed module to the end, deploys
+   * the new PolicyStack (permissionless and inert), and *proposes* the bind.
+   * Until governance executes that proposal the node keeps exactly the modules
+   * the org voted — a purchase changes nothing an agent is allowed to do.
+   *
+   * Appending rather than replacing is the second half: first DENY wins, so a
+   * module added at the end can only ever narrow what the existing stack lets
+   * through. A payload that replaced the stack could have sold a buyer a
+   * loosening dressed as a guardrail.
+   */
+  async proposeAttachPolicyModule(input: {
+    node: `0x${string}`;
+    /** The listing payload, revalidated here — it arrives from a seller. */
+    listing: PolicyModuleListing | unknown;
+    tier?: GovernanceTier;
+    /** Selects which asset stack's router the bind targets; omit = primary. */
+    asset?: string;
+  }): Promise<{
+    node: `0x${string}`;
+    module: `0x${string}`;
+    /** The stack that would be bound; absent when nothing was proposed. */
+    stack?: `0x${string}`;
+    /** Resolved member order of that stack, the listed module last. */
+    members: `0x${string}`[];
+    proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }>;
+    /** True when this node's stack already carries the module — no proposal. */
+    alreadyBound?: boolean;
+  }> {
+    // The payload is screened before the chain is consulted: a listing that
+    // resolves to nothing is bad input whether or not a chain is wired, and an
+    // answer of "no chain here" would send the seller to fix the wrong thing.
+    const check = validatePolicyModulePayload(input.listing);
+    if (!check.ok || !check.listing) {
+      throw new Error(`invalid_policy_module_payload: ${check.errors.join("; ")}`);
+    }
+    if (!isOnchainClient(this.client)) {
+      throw new Error("policy_attach_requires_chain");
+    }
+    const listing = check.listing;
+    const module = this.resolvePolicyModule(listing, input.asset);
+
+    // A stack member with no code makes every `check` revert, so binding one
+    // would strand the node the moment governance executed. Refusing here is
+    // the difference between a rejected install and an unusable seat.
+    const code = await this.client.publicClient.getCode({ address: module });
+    if (!code || code === "0x") throw new Error("policy_module_has_no_code");
+
+    const [current] = await this.client.getNodePolicies({
+      nodes: [input.node],
+      asset: input.asset,
+    });
+    // What the router applies to this node today, whether bound per-node or
+    // inherited from the router default. Carrying the inherited members across
+    // is deliberate: attaching a module must not be how a node quietly loses
+    // the org-wide stack it was standing under.
+    const existing = (current?.modules ?? []).map((m) => m.address);
+    if (existing.some((a) => a.toLowerCase() === module.toLowerCase())) {
+      return { node: input.node, module, members: existing, proposals: [], alreadyBound: true };
+    }
+
+    const members = [...existing, module];
+    const stack = await this.client.deployPolicyStack(members);
+    const bind = await this.client.proposeSetNodePolicy({
+      node: input.node,
+      policyModule: stack.address,
+      tier: input.tier ?? "high",
+      asset: input.asset,
+    });
+    this.pushAudit({
+      type: "ProposalCreated",
+      at: new Date().toISOString(),
+      payload: {
+        proposalId: bind.proposalId,
+        node: input.node,
+        policyModule: stack.address,
+        attachedModule: module,
+        listing: listing.id,
+        action: "setNodePolicy",
+        txHash: bind.txHash,
+      },
+    });
+    return {
+      node: input.node,
+      module,
+      stack: stack.address,
+      members,
+      proposals: [{ action: "setNodePolicy", proposalId: bind.proposalId, txHash: bind.txHash }],
+    };
+  }
+
+  /**
+   * The address a listing binds on *this* deployment. A standard-module listing
+   * resolves against this org's own address book; a third-party one must name
+   * this chain explicitly — an address listed for another chain is not a module
+   * here, and picking the nearest one would bind something nobody listed.
+   */
+  private resolvePolicyModule(listing: PolicyModuleListing, asset?: string): `0x${string}` {
+    if (!isOnchainClient(this.client)) throw new Error("policy_attach_requires_chain");
+    const addresses = this.client.addresses;
+    if (listing.standardModule) {
+      const stack = resolveAssetStack(addresses, asset);
+      const address =
+        listing.standardModule === "time_window"
+          ? addresses.timeWindowPolicy
+          : listing.standardModule === "spend_cap"
+            ? stack.spendCapPolicy
+            : stack.whitelistPolicy;
+      if (!address) throw new Error(`standard_module_missing: ${listing.standardModule}`);
+      return address;
+    }
+    const address = policyModuleAddressOn(listing, addresses.chainId);
+    if (!address) throw new Error(`policy_module_not_deployed_on_chain_${addresses.chainId}`);
+    return address;
   }
 
   async proposeSetWhitelist(input: {

@@ -585,6 +585,40 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(await badKind.json(), { error: "unknown_module_kind" });
   });
 
+  it("refuses to attach a bought policy module without a chain, and screens the payload", async () => {
+    const app = buildApp();
+    const node = "0x000000000000000000000000000000000000dEaD";
+    const listing = {
+      id: "office-hours",
+      version: "1.0.0",
+      name: "Office hours",
+      summary: "DENY outside 09:00–17:00 UTC.",
+      deployments: [{ chainId: 31337, address: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318" }],
+      slots: ["worker_agent"],
+    };
+    const post = (payload: unknown) =>
+      app.request("/governance/attach-policy-module", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+    assert.deepEqual(await (await post({ listing })).json(), { error: "node_required" });
+    assert.deepEqual(await (await post({ node })).json(), { error: "listing_required" });
+
+    // A payload that resolves to nothing is a listing whose install cannot be
+    // performed, and it is refused before any chain work is attempted.
+    const bad = await post({ node, listing: { ...listing, deployments: [] } });
+    assert.equal(bad.status, 400);
+    assert.match(((await bad.json()) as { error: string }).error, /invalid_policy_module_payload/);
+
+    // No chain: 409, never an invented proposal id. A buyer being told their
+    // module is attached when nothing was proposed is the whole failure.
+    const offline = await post({ node, listing });
+    assert.equal(offline.status, 409);
+    assert.deepEqual(await offline.json(), { error: "policy_attach_requires_chain" });
+  });
+
   it("serves usage counts from real operations, flagged incomplete off the ring", async () => {
     const app = buildApp();
     // Two real operations: a tick that escalates (IntentCreated + SessionIssued)

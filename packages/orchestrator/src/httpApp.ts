@@ -3177,6 +3177,39 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     }
   });
 
+  app.post("/governance/attach-policy-module", async (c) => {
+    // Install a marketplace policy-module listing (F3.1): resolve the module
+    // the payload names, append it to the stack the chain binds for this node,
+    // and propose the bind. Nothing here changes what the node is allowed to
+    // do — the purchase bought a payload, the vote binds the module.
+    const body = await bodyOf<{
+      node?: string;
+      listing?: unknown;
+      tier?: "low" | "high";
+      asset?: string;
+    }>(c);
+    if (!body.node || !/^0x[0-9a-fA-F]{40}$/.test(body.node)) {
+      return jsonBig(c, { error: "node_required" }, 400);
+    }
+    if (!body.listing) {
+      return jsonBig(c, { error: "listing_required" }, 400);
+    }
+    try {
+      const result = await runtime.proposeAttachPolicyModule({
+        node: body.node as `0x${string}`,
+        listing: body.listing,
+        tier: body.tier,
+        asset: body.asset || undefined,
+      });
+      return jsonBig(c, { ...result, asset: body.asset || undefined, mode: runtime.mode });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "attach_policy_module_failed";
+      // No chain → 409: nothing can be proposed, and that is a deployment
+      // fact rather than something the caller phrased wrong.
+      return jsonBig(c, { error: message }, message === "policy_attach_requires_chain" ? 409 : 400);
+    }
+  });
+
   app.post("/governance/propose-set-whitelist", async (c) => {
     const body = await bodyOf<{
       target?: `0x${string}`;
