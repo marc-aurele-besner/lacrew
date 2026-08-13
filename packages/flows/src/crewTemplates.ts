@@ -3,11 +3,14 @@
  *
  * Each one is a pipeline a design partner described in their intake, written so
  * the money in it rides the policy stack rather than a promise: the DeFi desk's
- * clip size is a gate, and the fixer's retry budget is a gate. The content
- * crew's publish step *asks* policy first, because its endpoint is deliberately
- * unadmitted — a propose against a target the run's session key does not cover
- * reverts onchain, and a reverted run never reaches the human handoff that was
- * the whole point. Asking returns DENY and the flow routes on it.
+ * clip size is a gate, and the fixer's retry budget is a gate.
+ *
+ * Where a refusal is the *expected* outcome, the step **asks** policy first —
+ * the content crew before publishing, the desk before trading at a venue. A
+ * propose against a target the run's session key does not cover reverts
+ * onchain, and a reverted run never reaches the note or the human handoff that
+ * was the whole point of refusing. Asking returns DENY and the flow routes on
+ * it, with nothing proposed and nothing spent.
  *
  * Seats and targets appear as `{{crew.<role>}}` / `{{target.<id>}}` because a
  * template cannot know addresses that only exist once the crew is hired.
@@ -86,7 +89,7 @@ const deskExecuteTrade: FlowTemplate = {
   id: "tpl-desk-execute-trade",
   name: "Desk: execute trade",
   description:
-    "Pre-flight a route plan and propose the trade at clip size. Under the executor's cap it executes; over it, the intent sits pending the risk manager onchain and the flow writes the memo they will read.",
+    "Pre-flight a route plan, ask policy about the venue, then propose the trade at clip size. Under the executor's cap it executes; over it, the intent sits pending the risk manager onchain and the flow writes the memo they will read; at a venue nobody admitted it stands down without proposing anything.",
   category: "trading",
   author: "LaCrew",
   definition: flow("desk-execute-trade", "Desk: execute trade")
@@ -105,8 +108,32 @@ const deskExecuteTrade: FlowTemplate = {
     .branch("ready", {
       label: "Cleared pre-flight?",
       when: { source: "{{steps.preflight.text}}", op: "equals", value: "SEND" },
-      onTrue: "trade",
+      onTrue: "venue-check",
       onFalse: "fix-note",
+    })
+    /*
+      Asked before it is attempted, for the same reason the content crew asks
+      before publishing: `EscalationRouter.propose` *reverts* on DENY, and a
+      reverted run never reaches the stand-down note that is the whole point of
+      refusing. A venue the desk has not admitted is exactly the case this path
+      is certified on, so the refusal has to be a verdict the flow read.
+    */
+    .tool(
+      "venue-check",
+      "lacrew_check_policy",
+      { target: "{{target.dex-router}}", value: "200000000" },
+      { label: "May the desk trade at this venue?", next: "admitted" },
+    )
+    /*
+      DENY stops here; everything else goes to the gate. An ESCALATE must not be
+      treated as a refusal — the escalation *is* the desk's ladder, and the
+      pending intent it creates is what the risk manager approves.
+    */
+    .branch("admitted", {
+      label: "Is the venue admitted?",
+      when: { source: "{{steps.venue-check.json}}", op: "contains", value: '"DENY"' },
+      onTrue: "stand-down",
+      onFalse: "trade",
     })
     .gate("trade", {
       label: "Propose the trade at clip size",
@@ -114,6 +141,9 @@ const deskExecuteTrade: FlowTemplate = {
       value: "200000000",
       onAllow: "receipt",
       onEscalate: "risk-memo",
+      // Kept for the window between the check and the propose: policy can
+      // change under a run, and a refusal arriving late is still a refusal to
+      // route on rather than a step that fails silently.
       onDeny: "stand-down",
     })
     .model("receipt", {
@@ -131,7 +161,7 @@ const deskExecuteTrade: FlowTemplate = {
     .model("stand-down", {
       label: "Stand down",
       prompt:
-        "Policy denied the trade: {{steps.trade.json}}. Write one line naming which limit refused it — an unadmitted venue, or a size past the cap — and what would have to change.",
+        "Policy refused the trade: {{steps.venue-check.json}}. Nothing was proposed. Write one line naming which limit refused it — an unadmitted venue, or a size past the cap — and what would have to change. Admitting a venue is a governance proposal, not a retry.",
       next: null,
     })
     .model("fix-note", {
