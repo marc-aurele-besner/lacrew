@@ -213,6 +213,23 @@ export {
 } from "./skillPacks.js";
 export { firstPartySkillPacks, getSkillPack } from "./skillPackLibrary.js";
 export {
+  POLICY_MODULE_AUDIT_STATUSES,
+  POLICY_MODULE_LIMITS,
+  POLICY_MODULE_SLOTS,
+  STANDARD_POLICY_MODULES,
+  parsePolicyModuleListing,
+  policyModuleAddressOn,
+  policyModuleFitsSlot,
+  validatePolicyModulePayload,
+  type PolicyModuleAudit,
+  type PolicyModuleDeployment,
+  type PolicyModuleListing,
+  type PolicyModuleSlot,
+  type PolicyModuleValidation,
+  type StandardPolicyModule,
+} from "./policyModules.js";
+export { firstPartyPolicyModules, getPolicyModuleListing } from "./policyModuleLibrary.js";
+export {
   DEFAULT_MODEL_PRICES,
   INFERENCE_BUDGET_EXCEEDED,
   INFERENCE_BUDGET_MAX_WINDOW_DAYS,
