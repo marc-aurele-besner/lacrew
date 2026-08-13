@@ -56,6 +56,38 @@ Stacks bind per node through `EscalationRouter.setNodePolicy(node, module)`
 rate module the router never records into silently never trips — the
 per-node recorder exists to make that failure impossible.
 
+### 2.1 Third-party modules — writing one, listing one
+
+`IPolicyModule` is a public extension point: a guardrail nobody here wrote is
+bound the same way a shipped one is. To publish one:
+
+1. **Implement `check`** as a `view` function. It is called inside
+   `EscalationRouter.propose` and inside every `PolicyStack` it belongs to, so
+   it must not revert on inputs it does not recognise — return ALLOW and let
+   another member decide. A module that reverts takes the whole stack with it.
+   Keep it cheap: the same call is made on every proposal.
+2. **Deploy it** and keep the address. A listing points at a deployed module;
+   the marketplace never compiles or deploys a seller's bytecode, so nothing a
+   third party publishes ever runs off-chain.
+3. **Publish a `policyModule` listing** whose payload is validated by
+   `validatePolicyModulePayload` (`@lacrew/flows`): `id`, `version`, `name`,
+   `summary`, the `deployments` (one `{chainId, address}` per chain you support),
+   the `slots` the module is written for, and an `audit` claim. Absent audit
+   metadata means `unaudited`, which is what the catalog labels it. A listing
+   may instead name a `standardModule` — one of the modules a deployment already
+   carries in its address book — which is how the first-party entries resolve
+   without hardcoding an address that is right on one chain only.
+
+Buying does not attach. A purchase settles USDC on `MarketplacePayments` and
+entitles the buyer to the payload; binding is `setNodePolicy`, which is
+governor-gated. The orchestrator's install path
+(`POST /governance/attach-policy-module`) reads the stack the router binds for
+the node, **appends** the listed module, deploys the new `PolicyStack`
+(permissionless and inert), and proposes the bind at the high tier. Until that
+proposal executes the node keeps exactly the modules the org voted, and because
+appending puts the new module last behind them, a bought module can only ever
+narrow what the existing stack lets through — first DENY still wins.
+
 ## 3. OrgRegistry — the tree
 
 Nodes are accounts (`HumanRoot | ManagerAgent | WorkerAgent`); edges are
