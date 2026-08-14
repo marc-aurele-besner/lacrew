@@ -420,10 +420,23 @@ export class OnchainLacrewClient {
       functionName: "nextIntentId",
     })) as bigint;
 
-    const out: Intent[] = [];
-    for (let id = 1n; id < next; id++) {
-      const intent = await this.readIntent(id);
-      if (!intent.resolved) out.push(intent);
+    const intents = await this.readIdRange(next, (id) => this.readIntent(id));
+    return intents.filter((intent) => !intent.resolved);
+  }
+
+  /**
+   * Read rows 1..next-1 in bounded batches: concurrent within a batch so a
+   * long book does not pay one RPC round-trip per row, batched so a large id
+   * range cannot open thousands of simultaneous requests.
+   */
+  private async readIdRange<T>(next: bigint, read: (id: bigint) => Promise<T>): Promise<T[]> {
+    const batch = 25n;
+    const out: T[] = [];
+    for (let start = 1n; start < next; start += batch) {
+      const end = start + batch < next ? start + batch : next;
+      const ids: bigint[] = [];
+      for (let id = start; id < end; id++) ids.push(id);
+      out.push(...(await Promise.all(ids.map(read))));
     }
     return out;
   }
@@ -782,10 +795,7 @@ export class OnchainLacrewClient {
       account: signer,
     });
     const hash = await wallet.writeContract(request);
-    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") {
-      throw new Error(`propose reverted: ${hash}`);
-    }
+    await this.confirmWrite(hash, "propose");
     const [intentIdRaw, verdictRaw] = result as [bigint, number];
     return {
       intentId: intentIdRaw.toString(),
@@ -1073,7 +1083,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "resolve");
     const intent = await this.readIntent(id);
     return {
       intent,
@@ -1249,7 +1259,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "registerListing");
     return { txHash: hash, listingId };
   }
 
@@ -1269,6 +1279,14 @@ export class OnchainLacrewClient {
     const buyer = wallet.account!.address;
     const { gross, fee, net } = await this.quoteListing(input.catalogId);
     const maxPrice = input.maxPrice ?? gross;
+    // Refuse before touching the token: at the current price the purchase is
+    // certain to revert, and the approve that precedes it would still land —
+    // leaving a live ERC-20 allowance to the market with nothing bought.
+    if (gross > maxPrice) {
+      throw new Error(
+        `listing "${input.catalogId}" quotes ${gross} which exceeds maxPrice ${maxPrice} — re-quote before buying`,
+      );
+    }
 
     const token = (await this.publicClient.readContract({
       address: market,
@@ -1292,7 +1310,7 @@ export class OnchainLacrewClient {
           account: wallet.account!,
           chain: wallet.chain,
         });
-        await this.publicClient.waitForTransactionReceipt({ hash: approveHash });
+        await this.confirmWrite(approveHash, "approve");
       }
     }
 
@@ -1304,7 +1322,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "purchase");
     return { txHash: hash, gross, fee, net };
   }
 
@@ -1375,7 +1393,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "withdraw");
     return { txHash: hash };
   }
 
@@ -1388,7 +1406,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "fundEth");
     return { txHash: hash };
   }
 
@@ -1406,10 +1424,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") {
-      throw new Error(`Transaction ${hash} reverted.`);
-    }
+    await this.confirmWrite(hash, "sendBuiltTx");
     return { txHash: hash };
   }
 
@@ -1452,71 +1467,45 @@ export class OnchainLacrewClient {
         : allowedTarget === zeroAddress
           ? []
           : [allowedTarget];
-    // A key with a window or rate limit uses issueScopedTimed (targets as an
-    // array); a plain one keeps the simpler `issue` path. Each branch simulates
-    // and writes on its own, so the two request shapes never meet in one union.
-    let hash: `0x${string}`;
-    let sessionId: bigint;
-    if (input.window || input.rate) {
-      const { request, result } = await this.publicClient.simulateContract({
-        address: addr,
-        abi: sessionRegistryAbi,
-        functionName: "issueScopedTimed",
-        args: [
-          input.agent,
-          input.key,
-          BigInt(input.expiresAtSec),
-          input.scopeMask,
-          maxValue,
-          targets,
-          input.window?.start ?? 0,
-          input.window?.end ?? 0,
-          input.rate?.maxProposals ?? 0,
-          input.rate?.ratePeriod ?? 0,
-        ],
-        account: wallet.account!,
-      });
-      hash = await wallet.writeContract(request);
-      sessionId = result as bigint;
-    } else if (targets.length > 1) {
-      // More than one target has no `issue` form; `issueScoped` is the only way
-      // to pin them all, and dropping to the first would be a silent narrowing.
-      const { request, result } = await this.publicClient.simulateContract({
-        address: addr,
-        abi: sessionRegistryAbi,
-        functionName: "issueScoped",
-        args: [
-          input.agent,
-          input.key,
-          BigInt(input.expiresAtSec),
-          input.scopeMask,
-          maxValue,
-          targets,
-        ],
-        account: wallet.account!,
-      });
-      hash = await wallet.writeContract(request);
-      sessionId = result as bigint;
-    } else {
-      const { request, result } = await this.publicClient.simulateContract({
-        address: addr,
-        abi: sessionRegistryAbi,
-        functionName: "issue",
-        args: [
-          input.agent,
-          input.key,
-          BigInt(input.expiresAtSec),
-          input.scopeMask,
-          maxValue,
-          targets[0] ?? allowedTarget,
-        ],
-        account: wallet.account!,
-      });
-      hash = await wallet.writeContract(request);
-      sessionId = result as bigint;
-    }
-    await this.publicClient.waitForTransactionReceipt({ hash });
-    return { sessionId: sessionId.toString(), txHash: hash };
+    // A key with a window or rate limit needs issueScopedTimed. More than one
+    // pinned target has no `issue` form — `issueScoped` is the only way to pin
+    // them all, and dropping to the first would be a silent narrowing. A plain
+    // key keeps the simpler `issue` path.
+    const base = [input.agent, input.key, BigInt(input.expiresAtSec), input.scopeMask, maxValue] as const;
+    const simulated =
+      input.window || input.rate
+        ? await this.publicClient.simulateContract({
+            address: addr,
+            abi: sessionRegistryAbi,
+            functionName: "issueScopedTimed",
+            args: [
+              ...base,
+              targets,
+              input.window?.start ?? 0,
+              input.window?.end ?? 0,
+              input.rate?.maxProposals ?? 0,
+              input.rate?.ratePeriod ?? 0,
+            ],
+            account: wallet.account!,
+          })
+        : targets.length > 1
+          ? await this.publicClient.simulateContract({
+              address: addr,
+              abi: sessionRegistryAbi,
+              functionName: "issueScoped",
+              args: [...base, targets],
+              account: wallet.account!,
+            })
+          : await this.publicClient.simulateContract({
+              address: addr,
+              abi: sessionRegistryAbi,
+              functionName: "issue",
+              args: [...base, targets[0] ?? allowedTarget],
+              account: wallet.account!,
+            });
+    const hash = await wallet.writeContract(simulated.request as never);
+    await this.confirmWrite(hash, "session issue");
+    return { sessionId: (simulated.result as bigint).toString(), txHash: hash };
   }
 
   async revokeSession(sessionId: string): Promise<{ txHash: `0x${string}` }> {
@@ -1530,7 +1519,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "session revoke");
     return { txHash: hash };
   }
 
@@ -1550,7 +1539,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "setIssuer");
     return { txHash: hash };
   }
 
@@ -1622,7 +1611,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
     });
     const hash = await wallet.writeContract(request);
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "runEpoch");
     return { epoch: Number(result as bigint), txHash: hash };
   }
 
@@ -1633,11 +1622,7 @@ export class OnchainLacrewClient {
       abi: governanceModuleAbi,
       functionName: "nextProposalId",
     })) as bigint;
-    const out: GovernanceProposal[] = [];
-    for (let id = 1n; id < next; id++) {
-      out.push(await this.readProposal(id));
-    }
-    return out;
+    return this.readIdRange(next, (id) => this.readProposal(id));
   }
 
   async getProposal(proposalId: string): Promise<GovernanceProposal> {
@@ -1874,7 +1859,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: this.chain ?? null,
     });
-    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    const receipt = await this.confirmWrite(hash, "deploy");
     if (!receipt.contractAddress) {
       throw new Error("deployment returned no contract address");
     }
@@ -1911,7 +1896,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
     });
     const setHash = await wallet.writeContract(request);
-    await this.publicClient.waitForTransactionReceipt({ hash: setHash });
+    await this.confirmWrite(setHash, "setRecorder");
     return deployed;
   }
 
@@ -2052,7 +2037,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
     });
     const hash = await wallet.writeContract(request);
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "governance propose");
     return { proposalId: (result as bigint).toString(), txHash: hash };
   }
 
@@ -2074,7 +2059,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "governance vote");
     return { txHash: hash };
   }
 
@@ -2088,7 +2073,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "governance veto");
     return { txHash: hash };
   }
 
@@ -2102,7 +2087,7 @@ export class OnchainLacrewClient {
       account: wallet.account!,
       chain: wallet.chain,
     });
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    await this.confirmWrite(hash, "governance execute");
     return { txHash: hash };
   }
 
@@ -2280,6 +2265,20 @@ export class OnchainLacrewClient {
       eta: Number(row[9]),
       state: STATE_FROM[row[10]] ?? "active",
     };
+  }
+
+  /**
+   * Wait for a write to land and refuse to report success on a reverted
+   * receipt. A hash alone proves only that a transaction was mined, not that
+   * it did anything — a caller told "revoked" about a session key whose revoke
+   * actually reverted would stop worrying about a key that is still live.
+   */
+  private async confirmWrite(hash: `0x${string}`, what: string) {
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`${what} reverted onchain: ${hash}`);
+    }
+    return receipt;
   }
 
   /** A wallet client that actually holds a signing account, or a refusal naming the missing role. */
