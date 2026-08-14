@@ -56,9 +56,13 @@ export const mockAllowances: Allowance[] = [
     cap: 200n * 10n ** 6n,
   },
   {
+    // Balance covers the pending 75-USDC fixture intent: the mock debits the
+    // agent's allowance when a spend finalizes (as Treasury.spendAllowance
+    // does), so a book that could not cover its own demo intent would make
+    // approving it an overdraft.
     node: MOCK_WORKER,
     token: MOCK_TOKEN,
-    balance: 50n * 10n ** 6n,
+    balance: 150n * 10n ** 6n,
     epoch: 1,
     cap: 50n * 10n ** 6n,
   },

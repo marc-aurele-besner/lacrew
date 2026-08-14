@@ -21,6 +21,10 @@ describe("LacrewClient resolve recursion", () => {
 
   it("climbs to root when over manager cap", async () => {
     const client = createLacrewClient({ useMock: true });
+    // Fund the worker's allowance up to the spend first: the root's approval
+    // finalizes by debiting it, and an overdraft is refused like the chain's.
+    await client.runEpoch();
+    await client.runEpoch();
     const { intentId } = await client.proposeIntent({
       agent: MOCK_WORKER,
       target: "0x4444444444444444444444444444444444444444",
@@ -162,6 +166,111 @@ describe("LacrewClient resolve recursion", () => {
     await client.executeGovernance(grant.proposalId);
     const [allowance] = await client.getAllowances(MOCK_WORKER);
     assert.equal(allowance!.cap, 999n);
+  });
+});
+
+describe("mock allowance book (Treasury.spendAllowance parity)", () => {
+  const target = "0x4444444444444444444444444444444444444444" as const;
+
+  it("debits an ALLOW spend from the agent's allowance", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const [before] = await client.getAllowances(MOCK_WORKER);
+    await client.proposeIntent({ agent: MOCK_WORKER, target, value: 40n * 10n ** 6n });
+    const [after] = await client.getAllowances(MOCK_WORKER);
+    assert.equal(after!.balance, before!.balance - 40n * 10n ** 6n);
+  });
+
+  it("debits an approved escalation when it finalizes, not before", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const [before] = await client.getAllowances(MOCK_WORKER);
+    const { intentId } = await client.proposeIntent({
+      agent: MOCK_WORKER,
+      target,
+      value: 75n * 10n ** 6n,
+    });
+    const [pending] = await client.getAllowances(MOCK_WORKER);
+    // An escalation is a question, not a spend: nothing moves until approval.
+    assert.equal(pending!.balance, before!.balance);
+
+    await client.resolveIntent(intentId, true, MOCK_MANAGER);
+    const [after] = await client.getAllowances(MOCK_WORKER);
+    assert.equal(after!.balance, before!.balance - 75n * 10n ** 6n);
+    const audit = await client.getAuditTrail();
+    assert.ok(
+      audit.some(
+        (e) => e.type === "AllowanceSpent" && e.payload.value === (75n * 10n ** 6n).toString(),
+      ),
+      "finalize records the spend in the audit trail",
+    );
+  });
+
+  it("a denial leaves the allowance untouched", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const [before] = await client.getAllowances(MOCK_WORKER);
+    const { intentId } = await client.proposeIntent({
+      agent: MOCK_WORKER,
+      target,
+      value: 75n * 10n ** 6n,
+    });
+    await client.resolveIntent(intentId, false, MOCK_MANAGER);
+    const [after] = await client.getAllowances(MOCK_WORKER);
+    assert.equal(after!.balance, before!.balance);
+  });
+
+  it("refuses an overdraft finalize, keeps the intent pending, and releases it after a refill", async () => {
+    const client = createLacrewClient({ useMock: true });
+    // Drain the worker (fixture: 150) to 75, then escalate a 100-USDC spend.
+    const first = await client.proposeIntent({ agent: MOCK_WORKER, target, value: 75n * 10n ** 6n });
+    await client.resolveIntent(first.intentId, true, MOCK_MANAGER);
+    const { intentId } = await client.proposeIntent({
+      agent: MOCK_WORKER,
+      target,
+      value: 100n * 10n ** 6n,
+    });
+
+    await assert.rejects(
+      () => client.resolveIntent(intentId, true, MOCK_MANAGER),
+      /allowance_exceeded/,
+    );
+    // The refused finalize behaves like a reverted resolve: still pending.
+    const stillPending = (await client.getPendingIntents()).find((i) => i.id === intentId);
+    assert.ok(stillPending, "the intent survives the refused finalize");
+
+    await client.runEpoch(); // +50 → 125, enough to cover 100
+    const result = await client.resolveIntent(intentId, true, MOCK_MANAGER);
+    assert.equal(result.intent.approved, true);
+    const [after] = await client.getAllowances(MOCK_WORKER);
+    assert.equal(after!.balance, 25n * 10n ** 6n);
+  });
+});
+
+describe("mock governance vote guard", () => {
+  it("refuses the seat voting twice, mirroring hasVoted", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const { proposalId } = await client.proposeHire({ label: "Scout" });
+    await client.voteGovernance(proposalId, true);
+    await assert.rejects(() => client.voteGovernance(proposalId, true), /Already voted/);
+    const proposal = await client.getProposal(proposalId);
+    assert.equal(proposal.yesVotes, 2, "the seat's weight is counted once");
+  });
+});
+
+describe("raw governance proposals", () => {
+  it("joins the proposal book with a collision-free id and executes", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const target = "0x4444444444444444444444444444444444444444" as const;
+    const raw = await client.proposeGovernance({ tier: "low", target, data: "0xdeadbeef" });
+    // Fetchable like any typed proposal — the old audit-length ids were not.
+    const listed = await client.getProposal(raw.proposalId);
+    assert.equal(listed.data, "0xdeadbeef");
+    assert.equal(listed.target, target);
+
+    const hire = await client.proposeHire({ label: "Scout" });
+    assert.notEqual(hire.proposalId, raw.proposalId);
+
+    await client.voteGovernance(raw.proposalId, true);
+    const { proposal } = await client.executeGovernance(raw.proposalId);
+    assert.equal(proposal.state, "executed");
   });
 });
 

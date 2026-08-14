@@ -74,6 +74,8 @@ export class LacrewClient {
     { voter: MOCK_MANAGER, power: "1", role: "agent" },
   ];
   private epoch = 0;
+  /** Proposals the mock's one voting seat (the root) has already voted on. */
+  private readonly votedProposals = new Set<string>();
 
   constructor(options: LacrewClientOptions = {}) {
     this.useMock = options.useMock ?? true;
@@ -83,6 +85,25 @@ export class LacrewClient {
     this.audit = mockAuditTrail.map((e) => ({ ...e, payload: { ...e.payload } }));
     this.nodes = mockOrgNodes.map((n) => ({ ...n }));
     this.allowances = mockAllowances.map((a) => ({ ...a }));
+  }
+
+  /**
+   * Debit a spend from the paying agent's modeled allowance, as
+   * Treasury.spendAllowance does when the router finalizes. The fixtures model
+   * allowances for the seated demo org only, so an agent outside that book
+   * leaves it untouched; a modeled agent overdrawing is refused the way the
+   * chain would revert it, leaving the intent pending.
+   */
+  private spendModeledAllowance(agent: `0x${string}`, value: bigint): void {
+    if (value === 0n) return;
+    const row = this.allowances.find((a) => a.node.toLowerCase() === agent.toLowerCase());
+    if (!row) return;
+    if (row.balance < value) {
+      throw new Error(
+        `allowance_exceeded: ${agent} holds ${row.balance} and cannot cover ${value} — run a payroll epoch first`,
+      );
+    }
+    row.balance -= value;
   }
 
   private requireMock(what: string): void {
@@ -185,6 +206,7 @@ export class LacrewClient {
     }
 
     if (verdict === "ALLOW") {
+      this.spendModeledAllowance(input.agent, input.value);
       this.audit.push({
         type: "AllowanceSpent",
         at: new Date().toISOString(),
@@ -287,12 +309,23 @@ export class LacrewClient {
     }
 
     if (verdict === "ALLOW") {
+      this.spendModeledAllowance(intent.agent, intent.value);
       intent.resolved = true;
       intent.approved = true;
       this.audit.push({
         type: "IntentResolved",
         at: new Date().toISOString(),
         payload: { intentId, approved: true },
+      });
+      this.audit.push({
+        type: "AllowanceSpent",
+        at: new Date().toISOString(),
+        payload: {
+          agent: intent.agent,
+          target: intent.target,
+          value: intent.value.toString(),
+          intentId,
+        },
       });
       return { intent, escalated: false };
     }
@@ -302,12 +335,23 @@ export class LacrewClient {
       (n) => n.account.toLowerCase() === actingApprover.toLowerCase(),
     );
     if (!approverNode?.parent || approverNode.kind === "human_root") {
+      this.spendModeledAllowance(intent.agent, intent.value);
       intent.resolved = true;
       intent.approved = true;
       this.audit.push({
         type: "IntentResolved",
         at: new Date().toISOString(),
         payload: { intentId, approved: true, reason: "root_finalize" },
+      });
+      this.audit.push({
+        type: "AllowanceSpent",
+        at: new Date().toISOString(),
+        payload: {
+          agent: intent.agent,
+          target: intent.target,
+          value: intent.value.toString(),
+          intentId,
+        },
       });
       return { intent, escalated: false };
     }
@@ -336,29 +380,27 @@ export class LacrewClient {
   }
 
   /**
-   * Mocked governance: records a ProposalCreated audit event only.
-   * Use createOnchainClient for real propose/vote/execute.
+   * Mocked governance: a raw (target + calldata) proposal. It joins the same
+   * proposal book as the typed propose* helpers — listable via getProposals,
+   * votable and executable (executing it mutates nothing, since the mock
+   * cannot interpret arbitrary calldata). It used to mint its id from the
+   * audit-trail length instead, which made the returned id unfetchable and
+   * able to collide with a later typed proposal's id.
    */
   async proposeGovernance(input: {
     tier: GovernanceTier;
     target: `0x${string}`;
     data?: `0x${string}`;
   }): Promise<{ proposalId: string }> {
-    if (!this.useMock) {
-      throw new Error("Onchain governance requires createOnchainClient");
-    }
-    const proposalId = `proposal-mock-${this.audit.length + 1}`;
-    this.audit.push({
-      type: "ProposalCreated",
-      at: new Date().toISOString(),
-      payload: {
-        proposalId,
-        tier: input.tier,
-        target: input.target,
-        data: input.data ?? "0x",
-      },
-    });
-    return { proposalId };
+    this.requireMock("governance");
+    const proposal = this.createMockProposal(
+      input.tier,
+      input.target,
+      { kind: "raw" },
+      { target: input.target, data: input.data ?? "0x" },
+      input.data ?? "0x",
+    );
+    return { proposalId: proposal.id };
   }
 
   // ── Mock governance lifecycle (mirrors GovernanceModule semantics) ──────
@@ -368,6 +410,7 @@ export class LacrewClient {
     target: `0x${string}`,
     action: MockProposalAction,
     auditPayload: Record<string, unknown>,
+    data: `0x${string}` = "0x",
   ): GovernanceProposal {
     const root = this.nodes.find((n) => n.kind === "human_root");
     const proposal: GovernanceProposal = {
@@ -376,7 +419,7 @@ export class LacrewClient {
       tier,
       target,
       actionHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
-      data: "0x",
+      data,
       yesVotes: 0,
       noVotes: 0,
       yesHumanVotes: 0,
@@ -592,6 +635,10 @@ export class LacrewClient {
     const proposal = this.proposals.find((p) => p.id === proposalId);
     if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
     if (proposal.state !== "active") throw new Error(`Proposal not active: ${proposalId}`);
+    // Mirrors the contract's hasVoted guard: the mock's one voting seat cannot
+    // double-count its weight by voting again.
+    if (this.votedProposals.has(proposalId)) throw new Error(`Already voted: ${proposalId}`);
+    this.votedProposals.add(proposalId);
     if (support) {
       proposal.yesVotes += 2;
       proposal.yesHumanVotes = (proposal.yesHumanVotes ?? 0) + 2;
