@@ -1,4 +1,6 @@
-# Agent logic flows (`@lacrew/flows`)
+---
+title: "Agent logic flows (`@lacrew/flows`)"
+---
 
 Flows are declarative pipelines of agent logic — model calls, LaCrew tools,
 policy-gated spends, and branches — that the orchestrator executes against its

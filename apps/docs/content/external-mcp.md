@@ -1,4 +1,6 @@
-# External MCP servers
+---
+title: "External MCP servers"
+---
 
 LaCrew serves MCP: the `lacrew_*` tools are how an agent reads the org chart,
 checks a policy, and proposes an intent. This is the other direction — attaching

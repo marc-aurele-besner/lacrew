@@ -1,4 +1,6 @@
-# Escalation flow
+---
+title: "Escalation flow"
+---
 
 Operational spend never votes. When a policy returns `ESCALATE`, the EscalationRouter opens a pending intent and walks the reporting line until a node with sufficient authority resolves it.
 

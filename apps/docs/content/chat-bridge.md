@@ -1,4 +1,6 @@
-# Supervising a crew from chat
+---
+title: "Supervising a crew from chat"
+---
 
 A crew that asks a question stops. Until someone answers it, nothing moves — which is
 correct, and useless if the only place the question is visible is a browser tab nobody has

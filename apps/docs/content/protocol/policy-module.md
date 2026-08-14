@@ -1,4 +1,6 @@
-# IPolicyModule
+---
+title: "IPolicyModule"
+---
 
 The heart of the protocol. Modules stack on a node; first `DENY` wins; any `ESCALATE` routes upward.
 

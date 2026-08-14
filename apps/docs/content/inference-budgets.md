@@ -1,4 +1,6 @@
-# Inference cost budgets
+---
+title: "Inference cost budgets"
+---
 
 > **Onchain budget ≠ inference budget.** They bound different money, are
 > enforced in different places, and one is not a substitute for the other. If

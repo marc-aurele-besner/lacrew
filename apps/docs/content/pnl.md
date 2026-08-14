@@ -1,4 +1,6 @@
-# Crew P&L
+---
+title: "Crew P&L"
+---
 
 > **Reporting, not authority.** Nothing on this page approves a spend, releases
 > an escalation, changes a cap, or moves a token. It reads three meters and puts

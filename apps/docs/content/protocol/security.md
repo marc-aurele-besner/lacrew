@@ -1,4 +1,6 @@
-# Security model
+---
+title: "Security model"
+---
 
 Users do not buy composability. They buy **"my agents cannot rug me."**
 
