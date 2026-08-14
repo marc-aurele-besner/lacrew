@@ -24,6 +24,16 @@ export {
   type SafeApprovalResult,
   type SafeApprovalSurface,
 } from "./safeApproval.js";
+export {
+  parseWalletAdapterId,
+  resolveWalletAdapterFactory,
+  walletAdapterFromEnv,
+  walletAdapterIdFromEnv,
+  WALLET_ADAPTER_IDS,
+  type WalletAdapterFactory,
+  type WalletAdapterId,
+  type WalletAdapterOptions,
+} from "./walletAdapters.js";
 export { createRuntimeMcpBackend } from "./mcpBackend.js";
 export {
   connectorEnvVars,
