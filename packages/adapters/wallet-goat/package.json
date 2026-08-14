@@ -1,5 +1,5 @@
 {
-  "name": "@lacrew/adapter-wallet-agentkit",
+  "name": "@lacrew/adapter-wallet-goat",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
@@ -10,33 +10,30 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./contract": {
-      "types": "./dist/contract.d.ts",
-      "import": "./dist/contract.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/index.test.ts",
     "clean": "rm -rf dist",
-    "lint": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
-    "smoke:cdp": "node --import tsx scripts/smoke-cdp.ts"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 src/index.test.ts src/policyGate.test.ts"
   },
   "dependencies": {
-    "@lacrew/core": "workspace:*"
+    "@lacrew/adapter-wallet-agentkit": "workspace:*",
+    "@lacrew/core": "workspace:*",
+    "viem": "^2.21.0"
   },
   "devDependencies": {
-    "@coinbase/cdp-sdk": "^1.54.0",
+    "@goat-sdk/wallet-viem": "0.3.0",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@coinbase/cdp-sdk": "^1.0.0"
+    "@goat-sdk/wallet-viem": "0.3.x"
   },
   "peerDependenciesMeta": {
-    "@coinbase/cdp-sdk": {
+    "@goat-sdk/wallet-viem": {
       "optional": true
     }
   }

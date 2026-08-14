@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createPublicClient, createWalletClient, defineChain, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { assertWalletAdapterContract } from "@lacrew/adapter-wallet-agentkit/contract";
 import {
   connectSafeWallet,
   createMockSafeWallet,
@@ -57,12 +58,15 @@ test("bound mock adapter reads the verdict from the policy reader", async () => 
   assert.equal(await mockSafeWalletAdapter.checkPolicy(SPEND), "ESCALATE");
 });
 
-test("real adapter without a reader refuses to guess a verdict", () => {
-  const adapter = createSafeWalletAdapter({
-    provider: "http://127.0.0.1:8545",
-    owners: [OWNER_A],
+test("satisfies the shared WalletAdapter contract", async () => {
+  const base = { provider: "http://127.0.0.1:8545", owners: [OWNER_A] };
+  await assertWalletAdapterContract({
+    provider: "safe",
+    withReader: (reader) => createSafeWalletAdapter({ ...base, reader }),
+    withoutReader: () => createSafeWalletAdapter(base),
+    // Resolving an address needs a chain with the Safe singletons; the
+    // SAFE_FORK_RPC tests below cover provisioning.
   });
-  assert.throws(() => adapter.checkPolicy(SPEND), /No PolicyReader bound/);
 });
 
 test("an unsatisfiable threshold is rejected before touching the chain", async () => {

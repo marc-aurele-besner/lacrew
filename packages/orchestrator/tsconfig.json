@@ -11,6 +11,8 @@
     { "path": "../sdk" },
     { "path": "../db" },
     { "path": "../flows" },
-    { "path": "../adapters/agents-mcp" }
+    { "path": "../adapters/agents-mcp" },
+    { "path": "../adapters/wallet-agentkit" },
+    { "path": "../adapters/wallet-goat" }
   ]
 }
