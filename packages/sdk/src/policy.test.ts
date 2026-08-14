@@ -32,4 +32,23 @@ describe("checkClientPolicy", () => {
     });
     assert.equal(v, "DENY");
   });
+
+  it("matches agents and targets case-insensitively, as the chain compares addresses", () => {
+    const v = checkClientPolicy(defaultMockPolicy, {
+      agent: worker.toUpperCase().replace("0X", "0x") as `0x${string}`,
+      target: target.toUpperCase().replace("0X", "0x") as `0x${string}`,
+      value: 40n * 10n ** 6n,
+    });
+    assert.equal(v, "ALLOW");
+  });
+
+  it("an agent with no configured cap escalates any positive spend", () => {
+    // The unknown-agent cap is 0, not unlimited: fail closed.
+    const v = checkClientPolicy(defaultMockPolicy, {
+      agent: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      target,
+      value: 1n,
+    });
+    assert.equal(v, "ESCALATE");
+  });
 });

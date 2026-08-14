@@ -18,7 +18,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/policy.test.ts src/testing/client.test.ts src/surface.test.ts src/onchain.test.ts src/resolveSigner.test.ts src/simulate.test.ts",
+    "test": "node --import tsx --test src/policy.test.ts src/testing/client.test.ts src/surface.test.ts src/onchain.test.ts src/onchainWrites.test.ts src/resolveSigner.test.ts src/simulate.test.ts src/approvals.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
