@@ -13,7 +13,7 @@ Sibling private repo: `lacrew.xyz` (hosted cloud). Anything users must trust to 
 | Chain        | viem                                                                   |
 | Data         | Neon or Docker Postgres + Drizzle (`@lacrew/db`)                       |
 | Orchestrator | Node 22+, Hono/Fastify, QueueProvider + pg-boss (BullMQ later)         |
-| Docs         | Fumadocs (planned)                                                     |
+| Docs         | Fumadocs (Next.js static export → GitHub Pages)                        |
 
 ## Commands
 
