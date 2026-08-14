@@ -4,6 +4,7 @@ node_modules/
 dist/
 build/
 out/
+.next/
 coverage/
 .turbo/
 .pnpm-store/
@@ -29,6 +30,9 @@ packages/core/src/deployments.generated.ts
 
 # typedoc output, regenerated on every docs build
 apps/docs/content/reference/
+
+# The root SPEC.md, copied into the docs on every build
+apps/docs/content/spec.md
 
 # Vendored skill documents — not this repo's prose to restyle
 .claude/
