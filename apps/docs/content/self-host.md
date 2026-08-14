@@ -164,6 +164,16 @@ stack carries its own rate module. An unchanged composition proposes nothing
 (`unchanged: true`). `asset` selects a non-primary stack's own router;
 `propose-set-whitelist` and `propose-set-agent-cap` take the same selector.
 
+`POST /governance/attach-policy-module` installs a marketplace policy-module
+listing: it revalidates the payload, resolves the module for this chain (an
+explicit `deployments` address, or a `standardModule` from your own address
+book), refuses an address with no code, **appends** it to the stack the router
+binds for the node today, and proposes the bind at the high tier. It never
+calls `setNodePolicy` itself — buying a module grants a payload, binding it is a
+vote — and it returns `alreadyBound: true` without proposing when the node
+already carries the module. 409 means this deployment has no chain, so nothing
+could honestly be proposed.
+
 ### Indexer-derived events
 
 The indexer also derives `TreasuryDeposit` / `TreasuryOutflow` from each
