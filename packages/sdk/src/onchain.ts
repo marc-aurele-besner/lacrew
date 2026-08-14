@@ -10,6 +10,7 @@ import {
   erc20Abi,
   keccak256,
   toBytes,
+  zeroAddress,
   type Account,
   type Chain,
   type Hex,
@@ -112,6 +113,11 @@ const VERDICT_MAP: Record<number, Verdict> = {
   2: "DENY",
 };
 
+/** An address book slot that actually names a contract (set and non-zero). */
+function isPresent(address: `0x${string}` | undefined): address is `0x${string}` {
+  return Boolean(address) && address !== zeroAddress;
+}
+
 /**
  * Cached static facts about one policy module address — everything about it
  * that does not depend on which node is being asked about.
@@ -172,26 +178,14 @@ export class OnchainLacrewClient {
       transport: options.transport,
       chain: options.chain,
     });
-    this.walletClient = options.account
-      ? createWalletClient({
-          account: options.account,
-          transport: options.transport,
-          chain: options.chain,
-        })
-      : null;
+    const makeWallet = (account: Account) =>
+      createWalletClient({ account, transport: options.transport, chain: options.chain });
+    this.walletClient = options.account ? makeWallet(options.account) : null;
     this.resolverWalletClient = options.resolverAccount
-      ? createWalletClient({
-          account: options.resolverAccount,
-          transport: options.transport,
-          chain: options.chain,
-        })
+      ? makeWallet(options.resolverAccount)
       : this.walletClient;
     this.issuerWalletClient = options.issuerAccount
-      ? createWalletClient({
-          account: options.issuerAccount,
-          transport: options.transport,
-          chain: options.chain,
-        })
+      ? makeWallet(options.issuerAccount)
       : this.walletClient;
   }
 
@@ -226,7 +220,7 @@ export class OnchainLacrewClient {
       nodes.push({
         account: node.account,
         kind: KIND_MAP[Number(node.kind)] ?? "worker_agent",
-        parent: node.parent === "0x0000000000000000000000000000000000000000" ? null : node.parent,
+        parent: node.parent === zeroAddress ? null : node.parent,
         active: node.active,
       });
 
@@ -263,7 +257,7 @@ export class OnchainLacrewClient {
     // made every allowance claim to be from the first epoch forever.
     const streamer = stack.epochStreamer;
     const epoch =
-      streamer && streamer !== "0x0000000000000000000000000000000000000000"
+      isPresent(streamer)
         ? Number(
             (await this.publicClient.readContract({
               address: streamer,
@@ -314,7 +308,7 @@ export class OnchainLacrewClient {
     // it is the deployment's own statement about what the asset is.
     const tokens = new Map<string, WatchedToken>();
     for (const stack of listAssetStacks(this.addresses)) {
-      if (!stack.token || stack.token === "0x0000000000000000000000000000000000000000") continue;
+      if (!isPresent(stack.token)) continue;
       const key = stack.token.toLowerCase();
       if (!tokens.has(key)) {
         tokens.set(key, { symbol: stack.symbol, address: stack.token, decimals: stack.decimals });
@@ -343,7 +337,7 @@ export class OnchainLacrewClient {
   async getTreasuryBalances(): Promise<TreasuryBalance[]> {
     const out: TreasuryBalance[] = [];
     for (const stack of listAssetStacks(this.addresses)) {
-      if (!stack.treasury || stack.treasury === "0x0000000000000000000000000000000000000000") {
+      if (!stack.treasury || stack.treasury === zeroAddress) {
         continue;
       }
       const [total, liquid, reserved] = await Promise.all([
@@ -401,33 +395,21 @@ export class OnchainLacrewClient {
   }
 
   /**
-   * Resolve an asset's EpochStreamer address, or undefined when the stack has
-   * no streamer (a bare address book carries the zero address for it).
+   * Resolve one of an asset stack's module addresses, or undefined when the
+   * stack carries none (a bare address book holds the zero address there).
+   *
+   * Per-stack resolution is the safety property, not a convenience: caps and
+   * grants are asset-denominated (a WETH cap written to the USDC stack would
+   * compare 18-decimal values against a 6-decimal ceiling), and each asset's
+   * router consults its own whitelist, so a target allowed for USDC says
+   * nothing about WETH.
    */
-  private assetStreamer(asset?: string): `0x${string}` | undefined {
-    const addr = resolveAssetStack(this.addresses, asset).epochStreamer;
-    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
-  }
-
-  /**
-   * Resolve an asset's SpendCapPolicy address, or undefined when the stack
-   * carries none. Caps are asset-denominated, so a cap must land on the
-   * selected asset's own policy — writing a WETH cap to the USDC stack would
-   * compare 18-decimal values against a 6-decimal ceiling.
-   */
-  private assetSpendCap(asset?: string): `0x${string}` | undefined {
-    const addr = resolveAssetStack(this.addresses, asset).spendCapPolicy;
-    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
-  }
-
-  /**
-   * Resolve an asset's WhitelistPolicy address, or undefined when the stack
-   * carries none. Whitelists are per-stack: each asset's router consults its
-   * own module, so a target allowed for USDC says nothing about WETH.
-   */
-  private assetWhitelist(asset?: string): `0x${string}` | undefined {
-    const addr = resolveAssetStack(this.addresses, asset).whitelistPolicy;
-    return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : undefined;
+  private assetModule(
+    asset: string | undefined,
+    key: "epochStreamer" | "spendCapPolicy" | "whitelistPolicy",
+  ): `0x${string}` | undefined {
+    const addr = resolveAssetStack(this.addresses, asset)[key];
+    return isPresent(addr) ? addr : undefined;
   }
 
   /** Scan EscalationRouter intents(1..next-1) for unresolved rows (no indexer required). */
@@ -465,7 +447,7 @@ export class OnchainLacrewClient {
   }): Promise<Verdict> {
     const module =
       input.policyModule ?? this.addresses.policyStack ?? this.addresses.spendCapPolicy;
-    if (!module || module === "0x0000000000000000000000000000000000000000") {
+    if (!isPresent(module)) {
       throw new Error(
         `No policy module configured for chain ${this.chainId}: set addresses.policyStack or pass policyModule`,
       );
@@ -500,9 +482,8 @@ export class OnchainLacrewClient {
   async getNodePolicies(
     opts: { nodes?: `0x${string}`[]; asset?: string } = {},
   ): Promise<NodePolicyStack[]> {
-    const zero = "0x0000000000000000000000000000000000000000";
     const router = resolveAssetStack(this.addresses, opts.asset).escalationRouter;
-    if (!router || router === zero) return [];
+    if (!isPresent(router)) return [];
     const nodes = opts.nodes ?? (await this.getOrgTree()).map((n) => n.account);
     if (nodes.length === 0) return [];
 
@@ -525,9 +506,9 @@ export class OnchainLacrewClient {
         functionName: "policyOf",
         args: [node],
       })) as `0x${string}`;
-      const policyModule = bound !== zero ? bound : defaultPolicy;
-      const source = bound !== zero ? ("node" as const) : ("default" as const);
-      if (policyModule === zero) {
+      const policyModule = bound !== zeroAddress ? bound : defaultPolicy;
+      const source = bound !== zeroAddress ? ("node" as const) : ("default" as const);
+      if (policyModule === zeroAddress) {
         out.push({ node, policyModule, source, modules: [] });
         continue;
       }
@@ -635,7 +616,7 @@ export class OnchainLacrewClient {
       };
     }
     const allowedZero = await this.tryRead<boolean>(address, whitelistPolicyAbi, "allowed", [
-      "0x0000000000000000000000000000000000000000",
+      zeroAddress,
     ]);
     if (allowedZero !== undefined) {
       return { kind: "whitelist", allowedTargets: await this.readWhitelistTargets(address) };
@@ -893,7 +874,7 @@ export class OnchainLacrewClient {
     if (!sender) return null;
 
     const stacks = listAssetStacks(this.addresses).filter(
-      (s) => s.token && s.token !== "0x0000000000000000000000000000000000000000",
+      (s) => isPresent(s.token),
     );
     if (stacks.length === 0) return null;
 
@@ -906,7 +887,7 @@ export class OnchainLacrewClient {
       account: `0x${string}` | undefined,
       label: "treasury" | "agent" | "target" | "router",
     ) => {
-      if (!account || account === "0x0000000000000000000000000000000000000000") return;
+      if (!isPresent(account)) return;
       if (seen.has(account.toLowerCase())) return;
       seen.add(account.toLowerCase());
       parties.push({ account, label });
@@ -1197,7 +1178,7 @@ export class OnchainLacrewClient {
 
   private requireMarketplace(): `0x${string}` {
     const addr = this.addresses.marketplacePayments;
-    if (!addr || addr === "0x0000000000000000000000000000000000000000") {
+    if (!isPresent(addr)) {
       throw new Error("marketplacePayments address missing — redeploy with DeployMockOrg");
     }
     return addr;
@@ -1239,7 +1220,7 @@ export class OnchainLacrewClient {
       args: [OnchainLacrewClient.listingId(catalogId)],
     })) as readonly [`0x${string}`, bigint, boolean];
     const [seller, price, active] = result;
-    if (seller === "0x0000000000000000000000000000000000000000") return undefined;
+    if (seller === zeroAddress) return undefined;
     return { seller, price, active };
   }
 
@@ -1461,15 +1442,14 @@ export class OnchainLacrewClient {
      */
     rate?: { maxProposals: number; ratePeriod: number };
   }): Promise<{ sessionId: string; txHash: `0x${string}` }> {
-    const addr = this.addresses.sessionRegistry;
-    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const addr = this.requireSessionRegistry();
     const wallet = this.requireIssuerWallet();
     const maxValue = input.maxValue ?? 2n ** 256n - 1n;
-    const allowedTarget = input.allowedTarget ?? "0x0000000000000000000000000000000000000000";
+    const allowedTarget = input.allowedTarget ?? zeroAddress;
     const targets =
       input.allowedTargets && input.allowedTargets.length > 0
         ? input.allowedTargets
-        : allowedTarget === "0x0000000000000000000000000000000000000000"
+        : allowedTarget === zeroAddress
           ? []
           : [allowedTarget];
     // A key with a window or rate limit uses issueScopedTimed (targets as an
@@ -1540,8 +1520,7 @@ export class OnchainLacrewClient {
   }
 
   async revokeSession(sessionId: string): Promise<{ txHash: `0x${string}` }> {
-    const addr = this.addresses.sessionRegistry;
-    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const addr = this.requireSessionRegistry();
     const wallet = this.requireIssuerWallet();
     const hash = await wallet.writeContract({
       address: addr,
@@ -1561,8 +1540,7 @@ export class OnchainLacrewClient {
    * after this, `issue`/`revoke` accept that key, and only root can change it.
    */
   async setIssuer(issuer: `0x${string}`): Promise<{ txHash: `0x${string}` }> {
-    const addr = this.addresses.sessionRegistry;
-    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const addr = this.requireSessionRegistry();
     const wallet = this.requireWallet();
     const hash = await wallet.writeContract({
       address: addr,
@@ -1578,8 +1556,7 @@ export class OnchainLacrewClient {
 
   /** Current `SessionRegistry` issuer (root-or-this may issue/revoke). */
   async getIssuer(): Promise<`0x${string}`> {
-    const addr = this.addresses.sessionRegistry;
-    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    const addr = this.requireSessionRegistry();
     return (await this.publicClient.readContract({
       address: addr,
       abi: sessionRegistryAbi,
@@ -1589,7 +1566,7 @@ export class OnchainLacrewClient {
 
   /** Current payroll epoch from an asset's EpochStreamer (0 if not deployed). */
   async getCurrentEpoch(asset?: string): Promise<number> {
-    const addr = this.assetStreamer(asset);
+    const addr = this.assetModule(asset, "epochStreamer");
     if (!addr) return 0;
     const epoch = (await this.publicClient.readContract({
       address: addr,
@@ -1606,7 +1583,7 @@ export class OnchainLacrewClient {
    * has no recipients. `asset` selects the stack; omit it for the primary asset.
    */
   async getGrants(asset?: string): Promise<EpochGrant[]> {
-    const addr = this.assetStreamer(asset);
+    const addr = this.assetModule(asset, "epochStreamer");
     if (!addr) return [];
     const recipients = (await this.publicClient.readContract({
       address: addr,
@@ -1633,7 +1610,7 @@ export class OnchainLacrewClient {
    * `asset` selects the stack (symbol or token); omit it for the primary asset.
    */
   async runEpoch(asset?: string): Promise<{ epoch: number; txHash: `0x${string}` }> {
-    const addr = this.assetStreamer(asset);
+    const addr = this.assetModule(asset, "epochStreamer");
     if (!addr) {
       throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
     }
@@ -1683,7 +1660,7 @@ export class OnchainLacrewClient {
       input.parent ??
       this.addresses.manager ??
       this.addresses.humanRoot ??
-      ("0x0000000000000000000000000000000000000000" as `0x${string}`);
+      (zeroAddress as `0x${string}`);
     const account =
       input.account ??
       (`0x${keccak256(toBytes(`lacrew.hire:${input.label}`)).slice(26)}` as `0x${string}`);
@@ -1731,7 +1708,7 @@ export class OnchainLacrewClient {
    */
   async capOf(agent: `0x${string}`): Promise<bigint | undefined> {
     const addr = this.addresses.spendCapPolicy;
-    if (!addr || addr === "0x0000000000000000000000000000000000000000") return undefined;
+    if (!isPresent(addr)) return undefined;
     return (await this.publicClient.readContract({
       address: addr,
       abi: spendCapPolicyAbi,
@@ -1791,7 +1768,7 @@ export class OnchainLacrewClient {
     tier?: GovernanceTier;
     asset?: string;
   }): Promise<{ proposalId: string; account: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.assetStreamer(input.asset);
+    const addr = this.assetModule(input.asset, "epochStreamer");
     if (!addr) {
       throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
     }
@@ -1818,7 +1795,7 @@ export class OnchainLacrewClient {
     tier?: GovernanceTier;
     asset?: string;
   }): Promise<{ proposalId: string; count: number; txHash: `0x${string}` }> {
-    const addr = this.assetStreamer(input.asset);
+    const addr = this.assetModule(input.asset, "epochStreamer");
     if (!addr) {
       throw new Error("epochStreamer address missing — redeploy with DeployMockOrg");
     }
@@ -1918,7 +1895,7 @@ export class OnchainLacrewClient {
     asset?: string;
   }): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
     const router = resolveAssetStack(this.addresses, input.asset).escalationRouter;
-    if (!router || router === "0x0000000000000000000000000000000000000000") {
+    if (!isPresent(router)) {
       throw new Error("escalationRouter address missing — cannot bind the recorder");
     }
     const deployed = await this.deployFromBytecode(rateLimitPolicyAbi, rateLimitPolicyBytecode, [
@@ -1965,7 +1942,7 @@ export class OnchainLacrewClient {
     /** Selects which stack's WhitelistPolicy the change binds; omit = primary. */
     asset?: string;
   }): Promise<{ proposalId: string; target: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.assetWhitelist(input.asset);
+    const addr = this.assetModule(input.asset, "whitelistPolicy");
     if (!addr) throw new Error("whitelistPolicy address missing for the selected asset");
     const data = encodeFunctionData({
       abi: whitelistPolicyAbi,
@@ -1993,7 +1970,7 @@ export class OnchainLacrewClient {
     tier?: GovernanceTier;
     asset?: string;
   }): Promise<{ proposalId: string; agent: `0x${string}`; txHash: `0x${string}` }> {
-    const addr = this.assetSpendCap(input.asset);
+    const addr = this.assetModule(input.asset, "spendCapPolicy");
     if (!addr) throw new Error("spendCapPolicy address missing");
     const data = encodeFunctionData({
       abi: spendCapPolicyAbi,
@@ -2305,20 +2282,24 @@ export class OnchainLacrewClient {
     };
   }
 
+  /** A wallet client that actually holds a signing account, or a refusal naming the missing role. */
+  private requireSigner(client: WalletClient | null, message: string): WalletClient {
+    if (!client?.account) throw new Error(message);
+    return client;
+  }
+
   private requireWallet(): WalletClient {
-    if (!this.walletClient?.account) {
-      throw new Error("Onchain writes require an account (createOnchainClient({ account }))");
-    }
-    return this.walletClient;
+    return this.requireSigner(
+      this.walletClient,
+      "Onchain writes require an account (createOnchainClient({ account }))",
+    );
   }
 
   private requireResolverWallet(): WalletClient {
-    if (!this.resolverWalletClient?.account) {
-      throw new Error(
-        "Onchain resolve requires an account (createOnchainClient({ account }) or resolverAccount)",
-      );
-    }
-    return this.resolverWalletClient;
+    return this.requireSigner(
+      this.resolverWalletClient,
+      "Onchain resolve requires an account (createOnchainClient({ account }) or resolverAccount)",
+    );
   }
 
   /**
@@ -2345,20 +2326,25 @@ export class OnchainLacrewClient {
   }
 
   private requireIssuerWallet(): WalletClient {
-    if (!this.issuerWalletClient?.account) {
-      throw new Error(
-        "Onchain session issuance requires an account (createOnchainClient({ account }) or issuerAccount)",
-      );
-    }
-    return this.issuerWalletClient;
+    return this.requireSigner(
+      this.issuerWalletClient,
+      "Onchain session issuance requires an account (createOnchainClient({ account }) or issuerAccount)",
+    );
+  }
+
+  /** SessionRegistry's address, or a refusal — issuance and revocation have no meaning without it. */
+  private requireSessionRegistry(): `0x${string}` {
+    const addr = this.addresses.sessionRegistry;
+    if (!addr) throw new Error("sessionRegistry address missing — redeploy with DeployMockOrg");
+    return addr;
   }
 
   private async readIntent(id: bigint): Promise<Intent> {
     if (id === 0n) {
       return {
         id: "0",
-        agent: "0x0000000000000000000000000000000000000000",
-        target: "0x0000000000000000000000000000000000000000",
+        agent: zeroAddress,
+        target: zeroAddress,
         value: 0n,
         data: "0x",
         awaitingApprover: null,
@@ -2383,7 +2369,7 @@ export class OnchainLacrewClient {
       value,
       data,
       awaitingApprover:
-        awaitingApprover === "0x0000000000000000000000000000000000000000" ? null : awaitingApprover,
+        awaitingApprover === zeroAddress ? null : awaitingApprover,
       resolved,
       approved: resolved ? approved : null,
       verdict: resolved ? (approved ? "ALLOW" : "DENY") : "ESCALATE",
