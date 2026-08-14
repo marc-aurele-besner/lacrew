@@ -256,16 +256,15 @@ export class OnchainLacrewClient {
     // read once rather than per node. `epoch: 1` used to be hardcoded, which
     // made every allowance claim to be from the first epoch forever.
     const streamer = stack.epochStreamer;
-    const epoch =
-      isPresent(streamer)
-        ? Number(
-            (await this.publicClient.readContract({
-              address: streamer,
-              abi: epochStreamerAbi,
-              functionName: "currentEpoch",
-            })) as bigint,
-          )
-        : 0;
+    const epoch = isPresent(streamer)
+      ? Number(
+          (await this.publicClient.readContract({
+            address: streamer,
+            abi: epochStreamerAbi,
+            functionName: "currentEpoch",
+          })) as bigint,
+        )
+      : 0;
 
     const out: Allowance[] = [];
     for (const n of targets) {
@@ -883,9 +882,7 @@ export class OnchainLacrewClient {
     const sender = intent.awaitingApprover ?? this.resolverWalletClient?.account?.address ?? null;
     if (!sender) return null;
 
-    const stacks = listAssetStacks(this.addresses).filter(
-      (s) => isPresent(s.token),
-    );
+    const stacks = listAssetStacks(this.addresses).filter((s) => isPresent(s.token));
     if (stacks.length === 0) return null;
 
     const parties: Array<{
@@ -1471,7 +1468,13 @@ export class OnchainLacrewClient {
     // pinned target has no `issue` form — `issueScoped` is the only way to pin
     // them all, and dropping to the first would be a silent narrowing. A plain
     // key keeps the simpler `issue` path.
-    const base = [input.agent, input.key, BigInt(input.expiresAtSec), input.scopeMask, maxValue] as const;
+    const base = [
+      input.agent,
+      input.key,
+      BigInt(input.expiresAtSec),
+      input.scopeMask,
+      maxValue,
+    ] as const;
     const simulated =
       input.window || input.rate
         ? await this.publicClient.simulateContract({
@@ -2367,8 +2370,7 @@ export class OnchainLacrewClient {
       target,
       value,
       data,
-      awaitingApprover:
-        awaitingApprover === zeroAddress ? null : awaitingApprover,
+      awaitingApprover: awaitingApprover === zeroAddress ? null : awaitingApprover,
       resolved,
       approved: resolved ? approved : null,
       verdict: resolved ? (approved ? "ALLOW" : "DENY") : "ESCALATE",

@@ -22,9 +22,10 @@ const ROOT_ADDRESS = "0x1111111111111111111111111111111111111111" as const;
 type Call = { url: string; body: Record<string, unknown>; headers: Record<string, string> };
 
 /** A fetch stub that answers each POST from a script and records what it saw. */
-function stubOrchestrator(
-  responses: Array<{ status?: number; json: unknown }>,
-): { fetchImpl: typeof fetch; calls: Call[] } {
+function stubOrchestrator(responses: Array<{ status?: number; json: unknown }>): {
+  fetchImpl: typeof fetch;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   let i = 0;
   const fetchImpl = (async (url: unknown, init?: RequestInit) => {
@@ -83,7 +84,9 @@ describe("resolveIntentWithProof", () => {
     const signed: string[] = [];
     const { fetchImpl, calls } = stubOrchestrator([
       { json: walletChallenge },
-      { json: { escalated: false, authorizedBy: "root:wallet", approver: ROOT_ADDRESS, intent: {} } },
+      {
+        json: { escalated: false, authorizedBy: "root:wallet", approver: ROOT_ADDRESS, intent: {} },
+      },
     ]);
     const result = await resolveIntentWithProof({
       intentId: "7",
@@ -132,8 +135,7 @@ describe("resolveIntentWithProof", () => {
       { json: { ...walletChallenge, kind: "passkey" } },
     ]);
     await assert.rejects(
-      () =>
-        resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
+      () => resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
       /root_proof_required.*passkey root/s,
     );
     // Only the challenge went out; nothing was sent "to see".
@@ -151,8 +153,7 @@ describe("resolveIntentWithProof", () => {
       },
     ]);
     await assert.rejects(
-      () =>
-        resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
+      () => resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
       /0x5afe5afe5afe5afe5afe5afe5afe5afe5afe5afe/,
     );
   });
@@ -160,8 +161,7 @@ describe("resolveIntentWithProof", () => {
   it("refuses a wallet root with neither signer nor proof, quoting the statement", async () => {
     const { fetchImpl } = stubOrchestrator([{ json: walletChallenge }]);
     await assert.rejects(
-      () =>
-        resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
+      () => resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
       /root_proof_required.*LaCrew root approval/s,
     );
   });

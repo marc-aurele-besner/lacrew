@@ -140,7 +140,10 @@ describe("confirmWrite refuses reverted receipts", () => {
 
   it("a reverted governance vote throws with the operation named", async () => {
     const client = clientWith({ receiptStatus: "0x0" });
-    await assert.rejects(() => client.voteGovernance("3", true), /governance vote reverted onchain/);
+    await assert.rejects(
+      () => client.voteGovernance("3", true),
+      /governance vote reverted onchain/,
+    );
   });
 
   it("a successful write still reports its hash", async () => {
@@ -151,7 +154,9 @@ describe("confirmWrite refuses reverted receipts", () => {
 });
 
 describe("issueSession picks the narrowest issuance the inputs allow", () => {
-  async function issuedFunction(input: Parameters<ReturnType<typeof clientWith>["issueSession"]>[0]) {
+  async function issuedFunction(
+    input: Parameters<ReturnType<typeof clientWith>["issueSession"]>[0],
+  ) {
     const calls: Hex[] = [];
     const client = clientWith({
       calls,
@@ -291,7 +296,10 @@ describe("readTokenMetadata", () => {
   });
 
   it("an address with no code is definitively not_erc20", async () => {
-    const result = await readTokenMetadata(fakePublicClient({ getCode: async () => "0x" }), TARGET_A);
+    const result = await readTokenMetadata(
+      fakePublicClient({ getCode: async () => "0x" }),
+      TARGET_A,
+    );
     assert.equal(result.ok, false);
     assert.equal((result as { reason: string }).reason, "not_erc20");
   });

@@ -220,7 +220,11 @@ describe("mock allowance book (Treasury.spendAllowance parity)", () => {
   it("refuses an overdraft finalize, keeps the intent pending, and releases it after a refill", async () => {
     const client = createLacrewClient({ useMock: true });
     // Drain the worker (fixture: 150) to 75, then escalate a 100-USDC spend.
-    const first = await client.proposeIntent({ agent: MOCK_WORKER, target, value: 75n * 10n ** 6n });
+    const first = await client.proposeIntent({
+      agent: MOCK_WORKER,
+      target,
+      value: 75n * 10n ** 6n,
+    });
     await client.resolveIntent(first.intentId, true, MOCK_MANAGER);
     const { intentId } = await client.proposeIntent({
       agent: MOCK_WORKER,
