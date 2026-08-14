@@ -22,6 +22,7 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 - [SDK reference](./sdk.md) — hand-written guide
 - [API reference](./reference/README.md) — generated from source by TypeDoc
 - [Flows](./flows.md)
+- [Wallets](./wallets.md) — the one interface every wallet provider sits behind, and how to choose between CDP, Safe, MetaMask and GOAT
 - [Connectors](./connectors.md) — how a crew reaches GitHub, a CMS, or an RPC, on an allowlist the operator writes
 - [External MCP servers](./external-mcp.md) — attach somebody else's MCP server, one allowed tool at a time; new tools arrive blocked
 - [Crew blueprints](./crews.md) — a vertical as data: org chart, budgets, guardrails, and the plan that stands it up
