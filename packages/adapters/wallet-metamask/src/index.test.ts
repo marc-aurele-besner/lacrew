@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { assertWalletAdapterContract } from "@lacrew/adapter-wallet-agentkit/contract";
 import { createMetaMaskWalletAdapter, getEnvironment, SUPPORTED_CHAIN_IDS } from "./index.js";
 
 const SPEND = {
@@ -36,10 +37,13 @@ test("an unsupported chain reports plainly instead of returning a bad address", 
   await assert.rejects(() => getEnvironment(31337), /not deployed on chain 31337/);
 });
 
-test("adapter without a reader refuses to guess a verdict", () => {
-  const adapter = createMetaMaskWalletAdapter({ client: stubClient, owner });
-  assert.equal(adapter.provider, "metamask");
-  assert.throws(() => adapter.checkPolicy(SPEND), /No PolicyReader bound/);
+test("satisfies the shared WalletAdapter contract", async () => {
+  await assertWalletAdapterContract({
+    provider: "metamask",
+    withReader: (reader) => createMetaMaskWalletAdapter({ client: stubClient, owner, reader }),
+    withoutReader: () => createMetaMaskWalletAdapter({ client: stubClient, owner }),
+    // Provisioning needs the kit and a chain; delegation.test.ts covers it.
+  });
 });
 
 test("adapter honours a bound policy reader", async () => {

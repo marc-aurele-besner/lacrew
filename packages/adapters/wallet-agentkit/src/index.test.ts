@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { test } from "node:test";
+import { assertWalletAdapterContract } from "./contract.js";
 import {
   demoPolicyVerdict,
   createCdpWallet,
@@ -171,9 +172,13 @@ test("CDP adapter provisions through createWallet and honours the reader", async
   }
 });
 
-test("CDP adapter without a reader refuses to guess a verdict", () => {
-  const adapter = createCdpWalletAdapter({ name: "worker-1" });
-  assert.throws(() => adapter.checkPolicy(SPEND), /No PolicyReader bound/);
+test("satisfies the shared WalletAdapter contract", async () => {
+  await assertWalletAdapterContract({
+    provider: "agentkit",
+    withReader: (reader) => createCdpWalletAdapter({ name: "worker-1", reader }),
+    withoutReader: () => createCdpWalletAdapter({ name: "worker-1" }),
+    // Provisioning needs credentials; the mock-CDP tests above cover it.
+  });
 });
 
 test("CDP adapter needs an account name", async () => {
