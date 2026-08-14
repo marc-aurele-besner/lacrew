@@ -1,0 +1,27 @@
+{
+  "pages": [
+    "index",
+    "spec",
+    "protocol",
+    "---Build---",
+    "sdk",
+    "flows",
+    "reference",
+    "wallets",
+    "connectors",
+    "external-mcp",
+    "---Run a crew---",
+    "crews",
+    "skill-packs",
+    "heartbeat",
+    "chat-bridge",
+    "evals",
+    "---Guardrails---",
+    "plan-required",
+    "dual-control",
+    "inference-budgets",
+    "pnl",
+    "---Operate---",
+    "self-host"
+  ]
+}

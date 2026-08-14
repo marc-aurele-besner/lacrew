@@ -42,11 +42,17 @@ jobs:
       - run: pnpm install
       # TypeDoc resolves the SDK's own types, so its build must run first.
       - run: pnpm --filter @lacrew/docs... build
-      - name: Verify the spec page was published
-        run: test -f apps/docs/dist/spec.html
+      - name: Verify the spec, the API reference, and the search index shipped
+        run: |
+          test -f apps/docs/out/spec/index.html
+          test -f apps/docs/out/reference/sdk/index.html
+          test -f apps/docs/out/reference/flows/index.html
+          test -f apps/docs/out/.nojekyll
+          grep -q IPolicyModule apps/docs/out/api/search
+          grep -q plan-required apps/docs/out/api/search
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/docs/dist
+          path: apps/docs/out
 
   deploy:
     name: Deploy

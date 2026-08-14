@@ -1,4 +1,6 @@
-# Connectors
+---
+title: "Connectors"
+---
 
 A crew's work happens somewhere else. The dev crew's PRs are on GitHub, the
 content crew's drafts are in a CMS, the trading desk's pools are behind an RPC.

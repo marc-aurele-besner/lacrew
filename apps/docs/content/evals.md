@@ -1,4 +1,6 @@
-# Flow & blueprint evals
+---
+title: "Flow & blueprint evals"
+---
 
 > A blueprint's guarantees live in the edges of a flow. An eval is what holds
 > them there when someone edits the flow.

@@ -1,4 +1,7 @@
-# LaCrew docs
+---
+title: "LaCrew docs"
+description: "Protocol spec, contract interfaces, SDK reference, and self-hosting guide for LaCrew."
+---
 
 > Your agents. Their budgets. Your keys.
 
@@ -20,7 +23,7 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 ## Build
 
 - [SDK reference](./sdk.md) — hand-written guide
-- [API reference](./reference/README.md) — generated from source by TypeDoc
+- [API reference](./reference/index.md) — generated from source by TypeDoc
 - [Flows](./flows.md)
 - [Wallets](./wallets.md) — the one interface every wallet provider sits behind, and how to choose between CDP, Safe, MetaMask and GOAT
 - [Connectors](./connectors.md) — how a crew reaches GitHub, a CMS, or an RPC, on an allowlist the operator writes
@@ -34,7 +37,3 @@ LaCrew — the onchain org chart, budget, and escalation layer for AI agent team
 - [Dual control](./dual-control.md) — a second seat concurs, or the effect does not happen: four-eyes review in front of a merge or a spend
 - [Skill packs](./skill-packs.md) — directive skills as a versioned artifact: install one onto a seat, update it, take it back off
 - [Self-hosting](./self-host.md)
-
-## TODO
-
-- TODO: Adopt Fumadocs (or Docusaurus) in place of the static HTML builder

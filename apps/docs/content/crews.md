@@ -1,4 +1,6 @@
-# Crew blueprints
+---
+title: "Crew blueprints"
+---
 
 A blueprint is a vertical written down: the org chart, the per-seat caps and
 grants, the escalation ladder, the constitutional changes, the flows the crew
@@ -62,7 +64,7 @@ a Snapshot space instead and finds the proposal itself — the difference betwee
 a desk that watches a protocol and a desk that waits to be told. It ends in the
 instruction a mandate owner casts, because a Snapshot vote is a message signed
 by the delegate's key and no connector ships a route that could send one. See
-[how discovery reaches a run](/docs/connectors#how-discovery-reaches-a-run).
+[how discovery reaches a run](./connectors.md#how-discovery-reaches-a-run).
 
 ## What a blueprint holds
 

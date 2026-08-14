@@ -1,4 +1,6 @@
-# Governance
+---
+title: "Governance"
+---
 
 LaCrew splits decisions into two regimes and refuses to confuse them.
 

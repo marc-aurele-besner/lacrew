@@ -1,4 +1,6 @@
-# Dual control
+---
+title: "Dual control"
+---
 
 Policy bounds what a crew _may_ do. [Plan-required](./plan-required.md) bounds
 when it may do it without having said so. Neither catches the plan that is

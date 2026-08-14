@@ -1,4 +1,6 @@
-# Self-hosting
+---
+title: "Self-hosting"
+---
 
 Self-host loses nothing except convenience. The cloud is a thin commercial shell around the OSS core.
 
@@ -817,7 +819,7 @@ port is reachable beyond localhost.
 an open route: a webhook producer is an external system holding that trigger's
 HMAC secret rather than the operator's bearer token, and every delivery is
 verified against that signature before anything is enqueued. See
-[Webhook triggers](/docs/flows#webhook-triggers).
+[Webhook triggers](./flows.md#webhook-triggers).
 
 ## Webhook triggers (self-host)
 

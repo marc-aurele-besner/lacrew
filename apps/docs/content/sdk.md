@@ -1,4 +1,6 @@
-# SDK reference (`@lacrew/sdk`)
+---
+title: "SDK reference (`@lacrew/sdk`)"
+---
 
 Typed client for the LaCrew protocol. Prefer `createLacrewClient({ useMock: true })` for demos; switch to `createOnchainClient` when `ANVIL_RPC` + a deployer key are available.
 

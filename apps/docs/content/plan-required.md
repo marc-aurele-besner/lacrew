@@ -1,4 +1,6 @@
-# Plan-required mode
+---
+title: "Plan-required mode"
+---
 
 An agent can already post a `plan` into its crew's thread — a sentence saying
 what it is about to do, in the one window where a human can still redirect it.

@@ -1,4 +1,6 @@
-# Wallets
+---
+title: "Wallets"
+---
 
 An agent seat needs an address that can hold and spend funds. LaCrew does not
 issue one. Wallet infrastructure is a solved, competitive problem, and the part

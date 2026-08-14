@@ -1,4 +1,6 @@
-# Protocol overview
+---
+title: "Protocol overview"
+---
 
 LaCrew encodes an organization as a tree of smart accounts with streaming allowances and stacked policy modules.
 

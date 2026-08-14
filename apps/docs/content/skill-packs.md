@@ -1,4 +1,6 @@
-# Skill packs
+---
+title: "Skill packs"
+---
 
 A crew's directive has three parts: guidelines (the prose an `AGENTS.md` would
 carry), resources (what the seat looks after), and **skills** — named procedures,
