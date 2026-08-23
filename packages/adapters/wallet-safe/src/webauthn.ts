@@ -44,6 +44,11 @@ export interface VerifyAssertionInput extends WebAuthnAssertion {
 }
 
 function fromBase64Url(value: string): Uint8Array {
+  // Node decodes base64url leniently (it never throws), so the alphabet is
+  // checked here; otherwise garbage flows on under a misleading error name.
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]*$/.test(value)) {
+    throw new Error("not base64url");
+  }
   return new Uint8Array(Buffer.from(value, "base64url"));
 }
 

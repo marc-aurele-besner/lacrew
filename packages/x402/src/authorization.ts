@@ -17,6 +17,7 @@ import {
   type Abi,
 } from "viem";
 import type { Authorization, PaymentRequirements } from "./types.js";
+import { CHAIN_IDS } from "./assets.js";
 
 /** The struct USDC and other EIP-3009 tokens hash for a transfer. */
 export const TRANSFER_WITH_AUTHORIZATION_TYPES = {
@@ -182,6 +183,24 @@ export async function verifyAuthorization(opts: {
   if (!isAddress(auth.from) || !isAddress(auth.to)) {
     return { valid: false, reason: "authorization has a malformed address" };
   }
+  // The domain is caller-supplied; a signature over another chain's or another
+  // token's domain is a valid signature for something the requirements never asked for.
+  const expectedChainId = CHAIN_IDS[requirements.network];
+  if (expectedChainId !== undefined && Number(opts.domain.chainId) !== expectedChainId) {
+    return {
+      valid: false,
+      reason: `signed for chain ${String(opts.domain.chainId)}, expected ${expectedChainId} (${requirements.network})`,
+    };
+  }
+  if (
+    opts.domain.verifyingContract &&
+    getAddress(opts.domain.verifyingContract) !== getAddress(requirements.asset)
+  ) {
+    return {
+      valid: false,
+      reason: `signed for token ${opts.domain.verifyingContract}, expected ${requirements.asset}`,
+    };
+  }
   if (getAddress(auth.to) !== getAddress(requirements.payTo)) {
     return { valid: false, reason: `pays ${auth.to}, expected ${requirements.payTo}` };
   }
@@ -189,6 +208,14 @@ export async function verifyAuthorization(opts: {
     return {
       valid: false,
       reason: `authorizes ${auth.value}, above the required ${requirements.maxAmountRequired}`,
+    };
+  }
+  // The `exact` scheme means exactly that: `maxAmountRequired` is the price, and
+  // an authorization for less is an unpaid resource, not a discount.
+  if (auth.value < BigInt(requirements.maxAmountRequired)) {
+    return {
+      valid: false,
+      reason: `authorizes ${auth.value}, below the required ${requirements.maxAmountRequired}`,
     };
   }
   if (auth.value <= 0n) {
