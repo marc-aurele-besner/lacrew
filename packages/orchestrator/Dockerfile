@@ -20,8 +20,11 @@ RUN pnpm --filter "@lacrew/orchestrator..." build
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV PORT=8788
-COPY --from=build /app /app
+# Run as the unprivileged user the base image ships; the tree is chowned so
+# nothing at runtime needs root to read it.
+COPY --from=build --chown=node:node /app /app
 WORKDIR /app/packages/orchestrator
+USER node
 EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8788)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
