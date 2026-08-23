@@ -38,16 +38,8 @@ import {
   type CrewExternalCandidate,
   type CrewRole,
 } from "@lacrew/flows";
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
-
-function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
-}
+import { flagValue, hasFlag } from "./args.js";
+import { orchHeaders, orchUrl } from "./orch.js";
 
 /** Reporting lines as an indented tree, managers first. */
 function printOrgTree(bp: CrewBlueprint): void {
@@ -304,17 +296,6 @@ function printPlan(bp: CrewBlueprint, bindings: CrewBindings, controls = false):
   }
 }
 
-/* ------------------------------------------------------------------------- *
- * checklist — the golden path, probed against a running orchestrator.
- * ------------------------------------------------------------------------- */
-
-function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
-    /\/$/,
-    "",
-  );
-}
-
 /**
  * One probe. Answers `null` on any failure rather than throwing, because a
  * single unreadable surface must degrade one step to `unknown` instead of
@@ -322,11 +303,8 @@ function orchUrl(args: string[]): string {
  * is the whole reason the checklist has four states.
  */
 async function probe<T>(args: string[], path: string): Promise<T | null> {
-  const token = process.env.ORCH_TOKEN?.trim();
   try {
-    const res = await fetch(`${orchUrl(args)}${path}`, {
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-    });
+    const res = await fetch(`${orchUrl(args)}${path}`, { headers: orchHeaders() });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -341,13 +319,9 @@ async function probe<T>(args: string[], path: string): Promise<T | null> {
  * prevent.
  */
 async function putJson<T>(args: string[], path: string, body: unknown): Promise<T> {
-  const token = process.env.ORCH_TOKEN?.trim();
   const res = await fetch(`${orchUrl(args)}${path}`, {
     method: "PUT",
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: orchHeaders({}, { json: true }),
     body: JSON.stringify(body),
   });
   const text = await res.text();

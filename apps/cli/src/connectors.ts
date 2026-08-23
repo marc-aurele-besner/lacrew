@@ -31,22 +31,8 @@ import {
   type ConnectorPresetAuthMode,
   type ConnectorPresetOptions,
 } from "@lacrew/orchestrator";
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
-
-/** Every `--flag value` occurrence, so `--omit` and `--policy-target` repeat. */
-function flagValues(args: string[], flag: string): string[] {
-  const out: string[] = [];
-  args.forEach((arg, i) => {
-    const next = args[i + 1];
-    if (arg === flag && next && !next.startsWith("-")) out.push(next);
-  });
-  return out;
-}
+import { flagValue, flagValues } from "./args.js";
+import { orchFetch } from "./orch.js";
 
 function routeLine(preset: ConnectorPreset, name: string): string {
   const route = preset.routes.find((r) => r.name === name)!;
@@ -262,28 +248,6 @@ type AskRow = {
   flowId?: string;
   runId?: string;
 };
-
-function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
-    /\/$/,
-    "",
-  );
-}
-
-async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
-  const token = process.env.ORCH_TOKEN?.trim();
-  const res = await fetch(`${orchUrl(args)}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
-  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
-}
 
 function scopeLabel(scope: ModeRule["scope"]): string {
   return scope.level === "workspace" ? "workspace" : `${scope.level} ${scope.ref}`;

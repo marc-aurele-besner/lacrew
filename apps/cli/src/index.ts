@@ -26,6 +26,7 @@ import { cmdPlanRequired } from "./planRequired.js";
 import { cmdDualControl } from "./dualControl.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
+import { flagValue, hasFlag } from "./args.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Anvil account #0 — public dev key; only ever used for `lacrew deploy --anvil`. */
@@ -38,16 +39,6 @@ loadEnvFile(join(repoRoot, ".env"));
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2));
-}
-
-function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
-}
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
 }
 
 function createClient(args: string[]) {
@@ -588,7 +579,7 @@ async function main(): Promise<void> {
           return;
         }
         printJson(
-          await (client as { proposeGovernance: Function }).proposeGovernance({
+          await (client as OnchainLacrewClient).proposeGovernance({
             tier,
             target: target as `0x${string}`,
             data,
@@ -608,7 +599,7 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           return;
         }
-        printJson(await (client as { proposeHire: Function }).proposeHire({ label }));
+        printJson(await (client as OnchainLacrewClient).proposeHire({ label }));
         return;
       }
       if (sub === "fire") {
@@ -623,7 +614,7 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           return;
         }
-        printJson(await (client as { proposeFire: Function }).proposeFire({ account }));
+        printJson(await (client as OnchainLacrewClient).proposeFire({ account }));
         return;
       }
       if (sub === "admit-human") {
@@ -645,7 +636,7 @@ async function main(): Promise<void> {
           return;
         }
         printJson(
-          await (client as { proposeAdmitHuman: Function }).proposeAdmitHuman({
+          await (client as OnchainLacrewClient).proposeAdmitHuman({
             account,
             power: power === undefined ? 2n : BigInt(power),
           }),
@@ -664,9 +655,7 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           return;
         }
-        printJson(
-          await (client as { proposeRemoveHuman: Function }).proposeRemoveHuman({ account }),
-        );
+        printJson(await (client as OnchainLacrewClient).proposeRemoveHuman({ account }));
         return;
       }
       if (sub === "seats") {
@@ -676,8 +665,8 @@ async function main(): Promise<void> {
           return;
         }
         const [seats, config] = await Promise.all([
-          (client as { readGovernanceSeats: Function }).readGovernanceSeats(),
-          (client as { readGovernanceConfig: Function }).readGovernanceConfig(),
+          (client as OnchainLacrewClient).readGovernanceSeats(),
+          (client as OnchainLacrewClient).readGovernanceConfig(),
         ]);
         printJson({ seats, config });
         return;
@@ -695,9 +684,7 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           return;
         }
-        printJson(
-          await (client as { proposeReparent: Function }).proposeReparent({ account, newParent }),
-        );
+        printJson(await (client as OnchainLacrewClient).proposeReparent({ account, newParent }));
         return;
       }
       if (sub === "grant") {
@@ -715,7 +702,7 @@ async function main(): Promise<void> {
         }
         // amountWei is denominated in the target asset's own decimals.
         printJson(
-          await (client as { proposeSetGrant: Function }).proposeSetGrant({
+          await (client as OnchainLacrewClient).proposeSetGrant({
             account,
             amount: BigInt(amountRaw),
             asset: flagValue(rest, "--asset"),
@@ -737,7 +724,7 @@ async function main(): Promise<void> {
           return;
         }
         printJson(
-          await (client as { proposeSetWhitelist: Function }).proposeSetWhitelist({
+          await (client as OnchainLacrewClient).proposeSetWhitelist({
             target,
             allowed,
           }),
@@ -758,7 +745,7 @@ async function main(): Promise<void> {
           return;
         }
         printJson(
-          await (client as { proposeSetAgentCap: Function }).proposeSetAgentCap({
+          await (client as OnchainLacrewClient).proposeSetAgentCap({
             agent,
             cap: BigInt(capRaw),
           }),
@@ -779,7 +766,7 @@ async function main(): Promise<void> {
           return;
         }
         printJson(
-          await (client as { proposeSetNodePolicy: Function }).proposeSetNodePolicy({
+          await (client as OnchainLacrewClient).proposeSetNodePolicy({
             node,
             policyModule,
           }),
@@ -795,11 +782,11 @@ async function main(): Promise<void> {
         }
         if (sub === "vote") {
           const support = cleaned[2] !== "no";
-          await (client as { voteGovernance: Function }).voteGovernance(id, support);
+          await (client as OnchainLacrewClient).voteGovernance(id, support);
         } else if (sub === "veto") {
-          await (client as { vetoGovernance: Function }).vetoGovernance(id);
+          await (client as OnchainLacrewClient).vetoGovernance(id);
         } else {
-          await (client as { executeGovernance: Function }).executeGovernance(id);
+          await (client as OnchainLacrewClient).executeGovernance(id);
         }
         printJson({ ok: true, proposalId: id, action: sub });
         return;
