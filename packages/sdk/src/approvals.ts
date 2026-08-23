@@ -17,6 +17,7 @@
  */
 
 import type { RootChallenge, RootProof } from "@lacrew/core";
+import { checkedRootChallengeStatement } from "@lacrew/core";
 
 /** Just enough of a viem `Account` to sign one statement. */
 export interface RootSigner {
@@ -156,12 +157,19 @@ export async function resolveIntentWithProof(
           `Challenge: ${issued.challenge}`,
       );
     } else if (options.rootAccount) {
+      // Sign only the statement for the action and intent this call asked for;
+      // a relay's `statement` as received could be a genuine challenge for
+      // something else entirely.
+      const statement = checkedRootChallengeStatement(issued, {
+        action,
+        subject: options.intentId,
+      });
       proved = {
         challenge: issued.challenge,
         rootProof: {
           kind: "wallet",
           address: options.rootAccount.address,
-          signature: await options.rootAccount.signMessage({ message: issued.statement }),
+          signature: await options.rootAccount.signMessage({ message: statement }),
         },
       };
     } else {

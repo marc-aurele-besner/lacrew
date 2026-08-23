@@ -18,10 +18,10 @@ on:
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
+# Read-only by default; the deploy job alone gets the Pages/OIDC grants, so the
+# PR-triggered build never runs with a token that could publish.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Never cancel an in-flight deploy; queue behind it.
 concurrency:
@@ -59,6 +59,10 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

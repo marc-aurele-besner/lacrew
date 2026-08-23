@@ -202,6 +202,44 @@ test("overpaying beyond the requirement is rejected", async () => {
   assert.match(result.valid === false ? result.reason : "", /above the required/);
 });
 
+test("underpaying the requirement is rejected — exact means exact", async () => {
+  const auth = authFor({ value: 1n });
+  const result = await verifyAuthorization({
+    domain,
+    authorization: auth,
+    signature: await signed(auth),
+    requirements,
+    now: NOW,
+  });
+  assert.equal(result.valid, false);
+  assert.match(result.valid === false ? result.reason : "", /below the required/);
+});
+
+test("a signature over another chain's or token's domain is rejected", async () => {
+  const auth = authFor();
+  const otherChain = { ...domain, chainId: 84532 };
+  const wrongChain = await verifyAuthorization({
+    domain: otherChain,
+    authorization: auth,
+    signature: await signAuthorization(account, otherChain, auth),
+    requirements,
+    now: NOW,
+  });
+  assert.equal(wrongChain.valid, false);
+  assert.match(wrongChain.valid === false ? wrongChain.reason : "", /expected 8453/);
+
+  const otherToken = { ...domain, verifyingContract: payee };
+  const wrongToken = await verifyAuthorization({
+    domain: otherToken,
+    authorization: auth,
+    signature: await signAuthorization(account, otherToken, auth),
+    requirements,
+    now: NOW,
+  });
+  assert.equal(wrongToken.valid, false);
+  assert.match(wrongToken.valid === false ? wrongToken.reason : "", /expected 0x/);
+});
+
 test("expired and not-yet-valid authorizations are rejected", async () => {
   const auth = authFor();
   const sig = await signed(auth);
@@ -260,12 +298,14 @@ test("a signature bound to a different domain is rejected", async () => {
   assert.equal(result.valid, false);
 });
 
-test("tampering with the amount after signing is rejected", async () => {
+test("tampering with a signed field after signing is rejected", async () => {
   const auth = authFor();
   const sig = await signed(auth);
+  // The amount is pinned by the exact-scheme check before the signature is
+  // ever looked at, so tamper a field only the signature protects.
   const result = await verifyAuthorization({
     domain,
-    authorization: { ...auth, value: 1n },
+    authorization: { ...auth, validBefore: auth.validBefore + 1n },
     signature: sig,
     requirements,
     now: NOW,

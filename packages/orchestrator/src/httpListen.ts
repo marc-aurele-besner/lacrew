@@ -10,7 +10,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function attemptListen(server: Server, port: number, onListening: () => void): Promise<void> {
+async function attemptListen(
+  server: Server,
+  port: number,
+  host: string | undefined,
+  onListening: () => void,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const onError = (err: NodeJS.ErrnoException) => {
       server.off("listening", onListen);
@@ -24,22 +29,27 @@ async function attemptListen(server: Server, port: number, onListening: () => vo
     server.once("error", onError);
     server.once("listening", onListen);
     // reusePort helps overlapping watch reloads on supported platforms.
-    server.listen({ port, reusePort: true, exclusive: false });
+    server.listen({ port, ...(host ? { host } : {}), reusePort: true, exclusive: false });
   });
 }
 
+/**
+ * `opts.host` narrows the bind address (e.g. `127.0.0.1` for an operator's
+ * own machine); unset binds every interface, which containers and pools rely
+ * on. Read from `LACREW_ORCH_HOST` by the server.
+ */
 export async function listenHttp(
   server: Server,
   port: number,
   onListening: () => void,
-  opts: { retries?: number; retryMs?: number } = {},
+  opts: { retries?: number; retryMs?: number; host?: string } = {},
 ): Promise<void> {
   const retries = opts.retries ?? 40;
   const retryMs = opts.retryMs ?? 250;
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {
-      await attemptListen(server, port, onListening);
+      await attemptListen(server, port, opts.host, onListening);
       return;
     } catch (err) {
       lastErr = err;
@@ -58,7 +68,8 @@ export async function listenHttp(
           };
           server.once("error", onError);
           server.once("listening", onListen);
-          server.listen(port);
+          if (opts.host) server.listen(port, opts.host);
+          else server.listen(port);
         });
         return;
       }

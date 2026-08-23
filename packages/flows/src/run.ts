@@ -154,7 +154,13 @@ export function interpolate(template: string, ctx: { input?: string; steps: Step
         inputFields = null;
       }
     }
-    return renderValue(inputFields?.[key]);
+    // Own properties only, like `readPath`: `{{input.constructor}}` must render
+    // empty rather than leak prototype text into a prompt or a tool argument.
+    return renderValue(
+      inputFields && Object.prototype.hasOwnProperty.call(inputFields, key)
+        ? inputFields[key]
+        : undefined,
+    );
   };
 
   const stepField = (id: string, path: string): string => {
@@ -331,8 +337,9 @@ export async function runFlow(
   // A resumed run keeps the original start time: the wait is part of how long
   // the run took, and restamping it would report an hour-long pause as instant.
   const startedAt = opts.resume?.startedAt ?? new Date().toISOString();
+  // The id keys checkpoints and resumes, so it must not be guessable or collide.
   const runId =
-    opts.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    opts.runId ?? `run-${Date.now().toString(36)}-${globalThis.crypto.randomUUID().slice(0, 13)}`;
   const steps: FlowStepTrace[] = [...(opts.resume?.steps ?? [])];
   const outputs: StepOutputs = { ...(opts.resume?.outputs ?? {}) };
   const input = opts.resume ? (opts.resume.input ?? opts.input) : opts.input;

@@ -62,7 +62,18 @@ const rawModel: ModelProvider = createModelProviderFromEnv();
 /** MCP HTTP binds to the live runtime; LACREW_MCP_MOCK=1 forces a detached SDK mock. */
 const mcpUseMock = process.env.LACREW_MCP_MOCK === "1";
 const authToken = getOrchToken();
+/** Bind address. Unset = every interface (containers); `127.0.0.1` keeps a laptop's orchestrator local. */
+const host = process.env.LACREW_ORCH_HOST?.trim() || undefined;
 let dbReady = false;
+
+if (!authToken) {
+  // An open orchestrator is a local-demo convenience. It still holds a real
+  // key, so the choice is made loudly rather than discovered later.
+  console.warn(
+    "[@lacrew/orchestrator] LACREW_ORCH_TOKEN is unset: every route is open to anything that can reach " +
+      `this port${host ? "" : " on every interface"}. Set it (and LACREW_ORCH_HOST=127.0.0.1 for a local demo) before exposing the process.`,
+  );
+}
 
 let migrationsRan = false;
 
@@ -86,11 +97,16 @@ async function main(): Promise<void> {
       ),
     );
     installShutdownHooks(server, async () => {});
-    await listenHttp(server, port, () => {
-      console.log(
-        `[@lacrew/orchestrator] listening on :${port} with no chain — every data route answers 503 (${boot.reason})`,
-      );
-    });
+    await listenHttp(
+      server,
+      port,
+      () => {
+        console.log(
+          `[@lacrew/orchestrator] listening on ${host ?? ""}:${port} with no chain — every data route answers 503 (${boot.reason})`,
+        );
+      },
+      { ...(host ? { host } : {}) },
+    );
     return;
   }
   const runtime = boot.runtime;
@@ -813,20 +829,25 @@ async function main(): Promise<void> {
     await externalMcp?.close();
   });
 
-  await listenHttp(server, port, () => {
-    const q = queue.status();
-    console.log(
-      `[@lacrew/orchestrator] ${runtime.mode} server listening on :${port}` +
-        (runtime.chainId != null ? ` (chain ${runtime.chainId})` : "") +
-        ` queue=${q.provider}` +
-        (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
-        ` model=${model.name}` +
-        ` auth=${authToken ? "on" : "off"}` +
-        (autoExecuteEnabled() ? " gov-auto-execute=on" : "") +
-        ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}` +
-        ` migrations=${migrationsRan ? "ok" : "skipped"}`,
-    );
-  });
+  await listenHttp(
+    server,
+    port,
+    () => {
+      const q = queue.status();
+      console.log(
+        `[@lacrew/orchestrator] ${runtime.mode} server listening on ${host ?? ""}:${port}` +
+          (runtime.chainId != null ? ` (chain ${runtime.chainId})` : "") +
+          ` queue=${q.provider}` +
+          (q.epochSchedule ? ` epoch=${q.epochSchedule}` : "") +
+          ` model=${model.name}` +
+          ` auth=${authToken ? "on" : "off"}` +
+          (autoExecuteEnabled() ? " gov-auto-execute=on" : "") +
+          ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}` +
+          ` migrations=${migrationsRan ? "ok" : "skipped"}`,
+      );
+    },
+    { ...(host ? { host } : {}) },
+  );
 }
 
 main().catch((err) => {

@@ -16,6 +16,7 @@ import {
   resolveIntentWithProof,
   SafeExecutionRequired,
 } from "./approvals.js";
+import { rootChallengeStatement } from "@lacrew/core";
 
 const ROOT_ADDRESS = "0x1111111111111111111111111111111111111111" as const;
 
@@ -55,7 +56,11 @@ const walletChallenge = {
   action: "intent:approve",
   subject: "7",
   expiresAt: 9999999999999,
-  statement: "LaCrew root approval\nintent: 7\nnonce: nonce-1",
+  statement: rootChallengeStatement({
+    action: "intent:approve",
+    subject: "7",
+    challenge: "nonce-1",
+  }),
 };
 
 describe("resolveIntentWithProof", () => {
@@ -158,11 +163,46 @@ describe("resolveIntentWithProof", () => {
     );
   });
 
+  it("refuses to sign a relay statement issued for a different action or intent", async () => {
+    // A genuine challenge — for approving intent 8 — handed to a caller denying intent 7.
+    const swapped = {
+      ...walletChallenge,
+      action: "intent:approve",
+      subject: "8",
+      statement: rootChallengeStatement({
+        action: "intent:approve",
+        subject: "8",
+        challenge: "nonce-1",
+      }),
+    };
+    const signed: string[] = [];
+    const { fetchImpl, calls } = stubOrchestrator([{ json: swapped }]);
+    await assert.rejects(
+      resolveIntentWithProof({
+        intentId: "7",
+        approved: false,
+        url: "http://orch.local",
+        fetchImpl,
+        rootAccount: {
+          address: ROOT_ADDRESS,
+          signMessage: async ({ message }) => {
+            signed.push(message);
+            return "0xsigned";
+          },
+        },
+      }),
+      /root_challenge_mismatch/,
+    );
+    // Nothing was signed and no resolve was attempted.
+    assert.deepEqual(signed, []);
+    assert.equal(calls.length, 1);
+  });
+
   it("refuses a wallet root with neither signer nor proof, quoting the statement", async () => {
     const { fetchImpl } = stubOrchestrator([{ json: walletChallenge }]);
     await assert.rejects(
       () => resolveIntentWithProof({ intentId: "7", approved: true, url: "http://o", fetchImpl }),
-      /root_proof_required.*LaCrew root approval/s,
+      /root_proof_required.*LaCrew root authorization/s,
     );
   });
 

@@ -6,6 +6,7 @@
  * memory fallback keeps everything working detached).
  */
 
+import { randomUUID } from "node:crypto";
 import {
   createMockFlowBackend,
   cronMatches,
@@ -697,8 +698,9 @@ export function createFlowsSurface(opts: {
       throw new Error("flow_out_of_scope");
     }
 
-    const runId =
-      input.runId ?? `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // The id names a durable run — its checkpoints, its resume, its cancel —
+    // so it is drawn from a CSPRNG, not a 31-bit float.
+    const runId = input.runId ?? `run-${Date.now().toString(36)}-${randomUUID().slice(0, 13)}`;
     // A resumed run keeps the start it suspended under: the wait is part of how
     // long the run took, and a fresh stamp would report an hour's pause as new.
     const startedAt = input.resume?.startedAt ?? new Date().toISOString();

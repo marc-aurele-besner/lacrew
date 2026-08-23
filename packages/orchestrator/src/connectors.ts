@@ -1148,6 +1148,9 @@ export function createConnectorRegistry(opts: ConnectorRegistryOptions): Connect
             },
             ...(requestBody !== undefined ? { body: requestBody } : {}),
             signal: controller.signal,
+            // The https/loopback rule was checked on the configured base URL;
+            // a 3xx to somewhere else must not be followed with the credential.
+            redirect: "manual",
           });
 
         let res = await send();

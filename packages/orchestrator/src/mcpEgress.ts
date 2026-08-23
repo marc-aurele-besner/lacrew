@@ -156,10 +156,18 @@ export function isPrivateAddressLiteral(host: string): boolean {
   const v4 = parseIpv4(bare);
   if (v4) return ipv4Private(v4);
   if (!bare.includes(":")) return false; // a name, not an address
-  // IPv4-mapped and IPv4-compatible forms carry the real address in the tail.
+  // IPv4-mapped and IPv4-compatible forms carry the real address in the tail —
+  // dotted (`::ffff:10.0.0.1`) or, as Node's URL parser renders it, as two hex
+  // groups (`::ffff:a00:1`); `64:ff9b::/96` (NAT64) embeds it the same way.
   const tail = bare.slice(bare.lastIndexOf(":") + 1);
   const mapped = parseIpv4(tail);
   if (mapped) return ipv4Private(mapped);
+  const hexMapped = /^(?:::ffff|64:ff9b::?)(?::0)*:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(bare);
+  if (hexMapped) {
+    const hi = Number.parseInt(hexMapped[1]!, 16);
+    const lo = Number.parseInt(hexMapped[2]!, 16);
+    return ipv4Private([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
+  }
   if (bare === "::" || bare === "::1") return true;
   const head = Number.parseInt(bare.split(":")[0] ?? "", 16);
   if (!Number.isFinite(head)) return false;

@@ -19,6 +19,7 @@
 
 import { privateKeyToAccount } from "viem/accounts";
 import type { RootAuthAction, RootChallenge, RootProof } from "@lacrew/core";
+import { checkedRootChallengeStatement } from "@lacrew/core";
 
 function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -113,13 +114,16 @@ async function proveRoot(
       ].join("\n"),
     );
   }
+  // Sign only the statement this command asked for — never the relay's text as
+  // received, which could be a genuine challenge for some other action.
+  const statement = checkedRootChallengeStatement(issued, { action, subject: sessionId });
   const account = privateKeyToAccount(key as `0x${string}`);
   return {
     challenge: issued.challenge,
     rootProof: {
       kind: "wallet",
       address: account.address,
-      signature: await account.signMessage({ message: issued.statement }),
+      signature: await account.signMessage({ message: statement }),
     },
   };
 }

@@ -299,13 +299,18 @@ describe("orchestrator Hono app", () => {
 
   it("runs the mock tick → escalate path over HTTP", async () => {
     const app = buildApp();
-    const res = await app.request("/tick", { method: "POST", body: "{}" });
+    const res = await app.request("/tick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { verdict: string; intentId: string };
     assert.equal(body.verdict, "ESCALATE");
 
     const resolve = await app.request("/intents/resolve", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ intentId: body.intentId, approved: true }),
     });
     assert.equal(resolve.status, 200);
@@ -321,11 +326,16 @@ describe("orchestrator Hono app", () => {
 
   it("validates flow run input and 404s unknown flows", async () => {
     const app = buildApp();
-    const missing = await app.request("/flows/run", { method: "POST", body: "{}" });
+    const missing = await app.request("/flows/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     assert.equal(missing.status, 400);
 
     const unknown = await app.request("/flows/run", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: "flow-does-not-exist" }),
     });
     assert.equal(unknown.status, 404);
@@ -379,6 +389,7 @@ describe("orchestrator Hono app", () => {
 
     const admit = await app.request("/governance/propose-admit-human", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: partner, power: "2" }),
     });
     assert.equal(admit.status, 200);
@@ -394,6 +405,7 @@ describe("orchestrator Hono app", () => {
     for (const action of ["vote", "execute"]) {
       const res = await app.request(`/governance/${action}`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ proposalId: admitBody.proposalId, support: true }),
       });
       assert.equal(res.status, 200, `${action} failed`);
@@ -411,6 +423,7 @@ describe("orchestrator Hono app", () => {
 
     const noAccount = await app.request("/governance/propose-admit-human", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
     assert.equal(noAccount.status, 400);
@@ -419,6 +432,7 @@ describe("orchestrator Hono app", () => {
     // an admission's name, and the contract rejects it.
     const zeroPower = await app.request("/governance/propose-admit-human", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: partner, power: "0" }),
     });
     assert.equal(zeroPower.status, 400);
@@ -426,7 +440,11 @@ describe("orchestrator Hono app", () => {
 
   it("streams mock epochs and lists governance over HTTP", async () => {
     const app = buildApp();
-    const res = await app.request("/epoch", { method: "POST", body: "{}" });
+    const res = await app.request("/epoch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { epoch: number; flowRuns: unknown[] };
     assert.equal(body.epoch, 1);
@@ -434,6 +452,7 @@ describe("orchestrator Hono app", () => {
 
     const hire = await app.request("/governance/propose-hire", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ label: "Scout" }),
     });
     assert.equal(hire.status, 200);
@@ -470,6 +489,7 @@ describe("orchestrator Hono app", () => {
 
     const res = await app.request("/wallets/watchlist", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         watchlist: [
           {
@@ -500,6 +520,7 @@ describe("orchestrator Hono app", () => {
   it("refuses a malformed watchlist rather than storing half of it", async () => {
     const res = await buildApp().request("/wallets/watchlist", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         watchlist: [{ chainId: 1, tokens: [{ symbol: "X", address: "0xnope", decimals: 6 }] }],
       }),
@@ -623,10 +644,15 @@ describe("orchestrator Hono app", () => {
     const app = buildApp();
     // Two real operations: a tick that escalates (IntentCreated + SessionIssued)
     // and its approval (IntentResolved).
-    const tick = await app.request("/tick", { method: "POST", body: "{}" });
+    const tick = await app.request("/tick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     const { intentId } = (await tick.json()) as { intentId: string };
     await app.request("/intents/resolve", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ intentId, approved: true }),
     });
 
@@ -656,7 +682,11 @@ describe("orchestrator Hono app", () => {
 
   it("counts nothing before ?since=", async () => {
     const app = buildApp();
-    await app.request("/tick", { method: "POST", body: "{}" });
+    await app.request("/tick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     const future = new Date(Date.now() + 60_000).toISOString();
     const res = await app.request(`/usage?since=${encodeURIComponent(future)}`);
     const body = (await res.json()) as { counts: Record<string, number> };
@@ -690,6 +720,7 @@ describe("orchestrator Hono app", () => {
   it("rejects an asset-selected whitelist change in mock mode", async () => {
     const res = await buildApp().request("/governance/propose-set-whitelist", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         target: "0x000000000000000000000000000000000000dEaD",
         allowed: true,
@@ -705,6 +736,7 @@ describe("orchestrator Hono app", () => {
   it("rejects an asset-selected agent cap as operator input in mock mode", async () => {
     const res = await buildApp().request("/governance/propose-set-agent-cap", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         agent: "0x000000000000000000000000000000000000dEaD",
         cap: "1000000000000000000",
@@ -723,6 +755,7 @@ describe("orchestrator Hono app", () => {
     // No asset → the primary (USDC) stack, unchanged: a proposal is created.
     const primaryGrant = await app.request("/governance/propose-set-grant", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: worker, amount: "1000000" }),
     });
     assert.equal(primaryGrant.status, 200);
@@ -731,6 +764,7 @@ describe("orchestrator Hono app", () => {
     // client — the operator's bad input is a 400, not the primary path's 500.
     const wethGrant = await app.request("/governance/propose-set-grant", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ account: worker, amount: "1000000000000000000", asset: "WETH" }),
     });
     assert.equal(wethGrant.status, 400);
@@ -740,6 +774,7 @@ describe("orchestrator Hono app", () => {
     // with no epoch flows to run the endpoint reports it as 400.
     const wethEpoch = await app.request("/epoch", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ asset: "WETH" }),
     });
     assert.equal(wethEpoch.status, 400);
@@ -847,6 +882,7 @@ describe("POST /governance/propose-set-grants", () => {
   it("creates one proposal for a batch of grants", async () => {
     const res = await buildApp().request("/governance/propose-set-grants", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         entries: [
           entry("0x2222222222222222222222222222222222222222", "10000000"),
@@ -863,6 +899,7 @@ describe("POST /governance/propose-set-grants", () => {
   it("rejects an empty batch", async () => {
     const res = await buildApp().request("/governance/propose-set-grants", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ entries: [] }),
     });
     assert.equal(res.status, 400);
@@ -872,6 +909,7 @@ describe("POST /governance/propose-set-grants", () => {
   it("rejects an entry missing its amount", async () => {
     const res = await buildApp().request("/governance/propose-set-grants", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         entries: [{ account: "0x2222222222222222222222222222222222222222" }],
       }),
@@ -901,6 +939,7 @@ describe("POST /epoch/schedule", () => {
   it("reschedules the epoch to a valid cron", async () => {
     const res = await buildApp().request("/epoch/schedule", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ cron: "0 0 * * 0" }),
     });
     assert.equal(res.status, 200);
@@ -912,6 +951,7 @@ describe("POST /epoch/schedule", () => {
   it("normalizes whitespace in the cron before scheduling", async () => {
     const res = await buildApp().request("/epoch/schedule", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ cron: "  0   0   *  * 0 " }),
     });
     assert.equal(res.status, 200);
@@ -921,6 +961,7 @@ describe("POST /epoch/schedule", () => {
   it("rejects a malformed cron", async () => {
     const res = await buildApp().request("/epoch/schedule", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ cron: "not a cron" }),
     });
     assert.equal(res.status, 400);
@@ -930,6 +971,7 @@ describe("POST /epoch/schedule", () => {
   it("rejects a cron with the wrong field count", async () => {
     const res = await buildApp().request("/epoch/schedule", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ cron: "0 0 * *" }),
     });
     assert.equal(res.status, 400);
@@ -950,6 +992,7 @@ describe("POST /epoch/schedule", () => {
 
     const paused = await app.request("/agents/pause", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent, reason: "spending anomaly" }),
     });
     assert.equal(paused.status, 200);
@@ -958,6 +1001,7 @@ describe("POST /epoch/schedule", () => {
     // The gate is the point: booting must fail rather than hand back a key.
     const booted = await app.request("/boot", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent }),
     });
     assert.equal(booted.status, 500);
@@ -965,6 +1009,7 @@ describe("POST /epoch/schedule", () => {
 
     const resumed = await app.request("/agents/resume", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent }),
     });
     assert.equal(((await resumed.json()) as { changed: boolean }).changed, true);
@@ -975,6 +1020,7 @@ describe("POST /epoch/schedule", () => {
     const agent = "0x0000000000000000000000000000000000000a12";
     await app.request("/agents/pause", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent, reason: "spending anomaly" }),
     });
     const body = (await (await app.request("/agents/controls")).json()) as {
@@ -988,7 +1034,11 @@ describe("POST /epoch/schedule", () => {
   it("requires an agent on both control routes", async () => {
     const app = buildApp();
     for (const path of ["/agents/pause", "/agents/resume"]) {
-      const res = await app.request(path, { method: "POST", body: JSON.stringify({}) });
+      const res = await app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
       assert.equal(res.status, 400);
       assert.equal(((await res.json()) as { error: string }).error, "agent_required");
     }
@@ -999,6 +1049,7 @@ describe("POST /epoch/schedule", () => {
     const agent = "0x0000000000000000000000000000000000000a13";
     const res = await app.request("/agents/brief", {
       method: "PUT",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         agent,
         layers: [
@@ -1019,10 +1070,12 @@ describe("POST /epoch/schedule", () => {
     const agent = "0x0000000000000000000000000000000000000a14";
     await app.request("/agents/brief", {
       method: "PUT",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent, layers: [{ label: "agent", text: "Settle only." }] }),
     });
     const cleared = await app.request("/agents/brief", {
       method: "PUT",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent, layers: [] }),
     });
     const body = (await cleared.json()) as { brief: unknown; systemPrompt: string };
@@ -1033,6 +1086,7 @@ describe("POST /epoch/schedule", () => {
   it("refuses a brief past the ceiling rather than storing a document", async () => {
     const res = await buildApp().request("/agents/brief", {
       method: "PUT",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         agent: "0x0000000000000000000000000000000000000a15",
         // Derived from the constant, never a literal: the ceiling moved once
@@ -1048,6 +1102,7 @@ describe("POST /epoch/schedule", () => {
   it("requires a layer list, so a missing field never silently clears a brief", async () => {
     const res = await buildApp().request("/agents/brief", {
       method: "PUT",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ agent: "0x0000000000000000000000000000000000000a16" }),
     });
     assert.equal(res.status, 400);
@@ -1057,6 +1112,7 @@ describe("POST /epoch/schedule", () => {
     const app = buildApp();
     await app.request("/messages", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         thread: "crew:trading",
         author: "0x0000000000000000000000000000000000000a20",
