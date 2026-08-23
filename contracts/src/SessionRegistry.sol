@@ -41,6 +41,13 @@ contract SessionRegistry {
     address public immutable humanRoot;
     /// @notice Optional issuer (orchestrator EOA). Defaults to humanRoot.
     address public issuer;
+    /// @notice Longest lifetime the issuer may give a session, in seconds. Root-set;
+    ///         the root itself is not bound by it.
+    /// @dev The threat model says a compromised orchestrator leaks only short-lived
+    ///      keys. That is only true if the chain refuses to mint it a long-lived one:
+    ///      without this ceiling the issuer could hand itself a key that outlives any
+    ///      rotation, and "short-lived" would rest on the compromised party's goodwill.
+    uint64 public maxIssuerTtl = 30 days;
 
     uint256 public nextSessionId = 1;
     mapping(uint256 => Session) public sessions;
@@ -70,6 +77,7 @@ contract SessionRegistry {
     address public escalationRouter;
 
     event IssuerUpdated(address indexed issuer);
+    event MaxIssuerTtlUpdated(uint64 maxIssuerTtl);
     event EscalationRouterUpdated(address indexed escalationRouter);
     event SessionIssued(
         uint256 indexed sessionId,
@@ -87,6 +95,8 @@ contract SessionRegistry {
     error NotAuthorized(address caller);
     error ZeroAddress();
     error InvalidExpiry(uint64 expiresAt);
+    error ExpiryExceedsIssuerTtl(uint64 expiresAt, uint64 maxExpiresAt);
+    error ZeroTtl();
     error SessionNotFound(uint256 sessionId);
     error AlreadyRevoked(uint256 sessionId);
     /// @dev An empty mask would be a session that can do nothing; an unknown bit
@@ -112,6 +122,14 @@ contract SessionRegistry {
         if (issuer_ == address(0)) revert ZeroAddress();
         issuer = issuer_;
         emit IssuerUpdated(issuer_);
+    }
+
+    /// @notice Cap how far ahead the issuer may set a session's expiry. Root-only.
+    function setMaxIssuerTtl(uint64 maxIssuerTtl_) external {
+        if (msg.sender != humanRoot) revert NotAuthorized(msg.sender);
+        if (maxIssuerTtl_ == 0) revert ZeroTtl();
+        maxIssuerTtl = maxIssuerTtl_;
+        emit MaxIssuerTtlUpdated(maxIssuerTtl_);
     }
 
     /// @notice Wire the EscalationRouter so it (and only it) can record proposals
@@ -195,6 +213,10 @@ contract SessionRegistry {
     ) private returns (uint256 sessionId) {
         if (agent == address(0) || key == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert InvalidExpiry(expiresAt);
+        if (msg.sender != humanRoot) {
+            uint64 maxExpiresAt = uint64(block.timestamp) + maxIssuerTtl;
+            if (expiresAt > maxExpiresAt) revert ExpiryExceedsIssuerTtl(expiresAt, maxExpiresAt);
+        }
         if (scopeMask == 0 || scopeMask & ~SessionScopes.ALL != 0) revert InvalidScopeMask(scopeMask);
         // A window is optional (both zero disables it); when set it must be a
         // real slice of a day, matching TimeWindowPolicy's `[start, end)` rule.
