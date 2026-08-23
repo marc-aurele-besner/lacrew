@@ -437,6 +437,19 @@ export const treasuryAbi = [
   },
   {
     "type": "function",
+    "name": "deployer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "deposit",
     "inputs": [
       {
@@ -843,6 +856,19 @@ export const escalationRouterAbi = [
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "deployer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1441,6 +1467,17 @@ export const escalationRouterAbi = [
   },
   {
     "type": "error",
+    "name": "ProtectedTarget",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SessionScopeDenied",
     "inputs": [
       {
@@ -1583,6 +1620,19 @@ export const governanceModuleAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SET_GOVERNOR_SELECTOR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
       }
     ],
     "stateMutability": "view"
@@ -2312,6 +2362,11 @@ export const governanceModuleAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "GovernorTransferNotHighTier",
+    "inputs": []
   },
   {
     "type": "error",
@@ -3828,6 +3883,19 @@ export const rateLimitPolicyAbi = [
   },
   {
     "type": "function",
+    "name": "admin",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "check",
     "inputs": [
       {
@@ -3963,6 +4031,30 @@ export const rateLimitPolicyAbi = [
     "stateMutability": "view"
   },
   {
+    "type": "event",
+    "name": "RecorderBound",
+    "inputs": [
+      {
+        "name": "recorder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorized",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
     "type": "error",
     "name": "NotRecorder",
     "inputs": [
@@ -3972,6 +4064,16 @@ export const rateLimitPolicyAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RecorderLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
   }
 ] as const;
 
@@ -4795,6 +4897,19 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "maxIssuerTtl",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "nextSessionId",
     "inputs": [],
     "outputs": [
@@ -4982,6 +5097,19 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "setMaxIssuerTtl",
+    "inputs": [
+      {
+        "name": "maxIssuerTtl_",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "withinTimeWindow",
     "inputs": [
       {
@@ -5026,6 +5154,19 @@ export const sessionRegistryAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MaxIssuerTtlUpdated",
+    "inputs": [
+      {
+        "name": "maxIssuerTtl",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -5130,6 +5271,22 @@ export const sessionRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "ExpiryExceedsIssuerTtl",
+    "inputs": [
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxExpiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidExpiry",
     "inputs": [
       {
@@ -5228,6 +5385,11 @@ export const sessionRegistryAbi = [
   {
     "type": "error",
     "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroTtl",
     "inputs": []
   }
 ] as const;
