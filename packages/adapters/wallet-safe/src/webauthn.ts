@@ -145,7 +145,9 @@ export function verifyWebAuthnAssertion(input: VerifyAssertionInput): AssertionV
     // high-s one is a valid assertion, not a malleability attack: nothing here
     // is replay-protected by signature bytes — the challenge is single-use.
     const parsed = p256.Signature.fromDER(signature);
-    if (!p256.verify(parsed, digest, publicKeyPoint, { lowS: false })) {
+    // noble/curves 1.9.x returns an ECDSASignature object from `fromDER` and
+    // `verify` takes bytes; round-trip through DER before calling verify.
+    if (!p256.verify(parsed.toBytes("der"), digest, publicKeyPoint, { lowS: false })) {
       return { verified: false, error: "signature_invalid" };
     }
   } catch {
