@@ -171,7 +171,8 @@ describe("lacrew intents approve — other roots", () => {
               action: "intent:deny",
               subject: "7",
               expiresAt: Date.now() + 60_000,
-              statement: "LaCrew root authorization\naction: intent:deny\nsubject: 7",
+              statement:
+                "LaCrew root authorization\naction: intent:deny\nsubject: 7\nchallenge: nonce-1",
             },
           }
         : { body: { authorizedBy: "root:wallet" } };
@@ -185,6 +186,30 @@ describe("lacrew intents approve — other roots", () => {
     assert.equal(resolve.rootProof.address, account.address);
     // The challenge was minted for a denial; approving would need its own.
     assert.equal((calls[0]!.body as { action: string }).action, "intent:deny");
+  });
+
+  it("refuses to sign a relay statement minted for another action", async () => {
+    process.env.ROOT_PRIVATE_KEY = ROOT_KEY;
+    responder = (call) =>
+      call.path === "/root-auth/challenge"
+        ? {
+            body: {
+              required: true,
+              kind: "wallet",
+              challenge: "nonce-1",
+              action: "intent:approve",
+              subject: "8",
+              expiresAt: Date.now() + 60_000,
+              statement:
+                "LaCrew root authorization\naction: intent:approve\nsubject: 8\nchallenge: nonce-1",
+            },
+          }
+        : { body: { authorizedBy: "root:wallet" } };
+    await assert.rejects(capture(["deny", "7"]), /root_challenge_mismatch/);
+    assert.equal(
+      calls.some((c) => c.path === "/intents/resolve"),
+      false,
+    );
   });
 
   it("says who a manager-depth intent awaits, and asks for no proof", async () => {

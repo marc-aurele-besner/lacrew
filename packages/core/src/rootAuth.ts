@@ -141,6 +141,56 @@ export function rootChallengeStatement(input: {
   ].join("\n");
 }
 
+/**
+ * The statement a signer may put a root key to, or the reason it must not.
+ *
+ * A challenge arrives through whatever relay the caller is pointed at, and the
+ * relay can fetch a perfectly genuine challenge for a *different* action from
+ * the real orchestrator — "approve intent 7" handed to someone who asked to
+ * revoke a key — so the client never signs `issued.statement` as received. It
+ * rebuilds the statement from what *it* asked for and the nonce it was given,
+ * and signs only if the two are byte-identical. The chain id is the one field
+ * the client may not know, so it is read back off the statement itself: a relay
+ * can scope a statement to a chain the caller did not intend, but then it is
+ * worthless on the orchestrator that actually checks it.
+ */
+export function checkedRootChallengeStatement(
+  issued: Pick<RootChallenge, "challenge" | "action" | "subject" | "statement">,
+  expected: { action: RootAuthAction; subject: string },
+): string {
+  if (issued.action !== expected.action || issued.subject !== expected.subject) {
+    throw new Error(
+      `root_challenge_mismatch: asked to ${expected.action} ${expected.subject}, ` +
+        `relay issued ${String(issued.action)} ${String(issued.subject)}`,
+    );
+  }
+  if (typeof issued.statement !== "string" || typeof issued.challenge !== "string") {
+    throw new Error("root_challenge_mismatch: relay issued no statement");
+  }
+  const chainLine = issued.statement.split("\n").find((line) => line.startsWith("chainId: "));
+  let chainId: number | undefined;
+  if (chainLine !== undefined) {
+    const raw = chainLine.slice("chainId: ".length);
+    if (!/^[0-9]{1,15}$/.test(raw)) {
+      throw new Error("root_challenge_mismatch: statement carries a malformed chainId");
+    }
+    chainId = Number(raw);
+  }
+  const canonical = rootChallengeStatement({
+    action: expected.action,
+    subject: expected.subject,
+    challenge: issued.challenge,
+    ...(chainId !== undefined ? { chainId } : {}),
+  });
+  if (canonical !== issued.statement) {
+    throw new Error(
+      "root_challenge_mismatch: the statement the relay returned is not the canonical " +
+        "statement for this action, subject and challenge — refusing to sign it",
+    );
+  }
+  return canonical;
+}
+
 /** Whether a config can actually verify a proof, and what is missing if not. */
 export function rootAuthConfigError(config: RootAuthConfig): string | null {
   if (isPasskeyRootKind(config.kind)) {
