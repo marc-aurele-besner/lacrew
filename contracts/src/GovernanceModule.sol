@@ -98,6 +98,15 @@ contract GovernanceModule {
     uint256 public constant MAX_VOTING_PERIOD = 30 days;
     uint256 public constant MAX_TIMELOCK = 30 days;
 
+    /// @notice `setGovernor(address)` — the selector every governed contract (OrgRegistry,
+    ///         Treasury, EscalationRouter, MarketplacePayments, the policies) uses to hand
+    ///         its constitutional authority to a new address.
+    /// @dev Rebinding a governor is re-weighting the electorate by another name: whoever
+    ///      receives it can skip this module entirely. So, like a proposal that targets
+    ///      this module, it is never Low tier — it always passes the human quorum, the
+    ///      timelock, and the veto window.
+    bytes4 public constant SET_GOVERNOR_SELECTOR = bytes4(keccak256("setGovernor(address)"));
+
     event ProposalCreated(
         uint256 indexed proposalId,
         address indexed proposer,
@@ -138,6 +147,7 @@ contract GovernanceModule {
     error InvalidSeatRole(SeatRole role);
     error InvalidTiming(uint256 votingPeriod, uint256 highTierTimelock);
     error SelfTargetNotHighTier();
+    error GovernorTransferNotHighTier();
 
     /// @dev Root acts directly; the module itself qualifies so an executed High-tier
     ///      proposal targeting this contract can retune parameters through governance.
@@ -303,7 +313,9 @@ contract GovernanceModule {
 
     /// @notice Create a constitutional proposal bound to executable calldata.
     ///         Proposals targeting this module (parameter changes) must be High tier
-    ///         so agent seats can never re-weight the electorate via a low-tier vote.
+    ///         so agent seats can never re-weight the electorate via a low-tier vote;
+    ///         the same holds for any proposal that would rebind a governed contract's
+    ///         governor (`SET_GOVERNOR_SELECTOR`), which is the electorate by proxy.
     function propose(
         Tier tier,
         address target,
@@ -311,6 +323,9 @@ contract GovernanceModule {
     ) external returns (uint256 proposalId) {
         if (target == address(0)) revert ZeroAddress();
         if (target == address(this) && tier != Tier.High) revert SelfTargetNotHighTier();
+        if (tier != Tier.High && data.length >= 4 && bytes4(data[:4]) == SET_GOVERNOR_SELECTOR) {
+            revert GovernorTransferNotHighTier();
+        }
         proposalId = nextProposalId++;
         bytes32 actionHash = keccak256(abi.encode(target, data));
         uint256 deadline = block.timestamp + votingPeriod;
