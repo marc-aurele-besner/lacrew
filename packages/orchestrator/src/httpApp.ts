@@ -49,9 +49,19 @@ import { SafeApprovalRefusal, type SafeApprovalSurface } from "./safeApproval.js
 import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
+import {
+  CORS_PREFLIGHT_HEADERS,
+  clampLimit,
+  corsHeadersFor,
+  parseBigInt,
+  parseCorsOrigins,
+  readBodyBounded,
+  rejectsNonJsonBody,
+} from "./httpGuards.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { connectorPresets, presetPolicyTargetKey } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
+import { checkMcpEgress, checkMcpEgressResolves, loadMcpEgressPolicyFromEnv } from "./mcpEgress.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
 import type { EvalRunnerSurface } from "./evalRunner.js";
@@ -157,6 +167,12 @@ export interface OrchestratorAppOptions {
   safeApproval?: SafeApprovalSurface;
   mcpUseMock: boolean;
   authToken?: string;
+  /**
+   * Browser origins allowed to call this orchestrator directly. Unset = none:
+   * no response carries CORS headers and no preflight succeeds. Defaults to
+   * `LACREW_ORCH_CORS_ORIGINS`.
+   */
+  corsOrigins?: ReadonlySet<string>;
   /** Live DB reachability (checked once on boot). */
   isDbReady: () => boolean;
   isDbConfigured: () => boolean;
@@ -167,10 +183,7 @@ function jsonBig(c: Context, body: unknown, status = 200): Response {
   return c.newResponse(
     JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
     status as 200,
-    {
-      "content-type": "application/json",
-      "access-control-allow-origin": "*",
-    },
+    { "content-type": "application/json" },
   );
 }
 
@@ -247,6 +260,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     mcpUseMock,
     authToken,
   } = options;
+  const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.LACREW_ORCH_CORS_ORIGINS);
   const app = new Hono();
 
   /**
@@ -381,12 +395,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   };
 
   app.use("*", async (c, next) => {
+    const cors = corsHeadersFor(c.req.header("origin"), corsOrigins);
     if (c.req.method === "OPTIONS") {
-      return c.newResponse(null, 204, {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET,POST,OPTIONS",
-        "access-control-allow-headers": "content-type,authorization",
-      });
+      // A preflight from an origin that is not allowed gets no CORS headers at
+      // all, which is how the browser learns to refuse the actual request.
+      return c.newResponse(null, 204, { ...cors, ...(cors.vary ? CORS_PREFLIGHT_HEADERS : {}) });
+    }
+    if (rejectsNonJsonBody(c)) {
+      return jsonBig(c, { error: "content_type_must_be_json" }, 415);
     }
     // Health stays open so pools/load balancers can probe without the token.
     // Hook deliveries too: a webhook producer is an external system that has
@@ -401,6 +417,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       }
     }
     await next();
+    for (const [name, value] of Object.entries(cors)) c.res.headers.set(name, value);
   });
 
   app.onError((err, c) => jsonBig(c, { error: err.message || "unknown" }, 500));
@@ -752,7 +769,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.get("/mcp/secrets", async (c) => {
     if (!mcpSecrets) return jsonBig(c, { error: "external_mcp_unavailable" }, 503);
     const owner = c.req.query("owner");
-    const scope = owner ? readExternalMcpScope(JSON.parse(owner) as unknown) : undefined;
+    let ownerJson: unknown;
+    try {
+      ownerJson = owner ? JSON.parse(owner) : undefined;
+    } catch {
+      return jsonBig(c, { error: "owner_must_be_json" }, 400);
+    }
+    const scope = ownerJson !== undefined ? readExternalMcpScope(ownerJson) : undefined;
     return jsonBig(c, { secrets: mcpSecrets.describe(scope) });
   });
 
@@ -1583,10 +1606,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.get("/flows/triggers/deliveries", async (c) => {
     if (!webhooks) return jsonBig(c, { error: "webhooks_unavailable" }, 503);
-    const limit = Number(c.req.query("limit") ?? 50);
     return jsonBig(c, {
       deliveries: await webhooks.deliveries(
-        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 50,
+        clampLimit(c.req.query("limit"), 50, 200),
         c.req.query("triggerId") ?? undefined,
       ),
     });
@@ -1605,7 +1627,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (Number.isFinite(declared) && declared > webhookMaxBodyBytes()) {
       return jsonBig(c, { error: "webhook_body_too_large" }, 413);
     }
-    const rawBody = await c.req.text().catch(() => "");
+    // A chunked body declares nothing, so it is counted as it streams and cut
+    // off at the same cap instead of being buffered whole first.
+    const rawBody = await readBodyBounded(c.req.raw, webhookMaxBodyBytes());
+    if (rawBody === null) return jsonBig(c, { error: "webhook_body_too_large" }, 413);
     const accepted = await webhooks.accept({
       triggerId: c.req.param("triggerId"),
       rawBody,
@@ -1717,10 +1742,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.get("/heartbeats/ticks", async (c) => {
     if (!heartbeats) return jsonBig(c, { error: "heartbeats_unavailable" }, 503);
-    const limit = Number(c.req.query("limit") ?? 20);
     return jsonBig(c, {
       ticks: await heartbeats.ticks(
-        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 20,
+        clampLimit(c.req.query("limit"), 20, 200),
         c.req.query("crewId") ?? undefined,
       ),
     });
@@ -1850,13 +1874,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       crewId,
       ...(c.req.query("agentId") ? { agentId: c.req.query("agentId")! } : {}),
     };
-    const limit = Number(c.req.query("limit") ?? 100);
     return jsonBig(c, {
       budget: await budgets.get(subject),
-      events: await budgets.events(
-        subject,
-        Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 100,
-      ),
+      events: await budgets.events(subject, clampLimit(c.req.query("limit"), 100, 500)),
     });
   });
 
@@ -1893,8 +1913,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       if (c.req.query("format") === "csv") {
         return c.newResponse(pnlToCsv(report), 200, {
           "content-type": "text/csv; charset=utf-8",
-          "content-disposition": `attachment; filename="pnl-${report.scope.crewId}-${report.period.key.replace(/[^\w.-]/g, "_")}.csv"`,
-          "access-control-allow-origin": "*",
+          // Both ids are caller-supplied; only filename-safe characters reach the header.
+          "content-disposition": `attachment; filename="pnl-${report.scope.crewId.replace(/[^\w.-]/g, "_")}-${report.period.key.replace(/[^\w.-]/g, "_")}.csv"`,
         });
       }
       return jsonBig(c, { ...report, mode: runtime.mode });
@@ -1967,9 +1987,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       }
     }
 
+    const maxValue = body.maxValue ? parseBigInt(body.maxValue) : undefined;
+    if (maxValue === null) return jsonBig(c, { error: "maxValue_must_be_an_integer" }, 400);
     const session = await runtime.boot(body.agent as `0x${string}` | undefined, {
       scopes,
-      maxValue: body.maxValue ? BigInt(body.maxValue) : undefined,
+      maxValue,
       allowedTarget: body.allowedTarget as `0x${string}` | undefined,
       window: body.window,
       rate: body.rate,
@@ -1986,7 +2008,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   );
 
   app.get("/sessions/history", async (c) => {
-    const limit = Number(c.req.query("limit") ?? 50);
+    const limit = clampLimit(c.req.query("limit"), 50, 500);
     return jsonBig(c, {
       sessions: await runtime.sessionHistory(limit),
       store: runtime.runtimeStoreName,
@@ -2452,7 +2474,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   /* ——— conversation (F1.7) ——— */
 
   app.get("/messages", async (c) => {
-    const limit = Number(c.req.query("limit") ?? 100);
+    const limit = clampLimit(c.req.query("limit"), 100, 1000);
     const threadId = c.req.query("thread");
     if (threadId) {
       const scope = scopeOfThread(threadId);
@@ -2552,14 +2574,15 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
   app.post("/tick", async (c) => {
     const body = await bodyOf<{ value?: string }>(c);
-    const value = body.value ? BigInt(body.value) : 75n * 10n ** 6n;
+    const value = body.value ? parseBigInt(body.value) : 75n * 10n ** 6n;
+    if (value === null) return jsonBig(c, { error: "value_must_be_an_integer" }, 400);
     return jsonBig(c, await runtime.tick(value));
   });
 
   app.get("/intents", async (c) => jsonBig(c, { intents: await runtime.listPending() }));
 
   app.get("/intents/history", async (c) => {
-    const limit = Number(c.req.query("limit") ?? 50);
+    const limit = clampLimit(c.req.query("limit"), 50, 500);
     return jsonBig(c, {
       intents: await runtime.intentHistory(limit),
       store: runtime.runtimeStoreName,
@@ -3033,7 +3056,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!body.account || body.amount === undefined || body.amount === "") {
       return jsonBig(c, { error: "account_and_amount_required" }, 400);
     }
-    const amount = BigInt(body.amount);
+    const amount = parseBigInt(body.amount);
+    if (amount === null) return jsonBig(c, { error: "amount_must_be_an_integer" }, 400);
     try {
       const result = await runtime.proposeSetGrant({
         account: body.account,
@@ -3251,7 +3275,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!body.agent || body.cap === undefined || body.cap === "") {
       return jsonBig(c, { error: "agent_and_cap_required" }, 400);
     }
-    const cap = BigInt(body.cap);
+    const cap = parseBigInt(body.cap);
+    if (cap === null) return jsonBig(c, { error: "cap_must_be_an_integer" }, 400);
     try {
       const result = await runtime.proposeSetAgentCap({
         agent: body.agent,
@@ -3334,6 +3359,33 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const body = await bodyOf<{ watchlist?: unknown }>(c);
     const parsed = parseWatchlist(body.watchlist);
     if (!parsed.ok) return jsonBig(c, { error: parsed.error }, 400);
+    // A watchlist rpcUrl is a URL this worker will POST JSON-RPC to, so it is
+    // egress like any MCP server's and goes through the same perimeter check:
+    // on a hosted pool that is the allowlist plus a refusal of private ranges,
+    // which keeps a settings change from pointing the worker at its own network.
+    const egress = loadMcpEgressPolicyFromEnv();
+    for (const chain of parsed.value) {
+      if (!chain.rpcUrl) continue;
+      const target = { transport: "http" as const, url: chain.rpcUrl };
+      const verdict = checkMcpEgress(target, egress, "runtime");
+      const resolved = verdict.ok
+        ? await checkMcpEgressResolves(target, egress, async (host) => {
+            const { lookup } = await import("node:dns/promises");
+            return (await lookup(host, { all: true })).map((entry) => entry.address);
+          })
+        : verdict;
+      if (!resolved.ok) {
+        return jsonBig(
+          c,
+          {
+            error: `rpc_url_refused:${resolved.reason}`,
+            chainId: chain.chainId,
+            detail: resolved.detail,
+          },
+          403,
+        );
+      }
+    }
     runtime.setWatchlist(parsed.value);
     return jsonBig(c, { watchlist: parsed.value.length, mode: runtime.mode });
   });
@@ -3525,16 +3577,18 @@ export function createUnavailableApp(options: {
   isDbReady: () => boolean;
   isDbConfigured: () => boolean;
   authToken?: string;
+  corsOrigins?: ReadonlySet<string>;
 }): Hono {
   const app = new Hono();
+  const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.LACREW_ORCH_CORS_ORIGINS);
 
   app.use("*", async (c, next) => {
+    const cors = corsHeadersFor(c.req.header("origin"), corsOrigins);
     if (c.req.method === "OPTIONS") {
-      return c.newResponse(null, 204, {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET,POST,OPTIONS",
-        "access-control-allow-headers": "content-type,authorization",
-      });
+      return c.newResponse(null, 204, { ...cors, ...(cors.vary ? CORS_PREFLIGHT_HEADERS : {}) });
+    }
+    if (rejectsNonJsonBody(c)) {
+      return jsonBig(c, { error: "content_type_must_be_json" }, 415);
     }
     if (options.authToken && !(c.req.method === "GET" && c.req.path === "/health")) {
       if (!isAuthorized(c.req.header("authorization"), options.authToken)) {
@@ -3542,6 +3596,7 @@ export function createUnavailableApp(options: {
       }
     }
     await next();
+    for (const [name, value] of Object.entries(cors)) c.res.headers.set(name, value);
   });
 
   app.get("/health", (c) =>

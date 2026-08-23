@@ -815,6 +815,25 @@ lacrew.xyz API forwards the same `LACREW_ORCH_TOKEN` env automatically; the
 example crews send it when `ORCH_TOKEN` is set. Always set the token when the
 port is reachable beyond localhost.
 
+Two more things hold the line between "an operator's orchestrator on
+localhost" and "a mutation any web page the operator visits can make", and they
+hold whether or not a token is set:
+
+- **No wildcard CORS.** Responses carry `access-control-allow-origin` only for
+  an origin listed in `LACREW_ORCH_CORS_ORIGINS` (comma-separated). Unset means
+  no browser origin may read a response or pass a preflight. The CLI, the SDK
+  and the cloud control plane are not browsers and need nothing here.
+- **Mutations are JSON.** A `POST`/`PUT`/`PATCH`/`DELETE` that carries a body
+  must say `content-type: application/json`, or it is answered `415`. A
+  cross-site form or a `fetch` with a text body is a "simple request" the
+  browser sends without a preflight; requiring a JSON content type turns it
+  into one that needs the preflight above. `POST /hooks/:triggerId` is exempt
+  (producers authenticate by HMAC).
+
+`LACREW_ORCH_HOST=127.0.0.1` narrows the bind address for a laptop demo; unset
+binds every interface, which containers and pools rely on. Without a token the
+process says so at boot.
+
 `POST /hooks/:triggerId` is the one exception besides `/health`, and it is not
 an open route: a webhook producer is an external system holding that trigger's
 HMAC secret rather than the operator's bearer token, and every delivery is
@@ -887,6 +906,7 @@ docker run --rm -p 8788:8788 lacrew-orchestrator
 | `EADDRINUSE :8788`                               | Another orchestrator still running — kill the old process after `tsx` reloads                                                      |
 | Propose reverts / no session                     | `POST /boot` first; confirm SessionRegistry grants for the worker                                                                  |
 | `401 unauthorized`                               | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env)      |
+| `415 content_type_must_be_json`                  | A mutating request carried a body without `content-type: application/json` — set the header (browsers: see HTTP auth)              |
 | `webhook_sealing_unavailable` on trigger create  | `DATABASE_URL` set without `LACREW_SESSION_KEY` — generate one with `openssl rand -base64 32` and restart                          |
 | Webhook delivery `401 webhook_signature_invalid` | Signature computed over re-serialized JSON; sign the exact bytes sent, and check the scheme matches how the trigger was registered |
 | Cloud API `notification_prefs` missing           | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate`                                               |
