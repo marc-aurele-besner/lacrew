@@ -14,8 +14,11 @@ contract Treasury is ITreasurySpender {
     address public immutable orgRegistry;
     IERC20 public immutable token;
 
+    /// @notice Deployer. Holds bootstrap authority until `governor` is bound, so the
+    ///         window between deployment and `setGovernor` is not permissionless.
+    address public immutable deployer;
     address public spender;
-    /// @notice GovernanceModule (or bootstrap root) for setSpender / stream authorization.
+    /// @notice GovernanceModule (or the deployer while bootstrapping) for setSpender / stream authorization.
     address public governor;
     /// @notice Optional epoch job that may call `streamAllowance`.
     address public streamer;
@@ -41,15 +44,14 @@ contract Treasury is ITreasurySpender {
         orgRegistry = orgRegistry_;
         token = IERC20(token_);
         spender = spender_;
+        deployer = msg.sender;
     }
 
+    /// @notice Bind constitutional authority. The deployer binds it first; afterwards
+    ///         only the governor may rotate it.
     function setGovernor(address governor_) external {
         if (governor_ == address(0)) revert ZeroAddress();
-        if (governor != address(0)) {
-            if (msg.sender != governor) revert NotAuthorized(msg.sender);
-        }
-        // Bootstrap: first set is permissionless so DeployMockOrg / tests can wire gov.
-        // Once set, only governor may rotate.
+        _onlyGovernorOrBootstrap();
         governor = governor_;
         emit GovernorUpdated(governor_);
     }
@@ -75,9 +77,12 @@ contract Treasury is ITreasurySpender {
     }
 
     /// @notice Allocate unreserved treasury balance to `node` for an epoch.
+    /// @dev Governor or streamer; the deployer while neither is bound.
     function streamAllowance(address node, uint256 amount, uint64 epoch) external {
         if (governor != address(0) || streamer != address(0)) {
             if (msg.sender != governor && msg.sender != streamer) revert NotAuthorized(msg.sender);
+        } else if (msg.sender != deployer) {
+            revert NotAuthorized(msg.sender);
         }
         uint256 liquid = liquidBalance();
         if (liquid < amount) revert InsufficientTreasury(amount, liquid);
@@ -105,8 +110,10 @@ contract Treasury is ITreasurySpender {
         return bal > totalReserved ? bal - totalReserved : 0;
     }
 
+    /// @dev Governor once bound; the deployer until then.
     function _onlyGovernorOrBootstrap() private view {
-        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
+        address authority = governor == address(0) ? deployer : governor;
+        if (msg.sender != authority) revert NotAuthorized(msg.sender);
     }
 
     function _spend(address node, uint256 amount, address to) private {

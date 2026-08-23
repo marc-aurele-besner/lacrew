@@ -30,7 +30,10 @@ contract EscalationRouter {
     ITreasurySpender public treasury;
     IRateRecorder public rateRecorder;
     SessionRegistry public sessionRegistry;
-    /// @notice GovernanceModule (or bootstrap) for setTreasury / setRateRecorder.
+    /// @notice Deployer. Holds bootstrap authority until `governor` is bound, so the
+    ///         wiring window is not open to whoever sees the deployment first.
+    address public immutable deployer;
+    /// @notice GovernanceModule (or the deployer while bootstrapping) for the setters below.
     address public governor;
 
     uint256 public nextIntentId = 1;
@@ -70,17 +73,23 @@ contract EscalationRouter {
     error SessionTargetDenied(address agent, address target, address allowedTarget);
     error SessionScopeDenied(address agent, uint256 required, uint256 granted);
     error SessionTimeWindowDenied(address agent);
+    /// @dev The router is `Treasury.spender`, `SessionRegistry.escalationRouter` and the
+    ///      bound recorder of its rate modules. Letting an agent aim a policy-admitted
+    ///      call at one of those would lend it the router's own authority.
+    error ProtectedTarget(address target);
     error ZeroAddress();
 
     constructor(address orgRegistry_, address policy_) {
+        if (orgRegistry_ == address(0)) revert ZeroAddress();
         orgRegistry = IOrgRegistry(orgRegistry_);
         policy = IPolicyModule(policy_);
+        deployer = msg.sender;
     }
 
-    /// @notice Bind constitutional authority. First set is bootstrap; then only governor.
+    /// @notice Bind constitutional authority. The deployer binds it first; then only governor.
     function setGovernor(address governor_) external {
         if (governor_ == address(0)) revert ZeroAddress();
-        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
+        _onlyGovernorOrBootstrap();
         governor = governor_;
         emit GovernorUpdated(governor_);
     }
@@ -132,6 +141,7 @@ contract EscalationRouter {
     ) external returns (uint256 intentId, Verdict verdict) {
         IOrgRegistry.Node memory agentNode = orgRegistry.getNode(agent);
         if (!agentNode.active) revert InactiveAgent(agent);
+        _requireUnprotectedTarget(agent, target);
         uint256 scopeMask = _requireValidSession(agent, target, value);
         // Count this propose against the key's rate limit (no-op unless wired and
         // the key has one). Reverts here roll back the count, so only a propose
@@ -291,13 +301,30 @@ contract EscalationRouter {
         }
     }
 
+    /// @dev Policy decides what an agent may call; this only refuses the contracts
+    ///      that trust the router as `msg.sender`, whatever the policy says. Checked
+    ///      at propose so no such intent can even be created for a parent to approve.
+    function _requireUnprotectedTarget(address agent, address target) private view {
+        // Unwired slots are zero; a zero target must not match them.
+        if (target == address(0)) return;
+        if (
+            target == address(this) || target == address(treasury)
+                || target == address(sessionRegistry) || target == address(rateRecorder)
+                || target == address(rateRecorderOf[agent])
+        ) {
+            revert ProtectedTarget(target);
+        }
+    }
+
     function _policyFor(address node) private view returns (IPolicyModule) {
         IPolicyModule nodePolicy = policyOf[node];
         if (address(nodePolicy) != address(0)) return nodePolicy;
         return policy;
     }
 
+    /// @dev Governor once bound; the deployer until then.
     function _onlyGovernorOrBootstrap() private view {
-        if (governor != address(0) && msg.sender != governor) revert NotAuthorized(msg.sender);
+        address authority = governor == address(0) ? deployer : governor;
+        if (msg.sender != authority) revert NotAuthorized(msg.sender);
     }
 }

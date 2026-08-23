@@ -6,16 +6,20 @@ LaCrew’s product promise is **bounded blast radius**: agents can spend only wh
 
 This repository is **pre-audit** Phase 0/1 scaffolding. Treat all deployments as test-only until a professional audit is published (see PRD F1.2).
 
-| Control                                                            | Code status                                                                                           |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Policy stack (DENY / ESCALATE / ALLOW)                             | Implemented (+ fuzz: first-DENY-wins)                                                                 |
-| Escalation climb + ALLOW spend execution                           | Implemented (EOA/router path; not ERC-4337 yet)                                                       |
-| Treasury conservation                                              | Invariant suite (reserved ≤ balance; sum allowances)                                                  |
-| Governance execute → OrgRegistry / Treasury / EpochStreamer grants | Implemented (role-weighted seats; human high-tier quorum)                                             |
-| High-tier timelock + human veto                                    | Implemented (+ fuzz: unbypassable timelock / veto)                                                    |
-| Multi-human seat admin                                             | Implemented (`admitHuman` / `removeHuman` governance-only; last human seat unremovable)               |
-| Session keys                                                       | `SessionRegistry` ephemeral EOAs; `propose` gated by key + `maxValue` + optional target; not ERC-4337 |
-| Professional audit / Slither gate                                  | Slither in CI (`fail-on: high`); no formal audit yet                                                  |
+| Control                                                            | Code status                                                                                                                                                          |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy stack (DENY / ESCALATE / ALLOW)                             | Implemented (+ fuzz: first-DENY-wins)                                                                                                                                |
+| Escalation climb + ALLOW spend execution                           | Implemented (EOA/router path; not ERC-4337 yet)                                                                                                                      |
+| Treasury conservation                                              | Invariant suite (reserved ≤ balance; sum allowances)                                                                                                                 |
+| Governance execute → OrgRegistry / Treasury / EpochStreamer grants | Implemented (role-weighted seats; human high-tier quorum)                                                                                                            |
+| High-tier timelock + human veto                                    | Implemented (+ fuzz: unbypassable timelock / veto)                                                                                                                   |
+| Multi-human seat admin                                             | Implemented (`admitHuman` / `removeHuman` governance-only; last human seat unremovable)                                                                              |
+| Session keys                                                       | `SessionRegistry` ephemeral EOAs; `propose` gated by key + `maxValue` + optional target; not ERC-4337                                                                |
+| Bootstrap authority                                                | `Treasury` / `EscalationRouter` setters and `RateLimitPolicy.setRecorder` are deployer-only until a governor is bound — never permissionless                         |
+| Router as a confused deputy                                        | `EscalationRouter.propose` refuses the contracts that trust the router as `msg.sender` (itself, Treasury, SessionRegistry, its rate recorders), whatever policy says |
+| Governor hand-over                                                 | `GovernanceModule` forces High tier for any `setGovernor(address)` payload, same as proposals targeting the module itself                                            |
+| Issuer key lifetime                                                | `SessionRegistry.maxIssuerTtl` (root-set, 30 days default) bounds how far ahead the issuer may set a session expiry; root is unbound                                 |
+| Professional audit / Slither gate                                  | Slither in CI (`fail-on: high`); no formal audit yet                                                                                                                 |
 
 Docs that describe ERC-4337 / passkey AA roots are **design targets**, not current guarantees. Session scoping on `propose` is live on Anvil.
 
