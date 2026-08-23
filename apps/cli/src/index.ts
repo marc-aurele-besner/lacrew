@@ -28,6 +28,9 @@ import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+/** Anvil account #0 — public dev key; only ever used for `lacrew deploy --anvil`. */
+const ANVIL_DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
 const repoRoot = resolve(__dirname, "../../..");
 
 // Before any getAddresses() call, so the CLI and the orchestrator agree.
@@ -148,14 +151,22 @@ function cmdDeploy(args: string[]): void {
     process.env.ANVIL_RPC ??
     process.env.RPC_URL ??
     "http://127.0.0.1:8545";
-  const privateKey =
-    process.env.PRIVATE_KEY ?? "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
   const sepoliaRpc = process.env.SEPOLIA_RPC_URL ?? process.env.BASE_SEPOLIA_RPC_URL;
   if (!anvil && !sepoliaRpc && !hasFlag(args, "--rpc")) {
     console.error("Usage: lacrew deploy --anvil");
     console.error("       lacrew deploy --rpc <url>  (needs PRIVATE_KEY)");
     console.error("Ethereum Sepolia: set SEPOLIA_RPC_URL + PRIVATE_KEY (+ CHAIN_ID=11155111)");
+    process.exitCode = 1;
+    return;
+  }
+
+  // Anvil's well-known account #0 is a convenience for the local chain only.
+  // Falling back to it anywhere else would deploy an org whose root is a key
+  // the whole world holds, so every non-Anvil deploy must name its own key.
+  const privateKey = process.env.PRIVATE_KEY ?? (anvil ? ANVIL_DEPLOYER_KEY : undefined);
+  if (!privateKey) {
+    console.error("PRIVATE_KEY is required for a non-Anvil deploy (it becomes HUMAN_ROOT).");
+    console.error("Use --anvil to deploy to a local Anvil with its well-known dev key.");
     process.exitCode = 1;
     return;
   }
@@ -485,7 +496,17 @@ async function main(): Promise<void> {
           maxValue,
           allowedTarget,
         });
-        await onchain.fundEth(ephemeral.keyAddress!, parseEther("0.05"));
+        // The ephemeral key exists only in this process: topping it up with gas
+        // is free on Anvil and stranded money on any other chain, where the
+        // operator should fund a key they keep (SESSION_PRIVATE_KEY) instead.
+        if (Number(process.env.CHAIN_ID ?? ANVIL_CHAIN_ID) === ANVIL_CHAIN_ID) {
+          await onchain.fundEth(ephemeral.keyAddress!, parseEther("0.05"));
+        } else {
+          console.error(
+            `! Not funding ephemeral session key ${ephemeral.keyAddress} on chain ` +
+              `${process.env.CHAIN_ID}: fund it yourself before the propose, or it will revert.`,
+          );
+        }
         const sessionAccount = privateKeyToAccount(ephemeral.privateKey);
         printJson({
           sessionId,
