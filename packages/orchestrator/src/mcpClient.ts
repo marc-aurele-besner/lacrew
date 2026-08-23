@@ -213,6 +213,10 @@ export function createHttpMcpClient(opts: HttpMcpClientOptions): McpClient {
           ...(params ? { params } : {}),
         }),
         signal: controller.signal,
+        // The egress check covered the configured URL, not wherever a 3xx
+        // points; following it would carry the credential to a host nobody
+        // vetted. A redirect is reported as the server's status instead.
+        redirect: "manual",
       });
       const session = res.headers.get("mcp-session-id");
       if (session) sessionId = session;

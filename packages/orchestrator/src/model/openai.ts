@@ -1,6 +1,8 @@
 import type { ModelCompleteInput, ModelCompleteResult, ModelProvider } from "./types.js";
 import { MemoryModelProvider } from "./memory.js";
 
+/** Upper bound on one completion round-trip; `LACREW_MODEL_TIMEOUT_MS` overrides. */
+const MODEL_TIMEOUT_MS = Number(process.env.LACREW_MODEL_TIMEOUT_MS) || 120_000;
 const DEFAULT_MODEL = "gpt-5";
 
 /**
@@ -34,6 +36,8 @@ export class OpenAIModelProvider implements ModelProvider {
 
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
+      // A hung provider must not hold a flow step or /model/complete forever.
+      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       headers,
       body: JSON.stringify({ model, messages }),
     });

@@ -1,6 +1,8 @@
 import type { ModelCompleteInput, ModelCompleteResult, ModelProvider } from "./types.js";
 import { MemoryModelProvider } from "./memory.js";
 
+/** Upper bound on one completion round-trip; `LACREW_MODEL_TIMEOUT_MS` overrides. */
+const MODEL_TIMEOUT_MS = Number(process.env.LACREW_MODEL_TIMEOUT_MS) || 120_000;
 const DEFAULT_MODEL = "claude-opus-5";
 /** Pinned rather than floating: a version bump can change the response shape. */
 const API_VERSION = "2023-06-01";
@@ -30,6 +32,8 @@ export class AnthropicModelProvider implements ModelProvider {
 
     const res = await fetch(`${this.baseUrl}/messages`, {
       method: "POST",
+      // A hung provider must not hold a flow step or /model/complete forever.
+      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       headers: {
         "x-api-key": this.apiKey,
         "anthropic-version": API_VERSION,

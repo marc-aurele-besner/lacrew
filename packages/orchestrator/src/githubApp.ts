@@ -146,6 +146,8 @@ export function createGithubAppTokenSource(opts: {
         authorization: `Bearer ${jwt}`,
         "x-github-api-version": "2022-11-28",
       },
+      redirect: "manual",
+      signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) {
       // The status is the whole diagnosis here — 401 is a bad key or app id,

@@ -466,14 +466,16 @@ export function createWebhookSurface(opts: {
     },
 
     remove: async (id) => {
-      const existing = triggers.get(id);
-      const existed = triggers.delete(id);
+      // Resolve through the store like rotate/setEnabled do: a replica that did
+      // not create the hook has no local entry, and deleting only what this
+      // process remembers would leave the hook live everywhere else.
+      const existing = await resolve(id);
+      triggers.delete(id);
       secrets.delete(id);
-      if (existing) {
-        await store.remove(id);
-        recordChange(existing, "removed");
-      }
-      return existed;
+      if (!existing) return false;
+      await store.remove(id);
+      recordChange(existing, "removed");
+      return true;
     },
 
     deliveries: async (limit = DELIVERY_LOG_LIMIT, triggerId) =>
