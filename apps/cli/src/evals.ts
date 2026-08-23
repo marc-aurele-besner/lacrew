@@ -20,10 +20,7 @@ import {
   runFlowEvals,
   type FlowEvalScenario,
 } from "@lacrew/flows";
-
-function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
-}
+import { hasFlag } from "./args.js";
 
 /**
  * A ref matches a scenario by its id, the flow it runs, or the blueprint it

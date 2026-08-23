@@ -13,19 +13,8 @@
  */
 
 import type { PnlReport } from "@lacrew/flows";
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
-
-function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
-    /\/$/,
-    "",
-  );
-}
+import { flagValue } from "./args.js";
+import { orchHeaders, orchUrl } from "./orch.js";
 
 const usd = (micros: number): string => `$${(micros / 1_000_000).toFixed(4)}`;
 
@@ -163,10 +152,7 @@ shown, and neither is added to the other.`);
   }
   if (args.includes("--csv")) query.set("format", "csv");
 
-  const token = process.env.ORCH_TOKEN?.trim();
-  const res = await fetch(`${orchUrl(args)}/pnl?${query.toString()}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
+  const res = await fetch(`${orchUrl(args)}/pnl?${query.toString()}`, { headers: orchHeaders() });
   if (args.includes("--csv")) {
     const text = await res.text();
     if (!res.ok) throw new Error(text || `${res.status} ${res.statusText}`);

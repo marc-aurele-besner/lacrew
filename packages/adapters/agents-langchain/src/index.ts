@@ -38,10 +38,11 @@ export type CreateLacrewLangChainToolsOptions = {
   /**
    * Live backend — pass createRuntimeMcpBackend(runtime) in-process or an
    * orchestrator URL string for the HTTP bridge (session-signed onchain
-   * calls). Omit for the detached SDK mock.
+   * calls). With no backend the tools refuse to build unless `useMock` is
+   * set: going live is never the implicit default.
    */
   backend?: McpToolBackend | string;
-  /** SDK fallback flag when no backend is given (default true = mock). */
+  /** Opt into the detached SDK mock when no backend is given; otherwise an error. */
   useMock?: boolean;
 };
 

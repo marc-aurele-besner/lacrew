@@ -30,44 +30,8 @@
 import { privateKeyToAccount } from "viem/accounts";
 import type { RootAuthAction, RootChallenge, RootProof } from "@lacrew/core";
 import { checkedRootChallengeStatement } from "@lacrew/core";
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
-
-function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
-    /\/$/,
-    "",
-  );
-}
-
-/** The body of a refusal, kept whole so a caller can act on what it carries. */
-class OrchRefusal extends Error {
-  constructor(
-    readonly status: number,
-    readonly body: Record<string, unknown>,
-  ) {
-    super(String(body.error ?? `${status}`));
-  }
-}
-
-async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
-  const token = process.env.ORCH_TOKEN?.trim();
-  const res = await fetch(`${orchUrl(args)}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) throw new OrchRefusal(res.status, body);
-  return body as T;
-}
+import { flagValue } from "./args.js";
+import { orchFetch, OrchRefusal } from "./orch.js";
 
 type ChallengeResponse =
   | ({

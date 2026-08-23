@@ -20,12 +20,7 @@ import {
   type FlowStepTrace,
   type FlowTriggerRecord,
 } from "@lacrew/flows";
-
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
+import { flagValue } from "./args.js";
 
 function orchClient(args: string[]) {
   return createFlowsClient({

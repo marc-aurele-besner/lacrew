@@ -24,6 +24,8 @@ import {
   type DualControlRecord,
   type DualControlReviewScope,
 } from "@lacrew/flows";
+import { flagValue } from "./args.js";
+import { orchFetch } from "./orch.js";
 
 type Resolution = {
   mode: DualControlMode;
@@ -58,40 +60,12 @@ type ReviewView = {
   expiresAt: string;
 };
 
-function flagValue(args: string[], flag: string): string | undefined {
-  const i = args.indexOf(flag);
-  if (i >= 0 && args[i + 1] && !args[i + 1]!.startsWith("-")) return args[i + 1];
-  return undefined;
-}
-
 function numberFlag(args: string[], flag: string): number | undefined {
   const raw = flagValue(args, flag);
   if (raw === undefined) return undefined;
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new Error(`${flag} must be a number (got "${raw}")`);
   return value;
-}
-
-function orchUrl(args: string[]): string {
-  return (flagValue(args, "--url") ?? process.env.ORCH_URL ?? "http://127.0.0.1:8788").replace(
-    /\/$/,
-    "",
-  );
-}
-
-async function orchFetch<T>(args: string[], path: string, init: RequestInit = {}): Promise<T> {
-  const token = process.env.ORCH_TOKEN?.trim();
-  const res = await fetch(`${orchUrl(args)}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body ? { "content-type": "application/json" } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
-  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
-  return body;
 }
 
 /**
