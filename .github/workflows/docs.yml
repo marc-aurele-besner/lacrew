@@ -50,7 +50,7 @@ jobs:
           test -f apps/docs/out/.nojekyll
           grep -q IPolicyModule apps/docs/out/api/search
           grep -q plan-required apps/docs/out/api/search
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/docs/out
 
