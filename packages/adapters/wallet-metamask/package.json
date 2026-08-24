@@ -24,13 +24,13 @@
     "viem": "^2.21.0"
   },
   "devDependencies": {
-    "@metamask/smart-accounts-kit": "^1.7.0",
+    "@metamask/smart-accounts-kit": "^2.0.0",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@metamask/smart-accounts-kit": "^1.0.0"
+    "@metamask/smart-accounts-kit": "^1.0.0 || ^2.0.0"
   },
   "peerDependenciesMeta": {
     "@metamask/smart-accounts-kit": {
