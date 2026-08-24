@@ -405,7 +405,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^2.0.10
-        version: 2.0.10(hono@4.12.31)
+        version: 2.1.1(hono@4.12.31)
       '@lacrew/adapter-agents-mcp':
         specifier: workspace:*
         version: link:../adapters/agents-mcp
@@ -1066,8 +1066,8 @@ packages:
       '@goat-sdk/wallet-evm': 0.3.0
       viem: 2.23.4
 
-  '@hono/node-server@2.0.10':
-    resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
+  '@hono/node-server@2.1.1':
+    resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
@@ -4360,7 +4360,7 @@ snapshots:
       '@goat-sdk/wallet-evm': 0.3.0(@goat-sdk/core@0.5.0(zod@4.4.3))(typescript@5.9.3)
       viem: 2.55.2(typescript@5.9.3)(zod@4.4.3)
 
-  '@hono/node-server@2.0.10(hono@4.12.31)':
+  '@hono/node-server@2.1.1(hono@4.12.31)':
     dependencies:
       hono: 4.12.31
 
