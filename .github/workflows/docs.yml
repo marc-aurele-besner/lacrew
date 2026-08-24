@@ -70,6 +70,6 @@ jobs:
       # The Pages site must already exist — GITHUB_TOKEN lacks the admin scope to
       # create it (enablement fails with "Resource not accessible by integration").
       # One-time setup: gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - id: deployment
         uses: actions/deploy-pages@v4
