@@ -30,7 +30,7 @@
     "@coinbase/cdp-sdk": "^1.54.0",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.0"
   },
   "peerDependencies": {
     "@coinbase/cdp-sdk": "^1.0.0"
