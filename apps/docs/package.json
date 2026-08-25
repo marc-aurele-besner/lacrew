@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "build": "pnpm content && next build && node ./scripts/postbuild.mjs",
-    "content": "typedoc && node ./scripts/prepare-content.mjs",
+    "content": "node ./scripts/run-typedoc.mjs && node ./scripts/prepare-content.mjs",
     "dev": "pnpm content && next dev",
     "start": "pnpm dlx serve out",
     "clean": "rm -rf out .next content/reference content/spec.md",
