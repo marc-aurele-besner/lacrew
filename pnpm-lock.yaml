@@ -265,8 +265,8 @@ importers:
         version: 2.55.19(typescript@5.9.3)(zod@4.4.3)
     devDependencies:
       '@metamask/smart-accounts-kit':
-        specifier: ^1.7.0
-        version: 1.7.0(typescript@5.9.3)(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)
+        specifier: ^2.0.0
+        version: 2.0.0(typescript@5.9.3)(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
         version: 26.2.0
@@ -1257,29 +1257,29 @@ packages:
   '@mdx-js/mdx@3.1.1':
     resolution: {integrity: sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ==}
 
-  '@metamask/7715-permission-types@1.0.0':
-    resolution: {integrity: sha512-KhdKsT35pmBNTNpYcp+14gECPxmP4bX2eLA56riDr6pCjf6U7kEqPBoN6gz1CULNywEMp+p9UIMpdiTzFCyelg==}
-    engines: {node: ^18.18 || >=20}
+  '@metamask/7715-permission-types@2.0.0':
+    resolution: {integrity: sha512-NS6NolXd7fDQhMZoEmzyQcLuJ9NtIPntKOAEOMdFQuR8y1HWpN6PYx1BrY6OgHmJ1D/P4vuWlCooDlh+L8CmVw==}
+    engines: {node: '>=20'}
 
   '@metamask/abi-utils@3.0.0':
     resolution: {integrity: sha512-a/l0DiSIr7+CBYVpHygUa3ztSlYLFCQMsklLna+t6qmNY9+eIO5TedNxhyIyvaJ+4cN7TLy0NQFbp9FV3X2ktg==}
     engines: {node: ^18.18 || ^20.14 || >=22}
 
-  '@metamask/delegation-abis@1.1.0':
-    resolution: {integrity: sha512-n7XgRAM+pKUqmw4X+nAxM9a9HTBGe049WCAbpnHV6WoT6JnHhurMSUiqpAwMh69RhEykBtJPYSVPTVlJu6pEPg==}
-    engines: {node: ^18.18 || >=20}
+  '@metamask/delegation-abis@2.0.0':
+    resolution: {integrity: sha512-3LW1mC/wrtgceMtou4kTJWlS683IXRRWzKY/fVnW9PieN5dayrDyZhJBP+1MJy7LyO19+E2l/IP+g9TES1ua2Q==}
+    engines: {node: '>=20'}
 
-  '@metamask/delegation-core@2.2.1':
-    resolution: {integrity: sha512-fpB25AgmBxTJYhHj92tFS4dJe63x6wz71c8dPTwUin12dAvFMWM3PH+rm4C34iPb5ZrQzkAPi4e9z2njmwEZUA==}
-    engines: {node: ^18.18 || >=20}
+  '@metamask/delegation-core@3.0.0':
+    resolution: {integrity: sha512-crrbAFb6+uyzQ+q9F8wyOFK42/f6tpFiUiLq8fxV7+McD2AbqmsxFEBH0bB4pKFjdxi3HxKn8naEDR7/w7k45A==}
+    engines: {node: '>=20'}
 
-  '@metamask/delegation-deployments@1.4.0':
-    resolution: {integrity: sha512-QuO4Fiz3GsP7nwcUpXFEVTxmRGBTkriYeZ7DBLxUAqbUQx7Kg630eR1SgvTn/eBMkmXB2tZJW9am/iGuAcySlw==}
-    engines: {node: ^18.18 || >=20}
+  '@metamask/delegation-deployments@2.0.0':
+    resolution: {integrity: sha512-DnI1eZ2fCZtkfrq9+G4NKh2S4WOVczKkrTh+JVTgBCS4bCmObxN1pDvdxbTA9WPl9TZoL0XamRhjfYSRXIq6wA==}
+    engines: {node: '>=20'}
 
-  '@metamask/smart-accounts-kit@1.7.0':
-    resolution: {integrity: sha512-zypiFPDkJ12fpXENmPIqFQr4H35b3LttwIhB+PfQpP9sGHWKUIz0CnhSurkl6vZ6GyKC+RNcl0Kq0QyPqSExXQ==}
-    engines: {node: ^18.18 || >=20}
+  '@metamask/smart-accounts-kit@2.0.0':
+    resolution: {integrity: sha512-eye6GMdOyhL9SPaWwwE0Zlk1466JFxQqB5NH5lHaTo8htibFZmjnKctbKzhdW+FOx53R767BRZXQx7bq6/KACA==}
+    engines: {node: '>=20'}
     peerDependencies:
       viem: ^2.31.4
 
@@ -4584,9 +4584,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@metamask/7715-permission-types@1.0.0':
+  '@metamask/7715-permission-types@2.0.0':
     dependencies:
-      '@metamask/delegation-core': 2.2.1
+      '@metamask/delegation-core': 3.0.0
       '@metamask/utils': 11.11.0
     transitivePeerDependencies:
       - supports-color
@@ -4598,9 +4598,9 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@metamask/delegation-abis@1.1.0': {}
+  '@metamask/delegation-abis@2.0.0': {}
 
-  '@metamask/delegation-core@2.2.1':
+  '@metamask/delegation-core@3.0.0':
     dependencies:
       '@metamask/abi-utils': 3.0.0
       '@metamask/utils': 11.11.0
@@ -4608,14 +4608,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@metamask/delegation-deployments@1.4.0': {}
+  '@metamask/delegation-deployments@2.0.0': {}
 
-  '@metamask/smart-accounts-kit@1.7.0(typescript@5.9.3)(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)':
+  '@metamask/smart-accounts-kit@2.0.0(typescript@5.9.3)(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@metamask/7715-permission-types': 1.0.0
-      '@metamask/delegation-abis': 1.1.0
-      '@metamask/delegation-core': 2.2.1
-      '@metamask/delegation-deployments': 1.4.0
+      '@metamask/7715-permission-types': 2.0.0
+      '@metamask/delegation-abis': 2.0.0
+      '@metamask/delegation-core': 3.0.0
+      '@metamask/delegation-deployments': 2.0.0
       '@metamask/utils': 11.11.0
       openapi-fetch: 0.13.8
       ox: 0.8.1(typescript@5.9.3)(zod@4.4.3)
