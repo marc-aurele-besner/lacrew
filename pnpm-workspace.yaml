@@ -3,3 +3,5 @@ packages:
   - "packages/adapters/*"
   - "apps/*"
   - "examples/*"
+
+minimumReleaseAge: 1440
