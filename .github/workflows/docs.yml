@@ -37,7 +37,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install
       # TypeDoc resolves the SDK's own types, so its build must run first.
@@ -50,7 +50,7 @@ jobs:
           test -f apps/docs/out/.nojekyll
           grep -q IPolicyModule apps/docs/out/api/search
           grep -q plan-required apps/docs/out/api/search
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: apps/docs/out
 
