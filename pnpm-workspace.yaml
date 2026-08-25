@@ -4,4 +4,7 @@ packages:
   - "apps/*"
   - "examples/*"
 
+allowBuilds:
+  esbuild: true
+
 minimumReleaseAge: 1440
