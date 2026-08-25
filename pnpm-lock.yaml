@@ -38,7 +38,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -200,7 +200,7 @@ importers:
         version: 24.13.3
       ai:
         specifier: ^7.0.31
-        version: 7.0.78(zod@4.4.3)
+        version: 7.0.77(zod@4.4.3)
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -219,7 +219,7 @@ importers:
         version: 1.55.0(typescript@5.9.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -244,7 +244,7 @@ importers:
         version: 0.3.0(@goat-sdk/core@0.5.0(zod@4.4.3))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@4.4.3))(typescript@5.9.3))(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -269,7 +269,7 @@ importers:
         version: 2.0.0(typescript@5.9.3)(viem@2.55.19(typescript@5.9.3)(zod@4.4.3))(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -325,7 +325,7 @@ importers:
         version: 8.0.6(typescript@5.9.3)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -337,7 +337,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -349,14 +349,14 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: ^0.45.0
-        version: 0.45.2(pg@8.22.0)(postgres@3.4.9)
+        version: 0.45.2(pg@8.23.0)(postgres@3.4.9)
       postgres:
         specifier: ^3.4.7
         version: 3.4.9
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       drizzle-kit:
         specifier: ^0.31.4
         version: 0.31.10
@@ -393,7 +393,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -437,8 +437,8 @@ importers:
         specifier: ^4.12.31
         version: 4.13.4
       pg-boss:
-        specifier: ^10.3.2
-        version: 10.4.2
+        specifier: ^12.0.0
+        version: 12.28.0
       viem:
         specifier: ^2.55.2
         version: 2.55.19(typescript@5.9.3)(zod@4.4.3)
@@ -448,7 +448,7 @@ importers:
         version: 1.9.7
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -467,7 +467,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -496,8 +496,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@ai-sdk/gateway@4.0.63':
-    resolution: {integrity: sha512-D7BogSRg61QfTdr7AEcYn9h0I/e4QHvFXwIV1RW+DZZGJu1wSiX2cH06szZSYyKi7Eat50V4s4J8vggZUEs7eg==}
+  '@ai-sdk/gateway@4.0.62':
+    resolution: {integrity: sha512-zR3pustGWhw5eUZHG+fJZx/V/PBe+LxdDpc5hDFWxozG/3MB/+eY62jn+YiR+9uOH+Hx63e5zJoeKLfZfPktWQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2343,8 +2343,8 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
-  '@types/node@26.3.0':
-    resolution: {integrity: sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw==}
+  '@types/node@26.2.0':
+    resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
   '@types/react-dom@19.2.5':
     resolution: {integrity: sha512-fMPwH9v7r/pp43yUd2/Mbiex5KouJwwR3dzHkhLREUC6764VyDsqxhAxv6OFEYR1RhjOyD1naqba8ECDBe7ZQg==}
@@ -2493,8 +2493,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  ai@7.0.78:
-    resolution: {integrity: sha512-AlHn784ceofz5XOe+AhllCUwloC4QgNogVVYMULc5GHsEmzLRjuBeLGZR6yRvL0cgkX3YV3Jq8/QqNLcPNmnqA==}
+  ai@7.0.77:
+    resolution: {integrity: sha512-muLtBSTAUCreR77L16w4AFBiX2gK/RNt84EKp8m03SN9+MfNlC5EGqYYttRjYKV3xe0a33yj1Zawj1EnjejIWw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2622,10 +2622,9 @@ packages:
     engines: {node: '>=0.8'}
     hasBin: true
 
-  cron-parser@4.9.0:
-    resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
-    engines: {node: '>=12.0.0'}
-    deprecated: v4 is no longer maintained, upgrade to v5
+  cron-parser@5.10.0:
+    resolution: {integrity: sha512-izNAxJyRWUP8ljBoDSub5WyrVOUlT4SLGShswE7eoRBpp6QUsSycYxLBMJlbshgPBMcPT/nrfgjNY2918ayv2A==}
+    engines: {node: '>=18'}
 
   crypt@0.0.2:
     resolution: {integrity: sha512-mCxBlsHFYh9C+HVpiEacem8FEBnMXgU9gy4zmNC+SXAZNB/1idgp/aulFJ4FgCi7GPEVbfyng092GqL2k2rmow==}
@@ -3499,6 +3498,10 @@ packages:
       sass:
         optional: true
 
+  non-error@0.1.0:
+    resolution: {integrity: sha512-TMB1uHiGsHRGv1uYclfhivcnf0/PdFp2pNqRxXjncaAsjYMoisaQJI+SSZCqRq+VliwRTC8tsMQfmrWjDMhkPQ==}
+    engines: {node: '>=20'}
+
   npm-to-yarn@3.2.0:
     resolution: {integrity: sha512-K1HmQeZT2HrjpsR6KgqbN2FAXL2NrJJmNUSD9ck7HGTVu1JKXox8n9SB+tjbU8m8JGLF4OscrroPepew/L7/Xw==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
@@ -3557,9 +3560,10 @@ packages:
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
 
-  pg-boss@10.4.2:
-    resolution: {integrity: sha512-AttEWOtSzn53av8OnCMWEanwRBvjkZCE1y5nLrZnwvkkMnlZ5XpWDpZ7sKI/BYjvi2OVieMX37arD2ACgJ750w==}
-    engines: {node: '>=20'}
+  pg-boss@12.28.0:
+    resolution: {integrity: sha512-7OaS/sYcQ8jcA9fSSlcdJc3Z9GD+/7GtQD3TlfweKpJQ/UnSbZYQHs1TECXMRY2sZo8ah4khQu9+6Z9v86z1dg==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
 
   pg-cloudflare@1.4.0:
     resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
@@ -3576,15 +3580,15 @@ packages:
     peerDependencies:
       pg: '>=8.0'
 
-  pg-protocol@1.15.0:
-    resolution: {integrity: sha512-cq9sECI5s0+uPUXjbz8ioyPJni6RzsRib0US67i5IoTZKw8fNeYlVE7u8F4dG7vEJJtc5wdD1K189lCCUwqWTQ==}
+  pg-protocol@1.16.0:
+    resolution: {integrity: sha512-sILXutLVjCLjcDuOmvhX5e2Z4cS5qG/6Bu3VkpFwdf/633ElGLpEh9bgmuI5I4sqKqkifQiGyiCcx1HdtrK7tg==}
 
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
 
-  pg@8.22.0:
-    resolution: {integrity: sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA==}
+  pg@8.23.0:
+    resolution: {integrity: sha512-Ip2EQCngowJLGOfCwkFhPXU7/ljlhn6Rxlmy4XYfL2Y+vyRM59+8uR2xqRWKdYmbXmxCFOAmKxBuSUCdF34qLg==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -3764,9 +3768,9 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  serialize-error@8.1.0:
-    resolution: {integrity: sha512-3NnuWfM6vBYoy5gZFvHiYsVbafvI9vZv/+jlIigFn4oP4zjNPK3LhcY0xSCgeb1a5L8jO71Mit9LlNoi2UfDDQ==}
-    engines: {node: '>=10'}
+  serialize-error@13.0.1:
+    resolution: {integrity: sha512-bBZaRwLH9PN5HbLCjPId4dP5bNGEtumcErgOX952IsvOhVPrm3/AeK1y0UHA/QaPG701eg0yEnOKsCOC6X/kaA==}
+    engines: {node: '>=20'}
 
   sharp@0.35.3:
     resolution: {integrity: sha512-ej0zVHuZGHCiABXcNxeYhpRnPNPAcvbG8RMdBAhDAxLKkCRVSpK3Iyu7qbqw3JMzoj0REeM6f3tJLtVwl0023Q==}
@@ -3825,6 +3829,10 @@ packages:
       babel-plugin-macros:
         optional: true
 
+  tagged-tag@1.0.0:
+    resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
+    engines: {node: '>=20'}
+
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
@@ -3858,9 +3866,9 @@ packages:
     resolution: {integrity: sha512-yQfwQVoRXwOuyX1LxiJFBFNg6VfuYh+/RyZLd82+isgyLkBXw3S5XRRzvcck1FAjSCG5sVyLd+O1eDMvYa3J7g==}
     hasBin: true
 
-  type-fest@0.20.2:
-    resolution: {integrity: sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==}
-    engines: {node: '>=10'}
+  type-fest@5.8.0:
+    resolution: {integrity: sha512-YGYEVz3Fm5iy/AybuA0oyNFq7H4CgQNfRp/qfe8nurE1kuCeNm3/vfm9X4Mtl+qLyaKJUh5xrFZwogr41SMjYA==}
+    engines: {node: '>=20'}
 
   typedoc-plugin-markdown@4.12.0:
     resolution: {integrity: sha512-eJDEMAfxCmede22c/Jw7d0FA13ggAQv+KkwQYKYCdqI02cin6Rc9QRwbG/7XvvHWinuFejySnZVUWDtvGk3Vbg==}
@@ -4050,7 +4058,7 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@ai-sdk/gateway@4.0.63(zod@4.4.3)':
+  '@ai-sdk/gateway@4.0.62(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.29(zod@4.4.3)
@@ -5744,7 +5752,7 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  '@types/node@26.3.0':
+  '@types/node@26.2.0':
     dependencies:
       undici-types: 8.3.0
 
@@ -5840,9 +5848,9 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  ai@7.0.78(zod@4.4.3):
+  ai@7.0.77(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 4.0.63(zod@4.4.3)
+      '@ai-sdk/gateway': 4.0.62(zod@4.4.3)
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.29(zod@4.4.3)
       zod: 4.4.3
@@ -5946,7 +5954,7 @@ snapshots:
 
   crc-32@1.2.2: {}
 
-  cron-parser@4.9.0:
+  cron-parser@5.10.0:
     dependencies:
       luxon: 3.7.2
 
@@ -5981,9 +5989,9 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.12
 
-  drizzle-orm@0.45.2(pg@8.22.0)(postgres@3.4.9):
+  drizzle-orm@0.45.2(pg@8.23.0)(postgres@3.4.9):
     optionalDependencies:
-      pg: 8.22.0
+      pg: 8.23.0
       postgres: 3.4.9
 
   dunder-proto@1.0.1:
@@ -7076,6 +7084,8 @@ snapshots:
       - '@types/node'
       - babel-plugin-macros
 
+  non-error@0.1.0: {}
+
   npm-to-yarn@3.2.0: {}
 
   oniguruma-parser@0.12.2: {}
@@ -7176,11 +7186,11 @@ snapshots:
     dependencies:
       entities: 6.0.1
 
-  pg-boss@10.4.2:
+  pg-boss@12.28.0:
     dependencies:
-      cron-parser: 4.9.0
-      pg: 8.22.0
-      serialize-error: 8.1.0
+      cron-parser: 5.10.0
+      pg: 8.23.0
+      serialize-error: 13.0.1
     transitivePeerDependencies:
       - pg-native
 
@@ -7191,11 +7201,11 @@ snapshots:
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.14.0(pg@8.22.0):
+  pg-pool@3.14.0(pg@8.23.0):
     dependencies:
-      pg: 8.22.0
+      pg: 8.23.0
 
-  pg-protocol@1.15.0: {}
+  pg-protocol@1.16.0: {}
 
   pg-types@2.2.0:
     dependencies:
@@ -7205,11 +7215,11 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.22.0:
+  pg@8.23.0:
     dependencies:
       pg-connection-string: 2.14.0
-      pg-pool: 3.14.0(pg@8.22.0)
-      pg-protocol: 1.15.0
+      pg-pool: 3.14.0(pg@8.23.0)
+      pg-protocol: 1.16.0
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
@@ -7416,9 +7426,10 @@ snapshots:
 
   semver@7.8.5: {}
 
-  serialize-error@8.1.0:
+  serialize-error@13.0.1:
     dependencies:
-      type-fest: 0.20.2
+      non-error: 0.1.0
+      type-fest: 5.8.0
 
   sharp@0.35.3(@types/node@24.13.3):
     dependencies:
@@ -7498,6 +7509,8 @@ snapshots:
       client-only: 0.0.1
       react: 19.2.8
 
+  tagged-tag@1.0.0: {}
+
   tailwindcss@4.3.3: {}
 
   tapable@2.3.3: {}
@@ -7530,7 +7543,9 @@ snapshots:
       '@turbo/windows-64': 2.10.11
       '@turbo/windows-arm64': 2.10.11
 
-  type-fest@0.20.2: {}
+  type-fest@5.8.0:
+    dependencies:
+      tagged-tag: 1.0.0
 
   typedoc-plugin-markdown@4.12.0(typedoc@0.28.20(typescript@5.9.3)):
     dependencies:
