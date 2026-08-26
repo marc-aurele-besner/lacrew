@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import { decodeAbiParameters, decodeFunctionData, parseAbi } from "viem";
 import {
   assertSafeIsAwaitingApprover,
@@ -134,7 +134,7 @@ test("a high-s signature is normalised rather than passed through", () => {
   const high = new p256.Signature(low.r, P256_ORDER - low.s);
   assert.ok(high.s > P256_ORDER / 2n, "the twin must actually be the high one");
 
-  const normalised = normalizedSignature(high.toDERRawBytes());
+  const normalised = normalizedSignature(high.toBytes("der"));
   assert.equal(normalised.r, low.r);
   assert.equal(normalised.s, low.s);
 });

@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import {
   createPublicClient,
   createWalletClient,
@@ -79,8 +79,8 @@ function artifact(name: string): Artifact {
 
 /** A WebAuthn credential this test can both register and sign with. */
 function credential() {
-  const privateKey = p256.utils.randomPrivateKey();
-  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const privateKey = p256.utils.randomSecretKey();
+  const point = p256.Point.BASE.multiply(p256.Point.Fn.fromBytes(privateKey)).toBytes(false);
   const x = point.slice(1, 33);
   const y = point.slice(33, 65);
   return {
@@ -129,7 +129,7 @@ function assertOver(cred: ReturnType<typeof credential>, hash: `0x${string}`) {
     authenticatorData: Buffer.from(authData).toString("base64url"),
     clientDataJSON: clientData.toString("base64url"),
     signature: Buffer.from(
-      p256.sign(new Uint8Array(digest), cred.privateKey).toDERRawBytes(),
+      p256.sign(new Uint8Array(digest), cred.privateKey, { prehash: false, format: "der" }),
     ).toString("base64url"),
   };
 }

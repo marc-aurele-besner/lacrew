@@ -38,7 +38,7 @@ import {
   parseAbi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import {
   assertRelayAllowlist,
   assertRelayableChain,
@@ -290,11 +290,16 @@ export function normalizedSignature(derSignature: string | Uint8Array): { r: big
       : derSignature;
   let parsed;
   try {
-    parsed = p256.Signature.fromDER(bytes);
+    parsed = p256.Signature.fromBytes(bytes, "der");
   } catch {
     throw new Error("signature_unparseable: the assertion signature is not DER ECDSA.");
   }
-  const normalized = parsed.normalizeS();
+  // noble-curves 2.x removed `Signature.normalizeS()` because produced
+  // signatures are forced to low-S by default. Parsed signatures can still be
+  // high-S (authenticators aren't required to emit low-S), so reflect them
+  // across the subgroup order before returning.
+  const n = p256.Point.CURVE().n;
+  const normalized = parsed.hasHighS() ? new p256.Signature(parsed.r, n - parsed.s) : parsed;
   return { r: normalized.r, s: normalized.s };
 }
 

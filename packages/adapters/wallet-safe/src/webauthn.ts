@@ -12,7 +12,7 @@
  * trusting whoever relayed it.
  */
 
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { coseP256Coordinates } from "./passkey.js";
 
@@ -149,10 +149,19 @@ export function verifyWebAuthnAssertion(input: VerifyAssertionInput): AssertionV
     // Authenticators are not required to produce low-s signatures, and a
     // high-s one is a valid assertion, not a malleability attack: nothing here
     // is replay-protected by signature bytes — the challenge is single-use.
-    const parsed = p256.Signature.fromDER(signature);
-    // noble/curves 1.9.x returns an ECDSASignature object from `fromDER` and
-    // `verify` takes bytes; round-trip through DER before calling verify.
-    if (!p256.verify(parsed.toBytes("der"), digest, publicKeyPoint, { lowS: false })) {
+    const parsed = p256.Signature.fromBytes(signature, "der");
+    // noble/curves 2.x: `verify` now expects an unhashed message and hashes it
+    // internally by default. We pass the precomputed SHA-256 digest, so opt out
+    // with `prehash: false` to keep the v1 semantics this code was written for.
+    // `format: "der"` is required because verify defaults to compact 64-byte
+    // signatures and rejects DER encoding otherwise.
+    if (
+      !p256.verify(parsed.toBytes("der"), digest, publicKeyPoint, {
+        lowS: false,
+        prehash: false,
+        format: "der",
+      })
+    ) {
       return { verified: false, error: "signature_invalid" };
     }
   } catch {
