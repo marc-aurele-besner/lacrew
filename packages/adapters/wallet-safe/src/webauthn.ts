@@ -13,7 +13,7 @@
  */
 
 import { p256 } from "@noble/curves/nist";
-import { sha256 } from "@noble/hashes/sha2";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { coseP256Coordinates } from "./passkey.js";
 
 export type AssertionVerification = { verified: true } | { verified: false; error: string };
