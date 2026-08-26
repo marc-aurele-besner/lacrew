@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { createHash, randomBytes } from "node:crypto";
 import { test } from "node:test";
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import { verifyWebAuthnAssertion } from "./webauthn.js";
 
 const RP_ID = "localhost";
@@ -36,8 +36,8 @@ function authenticatorData(rpId: string, flags = 0x05): Uint8Array {
 
 /** A complete, valid assertion for `challenge`, plus the credential to check it against. */
 function assertion(opts: { challenge: string; rpId?: string; origin?: string; flags?: number }) {
-  const privateKey = p256.utils.randomPrivateKey();
-  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const privateKey = p256.utils.randomSecretKey();
+  const point = p256.Point.BASE.multiply(p256.Point.Fn.fromBytes(privateKey)).toBytes(false);
   const publicKey = coseKey(point.slice(1, 33), point.slice(33, 65));
 
   const clientData = Buffer.from(
@@ -50,7 +50,13 @@ function assertion(opts: { challenge: string; rpId?: string; origin?: string; fl
   const authData = authenticatorData(opts.rpId ?? RP_ID, opts.flags ?? 0x05);
   const signed = Buffer.concat([authData, createHash("sha256").update(clientData).digest()]);
   const digest = createHash("sha256").update(signed).digest();
-  const signature = p256.sign(new Uint8Array(digest), privateKey).toDERRawBytes();
+  // `prehash: false` because we pass the SHA-256 digest directly, not the
+  // preimage the signer would have hashed itself. `format: "der"` so the
+  // signature is DER-encoded for the WebAuthn pipeline.
+  const signature = p256.sign(new Uint8Array(digest), privateKey, {
+    prehash: false,
+    format: "der",
+  });
 
   return {
     publicKey,

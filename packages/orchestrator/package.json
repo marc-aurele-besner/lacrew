@@ -37,7 +37,7 @@
     "viem": "^2.55.2"
   },
   "devDependencies": {
-    "@noble/curves": "^1.9.1",
+    "@noble/curves": "^2.0.0",
     "@types/node": "^26.1.1",
     "tsx": "^4.19.4",
     "typescript": "^7.0.0"

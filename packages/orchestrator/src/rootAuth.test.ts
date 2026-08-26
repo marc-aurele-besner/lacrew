@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { p256 } from "@noble/curves/nist";
+import { p256 } from "@noble/curves/nist.js";
 import { privateKeyToAccount } from "viem/accounts";
 import { rootChallengeStatement, type RootAuthAction } from "@lacrew/core";
 import { createRootAuthSurface, readRootAuthConfig } from "./rootAuth.js";
@@ -31,8 +31,8 @@ function coseKey(x: Uint8Array, y: Uint8Array): string {
 }
 
 function credential() {
-  const privateKey = p256.utils.randomPrivateKey();
-  const point = p256.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(false);
+  const privateKey = p256.utils.randomSecretKey();
+  const point = p256.Point.BASE.multiply(p256.Point.Fn.fromBytes(privateKey)).toBytes(false);
   return {
     privateKey,
     publicKey: coseKey(point.slice(1, 33), point.slice(33, 65)),
@@ -56,7 +56,7 @@ function assertFor(cred: ReturnType<typeof credential>, challenge: string) {
     authenticatorData: Buffer.from(authData).toString("base64url"),
     clientDataJSON: clientData.toString("base64url"),
     signature: Buffer.from(
-      p256.sign(new Uint8Array(digest), cred.privateKey).toDERRawBytes(),
+      p256.sign(new Uint8Array(digest), cred.privateKey, { prehash: false, format: "der" }),
     ).toString("base64url"),
   };
 }
