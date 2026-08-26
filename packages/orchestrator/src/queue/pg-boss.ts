@@ -3,7 +3,7 @@
  * TODO: BullMQ + Upstash Redis adapter when concurrency needs Redis.
  */
 
-import PgBoss from "pg-boss";
+import { PgBoss } from "pg-boss";
 import { assertValidSchemaName, getDatabaseSchema, getDatabaseUrl } from "@lacrew/db";
 import type { QueueHandlers, QueueJobName, QueueProvider, QueueStatus } from "./types.js";
 
