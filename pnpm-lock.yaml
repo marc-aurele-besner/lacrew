@@ -38,7 +38,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -200,7 +200,7 @@ importers:
         version: 24.13.3
       ai:
         specifier: ^7.0.31
-        version: 7.0.78(zod@4.4.3)
+        version: 7.0.77(zod@4.4.3)
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -219,7 +219,7 @@ importers:
         version: 1.55.0(debug@4.4.3)(typescript@7.0.2)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -244,7 +244,7 @@ importers:
         version: 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.55.19(typescript@7.0.2)(zod@3.25.76))
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -269,7 +269,7 @@ importers:
         version: 2.0.0(typescript@7.0.2)(viem@2.55.19(typescript@7.0.2)(zod@4.4.3))(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -311,8 +311,8 @@ importers:
         specifier: ^1.9.1
         version: 1.9.7
       '@noble/hashes':
-        specifier: ^1.8.0
-        version: 1.8.0
+        specifier: ^2.0.0
+        version: 2.3.0
       '@safe-global/safe-modules-deployments':
         specifier: ^3.0.8
         version: 3.0.9
@@ -325,7 +325,7 @@ importers:
         version: 8.0.6(typescript@7.0.2)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -337,7 +337,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -356,7 +356,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       drizzle-kit:
         specifier: ^0.31.4
         version: 0.31.10
@@ -393,7 +393,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -448,7 +448,7 @@ importers:
         version: 1.9.7
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -467,7 +467,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.3.0
+        version: 26.2.0
       tsx:
         specifier: ^4.19.4
         version: 4.23.12
@@ -496,8 +496,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@ai-sdk/gateway@4.0.63':
-    resolution: {integrity: sha512-D7BogSRg61QfTdr7AEcYn9h0I/e4QHvFXwIV1RW+DZZGJu1wSiX2cH06szZSYyKi7Eat50V4s4J8vggZUEs7eg==}
+  '@ai-sdk/gateway@4.0.62':
+    resolution: {integrity: sha512-zR3pustGWhw5eUZHG+fJZx/V/PBe+LxdDpc5hDFWxozG/3MB/+eY62jn+YiR+9uOH+Hx63e5zJoeKLfZfPktWQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1376,6 +1376,10 @@ packages:
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@noble/hashes@2.3.0':
+    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
+    engines: {node: '>= 20.19.0'}
 
   '@peculiar/asn1-schema@2.9.4':
     resolution: {integrity: sha512-GjzePcT9Iw8NzeOPf73iNS9xM+TBhd/FilAfP+RQGkTMQJTVWtytN3JHJACCjf/ABNau5S7mS3g+DcuxmRgYEg==}
@@ -2343,8 +2347,8 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
-  '@types/node@26.3.0':
-    resolution: {integrity: sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw==}
+  '@types/node@26.2.0':
+    resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
   '@types/react-dom@19.2.5':
     resolution: {integrity: sha512-fMPwH9v7r/pp43yUd2/Mbiex5KouJwwR3dzHkhLREUC6764VyDsqxhAxv6OFEYR1RhjOyD1naqba8ECDBe7ZQg==}
@@ -2613,8 +2617,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  ai@7.0.78:
-    resolution: {integrity: sha512-AlHn784ceofz5XOe+AhllCUwloC4QgNogVVYMULc5GHsEmzLRjuBeLGZR6yRvL0cgkX3YV3Jq8/QqNLcPNmnqA==}
+  ai@7.0.77:
+    resolution: {integrity: sha512-muLtBSTAUCreR77L16w4AFBiX2gK/RNt84EKp8m03SN9+MfNlC5EGqYYttRjYKV3xe0a33yj1Zawj1EnjejIWw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -4175,7 +4179,7 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@ai-sdk/gateway@4.0.63(zod@4.4.3)':
+  '@ai-sdk/gateway@4.0.62(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.29(zod@4.4.3)
@@ -4823,6 +4827,8 @@ snapshots:
   '@noble/hashes@1.7.1': {}
 
   '@noble/hashes@1.8.0': {}
+
+  '@noble/hashes@2.3.0': {}
 
   '@peculiar/asn1-schema@2.9.4':
     dependencies:
@@ -5869,7 +5875,7 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  '@types/node@26.3.0':
+  '@types/node@26.2.0':
     dependencies:
       undici-types: 8.3.0
 
@@ -6030,9 +6036,9 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  ai@7.0.78(zod@4.4.3):
+  ai@7.0.77(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 4.0.63(zod@4.4.3)
+      '@ai-sdk/gateway': 4.0.62(zod@4.4.3)
       '@ai-sdk/provider': 4.0.7
       '@ai-sdk/provider-utils': 5.0.29(zod@4.4.3)
       zod: 4.4.3
