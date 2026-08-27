@@ -405,7 +405,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: ^2.0.10
-        version: 2.1.1(hono@4.13.4)
+        version: 2.1.1(hono@4.13.5)
       '@lacrew/adapter-agents-mcp':
         specifier: workspace:*
         version: link:../adapters/agents-mcp
@@ -435,7 +435,7 @@ importers:
         version: link:../sdk
       hono:
         specifier: ^4.12.31
-        version: 4.13.4
+        version: 4.13.5
       pg-boss:
         specifier: ^12.0.0
         version: 12.28.0
@@ -3204,8 +3204,8 @@ packages:
   hastscript@9.0.1:
     resolution: {integrity: sha512-g7df9rMFX/SPi34tyGCyUBREQoKkapwdY/T04Qn9TDWfHhAYt4/I0gMVirzK5wEzeUqIjEB+LXC/ypb7Aqno5w==}
 
-  hono@4.13.4:
-    resolution: {integrity: sha512-AGEwKIyRMHRv1t8Wjwa3LHxQ61X5CqrdFT+4BRNTpqS5aJNnpl5WLjADb7vFlJzI/8uK7T5QLVApCMQKNa3LgQ==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   html-void-elements@3.0.0:
@@ -4555,9 +4555,9 @@ snapshots:
       '@goat-sdk/wallet-evm': 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2)
       viem: 2.55.19(typescript@7.0.2)(zod@3.25.76)
 
-  '@hono/node-server@2.1.1(hono@4.13.4)':
+  '@hono/node-server@2.1.1(hono@4.13.5)':
     dependencies:
-      hono: 4.13.4
+      hono: 4.13.5
 
   '@img/colour@1.1.0':
     optional: true
@@ -6658,7 +6658,7 @@ snapshots:
       property-information: 7.2.0
       space-separated-tokens: 2.0.2
 
-  hono@4.13.4: {}
+  hono@4.13.5: {}
 
   html-void-elements@3.0.0: {}
 
