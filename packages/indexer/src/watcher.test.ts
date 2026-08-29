@@ -192,9 +192,7 @@ describe("every event a watcher emits carries its chain id", () => {
         chainId,
         sinks: [sink],
       });
-      await (
-        watcher as unknown as { processLog: (log: unknown) => Promise<void> }
-      ).processLog(log);
+      await (watcher as unknown as { processLog: (log: unknown) => Promise<void> }).processLog(log);
     }
 
     assert.equal(sinks[0]?.written[0]?.event.chainId, 11155111);

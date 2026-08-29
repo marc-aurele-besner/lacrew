@@ -133,5 +133,7 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createAuditStoreFromEnv(chainId?: number): AuditStore {
-  return getDatabaseUrl() ? createPgAuditStore(getDatabaseUrl(), chainId) : createMemoryAuditStore();
+  return getDatabaseUrl()
+    ? createPgAuditStore(getDatabaseUrl(), chainId)
+    : createMemoryAuditStore();
 }
