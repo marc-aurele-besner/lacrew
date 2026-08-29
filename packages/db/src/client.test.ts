@@ -7,10 +7,17 @@ import {
   getDatabaseUrl,
 } from "./client.js";
 import { orchestratorMeta } from "./schema/meta.js";
+import { auditEvents } from "./schema/audit.js";
 
 describe("@lacrew/db", () => {
   it("exports orchestrator_meta schema", () => {
     assert.equal(orchestratorMeta.key.name, "key");
+  });
+
+  it("keys the audit trail by chain", () => {
+    // The dedup identity is (chain_id, tx_hash, log_index): two chains
+    // sharing one database must never collapse or cross-attribute rows.
+    assert.equal(auditEvents.chainId.name, "chain_id");
   });
 
   it("checkDbReady is false without DATABASE_URL", async () => {
