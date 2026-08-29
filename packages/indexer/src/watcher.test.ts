@@ -7,6 +7,7 @@ import {
   transferToOutflowEvent,
 } from "./watcher.js";
 import type { AssetStack } from "@lacrew/core";
+import { MemoryEventSink } from "./sinks/memory.js";
 import { loadStore } from "./store.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -163,6 +164,45 @@ describe("logToProtocolEvent", () => {
 
   it("returns null for unknown events", () => {
     assert.equal(logToProtocolEvent("SomethingElse", {}, TX, AT), null);
+  });
+});
+
+describe("every event a watcher emits carries its chain id", () => {
+  // Two indexer processes (one per CHAIN_ID) may share one DATABASE_URL. The
+  // Postgres identity is (chain_id, tx_hash, log_index), so the same
+  // (tx_hash, log_index) pair seen by two chains must reach the sink as two
+  // events distinguished by chain — not collapse, and not cross-attribute.
+  it("stamps the same log from two chains with each watcher's chain", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lacrew-watcher-"));
+    const log = {
+      eventName: "IntentResolved",
+      args: { intentId: 1n, approved: true },
+      transactionHash: TX,
+      logIndex: 0,
+      blockNumber: null,
+    };
+
+    const sinks: MemoryEventSink[] = [];
+    for (const chainId of [11155111, 8453]) {
+      const sink = new MemoryEventSink();
+      sinks.push(sink);
+      const watcher = new EventWatcher({
+        rpcUrl: "http://127.0.0.1:1",
+        storePath: join(dir, `store-${chainId}.json`),
+        chainId,
+        sinks: [sink],
+      });
+      await (
+        watcher as unknown as { processLog: (log: unknown) => Promise<void> }
+      ).processLog(log);
+    }
+
+    assert.equal(sinks[0]?.written[0]?.event.chainId, 11155111);
+    assert.equal(sinks[1]?.written[0]?.event.chainId, 8453);
+    // Same chain coordinates — only the chain id separates the two rows.
+    assert.equal(sinks[0]?.written[0]?.txHash, sinks[1]?.written[0]?.txHash);
+    assert.equal(sinks[0]?.written[0]?.logIndex, sinks[1]?.written[0]?.logIndex);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

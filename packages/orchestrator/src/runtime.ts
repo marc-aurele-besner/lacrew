@@ -381,7 +381,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       workerAgent: worker,
       spendTarget: x402Target,
       managerAgent: manager,
-      auditStore: createAuditStoreFromEnv(),
+      auditStore: createAuditStoreFromEnv(chainId),
       runtimeStore: createRuntimeStoreFromEnv(),
       watchlist: watchlistFromEnv(),
       ...(delegations ? { delegations } : {}),
@@ -3395,7 +3395,13 @@ export class CrewRuntime {
       original and still dedupes.
     */
     this.auditSeq += 1;
-    event = { ...event, payload: { ...event.payload, seq: this.auditSeq } };
+    // Runtime rows carry the runtime's chain so the persisted trail is
+    // uniformly keyed by chain_id alongside the indexer's log rows.
+    event = {
+      ...event,
+      ...(event.chainId == null && this.chainId != null ? { chainId: this.chainId } : {}),
+      payload: { ...event.payload, seq: this.auditSeq },
+    };
     this.localAudit.push(event);
     if (this.localAudit.length > AUDIT_RING_MAX) {
       this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);

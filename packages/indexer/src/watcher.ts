@@ -3,7 +3,8 @@
  * Streams escalation + governance + treasury + session events into a JSON
  * store and out to every configured EventSink — Postgres by default
  * (orchestrator_audit_events — the stable consumer schema, F1.11) with
- * (tx_hash, log_index) dedup so backfills are idempotent.
+ * (chain_id, tx_hash, log_index) dedup so backfills are idempotent per chain
+ * and one indexer process per chain can share a database.
  * TODO: Replace the watch loop with Ponder once multi-chain reorg handling
  * matters. That swaps the event *source*; sinks are already pluggable.
  */
@@ -273,9 +274,12 @@ export class EventWatcher {
   private lastErrorAt = 0;
   private readonly sinks: EventSink[];
   private readonly blockTimes = new Map<bigint, string>();
+  /** Stamped onto every event this watcher emits; part of the dedup identity. */
+  private readonly chainId: number;
 
   constructor(options: WatcherOptions) {
     const chainId = options.chainId ?? 31337;
+    this.chainId = chainId;
     this.addresses = getAddresses(chainId);
     this.router = options.routerAddress ?? this.addresses.escalationRouter;
     this.storePath = options.storePath;
@@ -321,6 +325,7 @@ export class EventWatcher {
     const event = build(args, stack, at, log.transactionHash ?? null);
     if (!event) return;
     event.atSource = atSource;
+    event.chainId = this.chainId;
     if (!opts.skipJsonAudit) this.store.audit.push(event);
     saveStore(this.storePath, this.store);
     await writeToSinks(this.sinks, {
@@ -332,8 +337,8 @@ export class EventWatcher {
 
   /**
    * Index historical logs from `fromBlock` to latest. Idempotent: Postgres
-   * dedups on (tx_hash, log_index); the JSON audit is rewritten from scratch
-   * only when currently empty (otherwise left to live watch).
+   * dedups on (chain_id, tx_hash, log_index); the JSON audit is rewritten
+   * from scratch only when currently empty (otherwise left to live watch).
    */
   async backfill(fromBlock = 0n): Promise<number> {
     const collected: DecodedLog[] = [];
@@ -446,6 +451,7 @@ export class EventWatcher {
     const event = logToProtocolEvent(eventName, args, log.transactionHash, at);
     if (!event) return;
     event.atSource = atSource;
+    event.chainId = this.chainId;
 
     if (eventName === "IntentCreated") {
       await this.upsertFromChain(

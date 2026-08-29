@@ -58,7 +58,7 @@ await waitForRpc(rpcUrl);
 
 const watcher = new EventWatcher({ rpcUrl, storePath, chainId });
 
-// Historical backfill (idempotent: Postgres dedups on tx_hash+log_index).
+// Historical backfill (idempotent: Postgres dedups on chain_id+tx_hash+log_index).
 // INDEXER_BACKFILL=0 disables; INDEXER_FROM_BLOCK sets the start block.
 if (process.env.INDEXER_BACKFILL !== "0") {
   const fromBlock = BigInt(process.env.INDEXER_FROM_BLOCK ?? "0");

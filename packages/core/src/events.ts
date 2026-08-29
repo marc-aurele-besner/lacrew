@@ -435,6 +435,14 @@ export interface ProtocolEvent {
    * off as block time is a falsified record, and nothing downstream could tell.
    */
   atSource?: "block" | "ingest";
+  /**
+   * EIP-155 chain id of the chain this event belongs to. Set by the indexer
+   * on every log-sourced event and by the orchestrator on its own rows when
+   * it knows its chain, so one Postgres can hold a testnet and a mainnet
+   * trail without a consumer mixing them. Absent only on sources with no
+   * chain at all (mock demos).
+   */
+  chainId?: number;
   orgId?: string;
   payload: Record<string, unknown>;
 }
