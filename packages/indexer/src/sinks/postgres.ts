@@ -3,19 +3,21 @@ import type { EventSink, IndexedEvent } from "./types.js";
 
 /**
  * The consumer schema: orchestrator_audit_events, deduped on
- * (tx_hash, log_index). Guardian, Activity, and the dashboard feed all read
- * this table rather than any indexer API.
+ * (chain_id, tx_hash, log_index). Guardian, Activity, and the dashboard feed
+ * all read this table rather than any indexer API.
  */
 export class PostgresEventSink implements EventSink {
   readonly name = "postgres";
   private db: DbHandle | undefined;
 
   async write({ event, txHash, logIndex }: IndexedEvent): Promise<void> {
-    // Without both, the row cannot be deduped, so a replay would duplicate it.
-    if (txHash == null || logIndex == null) return;
+    // Without all three, the row cannot be deduped, so a replay would
+    // duplicate it — and a log without a chain id would collide with the same
+    // (tx_hash, log_index) pair from a different chain sharing this database.
+    if (event.chainId == null || txHash == null || logIndex == null) return;
     try {
       this.db ??= createDb();
-      await insertChainAuditEvent(this.db, { ...event, txHash, logIndex });
+      await insertChainAuditEvent(this.db, { ...event, chainId: event.chainId, txHash, logIndex });
     } catch (err) {
       console.error(
         "[@lacrew/indexer] postgres insert failed:",

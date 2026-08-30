@@ -57,25 +57,34 @@ export function createMemoryAuditStore(): AuditStore {
   };
 }
 
-export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
+/**
+ * Postgres-backed store, optionally scoped to one chain. When `chainId` is
+ * set, rows are stamped with it on write and every read answers only that
+ * chain — a testnet orchestrator and a mainnet one can share a database
+ * without hydrating or billing from each other's trail. Without it the store
+ * reads the whole table (mock demos, single-chain deployments).
+ */
+export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): AuditStore {
   let handle: DbHandle | undefined;
   const db = () => (handle ??= createDb(url));
+  const scope = chainId === undefined ? undefined : { chainId };
 
   return {
     name: "postgres",
     append: async (event) => {
       try {
-        await insertAuditEvent(db(), event);
+        await insertAuditEvent(db(), { ...event, chainId: event.chainId ?? chainId ?? null });
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit append failed:", err);
       }
     },
     recent: async (limit) => {
       try {
-        const rows = await recentAuditEvents(db(), limit);
+        const rows = await recentAuditEvents(db(), limit, scope);
         return rows.map((row) => ({
           type: row.type as ProtocolEvent["type"],
           at: row.at,
+          ...(row.chainId == null ? {} : { chainId: row.chainId }),
           ...(row.orgId ? { orgId: row.orgId } : {}),
           payload: row.payload,
         }));
@@ -86,7 +95,7 @@ export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
     },
     countByTypeSince: async (sinceIso) => {
       try {
-        const rows = await countAuditEventsByType(db(), sinceIso);
+        const rows = await countAuditEventsByType(db(), sinceIso, scope);
         return Object.fromEntries(rows.map((row) => [row.type, row.count]));
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit count failed:", err);
@@ -95,11 +104,12 @@ export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
     },
     between: async (fromIso, toIso, limit) => {
       try {
-        const rows = await auditEventsBetween(db(), fromIso, toIso, limit);
+        const rows = await auditEventsBetween(db(), fromIso, toIso, limit, scope);
         return {
           events: rows.map((row) => ({
             type: row.type as ProtocolEvent["type"],
             at: row.at,
+            ...(row.chainId == null ? {} : { chainId: row.chainId }),
             ...(row.orgId ? { orgId: row.orgId } : {}),
             payload: row.payload,
           })),
@@ -122,6 +132,8 @@ export function createPgAuditStore(url = getDatabaseUrl()): AuditStore {
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createAuditStoreFromEnv(): AuditStore {
-  return getDatabaseUrl() ? createPgAuditStore() : createMemoryAuditStore();
+export function createAuditStoreFromEnv(chainId?: number): AuditStore {
+  return getDatabaseUrl()
+    ? createPgAuditStore(getDatabaseUrl(), chainId)
+    : createMemoryAuditStore();
 }

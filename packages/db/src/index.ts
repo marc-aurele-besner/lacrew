@@ -14,6 +14,7 @@ export {
   insertChainAuditEvent,
   recentAuditEvents,
   type AuditEventRow,
+  type AuditReadOptions,
 } from "./audit.js";
 export {
   upsertFlowDefinition,

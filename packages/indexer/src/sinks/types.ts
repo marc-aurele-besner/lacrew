@@ -11,6 +11,7 @@
 import type { ProtocolEvent } from "@lacrew/core";
 
 export interface IndexedEvent {
+  /** Carries `chainId` — the watcher stamps every log-sourced event with its chain. */
   event: ProtocolEvent;
   /** Null for events the chain did not carry a tx for (never, in practice). */
   txHash: string | null;
