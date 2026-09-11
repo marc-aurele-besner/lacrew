@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "LaCrew — payroll, budgets, and approvals for AI agent teams",
   "license": "Apache-2.0",
-  "packageManager": "pnpm@12.3.4",
+  "packageManager": "pnpm@12.4.1",
   "engines": {
     "node": ">=20"
   },
