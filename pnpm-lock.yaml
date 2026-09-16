@@ -473,7 +473,7 @@ importers:
         version: 2.4.0
       '@safe-global/safe-modules-deployments':
         specifier: ^3.0.8
-        version: 3.0.9
+        version: 3.0.10
       viem:
         specifier: ^2.21.0
         version: 2.56.3(typescript@7.0.2)(zod@4.4.3)
@@ -1915,9 +1915,6 @@ packages:
 
   '@safe-global/safe-modules-deployments@3.0.10':
     resolution: {integrity: sha512-6TWp62j4MxQxTttL7WehrQMI3irMeQo3/mKUuSWb0+oE7fzioQWZ+QYT3sD92cfsKITFIWJ2rHyeyXIbSq0qMg==}
-
-  '@safe-global/safe-modules-deployments@3.0.9':
-    resolution: {integrity: sha512-tgW/ln4if6dLohAQVUT51/a+tTUMuTm3dKvGPgXmHaLUFS8P3f28+cs671rsyMlMa4A/zXJKOdFgBsfCTyfw0A==}
 
   '@safe-global/types-kit@4.0.1':
     resolution: {integrity: sha512-zmIYyAH9mcBcqHszPgcfNjOJYuPSvWCcc/f8zeznh7N1HSA7jEoFErO06O4QDfwAAS4aEyoyjhPyfHbVYRheZg==}
@@ -5393,8 +5390,6 @@ snapshots:
       semver: 7.8.5
 
   '@safe-global/safe-modules-deployments@3.0.10': {}
-
-  '@safe-global/safe-modules-deployments@3.0.9': {}
 
   '@safe-global/types-kit@4.0.1(typescript@7.0.2)(zod@4.4.3)':
     dependencies:
