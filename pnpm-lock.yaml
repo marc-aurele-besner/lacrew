@@ -480,7 +480,7 @@ importers:
     devDependencies:
       '@safe-global/protocol-kit':
         specifier: ^8.0.4
-        version: 8.0.6(typescript@7.0.2)(zod@4.4.3)
+        version: 8.0.7(typescript@7.0.2)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
         version: 26.4.1
@@ -1906,12 +1906,15 @@ packages:
   '@radix-ui/rect@1.1.3':
     resolution: {integrity: sha512-JtyZR+mqgBibTo8xea3B6ZRmzZiM/YeVBtUkas6zMuXjAlfIFIW2FgqeM9eLyvEaYX66vr6DJMK+4U6LV0KhNw==}
 
-  '@safe-global/protocol-kit@8.0.6':
-    resolution: {integrity: sha512-Jmu4d70Mkx6ESOHqEmX3vj+XqQEyCOoUIZKJeqIRdWJWMwIUAShiK4F5iU5fnf3hNn9ayGvDQKgi4Ws/3aTA7g==}
+  '@safe-global/protocol-kit@8.0.7':
+    resolution: {integrity: sha512-QKbRQmaQWHxsKB3/cogQ0JBzsnewSo2yoMvTvepicBy5N1C3FPRjiRGJBfQ/H9v881BvsLZXggbIh7e4qrjidg==}
 
-  '@safe-global/safe-deployments@1.37.62':
-    resolution: {integrity: sha512-EJMdtIsK0g89hedZDNhbQiyWGfLACKjeOLMlSOpMA7drIgAkht6wva/Qfv3DeJT7tAMFQAkgkwMnPxKZWn/6Pw==}
+  '@safe-global/safe-deployments@1.37.63':
+    resolution: {integrity: sha512-dH4V3iHH5tZdxx3DBvvBzmnlOZpKMXUx6CBFGUwlARnUa9MEVVyg8Sbpc3DplsaPB5fLh0J97+WB5ylxhLWCRA==}
     engines: {node: '>=22.0.0', pnpm: '>=10.16.0'}
+
+  '@safe-global/safe-modules-deployments@3.0.10':
+    resolution: {integrity: sha512-6TWp62j4MxQxTttL7WehrQMI3irMeQo3/mKUuSWb0+oE7fzioQWZ+QYT3sD92cfsKITFIWJ2rHyeyXIbSq0qMg==}
 
   '@safe-global/safe-modules-deployments@3.0.9':
     resolution: {integrity: sha512-tgW/ln4if6dLohAQVUT51/a+tTUMuTm3dKvGPgXmHaLUFS8P3f28+cs671rsyMlMa4A/zXJKOdFgBsfCTyfw0A==}
@@ -5368,10 +5371,10 @@ snapshots:
 
   '@radix-ui/rect@1.1.3': {}
 
-  '@safe-global/protocol-kit@8.0.6(typescript@7.0.2)(zod@4.4.3)':
+  '@safe-global/protocol-kit@8.0.7(typescript@7.0.2)(zod@4.4.3)':
     dependencies:
-      '@safe-global/safe-deployments': 1.37.62
-      '@safe-global/safe-modules-deployments': 3.0.9
+      '@safe-global/safe-deployments': 1.37.63
+      '@safe-global/safe-modules-deployments': 3.0.10
       '@safe-global/types-kit': 4.0.1(typescript@7.0.2)(zod@4.4.3)
       abitype: 1.3.0(typescript@7.0.2)(zod@4.4.3)
       semver: 7.8.5
@@ -5385,9 +5388,11 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@safe-global/safe-deployments@1.37.62':
+  '@safe-global/safe-deployments@1.37.63':
     dependencies:
       semver: 7.8.5
+
+  '@safe-global/safe-modules-deployments@3.0.10': {}
 
   '@safe-global/safe-modules-deployments@3.0.9': {}
 
