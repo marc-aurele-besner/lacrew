@@ -168,7 +168,7 @@ importers:
     devDependencies:
       prettier:
         specifier: ^3.5.3
-        version: 3.9.6
+        version: 3.9.7
       turbo:
         specifier: ^2.5.4
         version: 2.10.12
@@ -3925,8 +3925,8 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  prettier@3.9.6:
-    resolution: {integrity: sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==}
+  prettier@3.9.7:
+    resolution: {integrity: sha512-T3mF5P7HFzZVLDQuCUNtJj6WK1pcpLMweMNUVwGb01bLNkH9AkKxtZvmInw8K6bnn2O3d6/5RHl6zSHiBAD0Og==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -7649,7 +7649,7 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  prettier@3.9.6: {}
+  prettier@3.9.7: {}
 
   property-information@7.2.0: {}
 
