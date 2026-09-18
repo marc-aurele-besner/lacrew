@@ -196,7 +196,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -377,7 +377,7 @@ importers:
         version: 1.56.0(debug@4.4.3)(typescript@7.0.2)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -402,7 +402,7 @@ importers:
         version: 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.56.6(typescript@7.0.2)(zod@3.25.76))
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -427,7 +427,7 @@ importers:
         version: 2.0.0(typescript@7.0.2)(viem@2.56.6(typescript@7.0.2)(zod@4.4.3))(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -483,7 +483,7 @@ importers:
         version: 8.0.7(typescript@7.0.2)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -495,7 +495,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -514,7 +514,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       drizzle-kit:
         specifier: ^0.31.4
         version: 0.31.10
@@ -551,7 +551,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -606,7 +606,7 @@ importers:
         version: 2.4.0
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -625,7 +625,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.4.1
+        version: 26.6.1
       tsx:
         specifier: ^4.19.4
         version: 4.23.13
@@ -2512,8 +2512,8 @@ packages:
   '@types/node@24.13.5':
     resolution: {integrity: sha512-TXyindR+lBr22aJIdMQzCFHPHR6cR4js838mRDCSz5hOKWZvZwsXSSiXDmjRj4iJmgl+sR9O+1mkoVBSMadNug==}
 
-  '@types/node@26.4.1':
-    resolution: {integrity: sha512-k97ENvZWtvA6yqz5/FS6a7duDgOPEeOQOc2iKS/nY6mX6qJUKtLnWzQS+Xj6tXweyj6ZcTAK2Qecetnvi9nCLA==}
+  '@types/node@26.6.1':
+    resolution: {integrity: sha512-VqGJBMCtdhqkBUCcBLvywI0NJ+KLuVzgNnlBUNFOQjqVxzo2lxLUNg1DSey8+u2u6ktswSAxg+s68QLzWHNOuA==}
 
   '@types/react-dom@19.2.7':
     resolution: {integrity: sha512-I8bPpDLcHBv1qiIiXDCy71Rt8eQDKJP0sMSWJphDdAcdqiJ1sGpZamavoEIRZmYzjia9LuEb2HlYdDpmoENpvQ==}
@@ -4214,8 +4214,8 @@ packages:
   undici-types@7.29.0:
     resolution: {integrity: sha512-vamA8dGlzMwhpyYpQp9d8vka3o4D/yn5I7ez7Or+msDA4bZ8Uh+Zy91WvWf3I73gDAkFha9JcYRqm2li0Npfgg==}
 
-  undici-types@8.3.0:
-    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
@@ -6075,9 +6075,9 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  '@types/node@26.4.1':
+  '@types/node@26.6.1':
     dependencies:
-      undici-types: 8.3.0
+      undici-types: 8.9.0
 
   '@types/react-dom@19.2.7(@types/react@19.2.18)':
     dependencies:
@@ -8030,7 +8030,7 @@ snapshots:
 
   undici-types@7.29.0: {}
 
-  undici-types@8.3.0: {}
+  undici-types@8.9.0: {}
 
   undici@7.29.0: {}
 
