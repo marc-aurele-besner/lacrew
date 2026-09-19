@@ -596,7 +596,7 @@ importers:
         version: 4.13.6
       pg-boss:
         specifier: ^12.0.0
-        version: 12.33.1
+        version: 12.33.2
       viem:
         specifier: ^2.55.2
         version: 2.56.8(typescript@7.0.2)(zod@4.4.3)
@@ -3866,8 +3866,8 @@ packages:
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
 
-  pg-boss@12.33.1:
-    resolution: {integrity: sha512-u0DdaO4DsDV2TeuOeie2pXxmoYmO84CRlAX/7AEdzpf3y+NOEjt+As714UmzaCNTgnKdcvLItnN9AZklsjzOLQ==}
+  pg-boss@12.33.2:
+    resolution: {integrity: sha512-45Tdl1I0UxwDY6XxdFvB5H8QdB3FEKeiTOBrnj7/RznhX4yRTPk5shI+FjfrO4fWZVdTimrc5bulsoPaeCeu2w==}
     engines: {node: '>=22.12.0'}
     hasBin: true
 
@@ -7627,7 +7627,7 @@ snapshots:
     dependencies:
       entities: 6.0.1
 
-  pg-boss@12.33.1:
+  pg-boss@12.33.2:
     dependencies:
       cron-parser: 5.10.1
       pg: 8.23.0
