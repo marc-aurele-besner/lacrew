@@ -358,7 +358,7 @@ importers:
         version: 24.13.6
       ai:
         specifier: ^7.0.31
-        version: 7.0.110(zod@4.6.5)
+        version: 7.0.111(zod@4.6.5)
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -2786,8 +2786,8 @@ packages:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
     engines: {node: '>= 6.0.0'}
 
-  ai@7.0.110:
-    resolution: {integrity: sha512-rpqS0jhlUc1OL7Is5cz0tKd/ygweorFc9FZ2YpEyUV4+N/XWV8rs8ClIjgxidTrTI7WFqGUxBpVObmoEa7DP5A==}
+  ai@7.0.111:
+    resolution: {integrity: sha512-jd35WisL5FT7lFB6wIsZ38G0EaL4p1o+bUuRfkZGTXqO21U3SWyEZ+muV7N191QQfNeExgoyaeFoa8Jx6Uo+0A==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -6266,7 +6266,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  ai@7.0.110(zod@4.6.5):
+  ai@7.0.111(zod@4.6.5):
     dependencies:
       '@ai-sdk/gateway': 4.0.89(zod@4.6.5)
       '@ai-sdk/provider': 4.0.17
