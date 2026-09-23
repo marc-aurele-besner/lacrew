@@ -596,7 +596,7 @@ importers:
         version: 4.13.6
       pg-boss:
         specifier: ^12.0.0
-        version: 12.33.2
+        version: 12.33.4
       viem:
         specifier: ^2.55.2
         version: 2.56.8(typescript@7.0.2)(zod@4.4.3)
@@ -3866,8 +3866,8 @@ packages:
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
 
-  pg-boss@12.33.2:
-    resolution: {integrity: sha512-45Tdl1I0UxwDY6XxdFvB5H8QdB3FEKeiTOBrnj7/RznhX4yRTPk5shI+FjfrO4fWZVdTimrc5bulsoPaeCeu2w==}
+  pg-boss@12.33.4:
+    resolution: {integrity: sha512-LsLasc7MWXZqFBF0te+everd6EYt2Qcf9NfukcQL6Ae8HqVpu1Y1N/rJpoDbNG23rZYZ9jzB2kPb5UUbuq6JOQ==}
     engines: {node: '>=22.12.0'}
     hasBin: true
 
@@ -4063,8 +4063,8 @@ packages:
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
-  rrule-temporal@2.2.5:
-    resolution: {integrity: sha512-jBa4T38+6LslTJv/calJiphIRrcU6vFV2Icx3XCe377uz79IT7Fr4h/chLWifYERvXjQkR/6BeQPKl89O1s5Vw==}
+  rrule-temporal@2.2.6:
+    resolution: {integrity: sha512-izTnMn8pAFNLDuyRfF+H53YnWOF7tsA5+RcGrha4onVzOnXn8YXQ7tJE5StNZvAZXvxz0In3R/IQhbQJpi7EYQ==}
 
   scheduler@0.28.0:
     resolution: {integrity: sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw==}
@@ -7632,11 +7632,11 @@ snapshots:
     dependencies:
       entities: 6.0.1
 
-  pg-boss@12.33.2:
+  pg-boss@12.33.4:
     dependencies:
       cron-parser: 5.10.1
       pg: 8.23.0
-      rrule-temporal: 2.2.5
+      rrule-temporal: 2.2.6
       serialize-error: 13.0.1
     transitivePeerDependencies:
       - pg-native
@@ -7865,7 +7865,7 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
-  rrule-temporal@2.2.5:
+  rrule-temporal@2.2.6:
     dependencies:
       temporal-spec: 1.0.1
 
