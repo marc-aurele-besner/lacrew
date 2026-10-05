@@ -196,7 +196,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -377,7 +377,7 @@ importers:
         version: 1.57.1(debug@4.4.3)(typescript@7.0.2)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -402,7 +402,7 @@ importers:
         version: 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.57.2(typescript@7.0.2)(zod@3.25.76))
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -427,7 +427,7 @@ importers:
         version: 2.0.0(typescript@7.0.2)(viem@2.57.2(typescript@7.0.2)(zod@4.4.3))(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -483,7 +483,7 @@ importers:
         version: 8.0.7(typescript@7.0.2)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -495,7 +495,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -514,7 +514,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       drizzle-kit:
         specifier: ^0.31.4
         version: 0.31.11
@@ -551,7 +551,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -606,7 +606,7 @@ importers:
         version: 2.4.0
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -625,7 +625,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
-        version: 26.6.3
+        version: 26.6.4
       tsx:
         specifier: ^4.19.4
         version: 4.23.15
@@ -2512,8 +2512,8 @@ packages:
   '@types/node@24.19.1':
     resolution: {integrity: sha512-aS3/DG0oM05K0RIXXP+hKjinGG5IgSSVGzswZxW3O0sS3pH4/fycXundUC9XsszgKCk4gHXylTEK6hyFxVxnoQ==}
 
-  '@types/node@26.6.3':
-    resolution: {integrity: sha512-dsqMQQoeTLqu9wynDD00q573mNzso3IdQOAfHRJqLCcmCFPoGo9A1bDpUcv/9tnKpErQWv9uKeGfl37EIS02Yg==}
+  '@types/node@26.6.4':
+    resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
 
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
@@ -6098,7 +6098,7 @@ snapshots:
     dependencies:
       undici-types: 7.24.6
 
-  '@types/node@26.6.3':
+  '@types/node@26.6.4':
     dependencies:
       undici-types: 8.9.0
 
