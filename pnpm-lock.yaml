@@ -596,7 +596,7 @@ importers:
         version: 4.13.13
       pg-boss:
         specifier: ^12.0.0
-        version: 12.36.0(@opentelemetry/api@1.9.1)
+        version: 12.37.0(@opentelemetry/api@1.9.1)
       viem:
         specifier: ^2.55.2
         version: 2.57.3(typescript@7.0.2)(zod@4.6.5)
@@ -3892,8 +3892,8 @@ packages:
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
 
-  pg-boss@12.36.0:
-    resolution: {integrity: sha512-67Jj4xNuv8mkShTzfmsFtJeVa2ChXyrknjlw/WKZCIMuzRTwyHOUGjl2mf5Snrhmb0xglvFbkfAt5+hLtXukag==}
+  pg-boss@12.37.0:
+    resolution: {integrity: sha512-3TrhjNRPVQqkLVvrIcgUMBK1rHG3eKINq7kXBvHU+qUdmiiiGJbkIW25rAIUQB715NCpdwAqY3PquhOoSEa1/g==}
     engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
@@ -7657,7 +7657,7 @@ snapshots:
     dependencies:
       entities: 6.0.1
 
-  pg-boss@12.36.0(@opentelemetry/api@1.9.1):
+  pg-boss@12.37.0(@opentelemetry/api@1.9.1):
     dependencies:
       '@opentelemetry/api': 1.9.1
       cron-parser: 5.10.1
