@@ -596,7 +596,7 @@ importers:
         version: 4.13.13
       pg-boss:
         specifier: ^12.0.0
-        version: 12.37.1(@opentelemetry/api@1.9.1)
+        version: 12.38.0(@opentelemetry/api@1.9.1)
       viem:
         specifier: ^2.55.2
         version: 2.57.5(typescript@7.0.2)(zod@4.6.5)
@@ -2920,8 +2920,8 @@ packages:
     engines: {node: '>=0.8'}
     hasBin: true
 
-  cron-parser@5.10.1:
-    resolution: {integrity: sha512-pKRrRagItwk9rGIStcUyMxFX34x56zoX3KDf9HJ4ttwkXIK1qxK63EvXvEDmlxI9AdPJ+Y7TEKRftRlW5eSS7A==}
+  cron-parser@5.10.2:
+    resolution: {integrity: sha512-JfAYMY0LZaWQTuict8PhtF/ksSnq8xefSDmQUnnoqvkPYkU/y3UP0DTWzJKFBz0P1IXsDG8q0vY3zHkoFZOhvw==}
     engines: {node: '>=18'}
 
   crypt@0.0.2:
@@ -3862,8 +3862,8 @@ packages:
   parse-entities@4.0.2:
     resolution: {integrity: sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==}
 
-  pg-boss@12.37.1:
-    resolution: {integrity: sha512-LghWeOIbMCiLcTY3+8MInXaJ0wk0AOkbeUZ8oE+cGO0uoheGSW3GK57eDqEbrDGpwTIpX9BVphvdvWEDYTcJ9A==}
+  pg-boss@12.38.0:
+    resolution: {integrity: sha512-felA3fyPSJwWk5cb/VwAgnudCAzWEdgBjjf+eukXm8pExlwkhjdBbOMukMyG5s8uZHO6fZZZcaIaTa3oKpfSCg==}
     engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
@@ -6362,7 +6362,7 @@ snapshots:
 
   crc-32@1.2.2: {}
 
-  cron-parser@5.10.1:
+  cron-parser@5.10.2:
     dependencies:
       luxon: 3.7.2
 
@@ -7588,10 +7588,10 @@ snapshots:
       is-decimal: 2.0.1
       is-hexadecimal: 2.0.1
 
-  pg-boss@12.37.1(@opentelemetry/api@1.9.1):
+  pg-boss@12.38.0(@opentelemetry/api@1.9.1):
     dependencies:
       '@opentelemetry/api': 1.9.1
-      cron-parser: 5.10.1
+      cron-parser: 5.10.2
       pg: 8.23.1
       rrule-temporal: 2.2.8
       serialize-error: 13.0.2
