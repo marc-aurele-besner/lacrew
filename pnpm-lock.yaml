@@ -314,7 +314,7 @@ importers:
     devDependencies:
       '@langchain/core':
         specifier: ^1.2.3
-        version: 1.2.17(@opentelemetry/api@1.9.1)(ws@8.21.3)
+        version: 1.2.18(@opentelemetry/api@1.9.1)(ws@8.21.3)
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
@@ -1411,8 +1411,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@langchain/core@1.2.17':
-    resolution: {integrity: sha512-aLQLSed6oLCMLtJHrINhnFmsu79G2UiDlRslbOx+TSN9NmU+WuDv1OtVxrLpYglhXNy53elSduMVk3XBPG9ulw==}
+  '@langchain/core@1.2.18':
+    resolution: {integrity: sha512-ccwixbasSfP0ZGEUsN0/qdA1PK3GBzA1fwSi7PlQpvnT78/chR5FAKcodsvSk8imUNP/SWWeWnBG2VDrR1JLJQ==}
     engines: {node: '>=20'}
 
   '@mdx-js/mdx@3.1.1':
@@ -3433,8 +3433,8 @@ packages:
   json-schema@0.4.0:
     resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
-  langsmith@0.9.0:
-    resolution: {integrity: sha512-tlg/aG7qezAKY6G3fgADSX7PkRj+JKoF3z7QNkCMsAOvwvuzhiwP9Amn1Z+zAIxuKoWuXQdIjtFN0LVmUC1oUQ==}
+  langsmith@0.11.0:
+    resolution: {integrity: sha512-NMyaEhfHKAVPdXR8jqP1in4BAr2RhJTmBsH+ZzhvBDTxWUsuaprnJxkRe/3NY5d2+wCaPtzbDK2Myhh6vg2q7w==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -4879,12 +4879,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@langchain/core@1.2.17(@opentelemetry/api@1.9.1)(ws@8.21.3)':
+  '@langchain/core@1.2.18(@opentelemetry/api@1.9.1)(ws@8.21.3)':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.9.0(@opentelemetry/api@1.9.1)(ws@8.21.3)
+      langsmith: 0.11.0(@opentelemetry/api@1.9.1)(ws@8.21.3)
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.5
@@ -6878,7 +6878,7 @@ snapshots:
 
   json-schema@0.4.0: {}
 
-  langsmith@0.9.0(@opentelemetry/api@1.9.1)(ws@8.21.3):
+  langsmith@0.11.0(@opentelemetry/api@1.9.1)(ws@8.21.3):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
