@@ -473,7 +473,7 @@ importers:
         version: 2.4.0
       '@safe-global/safe-modules-deployments':
         specifier: ^3.0.8
-        version: 3.0.10
+        version: 3.0.11
       viem:
         specifier: ^2.21.0
         version: 2.57.7(typescript@7.0.2)(zod@4.6.5)
@@ -1920,8 +1920,8 @@ packages:
     resolution: {integrity: sha512-dH4V3iHH5tZdxx3DBvvBzmnlOZpKMXUx6CBFGUwlARnUa9MEVVyg8Sbpc3DplsaPB5fLh0J97+WB5ylxhLWCRA==}
     engines: {node: '>=22.0.0', pnpm: '>=10.16.0'}
 
-  '@safe-global/safe-modules-deployments@3.0.10':
-    resolution: {integrity: sha512-6TWp62j4MxQxTttL7WehrQMI3irMeQo3/mKUuSWb0+oE7fzioQWZ+QYT3sD92cfsKITFIWJ2rHyeyXIbSq0qMg==}
+  '@safe-global/safe-modules-deployments@3.0.11':
+    resolution: {integrity: sha512-H6ceE3n4jCyc6i2rMYMqpKPnXpUCG5Bw8bC44q3EzicdDTq6WZOxSzuaUwx/EO12Nwr9HPDxzya4Nb/wsW0A+Q==}
 
   '@safe-global/types-kit@4.0.1':
     resolution: {integrity: sha512-zmIYyAH9mcBcqHszPgcfNjOJYuPSvWCcc/f8zeznh7N1HSA7jEoFErO06O4QDfwAAS4aEyoyjhPyfHbVYRheZg==}
@@ -5408,7 +5408,7 @@ snapshots:
   '@safe-global/protocol-kit@8.0.7(typescript@7.0.2)(zod@4.6.5)':
     dependencies:
       '@safe-global/safe-deployments': 1.37.63
-      '@safe-global/safe-modules-deployments': 3.0.10
+      '@safe-global/safe-modules-deployments': 3.0.11
       '@safe-global/types-kit': 4.0.1(typescript@7.0.2)(zod@4.6.5)
       abitype: 1.3.0(typescript@7.0.2)(zod@4.6.5)
       semver: 7.8.5
@@ -5426,7 +5426,7 @@ snapshots:
     dependencies:
       semver: 7.8.5
 
-  '@safe-global/safe-modules-deployments@3.0.10': {}
+  '@safe-global/safe-modules-deployments@3.0.11': {}
 
   '@safe-global/types-kit@4.0.1(typescript@7.0.2)(zod@4.6.5)':
     dependencies:
