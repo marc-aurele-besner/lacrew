@@ -6,7 +6,10 @@ FROM node:26-bookworm-slim AS base
 WORKDIR /app
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Node 25+ images no longer ship corepack, so it is installed from npm
+# explicitly. Only the pnpm shim is enabled, which leaves npm itself alone;
+# the shim still resolves the pnpm version from the packageManager field.
+RUN npm install -g corepack && corepack enable pnpm
 
 FROM base AS build
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
