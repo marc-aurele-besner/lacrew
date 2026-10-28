@@ -23,7 +23,7 @@
     "@lacrew/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "ai": "^7.0.31",
     "tsx": "^4.19.4",
     "typescript": "^7.0.0"
