@@ -480,7 +480,7 @@ importers:
     devDependencies:
       '@safe-global/protocol-kit':
         specifier: ^8.0.4
-        version: 8.0.10(typescript@7.0.2)(zod@4.6.7)
+        version: 8.0.11(typescript@7.0.2)(zod@4.6.7)
       '@types/node':
         specifier: ^26.1.1
         version: 26.6.5
@@ -1913,11 +1913,11 @@ packages:
   '@radix-ui/rect@1.1.3':
     resolution: {integrity: sha512-JtyZR+mqgBibTo8xea3B6ZRmzZiM/YeVBtUkas6zMuXjAlfIFIW2FgqeM9eLyvEaYX66vr6DJMK+4U6LV0KhNw==}
 
-  '@safe-global/protocol-kit@8.0.10':
-    resolution: {integrity: sha512-H1x7rUE0g4953LvXV2VwicVzLd++OP9vDHlnW+3gdE8UtseLgi0/9UMaKlt3XGvQFWd0tLWYKE/v9+b1Cfln1w==}
+  '@safe-global/protocol-kit@8.0.11':
+    resolution: {integrity: sha512-N0KBBb5fixmttg8hitj9SVSD6qWs2snoW2IEBPsucu+ftWp+xZOEpcmrYcYGPe+BjutyvzF+stLEW2aj5oU/xA==}
 
-  '@safe-global/safe-deployments@1.37.65':
-    resolution: {integrity: sha512-07Pn5PRM127l+S0oScQk2R+Cp5YebuscC7pJOT1l7WTz3qScp6ZD3hc+yWSJM9VREhGopBTBe/mzE8ygvLpNow==}
+  '@safe-global/safe-deployments@1.37.66':
+    resolution: {integrity: sha512-LxnZcBmAHplv3KuEQlcFEd4V31Jdti7rAztRMe5e+KmL8Off0YFnQfPv4qI5fOvKFTq2Atl9fJ+qNRDeJzAP/A==}
     engines: {node: '>=22.0.0', pnpm: '>=10.16.0'}
 
   '@safe-global/safe-modules-deployments@3.0.13':
@@ -5413,9 +5413,9 @@ snapshots:
 
   '@radix-ui/rect@1.1.3': {}
 
-  '@safe-global/protocol-kit@8.0.10(typescript@7.0.2)(zod@4.6.7)':
+  '@safe-global/protocol-kit@8.0.11(typescript@7.0.2)(zod@4.6.7)':
     dependencies:
-      '@safe-global/safe-deployments': 1.37.65
+      '@safe-global/safe-deployments': 1.37.66
       '@safe-global/safe-modules-deployments': 3.0.13
       '@safe-global/types-kit': 4.0.1(typescript@7.0.2)(zod@4.6.7)
       abitype: 1.3.0(typescript@7.0.2)(zod@4.6.7)
@@ -5430,7 +5430,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@safe-global/safe-deployments@1.37.65':
+  '@safe-global/safe-deployments@1.37.66':
     dependencies:
       semver: 7.8.5
 
