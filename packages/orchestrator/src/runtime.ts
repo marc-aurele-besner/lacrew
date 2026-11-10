@@ -164,6 +164,12 @@ export type NodeStackModuleSpec =
 const AUDIT_RING_MAX = 200;
 /** How long a persisted-audit read is reused; the dashboard polls every 3s. */
 const AUDIT_STORE_TTL_MS = 2_000;
+const DAY_MS = 86_400_000;
+
+/** The UTC calendar day (`YYYY-MM-DD`) an epoch-ms instant falls in. */
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
 
 export interface CrewRuntimeOptions {
   /**
@@ -1751,6 +1757,110 @@ export class CrewRuntime {
       }
     }
     return { since: sinceIso, counts, complete: false, store: "memory" };
+  }
+
+  /**
+   * Operation counts per UTC day over `[fromIso, toIso)` — the read a usage
+   * chart is drawn from, in the vocabulary of `usage()`.
+   *
+   * Every UTC day the window touches is present, zero-filled as `{}` when
+   * nothing happened, so a chart has a continuous axis; the first and last day
+   * hold only the part of the day inside the window. From the full persisted
+   * trail when a database is wired (`complete: true`); otherwise from the
+   * bounded in-memory ring, flagged incomplete — a ring that forgot its oldest
+   * events draws early days lower than they were.
+   */
+  async usageDaily(
+    fromIso: string,
+    toIso: string,
+  ): Promise<{
+    from: string;
+    to: string;
+    days: Array<{ day: string; counts: Record<string, number> }>;
+    complete: boolean;
+    store: string;
+  }> {
+    const from = Date.parse(fromIso);
+    const to = Date.parse(toIso);
+    const byDay = new Map<string, Record<string, number>>();
+    // The last day is the one holding the final instant inside the window,
+    // which for a `to` on a midnight is the day before it.
+    const lastDay = utcDay(to - 1);
+    for (let cursor = Date.parse(`${utcDay(from)}T00:00:00.000Z`); ; cursor += DAY_MS) {
+      const day = utcDay(cursor);
+      if (day > lastDay) break;
+      byDay.set(day, {});
+    }
+    const add = (day: string, type: string, count: number) => {
+      const counts = byDay.get(day);
+      if (counts) counts[type] = (counts[type] ?? 0) + count;
+    };
+
+    const persisted = await this.auditStore.countByDayBetween(fromIso, toIso);
+    if (persisted) {
+      for (const row of persisted) add(row.day, row.type, row.count);
+    } else {
+      // The ring, not the merged audit() view, for the reason `usage()` gives.
+      for (const event of this.localAudit) {
+        const t = Date.parse(event.at);
+        if (Number.isFinite(t) && t >= from && t < to) add(utcDay(t), event.type, 1);
+      }
+    }
+    return {
+      from: fromIso,
+      to: toIso,
+      days: [...byDay].map(([day, counts]) => ({ day, counts })),
+      complete: persisted !== null,
+      store: persisted ? this.auditStore.name : "memory",
+    };
+  }
+
+  /**
+   * Operation counts per agent over `[fromIso, toIso)`. The agent is the
+   * event payload's `agent`, lower-cased; events that name none are counted
+   * under `agent: null` (listed last) so the rows sum to the window's total.
+   * Same completeness rule as `usageDaily`.
+   */
+  async usageByAgent(
+    fromIso: string,
+    toIso: string,
+  ): Promise<{
+    from: string;
+    to: string;
+    agents: Array<{ agent: string | null; counts: Record<string, number> }>;
+    complete: boolean;
+    store: string;
+  }> {
+    const byAgent = new Map<string | null, Record<string, number>>();
+    const add = (agent: string | null, type: string, count: number) => {
+      const counts = byAgent.get(agent) ?? {};
+      counts[type] = (counts[type] ?? 0) + count;
+      byAgent.set(agent, counts);
+    };
+
+    const persisted = await this.auditStore.countByAgentBetween(fromIso, toIso);
+    if (persisted) {
+      for (const row of persisted) add(row.agent, row.type, row.count);
+    } else {
+      const from = Date.parse(fromIso);
+      const to = Date.parse(toIso);
+      for (const event of this.localAudit) {
+        const t = Date.parse(event.at);
+        if (!Number.isFinite(t) || t < from || t >= to) continue;
+        const agent = event.payload.agent;
+        add(typeof agent === "string" ? agent.toLowerCase() : null, event.type, 1);
+      }
+    }
+    const agents = [...byAgent]
+      .map(([agent, counts]) => ({ agent, counts }))
+      .sort((a, b) => (a.agent === null ? 1 : b.agent === null ? -1 : a.agent < b.agent ? -1 : 1));
+    return {
+      from: fromIso,
+      to: toIso,
+      agents,
+      complete: persisted !== null,
+      store: persisted ? this.auditStore.name : "memory",
+    };
   }
 
   /**
