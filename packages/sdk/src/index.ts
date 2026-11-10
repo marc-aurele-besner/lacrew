@@ -12,6 +12,8 @@ export {
   readAccountBalances,
   readTokenMetadata,
   type TokenLookup,
+  FaucetCooldownError,
+  type MockTokenFaucet,
   OnchainLacrewClient,
   type OnchainClientOptions,
   type OnchainResolveResult,
