@@ -1,6 +1,10 @@
 export {
   CrewRuntime,
   createRuntimeFromEnv,
+  SandboxError,
+  type SandboxErrorCode,
+  type SandboxStatus,
+  type SandboxTopUp,
   type CrewRuntimeOptions,
   type RuntimeMode,
 } from "./runtime.js";
