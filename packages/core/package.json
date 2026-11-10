@@ -1,8 +1,13 @@
 {
   "name": "@lacrew/core",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marc-aurele-besner/lacrew.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://lacrew.xyz",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,6 +20,13 @@
       "types": "./dist/node.d.ts",
       "import": "./dist/node.js"
     }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "sync-abis": "node scripts/sync-abis.mjs",
