@@ -1,11 +1,23 @@
 {
   "name": "@lacrew/cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marc-aurele-besner/lacrew.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://lacrew.xyz",
   "type": "module",
   "bin": {
     "lacrew": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
