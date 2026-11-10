@@ -693,6 +693,123 @@ describe("orchestrator Hono app", () => {
     assert.deepEqual(body.counts, {});
   });
 
+  it("serves daily usage from real operations, zero-filled and flagged incomplete", async () => {
+    const app = buildApp();
+    await app.request("/tick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+
+    // An explicit `to` just ahead of the clock: the window is half-open, so a
+    // `to` of "now" leaves out an event stamped in this same millisecond.
+    const to = new Date(Date.now() + 60_000).toISOString();
+    const res = await app.request(`/usage/daily?to=${encodeURIComponent(to)}`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      from: string;
+      to: string;
+      days: Array<{ day: string; counts: Record<string, number> }>;
+      complete: boolean;
+      store: string;
+      mode: string;
+    };
+    // Default window: the 30 days up to `to`, one bucket per UTC day touched.
+    assert.equal(body.to, to);
+    assert.equal(Date.parse(body.to) - Date.parse(body.from), 30 * 86_400_000);
+    assert.ok(body.days.length === 30 || body.days.length === 31);
+    assert.equal(body.days[0]!.day, body.from.slice(0, 10));
+    assert.equal(body.days.at(-1)!.day, new Date(Date.parse(to) - 1).toISOString().slice(0, 10));
+    const created = body.days.reduce((sum, day) => sum + (day.counts.IntentCreated ?? 0), 0);
+    assert.equal(created, 1);
+    // Quiet days are present and empty, so a chart axis has no holes.
+    assert.deepEqual(body.days[0]!.counts, {});
+    // No database behind this app: the ring answered, and it must say so.
+    assert.equal(body.complete, false);
+    assert.equal(body.store, "memory");
+    assert.equal(body.mode, "mock");
+  });
+
+  it("serves usage by agent over the same window with ?by=agent", async () => {
+    const app = buildApp();
+    await app.request("/tick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const to = new Date(Date.now() + 60_000).toISOString();
+    const res = await app.request(`/usage/daily?by=agent&to=${encodeURIComponent(to)}`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      agents: Array<{ agent: string | null; counts: Record<string, number> }>;
+      complete: boolean;
+      store: string;
+    };
+    const total = body.agents.reduce(
+      (sum, row) => sum + Object.values(row.counts).reduce((a, b) => a + b, 0),
+      0,
+    );
+    assert.ok(total >= 1);
+    for (const row of body.agents) {
+      assert.ok(row.agent === null || row.agent === row.agent.toLowerCase());
+    }
+    assert.equal(body.complete, false);
+    assert.equal(body.store, "memory");
+  });
+
+  it("rejects invalid /usage/daily windows with stable codes", async () => {
+    const app = buildApp();
+    const errorOf = async (query: string) => {
+      const res = await app.request(`/usage/daily?${query}`);
+      assert.equal(res.status, 400, query);
+      return ((await res.json()) as { error: string }).error;
+    };
+    assert.equal(await errorOf("from=last-tuesday"), "invalid_from");
+    assert.equal(await errorOf("to=soon"), "invalid_to");
+    assert.equal(await errorOf("by=crew"), "invalid_by");
+    // from must be strictly before to.
+    assert.equal(
+      await errorOf("from=2026-03-02T00:00:00.000Z&to=2026-03-02T00:00:00.000Z"),
+      "invalid_window",
+    );
+    assert.equal(
+      await errorOf("from=2026-03-03T00:00:00.000Z&to=2026-03-02T00:00:00.000Z"),
+      "invalid_window",
+    );
+    // 93 days is one past the cap; exactly 92 is served.
+    assert.equal(
+      await errorOf("from=2026-01-01T00:00:00.000Z&to=2026-04-04T00:00:00.000Z"),
+      "window_too_large",
+    );
+    const atCap = await app.request(
+      "/usage/daily?from=2026-01-01T00:00:00.000Z&to=2026-04-03T00:00:00.000Z",
+    );
+    assert.equal(atCap.status, 200);
+    const body = (await atCap.json()) as { days: unknown[] };
+    assert.equal(body.days.length, 92);
+  });
+
+  it("defaults /usage/daily to the 30 days up to now", async () => {
+    const before = Date.now();
+    const res = await buildApp().request("/usage/daily");
+    const after = Date.now();
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { from: string; to: string };
+    const to = Date.parse(body.to);
+    assert.ok(to >= before && to <= after);
+    assert.equal(to - Date.parse(body.from), 30 * 86_400_000);
+  });
+
+  it("defaults ?from= to 30 days before an explicit ?to=", async () => {
+    const res = await buildApp().request("/usage/daily?to=2026-03-31T00:00:00.000Z");
+    const body = (await res.json()) as { from: string; to: string; days: Array<{ day: string }> };
+    assert.equal(body.from, "2026-03-01T00:00:00.000Z");
+    assert.equal(body.to, "2026-03-31T00:00:00.000Z");
+    assert.equal(body.days.length, 30);
+    assert.equal(body.days[0]!.day, "2026-03-01");
+    assert.equal(body.days.at(-1)!.day, "2026-03-30");
+  });
+
   it("serves node policies (empty in mock mode, not invented)", async () => {
     const res = await buildApp().request("/policies");
     assert.equal(res.status, 200);
