@@ -228,6 +228,12 @@ const CRON_FIELD = /^(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*$/;
  */
 const MAX_MODE_SUBJECTS = 50;
 
+const DAY_MS = 86_400_000;
+/** Window `GET /usage/daily` opens when `?from=` is absent. */
+const USAGE_DAILY_DEFAULT_DAYS = 30;
+/** Widest window `GET /usage/daily` serves — a quarter, at one bucket a day. */
+const USAGE_DAILY_MAX_DAYS = 92;
+
 /** Cheap 5-field cron pre-check; the durable queue is the semantic backstop. */
 function isValidCron(expr: string): boolean {
   const fields = expr.split(" ").filter(Boolean);
@@ -2603,6 +2609,35 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       return jsonBig(c, { error: "invalid_since" }, 400);
     }
     const usage = await runtime.usage(since);
+    return jsonBig(c, { ...usage, mode: runtime.mode });
+  });
+
+  app.get("/usage/daily", async (c) => {
+    // The same raw counts as /usage, cut per UTC day over [from, to) so a UI
+    // can chart them (?by=agent groups by the payload's agent instead). `to`
+    // defaults to now and `from` to 30 days before `to`; the window is capped
+    // so one request cannot ask for an unbounded scan. `complete` carries the
+    // same promise as on /usage.
+    const toParam = c.req.query("to") || undefined;
+    const fromParam = c.req.query("from") || undefined;
+    const by = c.req.query("by") || undefined;
+    if (by !== undefined && by !== "agent") {
+      return jsonBig(c, { error: "invalid_by" }, 400);
+    }
+    const to = toParam ? Date.parse(toParam) : Date.now();
+    if (Number.isNaN(to)) return jsonBig(c, { error: "invalid_to" }, 400);
+    const from = fromParam ? Date.parse(fromParam) : to - USAGE_DAILY_DEFAULT_DAYS * DAY_MS;
+    if (Number.isNaN(from)) return jsonBig(c, { error: "invalid_from" }, 400);
+    if (from >= to) return jsonBig(c, { error: "invalid_window" }, 400);
+    if (to - from > USAGE_DAILY_MAX_DAYS * DAY_MS) {
+      return jsonBig(c, { error: "window_too_large", maxDays: USAGE_DAILY_MAX_DAYS }, 400);
+    }
+    const fromIso = new Date(from).toISOString();
+    const toIso = new Date(to).toISOString();
+    const usage =
+      by === "agent"
+        ? await runtime.usageByAgent(fromIso, toIso)
+        : await runtime.usageDaily(fromIso, toIso);
     return jsonBig(c, { ...usage, mode: runtime.mode });
   });
 

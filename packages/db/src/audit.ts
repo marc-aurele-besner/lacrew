@@ -1,6 +1,6 @@
 /** Query helpers for the orchestrator audit trail (keeps Drizzle inside @lacrew/db). */
 
-import { and, count, desc, eq, gte, lt, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, sql, type SQL } from "drizzle-orm";
 import { auditEvents } from "./schema/audit.js";
 import type { DbHandle } from "./client.js";
 
@@ -84,6 +84,70 @@ export async function countAuditEventsByType(
     .where(and(gte(auditEvents.at, new Date(sinceIso)), chainScope(options)))
     .groupBy(auditEvents.type);
   return rows.map((row) => ({ type: row.type, count: Number(row.count) }));
+}
+
+/**
+ * Event counts by UTC day × type over `[fromIso, toIso)` — the read a usage
+ * chart is drawn from. Only days that hold at least one event come back; the
+ * caller fills the quiet ones.
+ *
+ * The day is cut in UTC whatever the session time zone is, so two servers in
+ * different zones bucket the same row into the same day. Half-open for the
+ * reason `auditEventsBetween` is: adjacent windows must not both count a row
+ * on their shared boundary.
+ */
+export async function countAuditEventsByDay(
+  handle: DbHandle,
+  fromIso: string,
+  toIso: string,
+  options?: AuditReadOptions,
+): Promise<Array<{ day: string; type: string; count: number }>> {
+  const day = sql<string>`to_char(${auditEvents.at} at time zone 'UTC', 'YYYY-MM-DD')`;
+  const rows = await handle.db
+    .select({ day, type: auditEvents.type, count: count() })
+    .from(auditEvents)
+    .where(
+      and(
+        gte(auditEvents.at, new Date(fromIso)),
+        lt(auditEvents.at, new Date(toIso)),
+        chainScope(options),
+      ),
+    )
+    .groupBy(day, auditEvents.type)
+    .orderBy(day, auditEvents.type);
+  return rows.map((row) => ({ day: row.day, type: row.type, count: Number(row.count) }));
+}
+
+/**
+ * Event counts by agent × type over `[fromIso, toIso)`.
+ *
+ * The agent is the payload's `agent` string, lower-cased so one address in two
+ * checksum casings is one agent. A row whose payload carries no string `agent`
+ * answers under `null` rather than being dropped, so the per-agent rows still
+ * sum to the window's total.
+ */
+export async function countAuditEventsByAgent(
+  handle: DbHandle,
+  fromIso: string,
+  toIso: string,
+  options?: AuditReadOptions,
+): Promise<Array<{ agent: string | null; type: string; count: number }>> {
+  const agent = sql<
+    string | null
+  >`case when jsonb_typeof(${auditEvents.payload} -> 'agent') = 'string' then lower(${auditEvents.payload} ->> 'agent') end`;
+  const rows = await handle.db
+    .select({ agent, type: auditEvents.type, count: count() })
+    .from(auditEvents)
+    .where(
+      and(
+        gte(auditEvents.at, new Date(fromIso)),
+        lt(auditEvents.at, new Date(toIso)),
+        chainScope(options),
+      ),
+    )
+    .groupBy(agent, auditEvents.type)
+    .orderBy(agent, auditEvents.type);
+  return rows.map((row) => ({ agent: row.agent, type: row.type, count: Number(row.count) }));
 }
 
 /**

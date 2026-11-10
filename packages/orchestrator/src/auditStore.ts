@@ -6,6 +6,8 @@
 
 import {
   auditEventsBetween,
+  countAuditEventsByAgent,
+  countAuditEventsByDay,
   countAuditEventsByType,
   createDb,
   getDatabaseUrl,
@@ -28,6 +30,24 @@ export interface AuditStore {
    * because a partial count served as a total is a billing lie.
    */
   countByTypeSince(sinceIso: string): Promise<Record<string, number> | null>;
+  /**
+   * Event counts by UTC day (`YYYY-MM-DD`) × type over `[fromIso, toIso)`,
+   * from the full persisted trail; days with no events are absent. Null when
+   * the store cannot answer completely, exactly as `countByTypeSince` is.
+   */
+  countByDayBetween(
+    fromIso: string,
+    toIso: string,
+  ): Promise<Array<{ day: string; type: string; count: number }> | null>;
+  /**
+   * Event counts by agent (the payload's lower-cased `agent`, null when a row
+   * names none) × type over `[fromIso, toIso)`. Null when the store cannot
+   * answer completely.
+   */
+  countByAgentBetween(
+    fromIso: string,
+    toIso: string,
+  ): Promise<Array<{ agent: string | null; type: string; count: number }> | null>;
   /**
    * Every event in `[fromIso, toIso)`, newest first — what a period report
    * (F2.33) folds its onchain and connector lines from.
@@ -52,6 +72,8 @@ export function createMemoryAuditStore(): AuditStore {
     append: async () => {},
     recent: async () => [],
     countByTypeSince: async () => null,
+    countByDayBetween: async () => null,
+    countByAgentBetween: async () => null,
     between: async () => null,
     close: async () => {},
   };
@@ -99,6 +121,22 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
         return Object.fromEntries(rows.map((row) => [row.type, row.count]));
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit count failed:", err);
+        return null;
+      }
+    },
+    countByDayBetween: async (fromIso, toIso) => {
+      try {
+        return await countAuditEventsByDay(db(), fromIso, toIso, scope);
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] audit daily count failed:", err);
+        return null;
+      }
+    },
+    countByAgentBetween: async (fromIso, toIso) => {
+      try {
+        return await countAuditEventsByAgent(db(), fromIso, toIso, scope);
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] audit agent count failed:", err);
         return null;
       }
     },

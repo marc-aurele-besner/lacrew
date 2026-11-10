@@ -9,6 +9,8 @@ export {
 } from "./client.js";
 export {
   auditEventsBetween,
+  countAuditEventsByAgent,
+  countAuditEventsByDay,
   countAuditEventsByType,
   insertAuditEvent,
   insertChainAuditEvent,
