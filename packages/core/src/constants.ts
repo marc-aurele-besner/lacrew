@@ -203,6 +203,47 @@ export const OPTIMISM_CHAIN_ID = 10;
 export const POLYGON_CHAIN_ID = 137;
 
 /**
+ * The chains a sandbox may run on: local Anvil and the named public testnets.
+ * An allowlist, so a chain id this package does not know is never a test chain.
+ */
+const TEST_CHAIN_IDS: ReadonlySet<number> = new Set([
+  ANVIL_CHAIN_ID,
+  SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID,
+]);
+
+/** Whether a chain id is local Anvil or a named testnet — never a mainnet. */
+export function isTestChain(chainId: number): boolean {
+  return TEST_CHAIN_IDS.has(chainId);
+}
+
+/** Why a deployment is not a sandbox; stable codes for callers to branch on. */
+export type SandboxRefusal = "not_test_chain" | "no_mock_token" | "spend_token_not_mock";
+
+/**
+ * Whether a deployment is a sandbox — one whose money is play money.
+ *
+ * Both halves must hold: the bound chain is a test chain, and the token the
+ * stack actually spends (`spendToken`, e.g. the Treasury's own `token()`) is
+ * the deployment's MockUSDC (`mockToken`). The chain is checked first, so a
+ * mainnet id is refused whatever the address book says about a mock token.
+ */
+export function sandboxVerdict(input: {
+  chainId: number;
+  spendToken?: `0x${string}`;
+  mockToken?: `0x${string}`;
+}): { sandbox: true } | { sandbox: false; reason: SandboxRefusal } {
+  if (!isTestChain(input.chainId)) return { sandbox: false, reason: "not_test_chain" };
+  if (!input.mockToken || input.mockToken === ZERO) {
+    return { sandbox: false, reason: "no_mock_token" };
+  }
+  if (!input.spendToken || input.spendToken.toLowerCase() !== input.mockToken.toLowerCase()) {
+    return { sandbox: false, reason: "spend_token_not_mock" };
+  }
+  return { sandbox: true };
+}
+
+/**
  * Display metadata for the chains this repo can name. Nothing onchain names a
  * chain or its coin, so this table is the only place either string can come
  * from — which is also why it is kept here, in the public package, where the
