@@ -130,6 +130,27 @@ Every read answers from the chain (or the persisted trail) — mock mode serves
 | `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                   |
 | `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                     |
 
+### Sandbox play money
+
+| Endpoint               | What it does                                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /sandbox`         | Whether this deployment is a sandbox, the play-money token, the fixed top-up amount, and the cooldown. `sandbox: false` carries a stable `reason`                                                |
+| `POST /sandbox/top-up` | Body `{ "account": "0x…" }`. Credits the fixed amount to the Treasury or an active org node. Refusals: `not_sandbox` 409, `invalid_account` 400, `account_not_in_org` 403, `faucet_cooldown` 429 |
+
+Play money is `MockUSDC`: a mock token with no value, minted on a test chain so a
+new org can run real flows before funding anything. A deployment is a sandbox
+only when its chain is local Anvil or a named testnet **and** its Treasury's own
+`token()` is the deployment's `MockUSDC`; both routes' answers follow from that,
+and the top-up refuses on any non-sandbox deployment — a mainnet chain id is
+never a sandbox, whatever `LACREW_MOCK_USDC` says. A top-up is not an approval
+and changes no allowance, cap, or policy: spending play money goes through the
+same onchain stack as any other spend. The amount is the contract's
+`FAUCET_AMOUNT` (100 mUSDC) and cannot be chosen by the caller. When the
+orchestrator's signer is the token's owner or an approved minter the top-up is a
+`mint`; otherwise it goes through the contract's self-serve `faucet()`, which
+allows one drip per signer per day — so one top-up a day for the whole
+deployment, refused in between as `faucet_cooldown` with `retryAfterSeconds`.
+
 ### Wallet watchlist
 
 `GET /agents/balances` reads the bound chain plus every chain on the watchlist.

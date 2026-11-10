@@ -102,7 +102,7 @@ import {
   type DualControlReviewScope,
   type PlanRequiredMode,
 } from "@lacrew/flows";
-import type { CrewRuntime, NodeStackModuleSpec } from "./runtime.js";
+import { SandboxError, type CrewRuntime, type NodeStackModuleSpec } from "./runtime.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
 import { webhookMaxBodyBytes, type WebhookInputMap, type WebhookSurface } from "./webhooks.js";
@@ -3372,6 +3372,49 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // [] in mock mode; an empty list means no chain answered, not empty wallets.
     const chains = await runtime.getAgentWallets();
     return jsonBig(c, { chains, mode: runtime.mode });
+  });
+
+  /**
+   * Whether this deployment is a sandbox — a test chain whose Treasury spends
+   * the deployment's MockUSDC — and what a top-up gives. `sandbox: false`
+   * carries a stable `reason`; it is an answer, not an error.
+   */
+  app.get("/sandbox", async (c) =>
+    jsonBig(c, { ...(await runtime.sandboxStatus()), mode: runtime.mode }),
+  );
+
+  /**
+   * Credit play money to an org account: `{ account }`, nothing else.
+   *
+   * Play money is MockUSDC, a mock token with no value, and this route refuses
+   * (`not_sandbox`) on every deployment that is not a sandbox. A top-up is not
+   * an approval and adds no authority — no allowance, cap, grant, or policy
+   * changes, and enforcement of every spend stays onchain. The amount is the
+   * contract's fixed faucet amount; a body naming one is refused rather than
+   * ignored, so no caller is left believing they chose it. The account must be
+   * the Treasury or an active org node, so this is not a faucet to arbitrary
+   * addresses.
+   */
+  app.post("/sandbox/top-up", async (c) => {
+    const body = await bodyOf<{ account?: unknown; amount?: unknown }>(c);
+    if (body.amount !== undefined) return jsonBig(c, { error: "amount_is_fixed" }, 400);
+    try {
+      const result = await runtime.sandboxTopUp({ account: body.account as string });
+      return jsonBig(c, { ...result, mode: runtime.mode });
+    } catch (err) {
+      if (!(err instanceof SandboxError)) throw err;
+      const status = {
+        not_sandbox: 409,
+        invalid_account: 400,
+        account_not_in_org: 403,
+        faucet_cooldown: 429,
+      }[err.code];
+      const res = jsonBig(c, { error: err.code, ...err.detail }, status);
+      if (err.detail.retryAfterSeconds !== undefined) {
+        res.headers.set("retry-after", String(err.detail.retryAfterSeconds));
+      }
+      return res;
+    }
   });
 
   /**

@@ -14,7 +14,9 @@ import assert from "node:assert/strict";
 import {
   custom,
   decodeFunctionData,
+  encodeErrorResult,
   encodeFunctionResult,
+  parseTransaction,
   type Abi,
   type Hex,
   type PublicClient,
@@ -24,10 +26,11 @@ import {
   ANVIL_CHAIN_ID,
   getAddresses,
   marketplacePaymentsAbi,
+  mockUsdcAbi,
   sessionRegistryAbi,
   sessionScopesFromMask,
 } from "@lacrew/core";
-import { createOnchainClient, readTokenMetadata } from "./onchain.js";
+import { createOnchainClient, FaucetCooldownError, readTokenMetadata } from "./onchain.js";
 
 /** Anvil account 0 — signing only; the stub transport swallows everything. */
 const MAIN = privateKeyToAccount(
@@ -73,6 +76,10 @@ function stubTransport(opts: {
   onCall?: (data: Hex) => Hex;
   sent?: Hex[];
   calls?: Hex[];
+  /** Latest block's timestamp, in seconds (default 1). */
+  blockTimestamp?: number;
+  /** Revert data gas estimation fails with, as a node reports a reverting call. */
+  estimateGasRevert?: Hex;
 }) {
   return custom({
     async request({ method, params }: { method: string; params?: unknown }) {
@@ -82,12 +89,22 @@ function stubTransport(opts: {
         case "eth_getTransactionCount":
           return "0x0";
         case "eth_estimateGas":
+          if (opts.estimateGasRevert) {
+            throw Object.assign(new Error("execution reverted"), {
+              code: 3,
+              data: opts.estimateGasRevert,
+            });
+          }
           return "0x186a0";
         case "eth_gasPrice":
         case "eth_maxPriorityFeePerGas":
           return "0x3b9aca00";
         case "eth_getBlockByNumber":
-          return { baseFeePerGas: "0x3b9aca00", number: "0x1", timestamp: "0x1" };
+          return {
+            baseFeePerGas: "0x3b9aca00",
+            number: "0x1",
+            timestamp: `0x${(opts.blockTimestamp ?? 1).toString(16)}`,
+          };
         case "eth_blockNumber":
           return "0x1";
         case "eth_sendRawTransaction":
@@ -330,5 +347,171 @@ describe("readTokenMetadata", () => {
     const result = await readTokenMetadata(fakePublicClient({}), TARGET_A);
     assert.equal(result.ok, false);
     assert.equal((result as { reason: string }).reason, "not_erc20");
+  });
+});
+
+describe("MockUSDC play money", () => {
+  const TOKEN = getAddresses(ANVIL_CHAIN_ID).mockUSDC!;
+  const DRIP = 100_000_000n;
+  const DAY = 86_400n;
+
+  /** The MockUSDC reads, with the parts a test varies. */
+  function tokenReads(over: CallHandlers = {}) {
+    return answerCalls([mockUsdcAbi as Abi], {
+      symbol: () => "mUSDC",
+      decimals: () => 6,
+      FAUCET_AMOUNT: () => DRIP,
+      FAUCET_COOLDOWN: () => DAY,
+      owner: () => TARGET_A,
+      minters: () => false,
+      lastFaucetAt: () => 0n,
+      ...over,
+    });
+  }
+
+  /** The token calls a list of signed raw transactions makes, in order. */
+  function sentCalls(sent: Hex[]) {
+    return sent.map((raw) => {
+      const tx = parseTransaction(raw);
+      assert.equal(tx.to?.toLowerCase(), TOKEN.toLowerCase());
+      const { functionName, args } = decodeFunctionData({ abi: mockUsdcAbi, data: tx.data! });
+      return { functionName, args: args ?? [] };
+    });
+  }
+
+  it("reads the faucet parameters and that the token's owner may mint", async () => {
+    const client = clientWith({ onCall: tokenReads({ owner: () => MAIN.address }) });
+    assert.deepEqual(await client.readMockTokenFaucet(TOKEN), {
+      token: TOKEN,
+      symbol: "mUSDC",
+      decimals: 6,
+      faucetAmount: DRIP,
+      cooldownSeconds: 86_400,
+      signer: MAIN.address,
+      canMint: true,
+    });
+  });
+
+  it("an approved minter may mint; any other signer may not", async () => {
+    const minter = clientWith({ onCall: tokenReads({ minters: () => true }) });
+    assert.equal((await minter.readMockTokenFaucet(TOKEN)).canMint, true);
+    const stranger = clientWith({ onCall: tokenReads() });
+    assert.equal((await stranger.readMockTokenFaucet(TOKEN)).canMint, false);
+  });
+
+  it("a client with no account reads the parameters and cannot mint", async () => {
+    const client = createOnchainClient({
+      transport: stubTransport({ onCall: tokenReads({ owner: () => MAIN.address }) }),
+      chainId: ANVIL_CHAIN_ID,
+      addresses: getAddresses(ANVIL_CHAIN_ID),
+    });
+    const faucet = await client.readMockTokenFaucet(TOKEN);
+    assert.equal(faucet.signer, null);
+    assert.equal(faucet.canMint, false);
+  });
+
+  it("an address that does not answer as a MockUSDC fails the read", async () => {
+    const client = clientWith({});
+    await assert.rejects(() => client.readMockTokenFaucet(TOKEN));
+  });
+
+  it("mint sends exactly mint(to, amount) to the token", async () => {
+    const sent: Hex[] = [];
+    const client = clientWith({ sent });
+    const { txHash } = await client.mintMockToken(TOKEN, WORKER, DRIP);
+    assert.match(txHash, /^0x11/);
+    assert.deepEqual(sentCalls(sent), [{ functionName: "mint", args: [WORKER, DRIP] }]);
+  });
+
+  it("a reverted mint throws instead of reporting a hash", async () => {
+    const client = clientWith({ receiptStatus: "0x0" });
+    await assert.rejects(
+      () => client.mintMockToken(TOKEN, WORKER, DRIP),
+      /mock token mint reverted onchain/,
+    );
+  });
+
+  it("the faucet wait is zero before any drip and once the cooldown has passed", async () => {
+    const never = clientWith({ onCall: tokenReads() });
+    assert.deepEqual(await never.readFaucetWait(TOKEN, MAIN.address), {
+      availableAt: 0,
+      retryAfterSeconds: 0,
+    });
+    const elapsed = clientWith({
+      blockTimestamp: 1_000 + 86_400,
+      onCall: tokenReads({ lastFaucetAt: () => 1_000n }),
+    });
+    assert.equal((await elapsed.readFaucetWait(TOKEN, MAIN.address)).retryAfterSeconds, 0);
+  });
+
+  it("the faucet wait is measured against the chain's clock", async () => {
+    const client = clientWith({
+      blockTimestamp: 1_600,
+      onCall: tokenReads({ lastFaucetAt: () => 1_000n }),
+    });
+    assert.deepEqual(await client.readFaucetWait(TOKEN, MAIN.address), {
+      availableAt: 1_000 + 86_400,
+      retryAfterSeconds: 86_400 - 600,
+    });
+  });
+
+  it("a drip is faucet() then a transfer of the faucet amount to the account", async () => {
+    const sent: Hex[] = [];
+    const client = clientWith({ sent, onCall: tokenReads() });
+    const result = await client.dripMockToken(TOKEN, WORKER);
+    assert.equal(result.amount, DRIP);
+    assert.deepEqual(sentCalls(sent), [
+      { functionName: "faucet", args: [] },
+      { functionName: "transfer", args: [WORKER, DRIP] },
+    ]);
+  });
+
+  it("a drip to the signer itself sends no transfer", async () => {
+    const sent: Hex[] = [];
+    const client = clientWith({ sent, onCall: tokenReads() });
+    await client.dripMockToken(TOKEN, MAIN.address);
+    assert.deepEqual(sentCalls(sent), [{ functionName: "faucet", args: [] }]);
+  });
+
+  it("a drip inside the cooldown is refused before anything is sent", async () => {
+    const sent: Hex[] = [];
+    const client = clientWith({
+      sent,
+      blockTimestamp: 1_600,
+      onCall: tokenReads({ lastFaucetAt: () => 1_000n }),
+    });
+    await assert.rejects(
+      () => client.dripMockToken(TOKEN, WORKER),
+      (err: unknown) =>
+        err instanceof FaucetCooldownError &&
+        err.message === "faucet_cooldown" &&
+        err.availableAt === 87_400 &&
+        err.retryAfterSeconds === 85_800,
+    );
+    assert.deepEqual(sent, []);
+  });
+
+  it("the contract's own FaucetCooldown revert is relayed as the same refusal", async () => {
+    // The read said the faucet was open and a concurrent drip closed it: the
+    // node rejects the call with the contract's custom error.
+    const sent: Hex[] = [];
+    const client = clientWith({
+      sent,
+      blockTimestamp: 2_000,
+      onCall: tokenReads(),
+      estimateGasRevert: encodeErrorResult({
+        abi: mockUsdcAbi,
+        errorName: "FaucetCooldown",
+        args: [MAIN.address, 88_400n],
+      }),
+    });
+    await assert.rejects(
+      () => client.dripMockToken(TOKEN, WORKER),
+      (err: unknown) =>
+        err instanceof FaucetCooldownError &&
+        err.availableAt === 88_400 &&
+        err.retryAfterSeconds === 86_400,
+    );
+    assert.deepEqual(sent, []);
   });
 });

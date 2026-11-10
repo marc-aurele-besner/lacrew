@@ -367,6 +367,15 @@ export type ProtocolEventType =
   | "MarketplaceListed"
   | "MarketplaceWithdrawn"
   /**
+   * Play money was credited to an org account on a sandbox deployment.
+   *
+   * Recorded by the orchestrator when it mints or drips MockUSDC — a token
+   * with no value, on a test chain only. Not an approval and not a budget
+   * change: no allowance, cap, or policy moved. The payload carries the
+   * account, the amount, and the transaction hash.
+   */
+  | "SandboxTopUp"
+  /**
    * An operator stopped or restarted an agent at the orchestrator (F1.7).
    *
    * Off-chain, like `FlowRun` and `ToolCalled`: a pause gates session issuance

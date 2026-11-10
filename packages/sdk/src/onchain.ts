@@ -4,6 +4,8 @@
  */
 
 import {
+  BaseError,
+  ContractFunctionRevertedError,
   createPublicClient,
   createWalletClient,
   encodeFunctionData,
@@ -116,6 +118,40 @@ const VERDICT_MAP: Record<number, Verdict> = {
 /** An address book slot that actually names a contract (set and non-zero). */
 function isPresent(address: `0x${string}` | undefined): address is `0x${string}` {
   return Boolean(address) && address !== zeroAddress;
+}
+
+/**
+ * MockUSDC's faucet parameters and what this client's write account may do
+ * with the token. Read from the contract, so an address that is not a MockUSDC
+ * fails the read instead of being described as one.
+ */
+export type MockTokenFaucet = {
+  token: `0x${string}`;
+  symbol: string;
+  decimals: number;
+  /** `FAUCET_AMOUNT`, in the token's base units. */
+  faucetAmount: bigint;
+  /** `FAUCET_COOLDOWN`, in seconds, per `faucet()` caller. */
+  cooldownSeconds: number;
+  /** The write account, or null when this client cannot sign. */
+  signer: `0x${string}` | null;
+  /** Whether `signer` is the token's owner or an approved minter. */
+  canMint: boolean;
+};
+
+/**
+ * MockUSDC's `faucet()` is still cooling down for the calling account.
+ * `availableAt` is the chain timestamp (seconds) the next drip opens at;
+ * `retryAfterSeconds` is that measured against the latest block.
+ */
+export class FaucetCooldownError extends Error {
+  constructor(
+    readonly availableAt: number,
+    readonly retryAfterSeconds: number,
+  ) {
+    super("faucet_cooldown");
+    this.name = "FaucetCooldownError";
+  }
 }
 
 /**
@@ -1392,6 +1428,165 @@ export class OnchainLacrewClient {
     });
     await this.confirmWrite(hash, "withdraw");
     return { txHash: hash };
+  }
+
+  /** The token the primary Treasury actually holds and spends (`Treasury.token()`). */
+  async readSpendToken(): Promise<`0x${string}`> {
+    return (await this.publicClient.readContract({
+      address: this.addresses.treasury,
+      abi: treasuryAbi,
+      functionName: "token",
+    })) as `0x${string}`;
+  }
+
+  /**
+   * Read a MockUSDC's faucet parameters and whether this client's write
+   * account may `mint`. Throws when `token` does not answer as a MockUSDC.
+   */
+  async readMockTokenFaucet(token: `0x${string}`): Promise<MockTokenFaucet> {
+    const read = <T>(functionName: string, args: readonly unknown[] = []) =>
+      this.publicClient.readContract({
+        address: token,
+        abi: mockUsdcAbi,
+        functionName,
+        args,
+      } as never) as Promise<T>;
+    const signer = this.walletClient?.account?.address ?? null;
+    const [symbol, decimals, faucetAmount, cooldown, owner, minter] = await Promise.all([
+      read<string>("symbol"),
+      read<number>("decimals"),
+      read<bigint>("FAUCET_AMOUNT"),
+      read<bigint>("FAUCET_COOLDOWN"),
+      read<`0x${string}`>("owner"),
+      signer ? read<boolean>("minters", [signer]) : Promise.resolve(false),
+    ]);
+    return {
+      token,
+      symbol,
+      decimals: Number(decimals),
+      faucetAmount,
+      cooldownSeconds: Number(cooldown),
+      signer,
+      canMint: signer !== null && (minter || owner.toLowerCase() === signer.toLowerCase()),
+    };
+  }
+
+  /** `MockUSDC.mint(to, amount)` — reverts unless the write account is owner or a minter. */
+  async mintMockToken(
+    token: `0x${string}`,
+    to: `0x${string}`,
+    amount: bigint,
+  ): Promise<{ txHash: `0x${string}` }> {
+    const wallet = this.requireWallet();
+    const hash = await wallet.writeContract({
+      address: token,
+      abi: mockUsdcAbi,
+      functionName: "mint",
+      args: [to, amount],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.confirmWrite(hash, "mock token mint");
+    return { txHash: hash };
+  }
+
+  /**
+   * Seconds until MockUSDC's `faucet()` reopens for `caller`, with the chain
+   * timestamp it reopens at; both 0 when a drip is available now. Measured
+   * against the latest block, the clock the contract itself compares with.
+   */
+  async readFaucetWait(
+    token: `0x${string}`,
+    caller: `0x${string}`,
+  ): Promise<{ availableAt: number; retryAfterSeconds: number }> {
+    const [last, cooldown, block] = await Promise.all([
+      this.publicClient.readContract({
+        address: token,
+        abi: mockUsdcAbi,
+        functionName: "lastFaucetAt",
+        args: [caller],
+      }) as Promise<bigint>,
+      this.publicClient.readContract({
+        address: token,
+        abi: mockUsdcAbi,
+        functionName: "FAUCET_COOLDOWN",
+      }) as Promise<bigint>,
+      this.publicClient.getBlock(),
+    ]);
+    if (last === 0n) return { availableAt: 0, retryAfterSeconds: 0 };
+    const availableAt = last + cooldown;
+    if (block.timestamp >= availableAt) return { availableAt: 0, retryAfterSeconds: 0 };
+    return {
+      availableAt: Number(availableAt),
+      retryAfterSeconds: Number(availableAt - block.timestamp),
+    };
+  }
+
+  /**
+   * Drip MockUSDC through the self-serve `faucet()` and forward it to `to`.
+   *
+   * `faucet()` credits only its caller, so this is two transactions: the write
+   * account drips `FAUCET_AMOUNT` to itself, then transfers that amount on
+   * (skipped when `to` is the write account). The cooldown is the write
+   * account's own, and is raised as `FaucetCooldownError` — from a read before
+   * anything is sent, and from the contract's `FaucetCooldown` revert when a
+   * concurrent drip wins the race.
+   */
+  async dripMockToken(
+    token: `0x${string}`,
+    to: `0x${string}`,
+  ): Promise<{ txHash: `0x${string}`; faucetTxHash: `0x${string}`; amount: bigint }> {
+    const wallet = this.requireWallet();
+    const signer = wallet.account!.address;
+    const wait = await this.readFaucetWait(token, signer);
+    if (wait.retryAfterSeconds > 0) {
+      throw new FaucetCooldownError(wait.availableAt, wait.retryAfterSeconds);
+    }
+    const amount = (await this.publicClient.readContract({
+      address: token,
+      abi: mockUsdcAbi,
+      functionName: "FAUCET_AMOUNT",
+    })) as bigint;
+
+    let faucetTxHash: `0x${string}`;
+    try {
+      faucetTxHash = await wallet.writeContract({
+        address: token,
+        abi: mockUsdcAbi,
+        functionName: "faucet",
+        account: wallet.account!,
+        chain: wallet.chain,
+      });
+    } catch (err) {
+      const revert =
+        err instanceof BaseError
+          ? err.walk((e) => e instanceof ContractFunctionRevertedError)
+          : null;
+      if (
+        revert instanceof ContractFunctionRevertedError &&
+        revert.data?.errorName === "FaucetCooldown"
+      ) {
+        const availableAt = Number((revert.data.args as readonly [string, bigint])[1]);
+        const now = Number((await this.publicClient.getBlock()).timestamp);
+        throw new FaucetCooldownError(availableAt, Math.max(availableAt - now, 0));
+      }
+      throw err;
+    }
+    await this.confirmWrite(faucetTxHash, "mock token faucet");
+    if (to.toLowerCase() === signer.toLowerCase()) {
+      return { txHash: faucetTxHash, faucetTxHash, amount };
+    }
+
+    const hash = await wallet.writeContract({
+      address: token,
+      abi: mockUsdcAbi,
+      functionName: "transfer",
+      args: [to, amount],
+      account: wallet.account!,
+      chain: wallet.chain,
+    });
+    await this.confirmWrite(hash, "mock token transfer");
+    return { txHash: hash, faucetTxHash, amount };
   }
 
   /** Send ETH from the root wallet (Phase 0 gas sponsorship for session keys). */

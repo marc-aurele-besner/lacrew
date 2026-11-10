@@ -12,6 +12,8 @@ import {
   readAccountBalances,
   readTokenMetadata,
   simulateIntentAction,
+  FaucetCooldownError,
+  type MockTokenFaucet,
   type OnchainLacrewClient,
   type ResolveResult,
   type TokenLookup,
@@ -28,6 +30,7 @@ import {
   hasDeployment,
   listAssetStacks,
   resolveAssetStack,
+  sandboxVerdict,
   sessionRegistryAbi,
   ADDRESS_ENV_VARS,
   MOCK_MANAGER,
@@ -225,6 +228,53 @@ export type RuntimeBootFailure =
   | "rpc_unreachable"
   | "chain_id_mismatch"
   | "delegations_unavailable";
+
+/**
+ * Whether this deployment is a sandbox, and what a play-money top-up gives.
+ *
+ * `reason` is a stable code present only when `sandbox` is false: `no_chain`
+ * (no chain bound), `chain_id_mismatch` (the endpoint reports another chain),
+ * `not_test_chain`, `no_mock_token`, `spend_token_not_mock` (see
+ * `sandboxVerdict`), `token_unreadable` (the spend token or the MockUSDC could
+ * not be read), or `no_signer` (this runtime cannot send the top-up).
+ */
+export type SandboxStatus = {
+  sandbox: boolean;
+  chainId: number | null;
+  token?: { address: `0x${string}`; symbol: string; decimals: number };
+  /** The fixed top-up amount, in the token's base units. */
+  faucetAmount?: string;
+  /** Seconds between top-ups: the faucet's cooldown, or 0 on the `mint` path. */
+  cooldownSeconds?: number;
+  /** The contract path a top-up takes for this deployment's signer. */
+  via?: "mint" | "faucet";
+  /** `faucet` path only: seconds until the next top-up is available (0 = now). */
+  retryAfterSeconds?: number;
+  reason?: string;
+};
+
+/** A credited play-money top-up. */
+export type SandboxTopUp = {
+  account: `0x${string}`;
+  amount: string;
+  txHash: `0x${string}`;
+  token: { address: `0x${string}`; symbol: string; decimals: number };
+  via: "mint" | "faucet";
+};
+
+export type SandboxErrorCode =
+  "not_sandbox" | "invalid_account" | "account_not_in_org" | "faucet_cooldown";
+
+/** A refused play-money top-up; `code` is stable for callers to branch on. */
+export class SandboxError extends Error {
+  constructor(
+    readonly code: SandboxErrorCode,
+    readonly detail: { reason?: string; retryAfterSeconds?: number } = {},
+  ) {
+    super(code);
+    this.name = "SandboxError";
+  }
+}
 
 export type RuntimeBoot =
   { ok: true; runtime: CrewRuntime } | { ok: false; reason: RuntimeBootFailure; detail: string };
@@ -3182,6 +3232,141 @@ export class CrewRuntime {
   listAssets(): AssetStack[] {
     if (!isOnchainClient(this.client)) return [];
     return listAssetStacks(this.client.addresses);
+  }
+
+  /**
+   * The sandbox decision plus the MockUSDC facts a top-up needs.
+   *
+   * Every input is read rather than assumed: the chain id from the endpoint,
+   * the spend token from the primary Treasury's own `token()`, and the faucet
+   * parameters from the token contract. A read that fails is a refusal — an
+   * unconfirmed sandbox is not a sandbox.
+   */
+  private async readSandbox(): Promise<{ status: SandboxStatus; faucet?: MockTokenFaucet }> {
+    const client = this.client;
+    const chainId = this.chainId;
+    if (!isOnchainClient(client) || chainId == null) {
+      return { status: { sandbox: false, chainId, reason: "no_chain" } };
+    }
+    const refuse = (reason: string) => ({ status: { sandbox: false, chainId, reason } });
+
+    const mockToken = client.addresses.mockUSDC;
+    // Decided on the address book alone first, so a mainnet deployment is
+    // refused without a single call to its chain.
+    const book = sandboxVerdict({ chainId, spendToken: mockToken, mockToken });
+    if (!book.sandbox) return refuse(book.reason);
+
+    let reported: number;
+    let spendToken: `0x${string}`;
+    try {
+      [reported, spendToken] = await Promise.all([
+        client.publicClient.getChainId(),
+        client.readSpendToken(),
+      ]);
+    } catch {
+      return refuse("token_unreadable");
+    }
+    if (reported !== chainId) return refuse("chain_id_mismatch");
+    const verdict = sandboxVerdict({ chainId, spendToken, mockToken });
+    if (!verdict.sandbox) return refuse(verdict.reason);
+
+    let faucet: MockTokenFaucet;
+    try {
+      faucet = await client.readMockTokenFaucet(spendToken);
+    } catch {
+      return refuse("token_unreadable");
+    }
+    if (!faucet.signer) return refuse("no_signer");
+
+    const via = faucet.canMint ? ("mint" as const) : ("faucet" as const);
+    let retryAfterSeconds: number | undefined;
+    if (via === "faucet") {
+      try {
+        retryAfterSeconds = (await client.readFaucetWait(spendToken, faucet.signer))
+          .retryAfterSeconds;
+      } catch {
+        return refuse("token_unreadable");
+      }
+    }
+    return {
+      faucet,
+      status: {
+        sandbox: true,
+        chainId,
+        token: { address: faucet.token, symbol: faucet.symbol, decimals: faucet.decimals },
+        faucetAmount: faucet.faucetAmount.toString(),
+        cooldownSeconds: via === "mint" ? 0 : faucet.cooldownSeconds,
+        via,
+        ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+      },
+    };
+  }
+
+  /**
+   * Whether this deployment is a sandbox: a test chain whose Treasury spends
+   * the deployment's MockUSDC. Never true in mock mode or on a mainnet id.
+   */
+  async sandboxStatus(): Promise<SandboxStatus> {
+    return (await this.readSandbox()).status;
+  }
+
+  /**
+   * Credit the fixed faucet amount of play money to an account of this org.
+   *
+   * Play money is MockUSDC — a mock token with no value. A top-up is not an
+   * approval and grants no authority: it changes no allowance, cap, grant, or
+   * policy, and every spend of it still goes through the onchain stack.
+   *
+   * Refusals are `SandboxError`s: `not_sandbox` unless `sandboxStatus()` says
+   * this is one; `invalid_account` for anything but a 20-byte hex address;
+   * `account_not_in_org` unless the account is the primary Treasury or an
+   * active node of the org tree; `faucet_cooldown` while the faucet is closed.
+   *
+   * The contract path is the one the signer is entitled to. An owner or
+   * approved minter calls `mint(account, FAUCET_AMOUNT)` — one transaction, no
+   * cooldown. Any other signer calls `faucet()`, which credits only its
+   * caller, and transfers the drip on; that path is bound by the signer's own
+   * per-address cooldown, so it serves one top-up per cooldown for the whole
+   * deployment. The amount is the contract's `FAUCET_AMOUNT` on both paths.
+   */
+  async sandboxTopUp(input: { account: string }): Promise<SandboxTopUp> {
+    const { status, faucet } = await this.readSandbox();
+    const client = this.client;
+    if (!status.sandbox || !status.token || !faucet || !isOnchainClient(client)) {
+      throw new SandboxError("not_sandbox", { reason: status.reason });
+    }
+    if (typeof input.account !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(input.account)) {
+      throw new SandboxError("invalid_account");
+    }
+    const account = input.account as `0x${string}`;
+    const wanted = account.toLowerCase();
+    const inOrg =
+      client.addresses.treasury.toLowerCase() === wanted ||
+      (await client.getOrgTree()).some((n) => n.active && n.account.toLowerCase() === wanted);
+    if (!inOrg) throw new SandboxError("account_not_in_org");
+
+    let txHash: `0x${string}`;
+    if (faucet.canMint) {
+      ({ txHash } = await client.mintMockToken(faucet.token, account, faucet.faucetAmount));
+    } else {
+      try {
+        ({ txHash } = await client.dripMockToken(faucet.token, account));
+      } catch (err) {
+        if (err instanceof FaucetCooldownError) {
+          throw new SandboxError("faucet_cooldown", { retryAfterSeconds: err.retryAfterSeconds });
+        }
+        throw err;
+      }
+    }
+
+    const via = faucet.canMint ? "mint" : "faucet";
+    const amount = faucet.faucetAmount.toString();
+    this.pushAudit({
+      type: "SandboxTopUp",
+      at: new Date().toISOString(),
+      payload: { account, amount, txHash, token: faucet.token, via },
+    });
+    return { account, amount, txHash, token: status.token, via };
   }
 
   /**
