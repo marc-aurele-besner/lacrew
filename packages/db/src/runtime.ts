@@ -24,7 +24,12 @@ export interface SessionRow {
   status: string;
   issuedAt: string;
   revokedAt?: string;
+  /** `chain` when absent; a `sandbox` session exists only in the simulator. */
+  ledger?: RuntimeLedger;
 }
+
+/** Which ledger a session or intent record belongs to. */
+export type RuntimeLedger = "chain" | "sandbox";
 
 export interface IntentRow {
   intentId: string;
@@ -35,10 +40,15 @@ export interface IntentRow {
   status: string;
   txHash?: string;
   resolveTxHash?: string;
+  /** Sandbox rows only: the simulator's names for the propose and the resolve. */
+  simTxId?: string;
+  resolveSimTxId?: string;
   sessionKeyId?: string;
   chainId?: number;
   proposedAt: string;
   resolvedAt?: string;
+  /** `chain` when absent; a `sandbox` intent was proposed to the simulator. */
+  ledger?: RuntimeLedger;
 }
 
 export async function upsertSessionRow(handle: DbHandle, row: SessionRow): Promise<void> {
@@ -56,29 +66,36 @@ export async function upsertSessionRow(handle: DbHandle, row: SessionRow): Promi
     status: row.status,
     issuedAt: new Date(row.issuedAt),
     revokedAt: row.revokedAt ? new Date(row.revokedAt) : null,
+    ledger: row.ledger ?? "chain",
   };
   await handle.db
     .insert(runtimeSessions)
     .values(values)
-    .onConflictDoUpdate({ target: runtimeSessions.keyId, set: values });
+    .onConflictDoUpdate({ target: [runtimeSessions.keyId, runtimeSessions.ledger], set: values });
 }
 
 export async function markSessionRevokedRow(
   handle: DbHandle,
   keyId: string,
   revokedAt: string,
+  ledger: RuntimeLedger = "chain",
 ): Promise<void> {
   await handle.db
     .update(runtimeSessions)
     .set({ status: "revoked", revokedAt: new Date(revokedAt) })
-    .where(eq(runtimeSessions.keyId, keyId));
+    .where(and(eq(runtimeSessions.keyId, keyId), eq(runtimeSessions.ledger, ledger)));
 }
 
-/** Most recent sessions, newest → oldest. */
-export async function recentSessionRows(handle: DbHandle, limit: number): Promise<SessionRow[]> {
+/** Most recent sessions of one ledger, newest → oldest. */
+export async function recentSessionRows(
+  handle: DbHandle,
+  limit: number,
+  ledger: RuntimeLedger = "chain",
+): Promise<SessionRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeSessions)
+    .where(eq(runtimeSessions.ledger, ledger))
     .orderBy(desc(runtimeSessions.issuedAt))
     .limit(limit);
   return rows.map((row) => ({
@@ -95,6 +112,7 @@ export async function recentSessionRows(handle: DbHandle, limit: number): Promis
     status: row.status,
     issuedAt: row.issuedAt.toISOString(),
     revokedAt: row.revokedAt?.toISOString(),
+    ledger: row.ledger as RuntimeLedger,
   }));
 }
 
@@ -108,10 +126,13 @@ export async function insertIntentRow(handle: DbHandle, row: IntentRow): Promise
     status: row.status,
     txHash: row.txHash ?? null,
     resolveTxHash: row.resolveTxHash ?? null,
+    simTxId: row.simTxId ?? null,
+    resolveSimTxId: row.resolveSimTxId ?? null,
     sessionKeyId: row.sessionKeyId ?? null,
     chainId: row.chainId ?? null,
     proposedAt: new Date(row.proposedAt),
     resolvedAt: row.resolvedAt ? new Date(row.resolvedAt) : null,
+    ledger: row.ledger ?? "chain",
   });
 }
 
@@ -119,23 +140,50 @@ export async function insertIntentRow(handle: DbHandle, row: IntentRow): Promise
 export async function resolveIntentRows(
   handle: DbHandle,
   intentId: string,
-  input: { status: string; resolveTxHash?: string; resolvedAt: string },
+  input: {
+    status: string;
+    resolveTxHash?: string;
+    resolveSimTxId?: string;
+    resolvedAt: string;
+    ledger?: RuntimeLedger;
+  },
 ): Promise<void> {
   await handle.db
     .update(runtimeIntents)
     .set({
       status: input.status,
       resolveTxHash: input.resolveTxHash ?? null,
+      resolveSimTxId: input.resolveSimTxId ?? null,
       resolvedAt: new Date(input.resolvedAt),
     })
-    .where(and(eq(runtimeIntents.intentId, intentId), eq(runtimeIntents.status, "pending")));
+    .where(
+      and(
+        eq(runtimeIntents.intentId, intentId),
+        eq(runtimeIntents.status, "pending"),
+        eq(runtimeIntents.ledger, input.ledger ?? "chain"),
+      ),
+    );
 }
 
-/** Most recent intents, newest → oldest. */
-export async function recentIntentRows(handle: DbHandle, limit: number): Promise<IntentRow[]> {
+/**
+ * Delete every simulated session and intent record. Paired with a sandbox
+ * reset; chain records are never touched.
+ */
+export async function deleteSandboxRuntimeRows(handle: DbHandle): Promise<void> {
+  await handle.db.delete(runtimeSessions).where(eq(runtimeSessions.ledger, "sandbox"));
+  await handle.db.delete(runtimeIntents).where(eq(runtimeIntents.ledger, "sandbox"));
+}
+
+/** Most recent intents of one ledger, newest → oldest. */
+export async function recentIntentRows(
+  handle: DbHandle,
+  limit: number,
+  ledger: RuntimeLedger = "chain",
+): Promise<IntentRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeIntents)
+    .where(eq(runtimeIntents.ledger, ledger))
     .orderBy(desc(runtimeIntents.proposedAt), desc(runtimeIntents.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -147,10 +195,13 @@ export async function recentIntentRows(handle: DbHandle, limit: number): Promise
     status: row.status,
     txHash: row.txHash ?? undefined,
     resolveTxHash: row.resolveTxHash ?? undefined,
+    simTxId: row.simTxId ?? undefined,
+    resolveSimTxId: row.resolveSimTxId ?? undefined,
     sessionKeyId: row.sessionKeyId ?? undefined,
     chainId: row.chainId ?? undefined,
     proposedAt: row.proposedAt.toISOString(),
     resolvedAt: row.resolvedAt?.toISOString(),
+    ledger: row.ledger as RuntimeLedger,
   }));
 }
 

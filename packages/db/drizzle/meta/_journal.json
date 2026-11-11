@@ -211,6 +211,13 @@
       "when": 1794403955784,
       "tag": "0029_spicy_ultimates",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794411189055,
+      "tag": "0030_outgoing_franklin_storm",
+      "breakpoints": true
     }
   ]
 }

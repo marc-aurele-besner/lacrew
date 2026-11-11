@@ -12,12 +12,15 @@ export {
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
+  deleteSandboxAuditEvents,
   insertAuditEvent,
   insertChainAuditEvent,
   recentAuditEvents,
   type AuditEventRow,
+  type AuditLedger,
   type AuditReadOptions,
 } from "./audit.js";
+export { loadSandboxState, saveSandboxState, type SandboxStateRow } from "./sandbox.js";
 export {
   insertTxGas,
   setTxGasAgent,
@@ -147,6 +150,8 @@ export {
   insertIntentRow,
   resolveIntentRows,
   recentIntentRows,
+  deleteSandboxRuntimeRows,
+  type RuntimeLedger,
   upsertAgentControlRow,
   allAgentControlRows,
   insertMessageRow,

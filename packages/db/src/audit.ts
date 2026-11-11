@@ -15,7 +15,12 @@ export interface AuditEventRow {
   /** Chain coordinates when sourced from a log. */
   txHash?: string | null;
   logIndex?: number | null;
+  /** `chain` when absent. A `sandbox` row is a simulated event; nothing was mined. */
+  ledger?: AuditLedger | null;
 }
+
+/** Which ledger an audit row belongs to. */
+export type AuditLedger = "chain" | "sandbox";
 
 /**
  * Optional chain scope for reads. When `chainId` is set only that chain's
@@ -25,10 +30,18 @@ export interface AuditEventRow {
  */
 export interface AuditReadOptions {
   chainId?: number;
+  /**
+   * Only this ledger's rows answer. A usage meter must pass `chain`: sandbox
+   * rows are simulated activity and billing them would charge for nothing.
+   */
+  ledger?: AuditLedger;
 }
 
 function chainScope(options?: AuditReadOptions): SQL | undefined {
-  return options?.chainId === undefined ? undefined : eq(auditEvents.chainId, options.chainId);
+  return and(
+    options?.chainId === undefined ? undefined : eq(auditEvents.chainId, options.chainId),
+    options?.ledger === undefined ? undefined : eq(auditEvents.ledger, options.ledger),
+  );
 }
 
 export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): Promise<void> {
@@ -40,7 +53,17 @@ export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): 
     chainId: event.chainId ?? null,
     txHash: event.txHash ?? null,
     logIndex: event.logIndex ?? null,
+    ledger: event.ledger ?? "chain",
   });
+}
+
+/**
+ * Delete every simulated row. A sandbox reset rebuilds the simulator from
+ * genesis, so the trail of the simulation it replaces goes with it. Chain rows
+ * are never touched: the predicate is the ledger column, not a time window.
+ */
+export async function deleteSandboxAuditEvents(handle: DbHandle): Promise<void> {
+  await handle.db.delete(auditEvents).where(eq(auditEvents.ledger, "sandbox"));
 }
 
 /**
@@ -186,6 +209,7 @@ export async function auditEventsBetween(
     chainId: row.chainId,
     txHash: row.txHash,
     logIndex: row.logIndex,
+    ledger: row.ledger as AuditLedger,
   }));
 }
 
@@ -209,5 +233,6 @@ export async function recentAuditEvents(
     chainId: row.chainId,
     txHash: row.txHash,
     logIndex: row.logIndex,
+    ledger: row.ledger as AuditLedger,
   }));
 }

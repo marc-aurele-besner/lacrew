@@ -35,11 +35,18 @@ export const auditEvents = pgTable(
     /** Chain coordinates when sourced from a log (indexer). */
     txHash: text("tx_hash"),
     logIndex: integer("log_index"),
+    /**
+     * Which ledger the event happened on: `chain` (mined, or raised by an
+     * orchestrator bound to a chain) or `sandbox` (simulated in process,
+     * nothing mined). Sandbox rows never count toward a usage meter.
+     */
+    ledger: text("ledger").notNull().default("chain"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("audit_events_at_idx").on(table.at),
     index("audit_events_chain_at_idx").on(table.chainId, table.at),
+    index("audit_events_ledger_at_idx").on(table.ledger, table.at),
     uniqueIndex("audit_events_chain_tx_log_idx").on(table.chainId, table.txHash, table.logIndex),
   ],
 );
