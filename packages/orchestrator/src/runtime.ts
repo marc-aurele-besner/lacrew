@@ -32,7 +32,7 @@ import {
   hasDeployment,
   listAssetStacks,
   resolveAssetStack,
-  sandboxVerdict,
+  faucetVerdict,
   gasReceiptFromTransaction,
   ADDRESS_ENV_VARS,
   GAS_PAYERS,
@@ -324,16 +324,16 @@ export type RuntimeBootFailure =
   | "delegations_unavailable";
 
 /**
- * Whether this deployment is a sandbox, and what a play-money top-up gives.
+ * Whether this deployment has a play-money faucet, and what a top-up gives.
  *
- * `reason` is a stable code present only when `sandbox` is false: `no_chain`
+ * `reason` is a stable code present only when `available` is false: `no_chain`
  * (no chain bound), `chain_id_mismatch` (the endpoint reports another chain),
  * `not_test_chain`, `no_mock_token`, `spend_token_not_mock` (see
- * `sandboxVerdict`), `token_unreadable` (the spend token or the MockUSDC could
+ * `faucetVerdict`), `token_unreadable` (the spend token or the MockUSDC could
  * not be read), or `no_signer` (this runtime cannot send the top-up).
  */
-export type SandboxStatus = {
-  sandbox: boolean;
+export type FaucetStatus = {
+  available: boolean;
   chainId: number | null;
   token?: { address: `0x${string}`; symbol: string; decimals: number };
   /** The fixed top-up amount, in the token's base units. */
@@ -348,7 +348,7 @@ export type SandboxStatus = {
 };
 
 /** A credited play-money top-up. */
-export type SandboxTopUp = {
+export type FaucetTopUp = {
   account: `0x${string}`;
   amount: string;
   txHash: `0x${string}`;
@@ -356,17 +356,17 @@ export type SandboxTopUp = {
   via: "mint" | "faucet";
 };
 
-export type SandboxErrorCode =
-  "not_sandbox" | "invalid_account" | "account_not_in_org" | "faucet_cooldown";
+export type FaucetErrorCode =
+  "faucet_unavailable" | "invalid_account" | "account_not_in_org" | "faucet_cooldown";
 
 /** A refused play-money top-up; `code` is stable for callers to branch on. */
-export class SandboxError extends Error {
+export class FaucetError extends Error {
   constructor(
-    readonly code: SandboxErrorCode,
+    readonly code: FaucetErrorCode,
     readonly detail: { reason?: string; retryAfterSeconds?: number } = {},
   ) {
     super(code);
-    this.name = "SandboxError";
+    this.name = "FaucetError";
   }
 }
 
@@ -3374,26 +3374,26 @@ export class CrewRuntime {
   }
 
   /**
-   * The sandbox decision plus the MockUSDC facts a top-up needs.
+   * The faucet decision plus the MockUSDC facts a top-up needs.
    *
    * Every input is read rather than assumed: the chain id from the endpoint,
    * the spend token from the primary Treasury's own `token()`, and the faucet
    * parameters from the token contract. A read that fails is a refusal — an
-   * unconfirmed sandbox is not a sandbox.
+   * unconfirmed faucet is not a faucet.
    */
-  private async readSandbox(): Promise<{ status: SandboxStatus; faucet?: MockTokenFaucet }> {
+  private async readFaucet(): Promise<{ status: FaucetStatus; faucet?: MockTokenFaucet }> {
     const client = this.client;
     const chainId = this.chainId;
     if (!isOnchainClient(client) || chainId == null) {
-      return { status: { sandbox: false, chainId, reason: "no_chain" } };
+      return { status: { available: false, chainId, reason: "no_chain" } };
     }
-    const refuse = (reason: string) => ({ status: { sandbox: false, chainId, reason } });
+    const refuse = (reason: string) => ({ status: { available: false, chainId, reason } });
 
     const mockToken = client.addresses.mockUSDC;
     // Decided on the address book alone first, so a mainnet deployment is
     // refused without a single call to its chain.
-    const book = sandboxVerdict({ chainId, spendToken: mockToken, mockToken });
-    if (!book.sandbox) return refuse(book.reason);
+    const book = faucetVerdict({ chainId, spendToken: mockToken, mockToken });
+    if (!book.available) return refuse(book.reason);
 
     let reported: number;
     let spendToken: `0x${string}`;
@@ -3406,8 +3406,8 @@ export class CrewRuntime {
       return refuse("token_unreadable");
     }
     if (reported !== chainId) return refuse("chain_id_mismatch");
-    const verdict = sandboxVerdict({ chainId, spendToken, mockToken });
-    if (!verdict.sandbox) return refuse(verdict.reason);
+    const verdict = faucetVerdict({ chainId, spendToken, mockToken });
+    if (!verdict.available) return refuse(verdict.reason);
 
     let faucet: MockTokenFaucet;
     try {
@@ -3430,7 +3430,7 @@ export class CrewRuntime {
     return {
       faucet,
       status: {
-        sandbox: true,
+        available: true,
         chainId,
         token: { address: faucet.token, symbol: faucet.symbol, decimals: faucet.decimals },
         faucetAmount: faucet.faucetAmount.toString(),
@@ -3442,11 +3442,11 @@ export class CrewRuntime {
   }
 
   /**
-   * Whether this deployment is a sandbox: a test chain whose Treasury spends
+   * Whether this deployment has a play-money faucet: a test chain whose Treasury spends
    * the deployment's MockUSDC. Never true in mock mode or on a mainnet id.
    */
-  async sandboxStatus(): Promise<SandboxStatus> {
-    return (await this.readSandbox()).status;
+  async faucetStatus(): Promise<FaucetStatus> {
+    return (await this.readFaucet()).status;
   }
 
   /**
@@ -3456,7 +3456,7 @@ export class CrewRuntime {
    * approval and grants no authority: it changes no allowance, cap, grant, or
    * policy, and every spend of it still goes through the onchain stack.
    *
-   * Refusals are `SandboxError`s: `not_sandbox` unless `sandboxStatus()` says
+   * Refusals are `FaucetError`s: `faucet_unavailable` unless `faucetStatus()` says
    * this is one; `invalid_account` for anything but a 20-byte hex address;
    * `account_not_in_org` unless the account is the primary Treasury or an
    * active node of the org tree; `faucet_cooldown` while the faucet is closed.
@@ -3468,21 +3468,21 @@ export class CrewRuntime {
    * per-address cooldown, so it serves one top-up per cooldown for the whole
    * deployment. The amount is the contract's `FAUCET_AMOUNT` on both paths.
    */
-  async sandboxTopUp(input: { account: string }): Promise<SandboxTopUp> {
-    const { status, faucet } = await this.readSandbox();
+  async faucetTopUp(input: { account: string }): Promise<FaucetTopUp> {
+    const { status, faucet } = await this.readFaucet();
     const client = this.client;
-    if (!status.sandbox || !status.token || !faucet || !isOnchainClient(client)) {
-      throw new SandboxError("not_sandbox", { reason: status.reason });
+    if (!status.available || !status.token || !faucet || !isOnchainClient(client)) {
+      throw new FaucetError("faucet_unavailable", { reason: status.reason });
     }
     if (typeof input.account !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(input.account)) {
-      throw new SandboxError("invalid_account");
+      throw new FaucetError("invalid_account");
     }
     const account = input.account as `0x${string}`;
     const wanted = account.toLowerCase();
     const inOrg =
       client.addresses.treasury.toLowerCase() === wanted ||
       (await client.getOrgTree()).some((n) => n.active && n.account.toLowerCase() === wanted);
-    if (!inOrg) throw new SandboxError("account_not_in_org");
+    if (!inOrg) throw new FaucetError("account_not_in_org");
 
     let txHash: `0x${string}`;
     if (faucet.canMint) {
@@ -3492,7 +3492,7 @@ export class CrewRuntime {
         ({ txHash } = await client.dripMockToken(faucet.token, account));
       } catch (err) {
         if (err instanceof FaucetCooldownError) {
-          throw new SandboxError("faucet_cooldown", { retryAfterSeconds: err.retryAfterSeconds });
+          throw new FaucetError("faucet_cooldown", { retryAfterSeconds: err.retryAfterSeconds });
         }
         throw err;
       }
@@ -3501,7 +3501,7 @@ export class CrewRuntime {
     const via = faucet.canMint ? "mint" : "faucet";
     const amount = faucet.faucetAmount.toString();
     this.pushAudit({
-      type: "SandboxTopUp",
+      type: "FaucetTopUp",
       at: new Date().toISOString(),
       payload: { account, amount, txHash, token: faucet.token, via },
     });

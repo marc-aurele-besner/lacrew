@@ -1,10 +1,10 @@
 /**
- * Play-money top-ups: when a deployment counts as a sandbox, who may be
+ * Play-money top-ups: when a deployment has a play-money faucet, who may be
  * credited, which contract path the credit takes, and how each refusal is
  * served over HTTP.
  *
  * The client is a fake that reads as onchain and answers the handful of calls
- * the sandbox surface makes — no chain is dialed, and every write it is asked
+ * the faucet surface makes — no chain is dialed, and every write it is asked
  * for is recorded so a refusal can be shown to have sent nothing. The SDK
  * methods it stands in for are tested against a stub transport in
  * `@lacrew/sdk` (onchainWrites.test.ts).
@@ -27,7 +27,7 @@ import { createMemoryFlowStore } from "./flowStore.js";
 import { createOrchestratorApp } from "./httpApp.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { InMemoryQueue } from "./queue/index.js";
-import { CrewRuntime, SandboxError } from "./runtime.js";
+import { CrewRuntime, FaucetError } from "./runtime.js";
 
 const addr = (n: string) => `0x${n.repeat(40)}` as `0x${string}`;
 const TREASURY = addr("2");
@@ -49,7 +49,7 @@ const TREE: OrgNode[] = [
 
 type Writes = Array<{ fn: "mint" | "drip"; to: string; amount?: bigint }>;
 
-function sandboxRuntime(
+function faucetRuntime(
   opts: {
     chainId?: number;
     /** What the endpoint itself reports; defaults to `chainId`. */
@@ -115,30 +115,30 @@ function sandboxRuntime(
 }
 
 /** The refusal code a top-up is rejected with. */
-async function refusal(run: Promise<unknown>): Promise<SandboxError> {
+async function refusal(run: Promise<unknown>): Promise<FaucetError> {
   try {
     await run;
   } catch (err) {
-    assert.ok(err instanceof SandboxError, `expected a SandboxError, got ${String(err)}`);
+    assert.ok(err instanceof FaucetError, `expected a FaucetError, got ${String(err)}`);
     return err;
   }
   throw new Error("expected the top-up to be refused");
 }
 
-describe("sandboxStatus", () => {
-  it("is not a sandbox with no chain bound", async () => {
+describe("faucetStatus", () => {
+  it("has no faucet with no chain bound", async () => {
     const runtime = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
-    assert.deepEqual(await runtime.sandboxStatus(), {
-      sandbox: false,
+    assert.deepEqual(await runtime.faucetStatus(), {
+      available: false,
       chainId: null,
       reason: "no_chain",
     });
   });
 
-  it("is a sandbox on a test chain whose Treasury spends the MockUSDC", async () => {
+  it("has a faucet on a test chain whose Treasury spends the MockUSDC", async () => {
     for (const chainId of [ANVIL_CHAIN_ID, SEPOLIA_CHAIN_ID]) {
-      assert.deepEqual(await sandboxRuntime({ chainId }).sandboxStatus(), {
-        sandbox: true,
+      assert.deepEqual(await faucetRuntime({ chainId }).faucetStatus(), {
+        available: true,
         chainId,
         token: { address: MOCK_USDC, symbol: "mUSDC", decimals: 6 },
         faucetAmount: "100000000",
@@ -149,8 +149,8 @@ describe("sandboxStatus", () => {
   });
 
   it("reports the faucet's cooldown when the signer cannot mint", async () => {
-    const status = await sandboxRuntime({ canMint: false, faucetWait: 600 }).sandboxStatus();
-    assert.equal(status.sandbox, true);
+    const status = await faucetRuntime({ canMint: false, faucetWait: 600 }).faucetStatus();
+    assert.equal(status.available, true);
     assert.equal(status.via, "faucet");
     assert.equal(status.cooldownSeconds, 86_400);
     assert.equal(status.retryAfterSeconds, 600);
@@ -159,8 +159,8 @@ describe("sandboxStatus", () => {
   it("refuses a mainnet id with a MockUSDC address set, without reading the chain", async () => {
     for (const chainId of [MAINNET_CHAIN_ID, BASE_CHAIN_ID]) {
       const reads = { n: 0 };
-      assert.deepEqual(await sandboxRuntime({ chainId, reads }).sandboxStatus(), {
-        sandbox: false,
+      assert.deepEqual(await faucetRuntime({ chainId, reads }).faucetStatus(), {
+        available: false,
         chainId,
         reason: "not_test_chain",
       });
@@ -169,42 +169,46 @@ describe("sandboxStatus", () => {
   });
 
   it("refuses a test chain with no MockUSDC in the address book", async () => {
-    const status = await sandboxRuntime({ mockUSDC: null }).sandboxStatus();
-    assert.deepEqual(status, { sandbox: false, chainId: ANVIL_CHAIN_ID, reason: "no_mock_token" });
+    const status = await faucetRuntime({ mockUSDC: null }).faucetStatus();
+    assert.deepEqual(status, {
+      available: false,
+      chainId: ANVIL_CHAIN_ID,
+      reason: "no_mock_token",
+    });
   });
 
   it("refuses a test chain whose Treasury spends another token", async () => {
     // The address book names a MockUSDC, and the Treasury holds something else:
     // the Treasury's own answer decides.
-    const status = await sandboxRuntime({ spendToken: REAL_USDC }).sandboxStatus();
-    assert.equal(status.sandbox, false);
+    const status = await faucetRuntime({ spendToken: REAL_USDC }).faucetStatus();
+    assert.equal(status.available, false);
     assert.equal(status.reason, "spend_token_not_mock");
   });
 
   it("refuses when the endpoint reports a different chain than the one bound", async () => {
-    const status = await sandboxRuntime({ reportedChainId: MAINNET_CHAIN_ID }).sandboxStatus();
-    assert.equal(status.sandbox, false);
+    const status = await faucetRuntime({ reportedChainId: MAINNET_CHAIN_ID }).faucetStatus();
+    assert.equal(status.available, false);
     assert.equal(status.reason, "chain_id_mismatch");
   });
 
   it("refuses a token that does not answer as a MockUSDC", async () => {
-    const status = await sandboxRuntime({ tokenThrows: true }).sandboxStatus();
-    assert.equal(status.sandbox, false);
+    const status = await faucetRuntime({ tokenThrows: true }).faucetStatus();
+    assert.equal(status.available, false);
     assert.equal(status.reason, "token_unreadable");
   });
 
   it("refuses a runtime that cannot sign the top-up", async () => {
-    const status = await sandboxRuntime({ signer: null, canMint: false }).sandboxStatus();
-    assert.equal(status.sandbox, false);
+    const status = await faucetRuntime({ signer: null, canMint: false }).faucetStatus();
+    assert.equal(status.available, false);
     assert.equal(status.reason, "no_signer");
   });
 });
 
-describe("sandboxTopUp", () => {
+describe("faucetTopUp", () => {
   it("mints the fixed faucet amount to an org node and records it", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ writes });
-    assert.deepEqual(await runtime.sandboxTopUp({ account: WORKER }), {
+    const runtime = faucetRuntime({ writes });
+    assert.deepEqual(await runtime.faucetTopUp({ account: WORKER }), {
       account: WORKER,
       amount: "100000000",
       txHash: TX,
@@ -213,7 +217,7 @@ describe("sandboxTopUp", () => {
     });
     assert.deepEqual(writes, [{ fn: "mint", to: WORKER, amount: DRIP }]);
 
-    const event = (await runtime.audit()).find((e) => e.type === "SandboxTopUp");
+    const event = (await runtime.audit()).find((e) => e.type === "FaucetTopUp");
     assert.ok(event, "the top-up is in the audit trail");
     assert.equal(event.payload.account, WORKER);
     assert.equal(event.payload.amount, "100000000");
@@ -223,9 +227,9 @@ describe("sandboxTopUp", () => {
 
   it("credits the Treasury and the human root, matched case-insensitively", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ writes });
-    await runtime.sandboxTopUp({ account: TREASURY });
-    await runtime.sandboxTopUp({ account: ROOT.toUpperCase().replace("0X", "0x") });
+    const runtime = faucetRuntime({ writes });
+    await runtime.faucetTopUp({ account: TREASURY });
+    await runtime.faucetTopUp({ account: ROOT.toUpperCase().replace("0X", "0x") });
     assert.deepEqual(
       writes.map((w) => w.to.toLowerCase()),
       [TREASURY, ROOT],
@@ -234,7 +238,7 @@ describe("sandboxTopUp", () => {
 
   it("drips through the faucet when the signer is not a minter", async () => {
     const writes: Writes = [];
-    const result = await sandboxRuntime({ canMint: false, writes }).sandboxTopUp({
+    const result = await faucetRuntime({ canMint: false, writes }).faucetTopUp({
       account: WORKER,
     });
     assert.equal(result.via, "faucet");
@@ -244,28 +248,28 @@ describe("sandboxTopUp", () => {
 
   it("relays the faucet cooldown with the seconds remaining, and records nothing", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ canMint: false, faucetWait: 600, writes });
-    const err = await refusal(runtime.sandboxTopUp({ account: WORKER }));
+    const runtime = faucetRuntime({ canMint: false, faucetWait: 600, writes });
+    const err = await refusal(runtime.faucetTopUp({ account: WORKER }));
     assert.equal(err.code, "faucet_cooldown");
     assert.equal(err.detail.retryAfterSeconds, 600);
     assert.deepEqual(writes, []);
-    assert.ok(!(await runtime.audit()).some((e) => e.type === "SandboxTopUp"));
+    assert.ok(!(await runtime.audit()).some((e) => e.type === "FaucetTopUp"));
   });
 
   it("refuses an address outside the org, and a fired node", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ writes });
+    const runtime = faucetRuntime({ writes });
     for (const account of [STRANGER, SIGNER, FIRED]) {
-      assert.equal((await refusal(runtime.sandboxTopUp({ account }))).code, "account_not_in_org");
+      assert.equal((await refusal(runtime.faucetTopUp({ account }))).code, "account_not_in_org");
     }
     assert.deepEqual(writes, []);
   });
 
   it("refuses anything that is not a 20-byte hex address", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ writes });
+    const runtime = faucetRuntime({ writes });
     for (const account of ["", "worker", "0x1234", `${WORKER}00`, undefined, 7]) {
-      const err = await refusal(runtime.sandboxTopUp({ account: account as string }));
+      const err = await refusal(runtime.faucetTopUp({ account: account as string }));
       assert.equal(err.code, "invalid_account");
     }
     assert.deepEqual(writes, []);
@@ -273,27 +277,27 @@ describe("sandboxTopUp", () => {
 
   it("refuses on a mainnet id, whatever the address book says, and sends nothing", async () => {
     const writes: Writes = [];
-    const runtime = sandboxRuntime({ chainId: BASE_CHAIN_ID, writes });
-    const err = await refusal(runtime.sandboxTopUp({ account: WORKER }));
-    assert.equal(err.code, "not_sandbox");
+    const runtime = faucetRuntime({ chainId: BASE_CHAIN_ID, writes });
+    const err = await refusal(runtime.faucetTopUp({ account: WORKER }));
+    assert.equal(err.code, "faucet_unavailable");
     assert.equal(err.detail.reason, "not_test_chain");
     assert.deepEqual(writes, []);
   });
 
   it("refuses when the Treasury spends a real token, and with no chain bound", async () => {
     const writes: Writes = [];
-    const real = sandboxRuntime({ spendToken: REAL_USDC, writes });
-    assert.equal((await refusal(real.sandboxTopUp({ account: WORKER }))).code, "not_sandbox");
+    const real = faucetRuntime({ spendToken: REAL_USDC, writes });
+    assert.equal((await refusal(real.faucetTopUp({ account: WORKER }))).code, "faucet_unavailable");
     assert.deepEqual(writes, []);
 
     const chainless = new CrewRuntime({ client: createLacrewClient({ useMock: true }) });
-    const err = await refusal(chainless.sandboxTopUp({ account: WORKER }));
-    assert.equal(err.code, "not_sandbox");
+    const err = await refusal(chainless.faucetTopUp({ account: WORKER }));
+    assert.equal(err.code, "faucet_unavailable");
     assert.equal(err.detail.reason, "no_chain");
   });
 });
 
-describe("sandbox routes", () => {
+describe("faucet routes", () => {
   function appFor(runtime: CrewRuntime, authToken?: string) {
     const model = new MemoryModelProvider();
     return createOrchestratorApp({
@@ -314,17 +318,17 @@ describe("sandbox routes", () => {
   }
 
   const topUp = (body: unknown, headers: Record<string, string> = {}) =>
-    new Request("http://x/sandbox/top-up", {
+    new Request("http://x/faucet/top-up", {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
     });
 
-  it("GET /sandbox serves the status, and a non-sandbox is a 200 with a reason", async () => {
-    const yes = await appFor(sandboxRuntime()).request("/sandbox");
+  it("GET /faucet serves the status, and a deployment with no faucet is a 200 with a reason", async () => {
+    const yes = await appFor(faucetRuntime()).request("/faucet");
     assert.equal(yes.status, 200);
     assert.deepEqual(await yes.json(), {
-      sandbox: true,
+      available: true,
       chainId: ANVIL_CHAIN_ID,
       token: { address: MOCK_USDC, symbol: "mUSDC", decimals: 6 },
       faucetAmount: "100000000",
@@ -333,19 +337,19 @@ describe("sandbox routes", () => {
       mode: "onchain",
     });
 
-    const no = await appFor(sandboxRuntime({ chainId: BASE_CHAIN_ID })).request("/sandbox");
+    const no = await appFor(faucetRuntime({ chainId: BASE_CHAIN_ID })).request("/faucet");
     assert.equal(no.status, 200);
     assert.deepEqual(await no.json(), {
-      sandbox: false,
+      available: false,
       chainId: BASE_CHAIN_ID,
       reason: "not_test_chain",
       mode: "onchain",
     });
   });
 
-  it("POST /sandbox/top-up credits an org account", async () => {
+  it("POST /faucet/top-up credits an org account", async () => {
     const writes: Writes = [];
-    const res = await appFor(sandboxRuntime({ writes })).request(topUp({ account: WORKER }));
+    const res = await appFor(faucetRuntime({ writes })).request(topUp({ account: WORKER }));
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), {
       account: WORKER,
@@ -361,16 +365,16 @@ describe("sandbox routes", () => {
   it("serves each refusal as its own stable 4xx", async () => {
     const cases: Array<[CrewRuntime, unknown, number, Record<string, unknown>]> = [
       [
-        sandboxRuntime({ chainId: BASE_CHAIN_ID }),
+        faucetRuntime({ chainId: BASE_CHAIN_ID }),
         { account: WORKER },
         409,
-        { error: "not_sandbox", reason: "not_test_chain" },
+        { error: "faucet_unavailable", reason: "not_test_chain" },
       ],
-      [sandboxRuntime(), { account: "nope" }, 400, { error: "invalid_account" }],
-      [sandboxRuntime(), {}, 400, { error: "invalid_account" }],
-      [sandboxRuntime(), { account: STRANGER }, 403, { error: "account_not_in_org" }],
+      [faucetRuntime(), { account: "nope" }, 400, { error: "invalid_account" }],
+      [faucetRuntime(), {}, 400, { error: "invalid_account" }],
+      [faucetRuntime(), { account: STRANGER }, 403, { error: "account_not_in_org" }],
       [
-        sandboxRuntime({ canMint: false, faucetWait: 600 }),
+        faucetRuntime({ canMint: false, faucetWait: 600 }),
         { account: WORKER },
         429,
         { error: "faucet_cooldown", retryAfterSeconds: 600 },
@@ -384,7 +388,7 @@ describe("sandbox routes", () => {
   });
 
   it("sets Retry-After on a cooldown refusal", async () => {
-    const res = await appFor(sandboxRuntime({ canMint: false, faucetWait: 600 })).request(
+    const res = await appFor(faucetRuntime({ canMint: false, faucetWait: 600 })).request(
       topUp({ account: WORKER }),
     );
     assert.equal(res.headers.get("retry-after"), "600");
@@ -392,7 +396,7 @@ describe("sandbox routes", () => {
 
   it("refuses a caller-chosen amount rather than ignoring it", async () => {
     const writes: Writes = [];
-    const res = await appFor(sandboxRuntime({ writes })).request(
+    const res = await appFor(faucetRuntime({ writes })).request(
       topUp({ account: WORKER, amount: "1000000000000" }),
     );
     assert.equal(res.status, 400);
@@ -402,9 +406,9 @@ describe("sandbox routes", () => {
 
   it("sits behind the bearer token like every other route", async () => {
     const writes: Writes = [];
-    const app = appFor(sandboxRuntime({ writes }), "s3cret");
+    const app = appFor(faucetRuntime({ writes }), "s3cret");
     assert.equal((await app.request(topUp({ account: WORKER }))).status, 401);
-    assert.equal((await app.request("/sandbox")).status, 401);
+    assert.equal((await app.request("/faucet")).status, 401);
     assert.deepEqual(writes, []);
 
     const ok = await app.request(topUp({ account: WORKER }, { authorization: "Bearer s3cret" }));
