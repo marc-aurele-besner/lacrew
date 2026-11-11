@@ -32,14 +32,15 @@ export function createRuntimeMcpBackend(
         value: intent.value.toString(),
       })),
     proposeIntent: async (input) => {
-      const { intentId, verdict, txHash } = await runtime.propose({
+      const { intentId, verdict, txHash, simTxId } = await runtime.propose({
         ...input,
         ceiling: actor.ceiling,
         window: actor.window,
         rate: actor.rate,
         scopes: actor.scopes,
       });
-      return { intentId, verdict, txHash };
+      // A sandbox propose is named by a `simTxId` and never by a `txHash`.
+      return { intentId, verdict, txHash, ...(simTxId ? { simTxId } : {}) };
     },
     /*
       An agent settling an intent that has climbed to the human root would be
@@ -57,16 +58,19 @@ export function createRuntimeMcpBackend(
           `root_approval_required: intent ${intentId} awaits the human root, who must approve it directly`,
         );
       }
-      const { intent, escalated, txHash } = await runtime.resolve(
+      const resolved = await runtime.resolve(
         intentId,
         approved,
         authority.awaitingApprover ?? undefined,
         "approver",
       );
+      const { intent, escalated, txHash } = resolved;
+      const simTxId = "simTxId" in resolved ? resolved.simTxId : undefined;
       return {
         intent: { ...intent, value: intent.value.toString() },
         escalated,
         txHash,
+        ...(simTxId ? { simTxId } : {}),
       };
     },
     checkPolicy: (input) => runtime.checkEffectivePolicy({ ...input, ceiling: actor.ceiling }),

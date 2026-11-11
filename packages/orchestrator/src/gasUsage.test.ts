@@ -58,7 +58,7 @@ function gasRuntime(opts: { gasStore?: GasStore } = {}) {
       observer = fn;
       return () => {};
     },
-  } as unknown as ConstructorParameters<typeof CrewRuntime>[0]["client"];
+  } as unknown as NonNullable<ConstructorParameters<typeof CrewRuntime>[0]["client"]>;
   const runtime = new CrewRuntime({
     client,
     mode: "onchain",
@@ -705,7 +705,7 @@ describe("GET /audit chain id", () => {
       publicClient: {},
       chainId: BASE_CHAIN_ID,
       addresses: { chainId: BASE_CHAIN_ID },
-    } as unknown as ConstructorParameters<typeof CrewRuntime>[0]["client"];
+    } as unknown as NonNullable<ConstructorParameters<typeof CrewRuntime>[0]["client"]>;
     const runtime = new CrewRuntime({
       client,
       mode: "onchain",
