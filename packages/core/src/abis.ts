@@ -1396,6 +1396,17 @@ export const escalationRouterAbi = [
   },
   {
     "type": "error",
+    "name": "InactiveApprover",
+    "inputs": [
+      {
+        "name": "approver",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentAlreadyResolved",
     "inputs": [
       {
@@ -1761,6 +1772,25 @@ export const governanceModuleAbi = [
     "type": "function",
     "name": "nextProposalId",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "noHumanVotes",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -2464,6 +2494,17 @@ export const governanceModuleAbi = [
   {
     "type": "error",
     "name": "ProposalNotActive",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotFound",
     "inputs": [
       {
         "name": "proposalId",
