@@ -60,6 +60,7 @@ import {
   type NodeKind,
   type NodePolicyStack,
   type OrgNode,
+  type PolicyDenial,
   type PolicyModuleInfo,
   type ProtocolEvent,
   type SessionKey,
@@ -67,6 +68,12 @@ import {
 } from "@lacrew/core";
 import { resolveWorkspacePath } from "@lacrew/core/node";
 import type { ProtocolClient, SessionKeyLimits } from "./protocolClient.js";
+import {
+  POLICY_DENIED_ERROR,
+  PolicyDeniedError,
+  describePolicyDenial,
+  type DenyingModule,
+} from "./policyDenial.js";
 
 const TIER_MAP: Record<GovernanceTier, number> = {
   low: 0,
@@ -541,6 +548,111 @@ export class OnchainLacrewClient implements ProtocolClient {
   }
 
   /**
+   * Which module of the agent's stack denies this action, by view calls alone.
+   *
+   * The router's `UnexpectedVerdict` names no module, so the stack it consulted
+   * (`policyOf(agent)`, else the default `policy()`) is walked in `check()`
+   * order and each member asked on its own; the first DENY is the answer. Read
+   * at the latest block: a rule that changed since the denied propose is
+   * reported as it stands now, and null when nothing denies any more.
+   */
+  async explainDenial(input: {
+    agent: `0x${string}`;
+    target: `0x${string}`;
+    value: bigint;
+    data?: Hex;
+  }): Promise<PolicyDenial | null> {
+    const router = this.addresses.escalationRouter;
+    const bound = (await this.publicClient.readContract({
+      address: router,
+      abi: escalationRouterAbi,
+      functionName: "policyOf",
+      args: [input.agent],
+    })) as `0x${string}`;
+    const policy =
+      bound !== zeroAddress
+        ? bound
+        : ((await this.publicClient.readContract({
+            address: router,
+            abi: escalationRouterAbi,
+            functionName: "policy",
+          })) as `0x${string}`);
+    if (policy === zeroAddress) return null;
+    const denying = await this.findDenyingModule(policy, input, 0);
+    if (!denying) return null;
+    return describePolicyDenial(await this.readDenyingModule(denying, input.target));
+  }
+
+  /** The first module at or under `module` that answers DENY on its own; null when `module` does not. */
+  private async findDenyingModule(
+    module: `0x${string}`,
+    input: { agent: `0x${string}`; target: `0x${string}`; value: bigint; data?: Hex },
+    depth: number,
+  ): Promise<`0x${string}` | null> {
+    if ((await this.checkPolicy({ ...input, policyModule: module })) !== "DENY") return null;
+    // The depth guard is the one `describePolicyModule` applies to nested stacks.
+    const count =
+      depth < 3 ? await this.tryRead<bigint>(module, policyStackAbi, "moduleCount") : undefined;
+    for (let i = 0; i < Number(count ?? 0n); i++) {
+      const member = (await this.publicClient.readContract({
+        address: module,
+        abi: policyStackAbi,
+        functionName: "modules",
+        args: [BigInt(i)],
+      })) as `0x${string}`;
+      const denying = await this.findDenyingModule(member, input, depth + 1);
+      if (denying) return denying;
+    }
+    return module;
+  }
+
+  /**
+   * A denying module's kind, by the getters `readModuleShape` probes, with
+   * only what its denial is described by: no log scan, no per-node state.
+   */
+  private async readDenyingModule(
+    address: `0x${string}`,
+    target: `0x${string}`,
+  ): Promise<DenyingModule> {
+    const base = { address, target };
+    if ((await this.tryRead<bigint>(address, policyStackAbi, "moduleCount")) !== undefined) {
+      return { ...base, kind: "stack" };
+    }
+    if ((await this.tryRead<bigint>(address, spendCapPolicyAbi, "defaultCap")) !== undefined) {
+      return { ...base, kind: "spend_cap" };
+    }
+    const start = await this.tryRead<number | bigint>(
+      address,
+      timeWindowPolicyAbi,
+      "startSecondOfDay",
+    );
+    if (start !== undefined) {
+      const [end, block] = await Promise.all([
+        this.tryRead<number | bigint>(address, timeWindowPolicyAbi, "endSecondOfDay"),
+        this.publicClient.getBlock(),
+      ]);
+      return {
+        ...base,
+        kind: "time_window",
+        startSecondOfDay: Number(start),
+        ...(end !== undefined ? { endSecondOfDay: Number(end) } : {}),
+        nowSec: Number(block.timestamp),
+      };
+    }
+    if (
+      (await this.tryRead<number | bigint>(address, rateLimitPolicyAbi, "maxActions")) !== undefined
+    ) {
+      return { ...base, kind: "rate_limit" };
+    }
+    if (
+      (await this.tryRead<boolean>(address, whitelistPolicyAbi, "allowed", [target])) !== undefined
+    ) {
+      return { ...base, kind: "whitelist" };
+    }
+    return { ...base, kind: "unknown" };
+  }
+
+  /**
    * Per-node policy-stack composition, read from the chain.
    *
    * For each node: resolve the module EscalationRouter will consult —
@@ -851,13 +963,30 @@ export class OnchainLacrewClient implements ProtocolClient {
     if (!signer) {
       throw new Error("proposeIntent requires a signer account");
     }
-    const { request, result } = await this.publicClient.simulateContract({
-      address: this.addresses.escalationRouter,
-      abi: escalationRouterAbi,
-      functionName: "propose",
-      args: [input.agent, input.target, input.value, input.data ?? "0x"],
-      account: signer,
-    });
+    const { request, result } = await this.publicClient
+      .simulateContract({
+        address: this.addresses.escalationRouter,
+        abi: escalationRouterAbi,
+        functionName: "propose",
+        args: [input.agent, input.target, input.value, input.data ?? "0x"],
+        account: signer,
+      })
+      .catch(async (err: unknown) => {
+        const revert =
+          err instanceof BaseError
+            ? err.walk((e) => e instanceof ContractFunctionRevertedError)
+            : null;
+        if (
+          revert instanceof ContractFunctionRevertedError &&
+          revert.data?.errorName === POLICY_DENIED_ERROR
+        ) {
+          // The dry run is where a DENY shows, so nothing was sent. The reads
+          // that name the module are best effort: the denial stands either way.
+          const denial = await this.explainDenial(input).catch(() => null);
+          throw new PolicyDeniedError(denial, { cause: err });
+        }
+        throw err;
+      });
     const hash = await wallet.writeContract(request);
     await this.confirmWrite(hash, "propose");
     const [intentIdRaw, verdictRaw] = result as [bigint, number];

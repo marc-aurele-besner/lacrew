@@ -193,6 +193,34 @@ export function check(
   }
 }
 
+/**
+ * The module behind a DENY from `module_`: the first member, in `check()`
+ * order, that denies when asked on its own. A stack is looked into; a stack
+ * none of whose members denies is itself the answer. Null when `module_` does
+ * not deny.
+ *
+ * No contract has this function. `check` answers with a verdict alone, and
+ * this reads the same state to say whose verdict it was.
+ */
+export function denyingModule(
+  ctx: Ctx,
+  module_: Address,
+  agent: Address,
+  target: Address,
+  value: bigint,
+  data: Hex,
+): Address | null {
+  if (check(ctx, module_, agent, target, value, data) !== Verdict.DENY) return null;
+  const module = ctx.world.policies[addr(module_)];
+  if (module?.kind === "PolicyStack") {
+    for (const member of module.modules) {
+      const denying = denyingModule(ctx, member, agent, target, value, data);
+      if (denying) return denying;
+    }
+  }
+  return addr(module_);
+}
+
 // ——— SpendCapPolicy / WhitelistPolicy ———
 
 /** `setGovernor` on a SpendCapPolicy or WhitelistPolicy: admin-only, once. */

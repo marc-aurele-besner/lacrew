@@ -719,6 +719,38 @@ export interface NodePolicyStack {
   modules: PolicyModuleInfo[];
 }
 
+/**
+ * Why a module said DENY, as a caller can branch on it.
+ *
+ * `policy_denied` is every module whose rule cannot be named: a kind the read
+ * does not recognise, or a stack none of whose members denies on its own.
+ */
+export type PolicyDenialReason = "target_not_allowlisted" | "outside_time_window" | "policy_denied";
+
+/**
+ * The policy module that denied a propose, and the rule it applied.
+ *
+ * `EscalationRouter.propose` reverts with `UnexpectedVerdict(DENY)` and names
+ * no module. This is that module, found by asking each member of the agent's
+ * stack on its own, in `check()` order: the first to answer DENY.
+ */
+export interface PolicyDenial {
+  /** The denying module's address. */
+  module: `0x${string}`;
+  kind: PolicyModuleKind;
+  reason: PolicyDenialReason;
+  /** One sentence for a person, saying the same thing as `reason`. */
+  detail: string;
+  /** whitelist: the target that is not on the allowlist. */
+  target?: `0x${string}`;
+  /** time_window: daily UTC window start, in seconds of day. */
+  startSecondOfDay?: number;
+  /** time_window: daily UTC window end (exclusive), in seconds of day. */
+  endSecondOfDay?: number;
+  /** time_window: the ledger's own second of day when the module was asked. */
+  secondOfDay?: number;
+}
+
 export interface ChainAddresses {
   chainId: number;
   orgRegistry: `0x${string}`;

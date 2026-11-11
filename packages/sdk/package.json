@@ -34,7 +34,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test src/policy.test.ts src/testing/client.test.ts src/surface.test.ts src/onchain.test.ts src/onchainWrites.test.ts src/resolveSigner.test.ts src/simulate.test.ts src/approvals.test.ts src/sandbox/kernel/orgRegistry.test.ts src/sandbox/kernel/treasury.test.ts src/sandbox/kernel/policies.test.ts src/sandbox/kernel/sessionRegistry.test.ts src/sandbox/kernel/escalationRouter.test.ts src/sandbox/kernel/epochStreamer.test.ts src/sandbox/kernel/governance.test.ts src/sandbox/kernel/world.test.ts src/sandbox/client.test.ts",
+    "test": "node --import tsx --test src/policy.test.ts src/policyDenial.test.ts src/testing/client.test.ts src/surface.test.ts src/onchain.test.ts src/onchainWrites.test.ts src/resolveSigner.test.ts src/simulate.test.ts src/approvals.test.ts src/sandbox/kernel/orgRegistry.test.ts src/sandbox/kernel/treasury.test.ts src/sandbox/kernel/policies.test.ts src/sandbox/kernel/sessionRegistry.test.ts src/sandbox/kernel/escalationRouter.test.ts src/sandbox/kernel/epochStreamer.test.ts src/sandbox/kernel/governance.test.ts src/sandbox/kernel/world.test.ts src/sandbox/client.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
