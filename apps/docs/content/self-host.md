@@ -507,8 +507,6 @@ These need a chain and answer 409 `needs_chain` instead of pretending:
 
 - Marketplace payments: `POST /marketplace/purchase`, `/marketplace/list`,
   `/marketplace/withdraw`. The read routes answer "not listed".
-- x402 settlement. A spend to any target is recorded and succeeds the way a
-  call to an address without code does; no payment authorisation is made.
 - Deploying or attaching policy modules: `POST /governance/propose-node-stack`,
   `/governance/attach-policy-module`. The genesis stack (time window,
   whitelist, spend cap, rate limit) is there, and caps and the whitelist are
@@ -518,6 +516,12 @@ These need a chain and answer 409 `needs_chain` instead of pretending:
 - Safe approvals: `POST /intents/confirm`.
 - The test-chain faucet: `GET /faucet`, `POST /faucet/top-up`. Use
   `POST /sandbox/fund`.
+
+x402 payments are not settled either. The orchestrator has no route that makes
+one, so there is nothing to refuse over HTTP: an allowed spend to an x402
+endpoint's address is recorded and succeeds the way a call to an address
+without code does, and no payment authorisation is created. The simulated token
+itself refuses `transferWithAuthorization` with the same `needs_chain` error.
 
 ## Postgres (Neon or Docker)
 
