@@ -7,7 +7,11 @@
  * enforced onchain rather than by the orchestrator.
  *
  * As in the other adapters, nothing here holds key material or broadcasts, and
- * an adapter without a `PolicyReader` refuses to produce a verdict.
+ * an adapter without a `PolicyReader` refuses to produce a verdict. Because
+ * nothing broadcasts, nothing here reports gas either: whoever sends a built
+ * deployment, redemption or disable transaction reports it with
+ * `reportTransactionGas`, or `reportUserOperationGas` when it went out as a
+ * user operation.
  */
 
 import type {
@@ -22,6 +26,16 @@ export * from "./account.js";
 export * from "./delegation.js";
 export * from "./sessionDelegation.js";
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
+export {
+  gasReceiptFromTransaction,
+  gasReceiptFromUserOperation,
+  reportGasReceipt,
+  reportTransactionGas,
+  reportUserOperationGas,
+  type GasPayer,
+  type GasReceipt,
+  type GasReceiptSink,
+} from "@lacrew/core";
 
 export type MetaMaskWalletAdapterOptions = Omit<CreateMetaMaskWalletOptions, "salt"> & {
   /** Fallback salt when `createWallet()` is called without a label. */

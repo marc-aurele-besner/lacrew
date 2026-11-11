@@ -7,6 +7,8 @@
  * here is reachable without a caller-supplied signer.
  */
 
+import { createPublicClient, http } from "viem";
+import { reportTransactionGas, type GasPayer, type GasReceiptSink } from "@lacrew/core";
 import { loadSafeKit, type SafeWalletConfig } from "./safe.js";
 import type { MetaTransaction } from "./allowance.js";
 
@@ -14,6 +16,10 @@ export type SafeExecuteConfig = SafeWalletConfig & {
   safeAddress: `0x${string}`;
   /** Required — these paths sign and broadcast. */
   signer: string;
+  /** Told what each executed Safe transaction cost, with the Safe as the agent seat. */
+  onReceipt?: GasReceiptSink;
+  /** Who holds the signer key. Defaults to `agent`: a seat's owner acting for the seat. */
+  payer?: GasPayer;
 };
 
 export type SafeExecutionResult = {
@@ -31,6 +37,34 @@ async function initSafe(config: SafeExecuteConfig) {
 
 function hashOf(result: { hash?: string; transactionResponse?: unknown }): `0x${string}` {
   return (result.hash ?? "0x") as `0x${string}`;
+}
+
+/**
+ * Report what an executed Safe transaction cost. Reads the receipt through the
+ * config's own RPC; a transaction with no hash or no receipt reports nothing.
+ */
+async function reportSafeExecution(
+  config: SafeExecuteConfig,
+  hash: `0x${string}`,
+  kind: string,
+): Promise<void> {
+  if (!config.onReceipt || hash === "0x") return;
+  try {
+    const client = createPublicClient({ transport: http(config.provider) });
+    await reportTransactionGas(
+      client,
+      hash,
+      {
+        chainId: await client.getChainId(),
+        kind,
+        payer: config.payer ?? "agent",
+        agent: config.safeAddress,
+      },
+      config.onReceipt,
+    );
+  } catch {
+    // Bookkeeping only: the Safe transaction already went out.
+  }
 }
 
 /** Whether a module is already enabled — enabling twice reverts. */
@@ -55,6 +89,7 @@ export async function enableSafeModule(
   const tx = await safe.createEnableModuleTx(moduleAddress);
   const signed = await safe.signTransaction(tx);
   const result = await safe.executeTransaction(signed);
+  await reportSafeExecution(config, hashOf(result), "safe enable module");
   return { transactionHash: hashOf(result) };
 }
 
@@ -80,5 +115,6 @@ export async function executeSafeTransactions(
   });
   const signed = await safe.signTransaction(tx);
   const result = await safe.executeTransaction(signed);
+  await reportSafeExecution(config, hashOf(result), "safe exec");
   return { transactionHash: hashOf(result) };
 }

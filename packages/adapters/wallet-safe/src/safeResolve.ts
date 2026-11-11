@@ -38,6 +38,12 @@ import {
   parseAbi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import {
+  gasReceiptFromTransaction,
+  reportGasReceipt,
+  type GasPayer,
+  type GasReceiptSink,
+} from "@lacrew/core";
 import { p256 } from "@noble/curves/nist.js";
 import {
   assertRelayAllowlist,
@@ -471,7 +477,26 @@ export type RelaySafeExecutionOptions = {
   /** Chain ids this key may broadcast on; an empty list refuses everything. */
   allowChainIds: readonly number[];
   execution: SafeExecution;
+  /** Told what the broadcast cost, landed or reverted. */
+  onReceipt?: GasReceiptSink;
+  /** Who holds the sender key. Defaults to `orchestrator`: a relayer is the operator's. */
+  payer?: GasPayer;
 };
+
+/**
+ * The relayed Safe transaction was mined and reverted. Nothing was approved,
+ * but the sender paid for it — `hash` and `sender` are what let that fee be
+ * recorded.
+ */
+export class SafeExecutionRevertedError extends Error {
+  constructor(
+    readonly hash: `0x${string}`,
+    readonly sender: `0x${string}`,
+  ) {
+    super(`safe_exec_reverted: the Safe approval transaction reverted (${hash}).`);
+    this.name = "SafeExecutionRevertedError";
+  }
+}
 
 export type RelaySafeExecutionResult = {
   sender: `0x${string}`;
@@ -482,7 +507,9 @@ export type RelaySafeExecutionResult = {
  * Broadcast a built `execTransaction`. Same discipline as the root-Safe
  * deployment relayer: no default allowlist, refused before any RPC is reached,
  * and a reverted receipt throws rather than returning something a caller could
- * read as an approval that landed.
+ * read as an approval that landed. What it throws is a
+ * `SafeExecutionRevertedError` carrying the hash, because a reverted
+ * transaction was still paid for.
  */
 export async function relaySafeExecution(
   opts: RelaySafeExecutionOptions,
@@ -508,8 +535,16 @@ export async function relaySafeExecution(
     value: opts.execution.value,
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  await reportGasReceipt(
+    opts.onReceipt,
+    gasReceiptFromTransaction(receipt, {
+      chainId,
+      kind: "safe exec relay",
+      payer: opts.payer ?? "orchestrator",
+    }),
+  );
   if (receipt.status !== "success") {
-    throw new Error(`safe_exec_reverted: the Safe approval transaction reverted (${hash}).`);
+    throw new SafeExecutionRevertedError(hash, account.address);
   }
   return { sender: account.address, hash };
 }

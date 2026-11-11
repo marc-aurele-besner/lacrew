@@ -12,7 +12,12 @@
  * heuristic to fall back on; without a reader the gate cannot be built.
  */
 
-import type { Verdict } from "@lacrew/core";
+import {
+  reportTransactionGas,
+  type GasReceiptSink,
+  type TransactionReceiptReader,
+  type Verdict,
+} from "@lacrew/core";
 import type { AdapterCheckInput, PolicyReader } from "@lacrew/adapter-wallet-agentkit";
 import { encodeFunctionData, type Abi } from "viem";
 import type { GoatTransaction, GoatWalletClient } from "./wallet.js";
@@ -49,6 +54,13 @@ export type GoatPolicyGateOptions = {
   agent?: `0x${string}`;
   /** Notified when a verdict stops a send — e.g. to open an escalation. */
   onBlocked?: (event: GoatBlockedSpend) => void | Promise<void>;
+  /**
+   * Told what each send cost, as paid by the agent's own wallet. Needs
+   * `receipts`: GOAT hands back a hash, and the fee is on the receipt.
+   */
+  onReceipt?: GasReceiptSink;
+  /** Reads the sent transaction's receipt — a viem `PublicClient` on the wallet's chain. */
+  receipts?: TransactionReceiptReader;
 };
 
 /**
@@ -102,6 +114,10 @@ export function toAdapterCheckInput(
  * an ALLOW sends exactly what was asked. Anything else throws `GoatPolicyError`
  * with the verdict, and a reader that cannot answer surfaces its own failure —
  * an unreachable RPC must never read as permission.
+ *
+ * With `onReceipt` and `receipts` set, each allowed send's receipt is read and
+ * its fee reported before the hash is handed back. A receipt that cannot be
+ * read reports nothing and never fails the send.
  */
 export function gateGoatWallet(opts: GoatPolicyGateOptions): GoatWalletClient {
   const { wallet, reader } = opts;
@@ -116,7 +132,17 @@ export function gateGoatWallet(opts: GoatPolicyGateOptions): GoatWalletClient {
         await opts.onBlocked?.({ verdict, spend, transaction });
         throw new GoatPolicyError(verdict, spend);
       }
-      return wallet.sendTransaction(transaction);
+      const sent = await wallet.sendTransaction(transaction);
+      const chainId = wallet.getChain().id;
+      if (opts.onReceipt && opts.receipts && typeof chainId === "number") {
+        await reportTransactionGas(
+          opts.receipts,
+          sent.hash as `0x${string}`,
+          { chainId, kind: "goat send", payer: "agent", agent },
+          opts.onReceipt,
+        );
+      }
+      return sent;
     },
   };
 }

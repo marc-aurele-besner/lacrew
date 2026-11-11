@@ -13,6 +13,7 @@ import {
   GoatPolicyError,
   toAdapterCheckInput,
   type AdapterCheckInput,
+  type GasReceipt,
   type GoatBlockedSpend,
   type GoatTransaction,
   type GoatWalletClient,
@@ -143,4 +144,82 @@ test("the gate keeps the client's reads intact", () => {
   const gated = gateGoatWallet({ wallet, reader });
   assert.equal(gated.getAddress(), SEAT);
   assert.deepEqual(gated.getChain(), { type: "evm", id: 8453 });
+});
+
+test("an allowed send reports what it cost the agent's wallet", async () => {
+  const { wallet } = recordingWallet();
+  const { reader } = readerReturning("ALLOW");
+  const asked: string[] = [];
+  const seen: GasReceipt[] = [];
+  const gated = gateGoatWallet({
+    wallet,
+    reader,
+    receipts: {
+      async waitForTransactionReceipt({ hash }) {
+        asked.push(hash);
+        return {
+          transactionHash: hash,
+          from: SEAT,
+          status: "success",
+          gasUsed: 50_000n,
+          effectiveGasPrice: 2n,
+        };
+      },
+    },
+    onReceipt: (receipt) => void seen.push(receipt),
+  });
+
+  assert.deepEqual(await gated.sendTransaction({ to: PAYEE, value: 1n }), { hash: "0xfeed" });
+  assert.deepEqual(asked, ["0xfeed"]);
+  assert.deepEqual(seen, [
+    {
+      chainId: 8453,
+      txHash: "0xfeed",
+      kind: "goat send",
+      status: "success",
+      gasUsed: 50_000n,
+      effectiveGasPrice: 2n,
+      feeWei: 100_000n,
+      payer: "agent",
+      sender: SEAT,
+      agent: SEAT,
+    },
+  ]);
+});
+
+test("a blocked send reports nothing: nothing was paid", async () => {
+  const { wallet } = recordingWallet();
+  const { reader } = readerReturning("DENY");
+  const seen: GasReceipt[] = [];
+  const gated = gateGoatWallet({
+    wallet,
+    reader,
+    receipts: {
+      async waitForTransactionReceipt() {
+        throw new Error("must not be read");
+      },
+    },
+    onReceipt: (receipt) => void seen.push(receipt),
+  });
+  await assert.rejects(() => gated.sendTransaction({ to: PAYEE, value: 1n }), GoatPolicyError);
+  assert.deepEqual(seen, []);
+});
+
+test("a receipt that cannot be read does not fail the send", async () => {
+  const { wallet, sent } = recordingWallet();
+  const { reader } = readerReturning("ALLOW");
+  const seen: GasReceipt[] = [];
+  const gated = gateGoatWallet({
+    wallet,
+    reader,
+    receipts: {
+      async waitForTransactionReceipt() {
+        throw new Error("rpc down");
+      },
+    },
+    onReceipt: (receipt) => void seen.push(receipt),
+  });
+  assert.deepEqual(await gated.sendTransaction({ to: PAYEE, value: 1n }), { hash: "0xfeed" });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(seen, []);
 });

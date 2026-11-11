@@ -40,6 +40,7 @@ import {
   type Abi,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import type { GasReceipt } from "@lacrew/core";
 import {
   buildSafeResolveExecution,
   buildSafeResolvePlan,
@@ -193,12 +194,20 @@ test(
       publicKey: cred.publicKey,
       saltNonce: salt,
     });
+    const gas: GasReceipt[] = [];
     const relayed = await relayRootSafeDeployment({
       provider: rpc!,
       privateKey: pk!,
       allowChainIds: [chainId],
       plan,
+      onReceipt: (receipt) => void gas.push(receipt),
     });
+    // One report per deployment transaction, each with a real fee.
+    assert.deepEqual(
+      gas.map((receipt) => receipt.txHash),
+      relayed.hashes.map((sent) => sent.hash),
+    );
+    assert.ok(gas.every((receipt) => receipt.payer === "orchestrator" && receipt.feeWei! > 0n));
     assert.equal(relayed.verification.ownerMatches, true, "the Safe must be the credential's");
     const safe = plan.predicted.safeAddress;
     const owner = plan.predicted.ownerAddress;
@@ -357,9 +366,15 @@ test(
           owner,
           assertOver(cred, approval.safeTxHash),
         ),
+        onReceipt: (receipt) => void gas.push(receipt),
       });
       return hash;
     })();
+    const approvalGas = gas.at(-1)!;
+    assert.equal(approvalGas.txHash, txHash);
+    assert.equal(approvalGas.status, "success");
+    assert.equal(approvalGas.sender?.toLowerCase(), account.address.toLowerCase());
+    assert.ok(approvalGas.feeWei! > 0n);
 
     // The acceptance criterion, second half: the money moved, and the
     // transaction the router saw came from the Safe.

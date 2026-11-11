@@ -27,6 +27,12 @@
 import { createPublicClient, createWalletClient, defineChain, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  gasReceiptFromTransaction,
+  reportGasReceipt,
+  type GasPayer,
+  type GasReceiptSink,
+} from "@lacrew/core";
+import {
   buildPasskeyOwnerDeployTx,
   predictPasskeySafe,
   type PasskeySafeOptions,
@@ -247,6 +253,10 @@ export type RelayRootSafeOptions = {
   /** Chain ids this key may broadcast on; an empty list refuses everything. */
   allowChainIds: readonly number[];
   plan: RootSafeDeployPlan;
+  /** Told what each broadcast cost, landed or reverted. */
+  onReceipt?: GasReceiptSink;
+  /** Who holds the sender key. Defaults to `orchestrator`: a relayer is the operator's. */
+  payer?: GasPayer;
 };
 
 export type RelayRootSafeResult = {
@@ -296,6 +306,14 @@ export async function relayRootSafeDeployment(
       value: tx.value,
     });
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    await reportGasReceipt(
+      opts.onReceipt,
+      gasReceiptFromTransaction(receipt, {
+        chainId,
+        kind: `root safe deploy ${tx.step}`,
+        payer: opts.payer ?? "orchestrator",
+      }),
+    );
     if (receipt.status !== "success") {
       throw new Error(`Root-Safe ${tx.step} deployment reverted (${hash}).`);
     }
