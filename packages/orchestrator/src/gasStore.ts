@@ -1,6 +1,6 @@
 /**
- * GasStore: pluggable persistence for what each transaction this orchestrator
- * sent cost in gas. Postgres (Drizzle via @lacrew/db) when DATABASE_URL is set,
+ * GasStore: pluggable persistence for what each transaction cost in gas and
+ * who paid. Postgres (Drizzle via @lacrew/db) when DATABASE_URL is set,
  * else a memory no-op — same provider pattern as AuditStore.
  */
 
@@ -13,23 +13,29 @@ import {
   sumTxGasByDay,
   type DbHandle,
 } from "@lacrew/db";
-import type { WriteReceipt } from "@lacrew/sdk";
+import { isGasPayer, type GasPayer, type GasReceipt } from "@lacrew/core";
 
 /**
- * One sent transaction's gas. Amounts are decimal strings, never JS numbers:
- * a fee in wei passes 2^53 well inside ordinary use.
+ * One transaction's gas. Amounts are decimal strings, never JS numbers: a fee
+ * in wei passes 2^53 well inside ordinary use.
  */
 export interface TxGasRecord {
   chainId: number;
-  /** Lower-cased. */
+  /** Lower-cased; for a user operation, the bundle transaction that included it. */
   txHash: string;
+  /** Lower-cased user operation hash; null for a plain transaction. */
+  userOpHash: string | null;
   /** ISO timestamp the receipt was read at. */
   at: string;
   /** What the transaction was for ("propose", "resolve", "session issue", …). */
   action: string;
-  /** Lower-cased account that signed and paid. */
+  /** Lower-cased account that sent it. */
   sender: string | null;
-  /** Lower-cased agent the transaction was sent for; null until an audit event names one. */
+  /** Who bore the fee. */
+  payer: GasPayer;
+  /** Lower-cased paymaster that paid, when `payer` is `sponsored`. */
+  paymaster: string | null;
+  /** Lower-cased agent the transaction was sent for; null until something names one. */
   agent: string | null;
   status: "success" | "reverted";
   gasUsed: string;
@@ -37,38 +43,33 @@ export interface TxGasRecord {
   effectiveGasPrice: string | null;
   /** OP-stack L1 data fee; null when the receipt carried none. */
   l1FeeWei: string | null;
-  /**
-   * `gasUsed × effectiveGasPrice` plus any L1 fee. Null when the receipt had
-   * no price: the fee is then unknown, and unknown is not zero.
-   */
+  /** The whole fee. Null when unknown, and unknown is not zero. */
   feeWei: string | null;
 }
 
-/** Fold a write receipt into the record that is stored for it. */
-export function txGasFromReceipt(
-  receipt: Pick<
-    WriteReceipt,
-    "txHash" | "action" | "status" | "gasUsed" | "effectiveGasPrice" | "l1Fee"
-  > & { from?: string },
-  chainId: number,
-  at: string,
-): TxGasRecord {
-  const price = receipt.effectiveGasPrice;
-  const fee = price === undefined ? null : receipt.gasUsed * price + (receipt.l1Fee ?? 0n);
+/** Fold a reported gas receipt into the record that is stored for it. */
+export function txGasFromReceipt(receipt: GasReceipt, at: string): TxGasRecord {
+  const text = (value: bigint | undefined) => (value === undefined ? null : value.toString());
   return {
-    chainId,
+    chainId: receipt.chainId,
     txHash: receipt.txHash.toLowerCase(),
+    userOpHash: receipt.userOpHash?.toLowerCase() ?? null,
     at,
-    action: receipt.action,
-    sender: receipt.from?.toLowerCase() ?? null,
-    agent: null,
+    action: receipt.kind,
+    sender: receipt.sender?.toLowerCase() ?? null,
+    payer: receipt.payer,
+    paymaster: receipt.paymaster?.toLowerCase() ?? null,
+    agent: receipt.agent?.toLowerCase() ?? null,
     status: receipt.status,
     gasUsed: receipt.gasUsed.toString(),
-    effectiveGasPrice: price === undefined ? null : price.toString(),
-    l1FeeWei: receipt.l1Fee === undefined ? null : receipt.l1Fee.toString(),
-    feeWei: fee === null ? null : fee.toString(),
+    effectiveGasPrice: text(receipt.effectiveGasPrice),
+    l1FeeWei: text(receipt.l1Fee),
+    feeWei: text(receipt.feeWei),
   };
 }
+
+/** A summed fee and how many transactions had one, for one payer. */
+export type GasSum = { payer: GasPayer; feeWei: string; txCount: number };
 
 export interface GasStore {
   readonly name: string;
@@ -78,20 +79,22 @@ export interface GasStore {
   attributeAgent(chainId: number, txHash: string, agent: string): Promise<void>;
   /**
    * Summed fee (wei, decimal string) and the number of transactions that had a
-   * fee, per UTC day over `[fromIso, toIso)`; days with no transaction are
-   * absent. Null when the store cannot answer completely (memory store, or a
+   * fee, per UTC day and payer over `[fromIso, toIso)`; days with no
+   * transaction are absent. Null when the store cannot answer completely (memory store, or a
    * read failure) — the caller falls back to its bounded ring and says so.
    */
-  sumByDayBetween(
-    fromIso: string,
-    toIso: string,
-  ): Promise<Array<{ day: string; feeWei: string; txCount: number }> | null>;
+  sumByDayBetween(fromIso: string, toIso: string): Promise<Array<{ day: string } & GasSum> | null>;
   /** The same sums per agent (null for transactions tied to none). */
   sumByAgentBetween(
     fromIso: string,
     toIso: string,
-  ): Promise<Array<{ agent: string | null; feeWei: string; txCount: number }> | null>;
+  ): Promise<Array<{ agent: string | null } & GasSum> | null>;
   close(): Promise<void>;
+}
+
+/** Narrows a stored payer; a row written with a name this build does not know is left out. */
+function knownPayer<T extends { payer: string }>(row: T): row is T & { payer: GasPayer } {
+  return isGasPayer(row.payer);
 }
 
 /** No-op store for mock demos and tests. */
@@ -133,7 +136,7 @@ export function createPgGasStore(url = getDatabaseUrl(), chainId?: number): GasS
     sumByDayBetween: async (fromIso, toIso) => {
       try {
         await tail;
-        return await sumTxGasByDay(db(), fromIso, toIso, scope);
+        return (await sumTxGasByDay(db(), fromIso, toIso, scope)).filter(knownPayer);
       } catch (err) {
         console.error("[@lacrew/orchestrator] gas daily sum failed:", err);
         return null;
@@ -142,7 +145,7 @@ export function createPgGasStore(url = getDatabaseUrl(), chainId?: number): GasS
     sumByAgentBetween: async (fromIso, toIso) => {
       try {
         await tail;
-        return await sumTxGasByAgent(db(), fromIso, toIso, scope);
+        return (await sumTxGasByAgent(db(), fromIso, toIso, scope)).filter(knownPayer);
       } catch (err) {
         console.error("[@lacrew/orchestrator] gas agent sum failed:", err);
         return null;

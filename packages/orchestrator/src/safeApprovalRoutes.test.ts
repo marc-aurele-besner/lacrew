@@ -30,7 +30,11 @@ import { InMemoryQueue } from "./queue/index.js";
 import { MemoryModelProvider } from "./model/index.js";
 import { createOrchestratorApp } from "./httpApp.js";
 import { createRootAuthSurface } from "./rootAuth.js";
-import { SafeApprovalRefusal, type SafeApprovalSurface } from "./safeApproval.js";
+import {
+  SafeApprovalRefusal,
+  SafeApprovalReverted,
+  type SafeApprovalSurface,
+} from "./safeApproval.js";
 
 const RP_ID = "localhost";
 const ORIGIN = "http://localhost:3000";
@@ -154,6 +158,8 @@ type SafeState = {
   submits: Array<{ intentId: string; approved: boolean; awaitingApprover: string | null }>;
   relay: boolean;
   refuseWith?: string;
+  /** The relayed transaction is mined and reverts, under this hash. */
+  revertAs?: `0x${string}`;
 };
 
 /** A stand-in for the real Safe: records what it was asked to do. */
@@ -173,6 +179,12 @@ function fakeSafeApproval(safe: SafeState): SafeApprovalSurface {
         awaitingApprover: input.awaitingApprover,
       });
       if (safe.refuseWith) throw new SafeApprovalRefusal(safe.refuseWith);
+      if (safe.revertAs) {
+        throw new SafeApprovalReverted(
+          `safe_exec_reverted: the Safe approval transaction reverted (${safe.revertAs}).`,
+          safe.revertAs,
+        );
+      }
       if (!safe.relay) {
         return {
           sent: false,
@@ -374,6 +386,27 @@ describe("POST /intents/resolve — the Safe is the sender", () => {
     });
     assert.equal(res.status, 401);
     assert.match(((await res.json()) as { error: string }).error, /root_safe_not_passkey_owned/);
+    assert.deepEqual(state.resolved, []);
+  });
+
+  it("hands back the hash of a relayed approval that reverted, and settles nothing", async () => {
+    const cred = credential();
+    const rootAuth = safePasskeyAuth(cred);
+    const reverted = `0x${"dd".repeat(32)}` as const;
+    const safe: SafeState = { submits: [], relay: true, revertAs: reverted };
+    const { app, state } = buildApp({ rootAuth, safe });
+    const challenge = rootAuth.issueChallenge("intent:approve", "root-1", SAFE_CHALLENGE);
+    const res = await post(app, "/intents/resolve", {
+      intentId: "root-1",
+      approved: true,
+      challenge: challenge.challenge,
+      rootProof: assertFor(cred, challenge.challenge),
+    });
+    assert.equal(res.status, 502);
+    const body = (await res.json()) as { error: string; txHash: string };
+    assert.match(body.error, /safe_exec_reverted/);
+    // The relayer paid for it: the hash is what lets the fee be found.
+    assert.equal(body.txHash, reverted);
     assert.deepEqual(state.resolved, []);
   });
 

@@ -33,6 +33,7 @@ import {
   hashToChallenge,
   predictPasskeyOwner,
   relaySafeExecution,
+  SafeExecutionRevertedError,
   verifySafeApprover,
   type SafeExecution,
   type SafeResolvePlan,
@@ -93,6 +94,21 @@ export interface SafeApprovalSurface {
 
 /** Raised for the refusals a caller can act on; the route maps these to 4xx. */
 export class SafeApprovalRefusal extends Error {}
+
+/**
+ * Raised when the relayed Safe transaction was mined and reverted. Nothing was
+ * approved, but the relayer paid for it — the hash is what lets that fee be
+ * recorded.
+ */
+export class SafeApprovalReverted extends Error {
+  constructor(
+    message: string,
+    readonly txHash: `0x${string}`,
+  ) {
+    super(message);
+    this.name = "SafeApprovalReverted";
+  }
+}
 
 export function createSafeApprovalSurface(opts: SafeApprovalOptions): SafeApprovalSurface {
   const allowChainIds = opts.allowChainIds ?? [];
@@ -173,12 +189,20 @@ export function createSafeApprovalSurface(opts: SafeApprovalOptions): SafeApprov
       if (!(await relayableHere())) {
         return { sent: false, execution, safeTxHash: built.safeTxHash };
       }
-      const relayed = await relaySafeExecution({
-        provider: opts.provider,
-        privateKey: opts.relayerKey!,
-        allowChainIds,
-        execution,
-      });
+      let relayed: Awaited<ReturnType<typeof relaySafeExecution>>;
+      try {
+        relayed = await relaySafeExecution({
+          provider: opts.provider,
+          privateKey: opts.relayerKey!,
+          allowChainIds,
+          execution,
+        });
+      } catch (err) {
+        if (err instanceof SafeExecutionRevertedError) {
+          throw new SafeApprovalReverted(err.message, err.hash);
+        }
+        throw err;
+      }
       return { sent: true, txHash: relayed.hash, safeTxHash: built.safeTxHash };
     },
   };

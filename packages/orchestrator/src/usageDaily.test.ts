@@ -9,7 +9,12 @@ const ALICE = "0x1111111111111111111111111111111111111111";
 const BOB_CHECKSUMMED = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
 
 /** What a row carries when no transaction was sent: these tests are about the counts. */
-const NO_GAS = { gasFeeWei: "0", gasTxCount: 0 };
+const NONE = { feeWei: "0", txCount: 0 };
+const NO_GAS = {
+  gasFeeWei: "0",
+  gasTxCount: 0,
+  gasByPayer: { orchestrator: NONE, agent: NONE, approver: NONE, sponsored: NONE },
+};
 
 function event(type: ProtocolEvent["type"], at: string, agent?: string): ProtocolEvent {
   return { type, at, payload: agent ? { agent } : {} };
