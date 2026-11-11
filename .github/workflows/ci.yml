@@ -65,6 +65,50 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
 
+  # The sandbox simulator held to the contracts it simulates.
+  #
+  # The sandbox answers reads and writes with no chain, from a TypeScript
+  # restatement of the contracts. That is only worth trusting while the two
+  # agree, so one scenario suite runs against both: the simulator, and the real
+  # contracts deployed to a local Anvil from the bytecode this very build
+  # produced. A seeded fuzzer then walks both through generated activity and
+  # compares after every call. Where they differ the contracts are right, and
+  # this job is red until the simulator is fixed.
+  #
+  # The simulator half also runs in Packages (`pnpm test`); it is repeated here
+  # so the job stands on its own as a required check.
+  conformance:
+    name: Conformance (sandbox vs contracts)
+    runs-on: ubuntu-latest
+    env:
+      # Without this a missing `anvil` skips the chain half and the job passes
+      # having compared nothing.
+      CONFORMANCE_REQUIRE_ANVIL: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Install contract deps
+        working-directory: contracts
+        run: |
+          forge install foundry-rs/forge-std@v1.16.2 --no-git
+          forge install OpenZeppelin/openzeppelin-contracts@v5.3.0 --no-git
+          forge build
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install
+      # The ABIs and the bytecode under test are the ones just compiled, not
+      # the committed copies.
+      - run: pnpm --filter @lacrew/core sync-abis
+      - run: pnpm build
+      - name: Scenarios, ABI coverage and fuzz on the simulator
+        run: pnpm --filter @lacrew/conformance test
+      - name: Scenarios and differential fuzz against the contracts on Anvil
+        run: pnpm --filter @lacrew/conformance test:anvil
+
   # Flow & blueprint regression scenarios (PRD F2.29). Deliberately not path
   # filtered: a skipped job never reports, so a required check that only runs on
   # some paths is a check that silently passes on the rest. The suite is offline
