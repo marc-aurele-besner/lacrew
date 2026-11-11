@@ -7,119 +7,89 @@ import {
   txGasFromReceipt,
   type TxGasRecord,
 } from "./gasStore.js";
+import type { GasPayer, GasReceipt } from "@lacrew/core";
 
 const TX = `0x${"Ab".repeat(32)}` as `0x${string}`;
 const SENDER = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd" as `0x${string}`;
 const AT = "2026-03-01T12:00:00.000Z";
 
+const receipt = (over: Partial<GasReceipt> = {}): GasReceipt => ({
+  chainId: 8453,
+  txHash: TX,
+  kind: "propose",
+  status: "success",
+  gasUsed: 21_000n,
+  payer: "orchestrator",
+  ...over,
+});
+
 describe("txGasFromReceipt", () => {
-  it("multiplies gas used by the effective gas price, as decimal strings", () => {
+  it("stores a receipt as lower-cased decimal strings", () => {
     const record = txGasFromReceipt(
-      {
-        txHash: TX,
-        action: "propose",
-        from: SENDER,
-        status: "success",
-        gasUsed: 21_000n,
+      receipt({
+        sender: SENDER,
+        agent: SENDER,
         effectiveGasPrice: 1_500_000_000n,
-      },
-      8453,
+        l1Fee: 234n,
+        feeWei: 31_500_000_000_234n,
+      }),
       AT,
     );
     assert.deepEqual(record, {
       chainId: 8453,
       txHash: TX.toLowerCase(),
+      userOpHash: null,
       at: AT,
       action: "propose",
       sender: SENDER.toLowerCase(),
-      agent: null,
+      payer: "orchestrator",
+      paymaster: null,
+      agent: SENDER.toLowerCase(),
       status: "success",
       gasUsed: "21000",
       effectiveGasPrice: "1500000000",
-      l1FeeWei: null,
-      feeWei: "31500000000000",
+      l1FeeWei: "234",
+      feeWei: "31500000000234",
     });
   });
 
   it("keeps a fee past 2^53 exact", () => {
-    const record = txGasFromReceipt(
-      {
-        txHash: TX,
-        action: "deploy",
-        status: "success",
-        gasUsed: 3_000_000n,
-        effectiveGasPrice: 400_000_000_000n,
-      },
-      1,
-      AT,
-    );
     // 1.2e18 wei: a JS number would have rounded it.
-    assert.equal(record.feeWei, "1200000000000000000");
+    const record = txGasFromReceipt(receipt({ feeWei: 1_200_000_000_000_000_001n }), AT);
+    assert.equal(record.feeWei, "1200000000000000001");
     assert.equal(record.sender, null);
   });
 
-  it("leaves the fee null when the receipt lacks an effective gas price", () => {
-    const record = txGasFromReceipt(
-      { txHash: TX, action: "resolve", status: "success", gasUsed: 90_000n },
-      31337,
-      AT,
-    );
-    assert.equal(record.gasUsed, "90000");
+  it("leaves the fee null when the receipt states none", () => {
+    const record = txGasFromReceipt(receipt({ l1Fee: 7n }), AT);
     assert.equal(record.effectiveGasPrice, null);
+    assert.equal(record.l1FeeWei, "7");
     // Unknown, not zero: a zero would read as a transaction that cost nothing.
     assert.equal(record.feeWei, null);
   });
 
-  it("does not pass an L1 fee off as the whole fee when the price is missing", () => {
+  it("keeps a sponsored user operation's own hash and its paymaster", () => {
     const record = txGasFromReceipt(
-      { txHash: TX, action: "resolve", status: "success", gasUsed: 90_000n, l1Fee: 7n },
-      8453,
-      AT,
-    );
-    assert.equal(record.l1FeeWei, "7");
-    assert.equal(record.feeWei, null);
-  });
-
-  it("adds an OP-stack L1 fee on top of the L2 gas", () => {
-    const record = txGasFromReceipt(
-      {
-        txHash: TX,
-        action: "propose",
-        status: "success",
-        gasUsed: 100n,
-        effectiveGasPrice: 10n,
-        l1Fee: 234n,
-      },
-      8453,
-      AT,
-    );
-    assert.equal(record.l1FeeWei, "234");
-    assert.equal(record.feeWei, "1234");
-  });
-
-  it("records a reverted transaction's gas as well", () => {
-    const record = txGasFromReceipt(
-      {
-        txHash: TX,
-        action: "session revoke",
+      receipt({
+        userOpHash: `0x${"CD".repeat(32)}`,
+        payer: "sponsored",
+        paymaster: SENDER,
         status: "reverted",
-        gasUsed: 50_000n,
-        effectiveGasPrice: 2n,
-      },
-      31337,
+        feeWei: 5n,
+      }),
       AT,
     );
+    assert.equal(record.userOpHash, `0x${"cd".repeat(32)}`);
+    assert.equal(record.payer, "sponsored");
+    assert.equal(record.paymaster, SENDER.toLowerCase());
     assert.equal(record.status, "reverted");
-    assert.equal(record.feeWei, "100000");
   });
 });
 
 describe("GasStore", () => {
   it("memory store is a safe no-op that cannot answer the sums", async () => {
     const store = createMemoryGasStore();
-    await store.append(
-      txGasFromReceipt({ txHash: TX, action: "propose", status: "success", gasUsed: 1n }, 1, AT),
-    );
+    await store.append(txGasFromReceipt(receipt(), AT));
     await store.attributeAgent(1, TX, SENDER);
     // Null, not []: the caller must fall back to its ring and say it is partial.
     assert.equal(await store.sumByDayBetween(AT, AT), null);
@@ -138,7 +108,7 @@ describe("GasStore", () => {
   });
 
   it(
-    "postgres store sums fees by UTC day and by agent, one row per transaction",
+    "postgres store sums fees by UTC day, agent and payer, one row per transaction",
     { skip: !process.env.DATABASE_URL },
     async () => {
       // A chain id of its own, so the shared table's other rows stay out of
@@ -148,14 +118,21 @@ describe("GasStore", () => {
       const agent = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
       const other = "0x1111111111111111111111111111111111111111";
       let n = 0;
-      const tx = (at: string, feeWei: string | null): TxGasRecord => {
+      const tx = (
+        at: string,
+        feeWei: string | null,
+        payer: GasPayer = "orchestrator",
+      ): TxGasRecord => {
         n += 1;
         return {
           chainId,
           txHash: `0x${n.toString(16).padStart(64, "0")}`,
+          userOpHash: null,
           at,
           action: "propose",
           sender: SENDER.toLowerCase(),
+          payer,
+          paymaster: null,
           agent: null,
           status: "success",
           gasUsed: "21000",
@@ -185,22 +162,57 @@ describe("GasStore", () => {
 
         const from = "2026-03-01T00:00:00.000Z";
         const to = "2026-03-04T00:00:00.000Z";
+        // An agent wallet's own transaction, and two user operations that
+        // share one bundle transaction: each operation is a fee of its own.
+        const own = tx("2026-03-03T10:00:00.000Z", "11", "agent");
+        own.agent = other;
+        await store.append(own);
+        const bundle = tx("2026-03-03T11:00:00.000Z", "40", "sponsored");
+        const op = (suffix: string): TxGasRecord => ({
+          ...bundle,
+          userOpHash: `0x${suffix.repeat(32)}`,
+          paymaster: other,
+          agent: other,
+        });
+        await store.append(op("a1"));
+        await store.append(op("a2"));
+        await store.append(op("a2"));
+
         assert.deepEqual(await store.sumByDayBetween(from, to), [
-          { day: "2026-03-01", feeWei: "36893488147419103232", txCount: 2 },
+          {
+            day: "2026-03-01",
+            payer: "orchestrator",
+            feeWei: "36893488147419103232",
+            txCount: 2,
+          },
           // The transaction with no price adds to neither figure.
-          { day: "2026-03-02", feeWei: "5", txCount: 1 },
+          { day: "2026-03-02", payer: "orchestrator", feeWei: "5", txCount: 1 },
+          { day: "2026-03-03", payer: "agent", feeWei: "11", txCount: 1 },
+          { day: "2026-03-03", payer: "sponsored", feeWei: "80", txCount: 2 },
         ]);
         const byAgent = await store.sumByAgentBetween(from, to);
         assert.ok(byAgent);
         assert.deepEqual(
           byAgent.find((row) => row.agent === agent.toLowerCase()),
-          { agent: agent.toLowerCase(), feeWei: "18446744073709551621", txCount: 2 },
+          {
+            agent: agent.toLowerCase(),
+            payer: "orchestrator",
+            feeWei: "18446744073709551621",
+            txCount: 2,
+          },
         );
         assert.deepEqual(
           byAgent.find((row) => row.agent === null),
-          { agent: null, feeWei: big, txCount: 1 },
+          { agent: null, payer: "orchestrator", feeWei: big, txCount: 1 },
         );
-        assert.equal(byAgent.length, 2);
+        assert.deepEqual(
+          byAgent.filter((row) => row.agent === other),
+          [
+            { agent: other, payer: "agent", feeWei: "11", txCount: 1 },
+            { agent: other, payer: "sponsored", feeWei: "80", txCount: 2 },
+          ],
+        );
+        assert.equal(byAgent.length, 4);
       } finally {
         await store.close();
       }

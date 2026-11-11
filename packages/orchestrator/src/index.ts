@@ -6,6 +6,7 @@ export {
   type SandboxStatus,
   type SandboxTopUp,
   type CrewRuntimeOptions,
+  type GasRecordOutcome,
   type RuntimeMode,
 } from "./runtime.js";
 export { getOrchToken, isAuthorized } from "./auth.js";
@@ -23,6 +24,7 @@ export {
   safeApprovalRelayChains,
   safeApprovalRelayer,
   SafeApprovalRefusal,
+  SafeApprovalReverted,
   type SafeApprovalChallenge,
   type SafeApprovalOptions,
   type SafeApprovalResult,
@@ -346,6 +348,7 @@ export {
   createPgGasStore,
   txGasFromReceipt,
   type GasStore,
+  type GasSum,
   type TxGasRecord,
 } from "./gasStore.js";
 export {

@@ -10,7 +10,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, createWalletClient, defineChain, http, parseAbi } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { MOCK_WORKER, MOCK_MANAGER, getAddresses } from "@lacrew/core";
+import {
+  MOCK_WORKER,
+  MOCK_MANAGER,
+  getAddresses,
+  reportTransactionGas,
+  type GasReceiptSink,
+} from "@lacrew/core";
 import { simulateIntentAction } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import {
@@ -111,7 +117,14 @@ async function offlineX402Receipt(valueUsdc: number, payTo: `0x${string}`) {
  * MockUSDC, no facilitator. This is the seat-pays-its-own-way rail, distinct
  * from the treasury allowance rail the proposes above exercise.
  */
-async function anvilX402Receipt(opts: { rpc: string; chainId: number; valueUsdc: number }) {
+async function anvilX402Receipt(opts: {
+  rpc: string;
+  chainId: number;
+  valueUsdc: number;
+  /** The runtime's gas ledger: the relayer below is not its SDK client. */
+  onReceipt?: GasReceiptSink;
+}) {
+  const gas = (kind: string) => ({ chainId: opts.chainId, kind, payer: "orchestrator" as const });
   const addresses = getAddresses(opts.chainId);
   const token = addresses.mockUSDC;
   const payTo = addresses.x402Target;
@@ -145,6 +158,7 @@ async function anvilX402Receipt(opts: { rpc: string; chainId: number; valueUsdc:
     args: [payer.address, value],
   });
   await publicClient.waitForTransactionReceipt({ hash: mintHash });
+  await reportTransactionGas(publicClient, mintHash, gas("x402 demo mint"), opts.onReceipt);
   if ((await publicClient.getBalance({ address: payer.address })) !== 0n) {
     throw new Error("Demo payer unexpectedly holds ETH; gasless claim would be untrue.");
   }
@@ -203,6 +217,7 @@ async function anvilX402Receipt(opts: { rpc: string; chainId: number; valueUsdc:
     value: settlement.value,
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: settleHash });
+  await reportTransactionGas(publicClient, settleHash, gas("x402 settle"), opts.onReceipt);
   const payeeAfter = (await publicClient.readContract({
     address: token,
     abi: tokenAbi,
@@ -334,6 +349,7 @@ async function runViaAnvil(): Promise<void> {
             rpc: rpc!,
             chainId: runtime.chainId ?? 31337,
             valueUsdc: spend.valueUsdc,
+            onReceipt: runtime.gasReceiptSink,
           }),
         );
       }

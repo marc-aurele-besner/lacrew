@@ -32,7 +32,9 @@ import {
   resolveAssetStack,
   sandboxVerdict,
   sessionRegistryAbi,
+  gasReceiptFromTransaction,
   ADDRESS_ENV_VARS,
+  GAS_PAYERS,
   MOCK_MANAGER,
   MOCK_WORKER,
   SESSION_SCOPES,
@@ -53,6 +55,9 @@ import {
   type SessionScope,
   type TreasuryBalance,
   type EpochGrant,
+  type GasPayer,
+  type GasReceipt,
+  type GasReceiptSink,
   type NodePolicyStack,
   narrowScopesForEscalation,
   policyForcesEscalation,
@@ -172,21 +177,52 @@ export type NodeStackModuleSpec =
   | { kind: "time_window"; startSecondOfDay: number; endSecondOfDay: number };
 
 const AUDIT_RING_MAX = 200;
+
+/** What `recordTransactionGas` did with a hash, and why not when it did nothing. */
+export type GasRecordOutcome =
+  | {
+      recorded: true;
+      chainId: number;
+      txHash: `0x${string}`;
+      payer: GasPayer;
+      status: "success" | "reverted";
+      /** Decimal string in wei; null when the receipt carried no gas price. */
+      feeWei: string | null;
+    }
+  | { recorded: false; reason: "no_chain" | "receipt_not_found" | "unexpected_target" };
+
+/** One ledger entry's identity: a transaction, or one user operation inside it. */
+function gasKey(chainId: number, txHash: string, userOpHash: string | null): string {
+  return `${chainId}:${txHash}:${userOpHash ?? ""}`;
+}
 /** Sent transactions whose gas is kept in memory when no database is wired. */
 const GAS_RING_MAX = 5_000;
 
-/** The gas a usage row carries: summed fee in wei, and how many transactions had one. */
-type GasTotals = { gasFeeWei: string; gasTxCount: number };
+/** A summed fee in wei (a decimal string) and how many transactions had one. */
+type GasFigure = { feeWei: string; txCount: number };
+
+/**
+ * The gas a usage row carries. `gasFeeWei` and `gasTxCount` cover the fees
+ * somebody in the org actually paid — every payer but `sponsored`, whose fee a
+ * paymaster bore. `gasByPayer` splits all four, each present even when zero.
+ */
+type GasTotals = {
+  gasFeeWei: string;
+  gasTxCount: number;
+  gasByPayer: Record<GasPayer, GasFigure>;
+};
 
 /** Adds fees as bigints and hands back the decimal strings a response carries. */
 class GasTally<K> {
-  private readonly totals = new Map<K, { fee: bigint; count: number }>();
+  private readonly totals = new Map<K, Map<GasPayer, { fee: bigint; count: number }>>();
 
-  add(key: K, feeWei: string, txCount: number): void {
-    const total = this.totals.get(key) ?? { fee: 0n, count: 0 };
+  add(key: K, payer: GasPayer, feeWei: string, txCount: number): void {
+    const byPayer = this.totals.get(key) ?? new Map<GasPayer, { fee: bigint; count: number }>();
+    const total = byPayer.get(payer) ?? { fee: 0n, count: 0 };
     total.fee += BigInt(feeWei);
     total.count += txCount;
-    this.totals.set(key, total);
+    byPayer.set(payer, total);
+    this.totals.set(key, byPayer);
   }
 
   keys(): K[] {
@@ -194,8 +230,19 @@ class GasTally<K> {
   }
 
   of(key: K): GasTotals {
-    const total = this.totals.get(key);
-    return { gasFeeWei: (total?.fee ?? 0n).toString(), gasTxCount: total?.count ?? 0 };
+    const byPayer = this.totals.get(key);
+    let paid = 0n;
+    let paidCount = 0;
+    const gasByPayer = {} as Record<GasPayer, GasFigure>;
+    for (const payer of GAS_PAYERS) {
+      const total = byPayer?.get(payer) ?? { fee: 0n, count: 0 };
+      gasByPayer[payer] = { feeWei: total.fee.toString(), txCount: total.count };
+      if (payer !== "sponsored") {
+        paid += total.fee;
+        paidCount += total.count;
+      }
+    }
+    return { gasFeeWei: paid.toString(), gasTxCount: paidCount, gasByPayer };
   }
 }
 /** How long a persisted-audit read is reused; the dashboard polls every 3s. */
@@ -516,7 +563,7 @@ export class CrewRuntime {
   private auditSeq = 0;
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
   private readonly auditStore: AuditStore;
-  /** Gas of the transactions this process sent, by lower-cased hash, oldest first. */
+  /** Gas of the transactions reported to this process, by `gasKey`, oldest first. */
   private readonly localGas = new Map<string, TxGasRecord>();
   private readonly gasStore: GasStore;
   private readonly runtimeStore: RuntimeStore;
@@ -556,9 +603,30 @@ export class CrewRuntime {
     this.gasStore = options.gasStore ?? createMemoryGasStore();
     // Every write the SDK client sends is confirmed in one place, and that
     // place reports the receipt here — so the gas ledger covers each
-    // transaction, including the ones no caller is handed a hash for.
+    // transaction, including the ones no caller is handed a hash for. The keys
+    // behind that client are this orchestrator's own (its signer and the
+    // session keys it holds and funds), hence the payer.
     if (isOnchainClient(this.client) && typeof this.client.observeWrites === "function") {
-      this.client.observeWrites((receipt) => this.recordTxGas(receipt));
+      this.client.observeWrites((receipt) => {
+        const chainId = this.gasChainId();
+        if (chainId === undefined) return;
+        this.recordGasReceipt({
+          chainId,
+          txHash: receipt.txHash,
+          kind: receipt.action,
+          status: receipt.status,
+          gasUsed: receipt.gasUsed,
+          ...(receipt.effectiveGasPrice === undefined
+            ? {}
+            : {
+                effectiveGasPrice: receipt.effectiveGasPrice,
+                feeWei: receipt.gasUsed * receipt.effectiveGasPrice + (receipt.l1Fee ?? 0n),
+              }),
+          ...(receipt.l1Fee === undefined ? {} : { l1Fee: receipt.l1Fee }),
+          payer: "orchestrator",
+          sender: receipt.from,
+        });
+      });
     }
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
     this.agentControls = new AgentControls(this.runtimeStore);
@@ -1721,10 +1789,26 @@ export class CrewRuntime {
     confirmed: boolean;
     awaitingApprover?: `0x${string}` | null;
     txHash?: `0x${string}`;
+    gas?: GasRecordOutcome;
   }> {
+    // The approver's own wallet paid for the reported transaction, landed or
+    // reverted. Recorded only when the chain shows it was sent to the root
+    // Safe (or straight to the router); any other hash is somebody else's.
+    const router = this.escalationRouterAddress();
+    const gas = input.txHash
+      ? await this.recordTransactionGas(input.txHash, {
+          kind: "safe resolve",
+          payer: "approver",
+          targets: [input.approver, ...(router ? [router] : [])],
+        })
+      : undefined;
     const stillPending = await this.pendingIntent(input.intentId);
     if (stillPending) {
-      return { confirmed: false, awaitingApprover: stillPending.awaitingApprover };
+      return {
+        confirmed: false,
+        awaitingApprover: stillPending.awaitingApprover,
+        ...(gas ? { gas } : {}),
+      };
     }
     void this.runtimeStore.markIntentResolved(input.intentId, {
       status: input.approved ? "approved" : "denied",
@@ -1744,7 +1828,11 @@ export class CrewRuntime {
       },
     });
     if (input.txHash) await this.ingestReceiptLogs(input.txHash);
-    return { confirmed: true, ...(input.txHash ? { txHash: input.txHash } : {}) };
+    return {
+      confirmed: true,
+      ...(input.txHash ? { txHash: input.txHash } : {}),
+      ...(gas ? { gas } : {}),
+    };
   }
 
   /**
@@ -1866,11 +1954,12 @@ export class CrewRuntime {
    * bounded in-memory ring, flagged incomplete — a ring that forgot its oldest
    * events draws early days lower than they were.
    *
-   * Each day also carries `gasFeeWei`, the summed fee of the transactions this
-   * orchestrator sent that day (a decimal string, in wei), and `gasTxCount`,
-   * how many of them had a fee to sum — a transaction whose receipt carried no
-   * gas price adds to neither. `gasComplete` is `complete`'s promise for those
-   * two figures.
+   * Each day also carries `gasFeeWei`, the summed fee of the transactions
+   * recorded that day that someone in the org paid (a decimal string, in wei),
+   * `gasTxCount`, how many of them had a fee to sum — a transaction whose
+   * receipt carried no gas price adds to neither — and `gasByPayer`, the same
+   * two figures per payer, `sponsored` included. `gasComplete` is `complete`'s
+   * promise for the gas figures.
    */
   async usageDaily(
     fromIso: string,
@@ -1913,10 +2002,10 @@ export class CrewRuntime {
     const gas = new GasTally<string>();
     const persistedGas = await this.gasStore.sumByDayBetween(fromIso, toIso);
     if (persistedGas) {
-      for (const row of persistedGas) gas.add(row.day, row.feeWei, row.txCount);
+      for (const row of persistedGas) gas.add(row.day, row.payer, row.feeWei, row.txCount);
     } else {
       for (const record of this.localGasBetween(from, to)) {
-        gas.add(utcDay(Date.parse(record.at)), record.feeWei!, 1);
+        gas.add(utcDay(Date.parse(record.at)), record.payer, record.feeWei!, 1);
       }
     }
     return {
@@ -1934,8 +2023,8 @@ export class CrewRuntime {
    * event payload's `agent`, lower-cased; events that name none are counted
    * under `agent: null` (listed last) so the rows sum to the window's total.
    * Same completeness rule as `usageDaily`, and the same gas figures: a
-   * transaction's fee is listed under the agent an audit event named for it,
-   * or under `agent: null` when none did.
+   * transaction's fee is listed under the agent its reporter or an audit event
+   * named for it, or under `agent: null` when neither did.
    */
   async usageByAgent(
     fromIso: string,
@@ -1972,10 +2061,10 @@ export class CrewRuntime {
     const gas = new GasTally<string | null>();
     const persistedGas = await this.gasStore.sumByAgentBetween(fromIso, toIso);
     if (persistedGas) {
-      for (const row of persistedGas) gas.add(row.agent, row.feeWei, row.txCount);
+      for (const row of persistedGas) gas.add(row.agent, row.payer, row.feeWei, row.txCount);
     } else {
       for (const record of this.localGasBetween(Date.parse(fromIso), Date.parse(toIso))) {
-        gas.add(record.agent, record.feeWei!, 1);
+        gas.add(record.agent, record.payer, record.feeWei!, 1);
       }
     }
     // An agent that paid gas in the window has a row even when it raised no
@@ -3789,15 +3878,21 @@ export class CrewRuntime {
     this.attributeTxGas(event);
   }
 
-  /** Keep one sent transaction's gas: in the ring, and in the store when one is wired. */
-  private recordTxGas(receipt: Parameters<typeof txGasFromReceipt>[0]): void {
-    const chainId =
-      this.chainId ?? (isOnchainClient(this.client) ? this.client.chainId : undefined);
-    if (chainId == null) return;
-    const record = txGasFromReceipt(receipt, chainId, new Date().toISOString());
-    // One transaction is one fee, however many times it is reported.
-    if (this.localGas.has(record.txHash)) return;
-    this.localGas.set(record.txHash, record);
+  /** The chain this runtime's own transactions are mined on. */
+  private gasChainId(): number | undefined {
+    return this.chainId ?? (isOnchainClient(this.client) ? this.client.chainId : undefined);
+  }
+
+  /**
+   * Keep one reported receipt: in the ring, and in the store when one is
+   * wired. One transaction (or one user operation) is one fee, however many
+   * times it is reported; the first report stands.
+   */
+  recordGasReceipt(receipt: GasReceipt): void {
+    const record = txGasFromReceipt(receipt, new Date().toISOString());
+    const key = gasKey(record.chainId, record.txHash, record.userOpHash);
+    if (this.localGas.has(key)) return;
+    this.localGas.set(key, record);
     if (this.localGas.size > GAS_RING_MAX) {
       this.localGas.delete(this.localGas.keys().next().value!);
     }
@@ -3806,55 +3901,108 @@ export class CrewRuntime {
   }
 
   /**
-   * Record the gas of a transaction this orchestrator sent outside the SDK
-   * client — the root Safe's approval, broadcast by the relayer key. The
-   * receipt is read from the chain; a transaction it cannot find is not
-   * recorded, since there is no fee to state.
+   * The sink a wallet adapter, relayer or any other sender in this process is
+   * handed as `onReceipt`, so what it paid lands in this runtime's ledger.
+   * Bound, and held per runtime: two orchestrators in one process each get
+   * their own.
    */
-  async recordSentTransaction(txHash: `0x${string}`, action: string): Promise<void> {
-    if (!isOnchainClient(this.client)) return;
-    try {
-      const receipt = await this.client.publicClient.getTransactionReceipt({ hash: txHash });
-      const l1Fee = (receipt as { l1Fee?: unknown }).l1Fee;
-      this.recordTxGas({
-        txHash,
-        action,
-        from: receipt.from,
-        status: receipt.status === "success" ? "success" : "reverted",
-        gasUsed: receipt.gasUsed,
-        ...(receipt.effectiveGasPrice == null
-          ? {}
-          : { effectiveGasPrice: BigInt(receipt.effectiveGasPrice) }),
-        ...(typeof l1Fee === "bigint" ||
-        (typeof l1Fee === "string" && /^0x[0-9a-fA-F]+$/.test(l1Fee))
-          ? { l1Fee: BigInt(l1Fee) }
-          : {}),
-      });
-    } catch {
-      // Best-effort: the approval landed either way, and a missing receipt
-      // leaves this transaction out of the ledger rather than guessing a fee.
+  readonly gasReceiptSink: GasReceiptSink = (receipt) => this.recordGasReceipt(receipt);
+
+  /**
+   * Record the gas of a transaction named only by its hash: one this
+   * orchestrator's relayer sent outside the SDK client, or one a caller says
+   * somebody else sent. The receipt is read from this runtime's own chain, so
+   * the fee is the chain's and never the caller's word.
+   *
+   * `targets` is what makes a caller's hash attributable: the transaction must
+   * have been sent to (or, for a deployment, have created) one of those
+   * addresses, so an arbitrary hash cannot be charged to the org.
+   */
+  async recordTransactionGas(
+    txHash: `0x${string}`,
+    context: {
+      kind: string;
+      payer: Exclude<GasPayer, "sponsored">;
+      agent?: `0x${string}`;
+      targets?: readonly string[];
+    },
+  ): Promise<GasRecordOutcome> {
+    const chainId = this.gasChainId();
+    if (!isOnchainClient(this.client) || chainId === undefined) {
+      return { recorded: false, reason: "no_chain" };
     }
+    let receipt: Awaited<ReturnType<typeof this.client.publicClient.getTransactionReceipt>>;
+    try {
+      receipt = await this.client.publicClient.getTransactionReceipt({ hash: txHash });
+    } catch {
+      // A missing receipt leaves the transaction out of the ledger rather
+      // than guessing a fee.
+      return { recorded: false, reason: "receipt_not_found" };
+    }
+    if (context.targets) {
+      const allowed = new Set(context.targets.map((address) => address.toLowerCase()));
+      const target = (receipt.to ?? receipt.contractAddress)?.toLowerCase();
+      if (!target || !allowed.has(target)) return { recorded: false, reason: "unexpected_target" };
+    }
+    const report = gasReceiptFromTransaction(receipt, {
+      chainId,
+      kind: context.kind,
+      payer: context.payer,
+      ...(context.agent ? { agent: context.agent } : {}),
+    });
+    this.recordGasReceipt(report);
+    return {
+      recorded: true,
+      chainId,
+      txHash: report.txHash.toLowerCase() as `0x${string}`,
+      payer: report.payer,
+      status: report.status,
+      feeWei: report.feeWei === undefined ? null : report.feeWei.toString(),
+    };
   }
 
   /**
-   * Tie a sent transaction's gas to the agent an audit event names beside its
-   * hash. The first event to name one decides, so a fee never moves between
+   * The contracts of this deployment — what a transaction reported from
+   * outside must have been sent to (or have deployed) to be recorded here.
+   */
+  deploymentAddresses(): `0x${string}`[] {
+    if (!isOnchainClient(this.client)) return [];
+    return Object.values(this.client.addresses).filter(
+      (value): value is `0x${string}` =>
+        typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value),
+    );
+  }
+
+  /**
+   * Tie a recorded transaction's gas to the agent an audit event names beside
+   * its hash. The first to name one decides, so a fee never moves between
    * agents after a report has shown it.
    */
   private attributeTxGas(event: ProtocolEvent): void {
     const { txHash, agent } = event.payload;
-    if (typeof txHash !== "string" || typeof agent !== "string") return;
-    const record = this.localGas.get(txHash.toLowerCase());
+    const chainId = this.gasChainId();
+    if (typeof txHash !== "string" || typeof agent !== "string" || chainId === undefined) return;
+    const record = this.localGas.get(gasKey(chainId, txHash.toLowerCase(), null));
     if (!record || record.agent !== null) return;
     record.agent = agent.toLowerCase();
     void this.gasStore.attributeAgent(record.chainId, record.txHash, record.agent);
   }
 
-  /** Ring records with a known fee whose receipt was read inside `[from, to)`. */
+  /**
+   * Ring records with a known fee whose receipt was read inside `[from, to)`,
+   * on this runtime's chain — the scope the persisted sums answer in, since
+   * wei of two chains' native tokens do not add up.
+   */
   private localGasBetween(from: number, to: number): TxGasRecord[] {
+    const chainId = this.gasChainId();
     return [...this.localGas.values()].filter((record) => {
       const t = Date.parse(record.at);
-      return record.feeWei !== null && t >= from && t < to;
+      return (
+        record.feeWei !== null &&
+        t >= from &&
+        t < to &&
+        (chainId === undefined || record.chainId === chainId)
+      );
     });
   }
 

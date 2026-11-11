@@ -11,6 +11,25 @@ import type { Verdict } from "@lacrew/core";
 
 export * from "./cdp.js";
 
+/**
+ * The gas-receipt hook every wallet provider shares. An adapter that
+ * broadcasts takes an `onReceipt` sink and reports each send to it; where an
+ * adapter only builds a transaction or hands back an account (CDP and
+ * MetaMask smart accounts, Safe allowance transfers), whoever sends it calls
+ * `reportTransactionGas` — or `reportUserOperationGas` for one that went
+ * through a bundler — with the same sink.
+ */
+export {
+  gasReceiptFromTransaction,
+  gasReceiptFromUserOperation,
+  reportGasReceipt,
+  reportTransactionGas,
+  reportUserOperationGas,
+  type GasPayer,
+  type GasReceipt,
+  type GasReceiptSink,
+} from "@lacrew/core";
+
 /** Shared adapter contract — feature code depends on this, not a vendor SDK. */
 export interface WalletAdapter {
   readonly provider: string;

@@ -22,6 +22,16 @@ import { createGoatWallet, createGoatWalletClient, type GoatWalletClient } from 
 export * from "./wallet.js";
 export * from "./policyGate.js";
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
+export {
+  gasReceiptFromTransaction,
+  gasReceiptFromUserOperation,
+  reportGasReceipt,
+  reportTransactionGas,
+  reportUserOperationGas,
+  type GasPayer,
+  type GasReceipt,
+  type GasReceiptSink,
+} from "@lacrew/core";
 
 export type GoatWalletAdapterOptions = {
   /** The GOAT wallet client holding this seat's account. */

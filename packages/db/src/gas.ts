@@ -10,7 +10,12 @@ export interface TxGasRow {
   /** ISO timestamp the receipt was read at. */
   at: string;
   action: string;
+  /** Set for a user operation; a plain transaction has none. */
+  userOpHash?: string | null;
   sender?: string | null;
+  /** `orchestrator`, `agent`, `approver` or `sponsored`. */
+  payer: string;
+  paymaster?: string | null;
   agent?: string | null;
   status: string;
   /** Decimal strings throughout: wei does not fit a JS number. */
@@ -30,8 +35,8 @@ function chainScope(options?: TxGasReadOptions): SQL | undefined {
 }
 
 /**
- * Record one transaction's gas. Idempotent on (chain_id, tx_hash): a
- * transaction reported twice is still one row and one fee.
+ * Record one transaction's gas. Idempotent on (chain_id, tx_hash,
+ * user_op_hash): reported twice, it is still one row and one fee.
  */
 export async function insertTxGas(handle: DbHandle, row: TxGasRow): Promise<void> {
   await handle.db
@@ -41,7 +46,10 @@ export async function insertTxGas(handle: DbHandle, row: TxGasRow): Promise<void
       txHash: row.txHash.toLowerCase(),
       at: new Date(row.at),
       action: row.action,
+      userOpHash: row.userOpHash?.toLowerCase() ?? "",
       sender: row.sender?.toLowerCase() ?? null,
+      payer: row.payer,
+      paymaster: row.paymaster?.toLowerCase() ?? null,
       agent: row.agent?.toLowerCase() ?? null,
       status: row.status,
       gasUsed: row.gasUsed,
@@ -73,19 +81,20 @@ export async function setTxGasAgent(
 
 /**
  * Summed fee in wei and the number of transactions that had one, per UTC day
- * over `[fromIso, toIso)`. A transaction whose fee is unknown adds to neither.
- * Only days holding at least one recorded transaction come back.
+ * and payer over `[fromIso, toIso)`. A transaction whose fee is unknown adds
+ * to neither. Only (day, payer) pairs with a recorded transaction come back.
  */
 export async function sumTxGasByDay(
   handle: DbHandle,
   fromIso: string,
   toIso: string,
   options?: TxGasReadOptions,
-): Promise<Array<{ day: string; feeWei: string; txCount: number }>> {
+): Promise<Array<{ day: string; payer: string; feeWei: string; txCount: number }>> {
   const day = sql<string>`to_char(${txGas.at} at time zone 'UTC', 'YYYY-MM-DD')`;
   const rows = await handle.db
     .select({
       day,
+      payer: txGas.payer,
       feeWei: sql<string>`coalesce(sum(${txGas.feeWei}), 0)::text`,
       txCount: count(txGas.feeWei),
     })
@@ -93,18 +102,19 @@ export async function sumTxGasByDay(
     .where(
       and(gte(txGas.at, new Date(fromIso)), lt(txGas.at, new Date(toIso)), chainScope(options)),
     )
-    .groupBy(day)
-    .orderBy(day);
+    .groupBy(day, txGas.payer)
+    .orderBy(day, txGas.payer);
   return rows.map((row) => ({
     day: row.day,
+    payer: row.payer,
     feeWei: row.feeWei,
     txCount: Number(row.txCount),
   }));
 }
 
 /**
- * The same sums per agent over `[fromIso, toIso)`. Transactions no audit
- * event tied to an agent answer under `null`, so the rows still sum to the
+ * The same sums per agent and payer over `[fromIso, toIso)`. Transactions
+ * nothing tied to an agent answer under `null`, so the rows still sum to the
  * window's total.
  */
 export async function sumTxGasByAgent(
@@ -112,10 +122,11 @@ export async function sumTxGasByAgent(
   fromIso: string,
   toIso: string,
   options?: TxGasReadOptions,
-): Promise<Array<{ agent: string | null; feeWei: string; txCount: number }>> {
+): Promise<Array<{ agent: string | null; payer: string; feeWei: string; txCount: number }>> {
   const rows = await handle.db
     .select({
       agent: txGas.agent,
+      payer: txGas.payer,
       feeWei: sql<string>`coalesce(sum(${txGas.feeWei}), 0)::text`,
       txCount: count(txGas.feeWei),
     })
@@ -123,10 +134,11 @@ export async function sumTxGasByAgent(
     .where(
       and(gte(txGas.at, new Date(fromIso)), lt(txGas.at, new Date(toIso)), chainScope(options)),
     )
-    .groupBy(txGas.agent)
-    .orderBy(txGas.agent);
+    .groupBy(txGas.agent, txGas.payer)
+    .orderBy(txGas.agent, txGas.payer);
   return rows.map((row) => ({
     agent: row.agent,
+    payer: row.payer,
     feeWei: row.feeWei,
     txCount: Number(row.txCount),
   }));

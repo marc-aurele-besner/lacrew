@@ -45,7 +45,11 @@ import {
   type SessionScope,
 } from "@lacrew/core";
 import type { RootAuthSurface } from "./rootAuth.js";
-import { SafeApprovalRefusal, type SafeApprovalSurface } from "./safeApproval.js";
+import {
+  SafeApprovalRefusal,
+  SafeApprovalReverted,
+  type SafeApprovalSurface,
+} from "./safeApproval.js";
 import { ancestorsOf } from "./flowScope.js";
 import { scopeOfThread } from "./conversation.js";
 import { isAuthorized } from "./auth.js";
@@ -361,6 +365,15 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // A refusal is something the operator can answer — a stale assertion, a
       // Safe that is not theirs, a chain waiting on someone else. Anything else
       // is this orchestrator's problem, and says so with a different status.
+      if (err instanceof SafeApprovalReverted) {
+        // Mined and reverted: nothing was approved, and this orchestrator's
+        // relayer still paid for it.
+        await runtime.recordTransactionGas(err.txHash, {
+          kind: "safe resolve relay",
+          payer: "orchestrator",
+        });
+        return jsonBig(c, { error: err.message.split("\n")[0], txHash: err.txHash }, 502);
+      }
       const status = err instanceof SafeApprovalRefusal ? 401 : 502;
       return jsonBig(c, { error: msgOf(err, "safe_exec_failed").split("\n")[0] }, status);
     }
@@ -392,7 +405,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       input.authorizedBy,
       async () => {
         // The relayer key is this orchestrator's own, so this is its gas.
-        await runtime.recordSentTransaction(sent.txHash, "safe resolve relay");
+        await runtime.recordTransactionGas(sent.txHash, {
+          kind: "safe resolve relay",
+          payer: "orchestrator",
+        });
         return sent.txHash;
       },
     );
@@ -2621,9 +2637,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // can chart them (?by=agent groups by the payload's agent instead). `to`
     // defaults to now and `from` to 30 days before `to`; the window is capped
     // so one request cannot ask for an unbounded scan. `complete` carries the
-    // same promise as on /usage. Each row also carries what the transactions
-    // this orchestrator sent cost: `gasFeeWei` (summed, a decimal string) and
-    // `gasTxCount` (how many had a fee); `gasComplete` is `complete` for those.
+    // same promise as on /usage. Each row also carries what the recorded
+    // transactions cost: `gasFeeWei` (summed fees somebody in the org paid, a
+    // decimal string), `gasTxCount` (how many had a fee) and `gasByPayer` (the
+    // same per payer, sponsored included); `gasComplete` is `complete` for those.
     const toParam = c.req.query("to") || undefined;
     const fromParam = c.req.query("from") || undefined;
     const by = c.req.query("by") || undefined;
@@ -2645,6 +2662,53 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         ? await runtime.usageByAgent(fromIso, toIso)
         : await runtime.usageDaily(fromIso, toIso);
     return jsonBig(c, { ...usage, mode: runtime.mode });
+  });
+
+  /**
+   * Report a transaction somebody other than this orchestrator sent — the
+   * CLI's own client, a deploy, an agent's wallet — so its fee joins the same
+   * ledger `/usage/daily` sums.
+   *
+   * The body names a hash and says who paid; everything else is read from this
+   * orchestrator's chain. The transaction must have been sent to a contract of
+   * this deployment or to the root Safe (or have deployed one of them), so an
+   * arbitrary hash cannot be charged to the org. `sponsored` is not accepted:
+   * that is a property of a user operation, which a transaction hash cannot
+   * prove.
+   */
+  app.post("/usage/gas", async (c) => {
+    const body = await bodyOf<{
+      txHash?: string;
+      kind?: string;
+      payer?: string;
+      agent?: string;
+    }>(c);
+    if (typeof body.txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(body.txHash)) {
+      return jsonBig(c, { error: "txHash_required" }, 400);
+    }
+    const payer = body.payer ?? "orchestrator";
+    if (payer !== "orchestrator" && payer !== "agent" && payer !== "approver") {
+      return jsonBig(c, { error: "invalid_payer" }, 400);
+    }
+    if (body.agent !== undefined && !/^0x[0-9a-fA-F]{40}$/.test(String(body.agent))) {
+      return jsonBig(c, { error: "invalid_agent" }, 400);
+    }
+    const kind = typeof body.kind === "string" ? body.kind.trim().slice(0, 64) : "";
+    const outcome = await runtime.recordTransactionGas(body.txHash as `0x${string}`, {
+      kind: kind || "reported",
+      payer,
+      ...(body.agent ? { agent: body.agent as `0x${string}` } : {}),
+      targets: [
+        ...runtime.deploymentAddresses(),
+        ...(safeApproval ? [safeApproval.safeAddress] : []),
+      ],
+    });
+    if (!outcome.recorded) {
+      const status =
+        outcome.reason === "no_chain" ? 409 : outcome.reason === "receipt_not_found" ? 404 : 422;
+      return jsonBig(c, { error: outcome.reason }, status);
+    }
+    return jsonBig(c, outcome);
   });
 
   /**

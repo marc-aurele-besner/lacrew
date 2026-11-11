@@ -125,6 +125,11 @@ would ask the policy stack about a plain transfer, and a whitelist or
 selector-aware module would then judge something the agent is not about to do. A
 call naming a function with no ABI to encode is refused for the same reason.
 
+Pass `receipts` (a viem `PublicClient` on the wallet's chain) and `onReceipt`
+to have each allowed send's gas fee reported as paid by the agent's wallet —
+`onReceipt: runtime.gasReceiptSink` puts it in the orchestrator's ledger. See
+[gas cost](./self-host.md#gas-cost).
+
 ### Version pin
 
 Verified against `@goat-sdk/wallet-viem@0.3.0` (`@goat-sdk/core@0.5.0`). Two of

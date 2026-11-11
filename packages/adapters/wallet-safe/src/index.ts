@@ -31,6 +31,16 @@ export * from "./webauthn.js";
 export * from "./execute.js";
 export { demoPolicyVerdict };
 export type { AdapterCheckInput, PolicyReader, WalletAdapter };
+export {
+  gasReceiptFromTransaction,
+  gasReceiptFromUserOperation,
+  reportGasReceipt,
+  reportTransactionGas,
+  reportUserOperationGas,
+  type GasPayer,
+  type GasReceipt,
+  type GasReceiptSink,
+} from "@lacrew/core";
 
 export interface MockSafeWallet {
   address: `0x${string}`;
