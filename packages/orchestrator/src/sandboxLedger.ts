@@ -12,7 +12,13 @@
  * memory otherwise — the same provider pattern as the other stores.
  */
 
-import { getDatabaseUrl, loadSandboxState, saveSandboxState } from "@lacrew/db";
+import {
+  DEFAULT_ORG_ID,
+  getDatabaseUrl,
+  loadSandboxState,
+  orgDb,
+  saveSandboxState,
+} from "@lacrew/db";
 import { sharedDb } from "./dbPool.js";
 import type { DbHandle } from "@lacrew/db";
 import {
@@ -22,7 +28,7 @@ import {
 } from "@lacrew/sdk/sandbox";
 
 /** The org id a single-org orchestrator stores its sandbox under. */
-export const DEFAULT_SANDBOX_ORG = "default";
+export const DEFAULT_SANDBOX_ORG = DEFAULT_ORG_ID;
 
 /**
  * The human root of a sandbox whose operator named none. Nobody holds a key
@@ -46,39 +52,41 @@ export interface SandboxStateRecord {
 
 export interface SandboxStateStore {
   readonly name: string;
-  load(orgId: string): Promise<SandboxStateRecord | null>;
+  load(): Promise<SandboxStateRecord | null>;
   /**
    * Write `record` only if the stored version is still `expectedVersion`
    * (0 = nothing stored yet). False means another writer got there first.
    */
-  save(orgId: string, record: SandboxStateRecord, expectedVersion: number): Promise<boolean>;
+  save(record: SandboxStateRecord, expectedVersion: number): Promise<boolean>;
   close(): Promise<void>;
 }
 
-/** Holds each org's state for the life of the process (or of a test). */
+/** Holds one org's state for the life of the process (or of a test). */
 export function createMemorySandboxStateStore(): SandboxStateStore {
-  const rows = new Map<string, SandboxStateRecord>();
+  let row: SandboxStateRecord | undefined;
   return {
     name: "memory",
-    load: async (orgId) => {
-      const row = rows.get(orgId);
-      return row ? structuredClone(row) : null;
-    },
-    save: async (orgId, record, expectedVersion) => {
-      if ((rows.get(orgId)?.version ?? 0) !== expectedVersion) return false;
-      rows.set(orgId, structuredClone(record));
+    load: async () => (row ? structuredClone(row) : null),
+    save: async (record, expectedVersion) => {
+      if ((row?.version ?? 0) !== expectedVersion) return false;
+      row = structuredClone(record);
       return true;
     },
     close: async () => {},
   };
 }
 
-export function createPgSandboxStateStore(options: { db: DbHandle }): SandboxStateStore {
-  const db = () => options.db;
+/** One org's stored simulation: every read and write is bound to `orgId`. */
+export function createPgSandboxStateStore(options: {
+  db: DbHandle;
+  orgId: string;
+}): SandboxStateStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   return {
     name: "postgres",
-    load: async (orgId) => {
-      const row = await loadSandboxState(db(), orgId);
+    load: async () => {
+      const row = await loadSandboxState(db());
       if (!row) return null;
       return {
         version: row.version,
@@ -86,11 +94,10 @@ export function createPgSandboxStateStore(options: { db: DbHandle }): SandboxSta
         clockOffset: row.clockOffset,
       };
     },
-    save: (orgId, record, expectedVersion) =>
+    save: (record, expectedVersion) =>
       saveSandboxState(
         db(),
         {
-          orgId,
           version: record.version,
           state: record.state,
           clockOffset: record.clockOffset,
@@ -103,9 +110,9 @@ export function createPgSandboxStateStore(options: { db: DbHandle }): SandboxSta
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createSandboxStateStoreFromEnv(): SandboxStateStore {
+export function createSandboxStateStoreFromEnv(orgId: string): SandboxStateStore {
   return getDatabaseUrl()
-    ? createPgSandboxStateStore({ db: sharedDb() })
+    ? createPgSandboxStateStore({ db: sharedDb(), orgId })
     : createMemorySandboxStateStore();
 }
 
@@ -132,7 +139,7 @@ export class SandboxControlError extends Error {
 export interface SandboxLedgerOptions {
   /** The org's human root. Defaults to `DEFAULT_SANDBOX_ROOT`. */
   root?: `0x${string}`;
-  /** Which org's state this is. Defaults to `default`. */
+  /** The org this sandbox is, as its status reports it. Defaults to `default`. */
   orgId?: string;
   /** Where state is kept. Defaults to memory. */
   store?: SandboxStateStore;
@@ -219,7 +226,7 @@ export class SandboxLedger {
    * whether stored state was found.
    */
   async hydrate(): Promise<boolean> {
-    const record = await this.store.load(this.orgId);
+    const record = await this.store.load();
     if (!record) {
       this.writeThrough(this.current.snapshot());
       await this.flush();
@@ -243,11 +250,7 @@ export class SandboxLedger {
       // longer exists.
       if (generation !== this.generation) return;
       try {
-        const landed = await this.store.save(
-          this.orgId,
-          { version, state, clockOffset },
-          this.stored,
-        );
+        const landed = await this.store.save({ version, state, clockOffset }, this.stored);
         if (landed) {
           this.stored = version;
           this.failure = null;
@@ -269,7 +272,7 @@ export class SandboxLedger {
    * overwrites it with one that forked.
    */
   private async adoptStored(): Promise<void> {
-    const record = await this.store.load(this.orgId);
+    const record = await this.store.load();
     this.generation += 1;
     this.lost += 1;
     this.failure = null;

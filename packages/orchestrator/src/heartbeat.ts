@@ -178,7 +178,7 @@ export function createHeartbeatSurface(opts: {
    */
   usageForRuns?: (runIds: string[]) => Promise<InferenceUsage>;
 }): HeartbeatSurface {
-  const store = opts.store ?? createHeartbeatStoreFromEnv();
+  const store = opts.store ?? createHeartbeatStoreFromEnv(opts.runtime.orgId);
   const configs = new Map<string, CrewHeartbeat>();
   /** Crews this process is mid-tick on; the store covers the other replicas. */
   const inFlight = new Set<string>();

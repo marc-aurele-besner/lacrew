@@ -51,6 +51,7 @@ import {
   type PricedCompletion,
 } from "@lacrew/flows";
 import type { ProtocolEvent } from "@lacrew/core";
+import { DEFAULT_ORG_ID } from "@lacrew/db";
 import {
   createInferenceBudgetStoreFromEnv,
   type InferenceBudgetStore,
@@ -180,13 +181,15 @@ function scopeKeysFor(subject: BudgetSubject): string[] {
 }
 
 export function createInferenceBudgets(opts: {
+  /** The org whose budgets and usage these are. Defaults to `default`. */
+  orgId?: string;
   store?: InferenceBudgetStore;
   /** Posts the warning into the crew's thread. */
   postNote?: (input: { crewId: string; body: string }) => void;
   onEvent?: (event: ProtocolEvent) => void;
   now?: () => Date;
 }): InferenceBudgetsSurface {
-  const store = opts.store ?? createInferenceBudgetStoreFromEnv();
+  const store = opts.store ?? createInferenceBudgetStoreFromEnv(opts.orgId ?? DEFAULT_ORG_ID);
   const now = opts.now ?? (() => new Date());
 
   /**

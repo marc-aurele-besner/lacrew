@@ -82,6 +82,7 @@ import {
   upsertSessionRow,
   type AgentControlRow,
   type ConnectorAskRow,
+  orgDb,
   type DbHandle,
   type DualControlReviewRow,
   type HumanGateRow,
@@ -620,8 +621,9 @@ export function messageToRow(message: Message): StoredMessageRow {
   };
 }
 
-export function createPgRuntimeStore(options: { db: DbHandle }): RuntimeStore {
-  const db = () => options.db;
+export function createPgRuntimeStore(options: { db: DbHandle; orgId: string }): RuntimeStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] runtime store ${op} failed:`, err);
 
@@ -1122,6 +1124,8 @@ export function createPgRuntimeStore(options: { db: DbHandle }): RuntimeStore {
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createRuntimeStoreFromEnv(): RuntimeStore {
-  return getDatabaseUrl() ? createPgRuntimeStore({ db: sharedDb() }) : createMemoryRuntimeStore();
+export function createRuntimeStoreFromEnv(orgId: string): RuntimeStore {
+  return getDatabaseUrl()
+    ? createPgRuntimeStore({ db: sharedDb(), orgId })
+    : createMemoryRuntimeStore();
 }

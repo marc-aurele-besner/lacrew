@@ -96,6 +96,7 @@ import { decideAutoExecute } from "./governanceSweep.js";
 import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./secretBox.js";
 import { planNodeStack, stackUnchanged } from "./policyPlan.js";
 import { watchlistFromEnv } from "./walletWatchlist.js";
+import { DEFAULT_ORG_ID } from "@lacrew/db";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
   createGasStoreFromEnv,
@@ -272,6 +273,11 @@ function utcDay(ms: number): string {
 }
 
 export interface CrewRuntimeOptions {
+  /**
+   * The org this runtime serves. Defaults to the sandbox ledger's org, or
+   * `default` (the single org of a self-hosted orchestrator).
+   */
+  orgId?: string;
   /**
    * Account-level session delegations (F1.3): when set, boot also issues a
    * budget-caveated delegation seat→session-key and revoke disables it.
@@ -454,12 +460,13 @@ export type RuntimeBoot =
  * fails, so without a probe a misconfigured endpoint yields a runtime that
  * claims to be onchain and throws on every read.
  */
-export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
+export async function createRuntimeFromEnv(options: { orgId?: string } = {}): Promise<RuntimeBoot> {
+  const orgId = options.orgId ?? DEFAULT_ORG_ID;
   // Sandbox is opted into by name and by nothing else. A missing RPC, a dead
   // chain or an incomplete address book all stay the failures they are below:
   // none of them is ever answered with a simulator.
   const requested = process.env.LACREW_MODE?.trim().toLowerCase();
-  if (requested === "sandbox") return createSandboxRuntimeFromEnv();
+  if (requested === "sandbox") return createSandboxRuntimeFromEnv(orgId);
   if (requested && requested !== "chain") {
     return {
       ok: false,
@@ -613,9 +620,10 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       workerAgent: worker,
       spendTarget: x402Target,
       managerAgent: manager,
-      auditStore: createAuditStoreFromEnv(chainId),
-      gasStore: createGasStoreFromEnv(chainId),
-      runtimeStore: createRuntimeStoreFromEnv(),
+      orgId,
+      auditStore: createAuditStoreFromEnv(orgId, chainId),
+      gasStore: createGasStoreFromEnv(orgId, chainId),
+      runtimeStore: createRuntimeStoreFromEnv(orgId),
       watchlist: watchlistFromEnv(),
       ...(delegations ? { delegations } : {}),
     }),
@@ -627,7 +635,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
  * node, no funds, no other seat), with no chain dialed and no key read.
  * Stored state is resumed later by `hydrateSandbox`, once migrations ran.
  */
-function createSandboxRuntimeFromEnv(): RuntimeBoot {
+function createSandboxRuntimeFromEnv(orgId: string): RuntimeBoot {
   const root = process.env.LACREW_SANDBOX_ROOT?.trim();
   if (root && !/^0x[0-9a-fA-F]{40}$/.test(root)) {
     return {
@@ -640,9 +648,10 @@ function createSandboxRuntimeFromEnv(): RuntimeBoot {
     ok: true,
     runtime: createSandboxRuntime({
       ...(root ? { root: root as `0x${string}` } : {}),
-      store: createSandboxStateStoreFromEnv(),
-      auditStore: createAuditStoreFromEnv(undefined, "sandbox"),
-      runtimeStore: createRuntimeStoreFromEnv(),
+      orgId,
+      store: createSandboxStateStoreFromEnv(orgId),
+      auditStore: createAuditStoreFromEnv(orgId, undefined, "sandbox"),
+      runtimeStore: createRuntimeStoreFromEnv(orgId),
     }),
   };
 }
@@ -686,6 +695,8 @@ export class CrewRuntime {
   private readonly spendTarget: `0x${string}`;
   private readonly managerAgent: `0x${string}`;
   readonly mode: RuntimeMode;
+  /** The org this runtime serves; every store it writes through is bound to it. */
+  readonly orgId: string;
   readonly chainId: number | null;
   /** Chains and tokens agent balances are read on, beyond the address book. */
   private watchlist: WatchedChain[];
@@ -747,6 +758,7 @@ export class CrewRuntime {
       throw new Error("A CrewRuntime needs a client; there is none to fall back to.");
     }
     this.sandboxLedger = options.sandbox;
+    this.orgId = options.orgId ?? options.sandbox?.orgId ?? DEFAULT_ORG_ID;
     // The demo fixtures below belong to the in-memory client only. An onchain
     // runtime that adopted them would sign as an address the org does not
     // contain, so the caller must name real seats or not claim to be onchain.

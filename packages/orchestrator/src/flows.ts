@@ -194,7 +194,7 @@ export function createFlowsSurface(opts: {
   /** Statuses a run cannot come back from. `waiting` is the one that can. */
   const TERMINAL = new Set(["completed", "error", "max_steps", "cancelled"]);
 
-  const store = opts.store ?? createFlowStoreFromEnv();
+  const store = opts.store ?? createFlowStoreFromEnv(opts.runtime.orgId);
   const flows = new Map<string, FlowDefinition>();
   const runRing: FlowRunResult[] = [];
   const cronFiredAt = new Map<string, number>();

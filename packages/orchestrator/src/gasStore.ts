@@ -10,6 +10,7 @@ import {
   setTxGasAgent,
   sumTxGasByAgent,
   sumTxGasByDay,
+  orgDb,
   type DbHandle,
 } from "@lacrew/db";
 import { sharedDb } from "./dbPool.js";
@@ -114,8 +115,13 @@ export function createMemoryGasStore(): GasStore {
  * chain, as the audit store's do, so two orchestrators on different chains can
  * share a database without summing each other's fees.
  */
-export function createPgGasStore(options: { db: DbHandle; chainId?: number }): GasStore {
-  const db = () => options.db;
+export function createPgGasStore(options: {
+  db: DbHandle;
+  orgId: string;
+  chainId?: number;
+}): GasStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   const { chainId } = options;
   const scope = chainId === undefined ? undefined : { chainId };
   // Writes run one after another: an attribution issued right behind its
@@ -158,6 +164,8 @@ export function createPgGasStore(options: { db: DbHandle; chainId?: number }): G
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createGasStoreFromEnv(chainId?: number): GasStore {
-  return getDatabaseUrl() ? createPgGasStore({ db: sharedDb(), chainId }) : createMemoryGasStore();
+export function createGasStoreFromEnv(orgId: string, chainId?: number): GasStore {
+  return getDatabaseUrl()
+    ? createPgGasStore({ db: sharedDb(), orgId, chainId })
+    : createMemoryGasStore();
 }

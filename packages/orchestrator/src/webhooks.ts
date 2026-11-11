@@ -246,7 +246,7 @@ export function createWebhookSurface(opts: {
   /** Test seam for Google's key set; production reaches the real endpoint. */
   jwksFetcher?: JwksFetcher;
 }): WebhookSurface {
-  const store = opts.store ?? createWebhookStoreFromEnv();
+  const store = opts.store ?? createWebhookStoreFromEnv(opts.runtime.orgId);
   const triggers = new Map<string, WebhookTrigger>();
   /** Cleartext secrets, in process only. The store holds them sealed. */
   const secrets = new Map<string, string>();

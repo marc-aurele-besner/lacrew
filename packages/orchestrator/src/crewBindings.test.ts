@@ -163,7 +163,7 @@ describe("crew bindings on Postgres", { skip: !process.env.DATABASE_URL }, () =>
   it("round-trips every field a binding carries, and rehydrates a renamed seat", async () => {
     const bp = getCrewBlueprint("github-experts")!;
     const crew = crewId();
-    const store = createPgRuntimeStore({ db: sharedDb() });
+    const store = createPgRuntimeStore({ db: sharedDb(), orgId: "default" });
     const accounts = new Map(
       bp.roles.map((role, i) => [role.id, `0x${String(i + 1).padStart(40, "0")}`]),
     );
@@ -215,7 +215,7 @@ describe("crew bindings on Postgres", { skip: !process.env.DATABASE_URL }, () =>
   */
   it("deletes the displaced row when a seat moves, and when one is cleared", async () => {
     const crew = crewId();
-    const store = createPgRuntimeStore({ db: sharedDb() });
+    const store = createPgRuntimeStore({ db: sharedDb(), orgId: "default" });
     try {
       const writer = createCrewBindings({ store });
       await writer.set({ roleId: "reviewer", account: A, crewId: crew });

@@ -712,7 +712,7 @@ describe("sandbox persistence", () => {
     await api.post("/sandbox/time/advance", { seconds: 7200 });
     const before = (await api.get("/sandbox")).body;
     assert.equal(before.persistError, undefined);
-    assert.equal((await store.load("default"))?.version, before.version);
+    assert.equal((await store.load())?.version, before.version);
 
     // A second process over the same store.
     const second = createSandboxRuntime({ store });
@@ -736,17 +736,17 @@ describe("sandbox persistence", () => {
     const runtime = createSandboxRuntime({ store });
     await runtime.hydrateSandbox();
     const api = appFor(runtime);
-    assert.equal((await store.load("default"))?.version, 1, "genesis is stored");
+    assert.equal((await store.load())?.version, 1, "genesis is stored");
 
     await api.post("/sandbox/fund", { amount: USDC(5) });
-    assert.equal((await store.load("default"))?.version, 2);
+    assert.equal((await store.load())?.version, 2);
     await api.post("/sandbox/time/advance", { seconds: 10 });
-    const stored = await store.load("default");
+    const stored = await store.load();
     assert.equal(stored?.version, 3);
     assert.equal(stored?.clockOffset, 10);
     // A refused call commits nothing.
     await api.post("/sandbox/fund", { amount: "0" });
-    assert.equal((await store.load("default"))?.version, 3);
+    assert.equal((await store.load())?.version, 3);
   });
 
   it("reports a write that lost the version check instead of answering 200", async () => {

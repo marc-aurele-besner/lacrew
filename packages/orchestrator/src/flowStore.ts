@@ -24,6 +24,7 @@ import {
   setFlowRunRequest,
   upsertFlowDefinition,
   upsertFlowRunState,
+  orgDb,
   type DbHandle,
 } from "@lacrew/db";
 import { sharedDb } from "./dbPool.js";
@@ -272,8 +273,9 @@ export function createMemoryFlowStore(): FlowStore {
   };
 }
 
-export function createPgFlowStore(options: { db: DbHandle }): FlowStore {
-  const db = () => options.db;
+export function createPgFlowStore(options: { db: DbHandle; orgId: string }): FlowStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] flow ${op} failed:`, err);
 
@@ -555,6 +557,6 @@ export function createPgFlowStore(options: { db: DbHandle }): FlowStore {
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createFlowStoreFromEnv(): FlowStore {
-  return getDatabaseUrl() ? createPgFlowStore({ db: sharedDb() }) : createMemoryFlowStore();
+export function createFlowStoreFromEnv(orgId: string): FlowStore {
+  return getDatabaseUrl() ? createPgFlowStore({ db: sharedDb(), orgId }) : createMemoryFlowStore();
 }
