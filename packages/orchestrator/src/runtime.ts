@@ -90,6 +90,13 @@ import { planNodeStack, stackUnchanged } from "./policyPlan.js";
 import { watchlistFromEnv } from "./walletWatchlist.js";
 import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import {
+  createGasStoreFromEnv,
+  createMemoryGasStore,
+  txGasFromReceipt,
+  type GasStore,
+  type TxGasRecord,
+} from "./gasStore.js";
+import {
   createMemoryRuntimeStore,
   createRuntimeStoreFromEnv,
   type IntentRecord,
@@ -165,6 +172,32 @@ export type NodeStackModuleSpec =
   | { kind: "time_window"; startSecondOfDay: number; endSecondOfDay: number };
 
 const AUDIT_RING_MAX = 200;
+/** Sent transactions whose gas is kept in memory when no database is wired. */
+const GAS_RING_MAX = 5_000;
+
+/** The gas a usage row carries: summed fee in wei, and how many transactions had one. */
+type GasTotals = { gasFeeWei: string; gasTxCount: number };
+
+/** Adds fees as bigints and hands back the decimal strings a response carries. */
+class GasTally<K> {
+  private readonly totals = new Map<K, { fee: bigint; count: number }>();
+
+  add(key: K, feeWei: string, txCount: number): void {
+    const total = this.totals.get(key) ?? { fee: 0n, count: 0 };
+    total.fee += BigInt(feeWei);
+    total.count += txCount;
+    this.totals.set(key, total);
+  }
+
+  keys(): K[] {
+    return [...this.totals.keys()];
+  }
+
+  of(key: K): GasTotals {
+    const total = this.totals.get(key);
+    return { gasFeeWei: (total?.fee ?? 0n).toString(), gasTxCount: total?.count ?? 0 };
+  }
+}
 /** How long a persisted-audit read is reused; the dashboard polls every 3s. */
 const AUDIT_STORE_TTL_MS = 2_000;
 const DAY_MS = 86_400_000;
@@ -196,6 +229,8 @@ export interface CrewRuntimeOptions {
   watchlist?: WatchedChain[];
   /** Persistence for the audit ring; defaults to memory no-op. */
   auditStore?: AuditStore;
+  /** Persistence for what sent transactions cost in gas; defaults to memory no-op. */
+  gasStore?: GasStore;
   /** Persistence for session/intent records; defaults to bounded memory. */
   runtimeStore?: RuntimeStore;
 }
@@ -438,6 +473,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
       spendTarget: x402Target,
       managerAgent: manager,
       auditStore: createAuditStoreFromEnv(chainId),
+      gasStore: createGasStoreFromEnv(chainId),
       runtimeStore: createRuntimeStoreFromEnv(),
       watchlist: watchlistFromEnv(),
       ...(delegations ? { delegations } : {}),
@@ -480,6 +516,9 @@ export class CrewRuntime {
   private auditSeq = 0;
   private auditCache: { events: ProtocolEvent[]; at: number } | undefined;
   private readonly auditStore: AuditStore;
+  /** Gas of the transactions this process sent, by lower-cased hash, oldest first. */
+  private readonly localGas = new Map<string, TxGasRecord>();
+  private readonly gasStore: GasStore;
   private readonly runtimeStore: RuntimeStore;
 
   /**
@@ -514,6 +553,13 @@ export class CrewRuntime {
     this.chainId = options.chainId ?? null;
     this.watchlist = options.watchlist ?? [];
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
+    this.gasStore = options.gasStore ?? createMemoryGasStore();
+    // Every write the SDK client sends is confirmed in one place, and that
+    // place reports the receipt here — so the gas ledger covers each
+    // transaction, including the ones no caller is handed a hash for.
+    if (isOnchainClient(this.client) && typeof this.client.observeWrites === "function") {
+      this.client.observeWrites((receipt) => this.recordTxGas(receipt));
+    }
     this.runtimeStore = options.runtimeStore ?? createMemoryRuntimeStore();
     this.agentControls = new AgentControls(this.runtimeStore);
     this.conversation = new Conversation(this.runtimeStore);
@@ -1819,6 +1865,12 @@ export class CrewRuntime {
    * trail when a database is wired (`complete: true`); otherwise from the
    * bounded in-memory ring, flagged incomplete — a ring that forgot its oldest
    * events draws early days lower than they were.
+   *
+   * Each day also carries `gasFeeWei`, the summed fee of the transactions this
+   * orchestrator sent that day (a decimal string, in wei), and `gasTxCount`,
+   * how many of them had a fee to sum — a transaction whose receipt carried no
+   * gas price adds to neither. `gasComplete` is `complete`'s promise for those
+   * two figures.
    */
   async usageDaily(
     fromIso: string,
@@ -1826,8 +1878,9 @@ export class CrewRuntime {
   ): Promise<{
     from: string;
     to: string;
-    days: Array<{ day: string; counts: Record<string, number> }>;
+    days: Array<{ day: string; counts: Record<string, number> } & GasTotals>;
     complete: boolean;
+    gasComplete: boolean;
     store: string;
   }> {
     const from = Date.parse(fromIso);
@@ -1856,11 +1909,22 @@ export class CrewRuntime {
         if (Number.isFinite(t) && t >= from && t < to) add(utcDay(t), event.type, 1);
       }
     }
+
+    const gas = new GasTally<string>();
+    const persistedGas = await this.gasStore.sumByDayBetween(fromIso, toIso);
+    if (persistedGas) {
+      for (const row of persistedGas) gas.add(row.day, row.feeWei, row.txCount);
+    } else {
+      for (const record of this.localGasBetween(from, to)) {
+        gas.add(utcDay(Date.parse(record.at)), record.feeWei!, 1);
+      }
+    }
     return {
       from: fromIso,
       to: toIso,
-      days: [...byDay].map(([day, counts]) => ({ day, counts })),
+      days: [...byDay].map(([day, counts]) => ({ day, counts, ...gas.of(day) })),
       complete: persisted !== null,
+      gasComplete: persistedGas !== null,
       store: persisted ? this.auditStore.name : "memory",
     };
   }
@@ -1869,7 +1933,9 @@ export class CrewRuntime {
    * Operation counts per agent over `[fromIso, toIso)`. The agent is the
    * event payload's `agent`, lower-cased; events that name none are counted
    * under `agent: null` (listed last) so the rows sum to the window's total.
-   * Same completeness rule as `usageDaily`.
+   * Same completeness rule as `usageDaily`, and the same gas figures: a
+   * transaction's fee is listed under the agent an audit event named for it,
+   * or under `agent: null` when none did.
    */
   async usageByAgent(
     fromIso: string,
@@ -1877,8 +1943,9 @@ export class CrewRuntime {
   ): Promise<{
     from: string;
     to: string;
-    agents: Array<{ agent: string | null; counts: Record<string, number> }>;
+    agents: Array<{ agent: string | null; counts: Record<string, number> } & GasTotals>;
     complete: boolean;
+    gasComplete: boolean;
     store: string;
   }> {
     const byAgent = new Map<string | null, Record<string, number>>();
@@ -1901,14 +1968,30 @@ export class CrewRuntime {
         add(typeof agent === "string" ? agent.toLowerCase() : null, event.type, 1);
       }
     }
+
+    const gas = new GasTally<string | null>();
+    const persistedGas = await this.gasStore.sumByAgentBetween(fromIso, toIso);
+    if (persistedGas) {
+      for (const row of persistedGas) gas.add(row.agent, row.feeWei, row.txCount);
+    } else {
+      for (const record of this.localGasBetween(Date.parse(fromIso), Date.parse(toIso))) {
+        gas.add(record.agent, record.feeWei!, 1);
+      }
+    }
+    // An agent that paid gas in the window has a row even when it raised no
+    // event there, so the per-agent fees still sum to the window's total.
+    for (const agent of gas.keys()) {
+      if (!byAgent.has(agent)) byAgent.set(agent, {});
+    }
     const agents = [...byAgent]
-      .map(([agent, counts]) => ({ agent, counts }))
+      .map(([agent, counts]) => ({ agent, counts, ...gas.of(agent) }))
       .sort((a, b) => (a.agent === null ? 1 : b.agent === null ? -1 : a.agent < b.agent ? -1 : 1));
     return {
       from: fromIso,
       to: toIso,
       agents,
       complete: persisted !== null,
+      gasComplete: persistedGas !== null,
       store: persisted ? this.auditStore.name : "memory",
     };
   }
@@ -3703,6 +3786,76 @@ export class CrewRuntime {
     }
     // Fire-and-forget; the store swallows its own errors.
     void this.auditStore.append(event);
+    this.attributeTxGas(event);
+  }
+
+  /** Keep one sent transaction's gas: in the ring, and in the store when one is wired. */
+  private recordTxGas(receipt: Parameters<typeof txGasFromReceipt>[0]): void {
+    const chainId =
+      this.chainId ?? (isOnchainClient(this.client) ? this.client.chainId : undefined);
+    if (chainId == null) return;
+    const record = txGasFromReceipt(receipt, chainId, new Date().toISOString());
+    // One transaction is one fee, however many times it is reported.
+    if (this.localGas.has(record.txHash)) return;
+    this.localGas.set(record.txHash, record);
+    if (this.localGas.size > GAS_RING_MAX) {
+      this.localGas.delete(this.localGas.keys().next().value!);
+    }
+    // Fire-and-forget; the store swallows its own errors.
+    void this.gasStore.append(record);
+  }
+
+  /**
+   * Record the gas of a transaction this orchestrator sent outside the SDK
+   * client — the root Safe's approval, broadcast by the relayer key. The
+   * receipt is read from the chain; a transaction it cannot find is not
+   * recorded, since there is no fee to state.
+   */
+  async recordSentTransaction(txHash: `0x${string}`, action: string): Promise<void> {
+    if (!isOnchainClient(this.client)) return;
+    try {
+      const receipt = await this.client.publicClient.getTransactionReceipt({ hash: txHash });
+      const l1Fee = (receipt as { l1Fee?: unknown }).l1Fee;
+      this.recordTxGas({
+        txHash,
+        action,
+        from: receipt.from,
+        status: receipt.status === "success" ? "success" : "reverted",
+        gasUsed: receipt.gasUsed,
+        ...(receipt.effectiveGasPrice == null
+          ? {}
+          : { effectiveGasPrice: BigInt(receipt.effectiveGasPrice) }),
+        ...(typeof l1Fee === "bigint" ||
+        (typeof l1Fee === "string" && /^0x[0-9a-fA-F]+$/.test(l1Fee))
+          ? { l1Fee: BigInt(l1Fee) }
+          : {}),
+      });
+    } catch {
+      // Best-effort: the approval landed either way, and a missing receipt
+      // leaves this transaction out of the ledger rather than guessing a fee.
+    }
+  }
+
+  /**
+   * Tie a sent transaction's gas to the agent an audit event names beside its
+   * hash. The first event to name one decides, so a fee never moves between
+   * agents after a report has shown it.
+   */
+  private attributeTxGas(event: ProtocolEvent): void {
+    const { txHash, agent } = event.payload;
+    if (typeof txHash !== "string" || typeof agent !== "string") return;
+    const record = this.localGas.get(txHash.toLowerCase());
+    if (!record || record.agent !== null) return;
+    record.agent = agent.toLowerCase();
+    void this.gasStore.attributeAgent(record.chainId, record.txHash, record.agent);
+  }
+
+  /** Ring records with a known fee whose receipt was read inside `[from, to)`. */
+  private localGasBetween(from: number, to: number): TxGasRecord[] {
+    return [...this.localGas.values()].filter((record) => {
+      const t = Date.parse(record.at);
+      return record.feeWei !== null && t >= from && t < to;
+    });
   }
 
   /** Parse EscalationRouter logs from a tx receipt into the local audit ring. */

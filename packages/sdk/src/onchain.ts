@@ -166,6 +166,32 @@ type ModuleShape =
   | { kind: "time_window"; startSecondOfDay: number; endSecondOfDay: number }
   | { kind: "unknown" };
 
+/**
+ * What one write this client sent cost, read off its receipt. Reported for
+ * every mined write, reverted ones included: a reverted transaction is still
+ * paid for.
+ */
+export type WriteReceipt = {
+  txHash: `0x${string}`;
+  /** The write's label, the one its revert error names ("propose", "resolve", …). */
+  action: string;
+  /** The account that signed and paid. */
+  from: `0x${string}`;
+  status: "success" | "reverted";
+  gasUsed: bigint;
+  /** Absent when the node's receipt carries none (some pre-London endpoints). */
+  effectiveGasPrice?: bigint;
+  /** The L1 data fee an OP-stack chain bills on top of L2 gas, when the receipt carries one. */
+  l1Fee?: bigint;
+};
+
+/** A fee field as a receipt may carry it: already a bigint, or a raw hex quantity. */
+function receiptQuantity(value: unknown): bigint | undefined {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value)) return BigInt(value);
+  return undefined;
+}
+
 export type OnchainClientOptions = {
   transport: Transport;
   /** Wallet account for writes (propose); reads work without it. */
@@ -200,6 +226,7 @@ export class OnchainLacrewClient {
   private readonly transport: Transport;
   private readonly chain: Chain | undefined;
   private readonly indexerPath?: string;
+  private readonly writeObservers = new Set<(receipt: WriteReceipt) => void>();
 
   constructor(options: OnchainClientOptions) {
     this.chainId = options.chainId ?? options.addresses?.chainId ?? ANVIL_CHAIN_ID;
@@ -2473,10 +2500,55 @@ export class OnchainLacrewClient {
    */
   private async confirmWrite(hash: `0x${string}`, what: string) {
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+    this.notifyWrite(hash, what, receipt);
     if (receipt.status !== "success") {
       throw new Error(`${what} reverted onchain: ${hash}`);
     }
     return receipt;
+  }
+
+  /**
+   * Be told what each write this client sends cost, as its receipt arrives —
+   * the one place every write passes through, so an observer sees the approve
+   * before a purchase and the deploy before a policy bind as well as the
+   * transaction a caller is handed the hash of. Returns the unsubscribe.
+   */
+  observeWrites(observer: (receipt: WriteReceipt) => void): () => void {
+    this.writeObservers.add(observer);
+    return () => {
+      this.writeObservers.delete(observer);
+    };
+  }
+
+  private notifyWrite(
+    hash: `0x${string}`,
+    action: string,
+    receipt: {
+      from: `0x${string}`;
+      status: string;
+      gasUsed: bigint;
+      effectiveGasPrice?: bigint | null;
+    },
+  ): void {
+    if (this.writeObservers.size === 0) return;
+    const effectiveGasPrice = receiptQuantity(receipt.effectiveGasPrice);
+    const l1Fee = receiptQuantity((receipt as { l1Fee?: unknown }).l1Fee);
+    const report: WriteReceipt = {
+      txHash: hash,
+      action,
+      from: receipt.from,
+      status: receipt.status === "success" ? "success" : "reverted",
+      gasUsed: receipt.gasUsed,
+      ...(effectiveGasPrice === undefined ? {} : { effectiveGasPrice }),
+      ...(l1Fee === undefined ? {} : { l1Fee }),
+    };
+    for (const observer of this.writeObservers) {
+      try {
+        observer(report);
+      } catch {
+        // An observer is bookkeeping; it must not turn a landed write into a failure.
+      }
+    }
   }
 
   /** A wallet client that actually holds a signing account, or a refusal naming the missing role. */

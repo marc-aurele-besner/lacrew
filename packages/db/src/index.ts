@@ -19,6 +19,14 @@ export {
   type AuditReadOptions,
 } from "./audit.js";
 export {
+  insertTxGas,
+  setTxGasAgent,
+  sumTxGasByAgent,
+  sumTxGasByDay,
+  type TxGasRow,
+  type TxGasReadOptions,
+} from "./gas.js";
+export {
   upsertFlowDefinition,
   deleteFlowDefinition,
   getFlowDefinition,

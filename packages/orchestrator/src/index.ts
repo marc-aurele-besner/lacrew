@@ -341,6 +341,14 @@ export {
   type AuditStore,
 } from "./auditStore.js";
 export {
+  createGasStoreFromEnv,
+  createMemoryGasStore,
+  createPgGasStore,
+  txGasFromReceipt,
+  type GasStore,
+  type TxGasRecord,
+} from "./gasStore.js";
+export {
   createRuntimeStoreFromEnv,
   createMemoryRuntimeStore,
   createPgRuntimeStore,

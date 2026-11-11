@@ -1,5 +1,6 @@
 export { orchestratorMeta } from "./meta.js";
 export { auditEvents } from "./audit.js";
+export { txGas } from "./gas.js";
 export { flowDefinitions, flowRuns, flowRunState, flowCheckpoints, humanGates } from "./flows.js";
 export { webhookTriggers, webhookDeliveries } from "./webhooks.js";
 export { connectorWriteModes, connectorAsks } from "./connectors.js";
