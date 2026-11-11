@@ -16,6 +16,7 @@ export {
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
+  deleteKeyedAuditEvents,
   deleteSandboxAuditEvents,
   insertAuditEvent,
   insertChainAuditEvent,

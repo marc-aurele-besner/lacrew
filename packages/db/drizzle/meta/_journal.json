@@ -239,6 +239,13 @@
       "when": 1794415751780,
       "tag": "0033_org_epoch_cadence",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794416497241,
+      "tag": "0034_audit_event_key",
+      "breakpoints": true
     }
   ]
 }
