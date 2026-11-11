@@ -15,7 +15,9 @@ import {
   FaucetCooldownError,
   type MockTokenFaucet,
   type OnchainLacrewClient,
+  type ProtocolClient,
   type ResolveResult,
+  type SessionKeyLimits,
   type TokenLookup,
 } from "@lacrew/sdk";
 import type { LacrewClient } from "@lacrew/sdk/testing";
@@ -31,7 +33,6 @@ import {
   listAssetStacks,
   resolveAssetStack,
   sandboxVerdict,
-  sessionRegistryAbi,
   gasReceiptFromTransaction,
   ADDRESS_ENV_VARS,
   GAS_PAYERS,
@@ -266,7 +267,7 @@ export interface CrewRuntimeOptions {
    * runtime with no chain still answered every read with an invented org.
    * Tests inject a client explicitly; production builds one from env.
    */
-  client: LacrewClient | OnchainLacrewClient;
+  client: LacrewClient | ProtocolClient;
   workerAgent?: `0x${string}`;
   spendTarget?: `0x${string}`;
   managerAgent?: `0x${string}`;
@@ -289,12 +290,23 @@ function normalizePk(raw: string | undefined): `0x${string}` | undefined {
   return (trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`) as `0x${string}`;
 }
 
-function isOnchainClient(
-  client: LacrewClient | OnchainLacrewClient,
-): client is OnchainLacrewClient {
+/**
+ * A client with a chain behind it. Gates only what needs one: marketplace
+ * settlement, module deployment, gas and receipts, native balances.
+ */
+function isOnchainClient(client: LacrewClient | ProtocolClient): client is OnchainLacrewClient {
   return (
     "publicClient" in client && typeof (client as OnchainLacrewClient).publicClient === "object"
   );
+}
+
+/**
+ * A client whose answers come from a ledger enforcing the contract rules, as
+ * opposed to the in-memory test client. Gates everything the protocol itself
+ * defines: sessions, policy, caps, governance writes.
+ */
+function isProtocolClient(client: LacrewClient | ProtocolClient): client is ProtocolClient {
+  return isOnchainClient(client) || "ledger" in client;
 }
 
 /**
@@ -529,7 +541,7 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
 }
 
 export class CrewRuntime {
-  private readonly client: LacrewClient | OnchainLacrewClient;
+  private readonly client: LacrewClient | ProtocolClient;
   private readonly workerAgent: `0x${string}`;
   private readonly spendTarget: `0x${string}`;
   private readonly managerAgent: `0x${string}`;
@@ -660,7 +672,7 @@ export class CrewRuntime {
    */
   async hydrateSessions(): Promise<number> {
     if (!sessionSealingAvailable()) return 0;
-    if (!isOnchainClient(this.client) || !this.addressesHasSessions()) return 0;
+    if (!isProtocolClient(this.client) || !this.addressesHasSessions()) return 0;
 
     const persisted = await this.runtimeStore.recentSessions(AUDIT_RING_MAX);
     let restored = 0;
@@ -754,63 +766,17 @@ export class CrewRuntime {
   private async readKeyLimits(
     agent: `0x${string}`,
     key: `0x${string}`,
-  ): Promise<{
-    valid: boolean;
-    maxValue: bigint;
-    allowedTarget: `0x${string}`;
-    window?: { start: number; end: number };
-    rate?: { maxProposals: number; ratePeriod: number };
-  } | null> {
-    if (!isOnchainClient(this.client)) return null;
-    const registry = this.client.addresses.sessionRegistry;
-    if (!registry) return null;
-    const client = this.client;
+  ): Promise<SessionKeyLimits | null> {
+    if (!isProtocolClient(this.client)) return null;
+    if (!this.client.addresses.sessionRegistry) return null;
     try {
-      const [valid, maxValue, allowedTarget] = (await client.publicClient.readContract({
-        address: registry,
-        abi: sessionRegistryAbi,
-        functionName: "keyLimits",
-        args: [agent, key],
-      })) as [boolean, bigint, `0x${string}`, bigint];
-      if (!valid) return { valid, maxValue, allowedTarget };
-      // Window and rate are separate from keyLimits, but the cache key needs them:
-      // a reclaimed windowed/rate-limited key keyed without them could be reused
-      // for a looser request. Read them for the active session behind this key.
-      const id = (await client.publicClient.readContract({
-        address: registry,
-        abi: sessionRegistryAbi,
-        functionName: "activeKeySession",
-        args: [agent, key],
-      })) as bigint;
-      const session = (await client.publicClient.readContract({
-        address: registry,
-        abi: sessionRegistryAbi,
-        functionName: "sessions",
-        args: [id],
-      })) as readonly unknown[];
-      const rl = (await client.publicClient.readContract({
-        address: registry,
-        abi: sessionRegistryAbi,
-        functionName: "rateLimits",
-        args: [id],
-      })) as readonly unknown[];
-      const windowStart = Number(session[8]);
-      const windowEnd = Number(session[9]);
-      const maxProposals = Number(rl[0]);
-      const ratePeriod = Number(rl[1]);
-      return {
-        valid,
-        maxValue,
-        allowedTarget,
-        window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
-        rate: maxProposals === 0 ? undefined : { maxProposals, ratePeriod },
-      };
+      return await this.client.readKeyLimits(agent, key);
     } catch {
       return null;
     }
   }
 
-  getClient(): LacrewClient | OnchainLacrewClient {
+  getClient(): LacrewClient | ProtocolClient {
     return this.client;
   }
 
@@ -886,7 +852,7 @@ export class CrewRuntime {
       return held.session;
     }
 
-    if (isOnchainClient(this.client) && this.addressesHasSessions()) {
+    if (isProtocolClient(this.client) && this.addressesHasSessions()) {
       const ephemeral = createEphemeralSession({ agent: forAgent, scopes });
       // The chain enforces maxValue on every propose, so the ceiling becomes a
       // real limit rather than a check the orchestrator has to remember.
@@ -960,7 +926,7 @@ export class CrewRuntime {
     // issue anything. Handing back an opaque id would look like a live key to
     // every caller, and to the audit trail, while nothing onchain constrains
     // what it signs — the one property a session key exists to provide.
-    if (isOnchainClient(this.client)) {
+    if (isProtocolClient(this.client)) {
       throw new Error(
         `Cannot issue a session on chain ${this.chainId ?? "unknown"}: no sessionRegistry in the address book. Deploy one, or set ${ADDRESS_ENV_VARS.sessionRegistry}.`,
       );
@@ -1007,7 +973,7 @@ export class CrewRuntime {
     const standing = this.scopePolicyFor(agent);
     // Nothing to drop: skip the chain reads entirely.
     if (!standing.includes("spend:whitelist")) return standing;
-    if (!isOnchainClient(this.client)) return standing;
+    if (!isProtocolClient(this.client)) return standing;
 
     let stacks: NodePolicyStack[];
     try {
@@ -1062,7 +1028,7 @@ export class CrewRuntime {
     ceiling?: `0x${string}`,
   ): Promise<bigint | undefined> {
     if (!ceiling || ceiling.toLowerCase() === principal.toLowerCase()) return undefined;
-    if (!isOnchainClient(this.client)) return undefined;
+    if (!isProtocolClient(this.client)) return undefined;
     const [own, scoped] = await Promise.all([
       this.client.capOf(principal),
       this.client.capOf(ceiling),
@@ -1072,7 +1038,7 @@ export class CrewRuntime {
   }
 
   private addressesHasSessions(): boolean {
-    return Boolean(isOnchainClient(this.client) && this.client.addresses.sessionRegistry);
+    return Boolean(isProtocolClient(this.client) && this.client.addresses.sessionRegistry);
   }
 
   /** Ephemeral session account for `agent`'s onchain propose (never logged). */
@@ -1236,7 +1202,7 @@ export class CrewRuntime {
     sessionId: string,
     authorizedBy?: string,
   ): Promise<{ txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       const held = this.findSessionEntry(sessionId);
       if (held) {
         this.sessions.set(held[0], { session: revokeSession(held[1].session) });
@@ -1318,7 +1284,7 @@ export class CrewRuntime {
 
   /** The chain's `SessionRegistry.humanRoot`, or null when unreadable. */
   async humanRootAddress(): Promise<`0x${string}` | null> {
-    if (!isOnchainClient(this.client)) return null;
+    if (!isProtocolClient(this.client)) return null;
     const addr = this.client.addresses.humanRoot;
     return addr && addr !== "0x0000000000000000000000000000000000000000" ? addr : null;
   }
@@ -1846,7 +1812,7 @@ export class CrewRuntime {
    */
   private async isHumanRoot(address: `0x${string}`): Promise<boolean> {
     const wanted = address.toLowerCase();
-    const booked = isOnchainClient(this.client) ? this.client.addresses.humanRoot : undefined;
+    const booked = isProtocolClient(this.client) ? this.client.addresses.humanRoot : undefined;
     if (booked && booked.toLowerCase() === wanted) return true;
     const nodes = await this.client.getOrgTree();
     return nodes.some((n) => n.kind === "human_root" && n.account.toLowerCase() === wanted);
@@ -2120,7 +2086,7 @@ export class CrewRuntime {
    * [] in mock mode — an invented allowance is a claim about money.
    */
   async getAllowances(asset?: string): Promise<Allowance[]> {
-    if (!isOnchainClient(this.client)) return [];
+    if (!isProtocolClient(this.client)) return [];
     return this.client.getAllowances(undefined, asset);
   }
 
@@ -2671,7 +2637,7 @@ export class CrewRuntime {
     policyModule: `0x${string}`;
     tier?: GovernanceTier;
   }): Promise<{ proposalId: string; node: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       throw new Error("proposeSetNodePolicy requires onchain mode");
     }
     const result = await this.client.proposeSetNodePolicy(input);
@@ -2996,7 +2962,7 @@ export class CrewRuntime {
     tier?: GovernanceTier;
     asset?: string;
   }): Promise<{ proposalId: string; target: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       if (input.asset) {
         throw new Error(
           `Whitelist changes for a specific asset require an onchain client; ` +
@@ -3027,7 +2993,7 @@ export class CrewRuntime {
     /** Asset stack the cap targets (symbol or token); omit for primary (USDC). */
     asset?: string;
   }): Promise<{ proposalId: string; agent: `0x${string}`; txHash?: `0x${string}` }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       throw new Error("proposeSetAgentCap requires onchain mode");
     }
     const result = await this.client.proposeSetAgentCap(input);
@@ -3055,7 +3021,7 @@ export class CrewRuntime {
     proposalId: string,
     support: boolean,
   ): Promise<{ txHashes: `0x${string}`[]; proposal: GovernanceProposal }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       await this.client.voteGovernance(proposalId, support);
       const proposal = await this.client.getProposal(proposalId);
       this.pushAudit({
@@ -3072,11 +3038,12 @@ export class CrewRuntime {
     }
     const txHashes: `0x${string}`[] = [];
     const first = await this.client.voteGovernance(proposalId, support);
-    txHashes.push(first.txHash);
+    if (first.txHash) txHashes.push(first.txHash);
 
     // Second seated voter (manager) when available — real weight, not a free-for-all.
     if (
       support &&
+      isOnchainClient(this.client) &&
       this.client.resolverWalletClient?.account &&
       this.client.walletClient?.account &&
       this.client.resolverWalletClient.account.address.toLowerCase() !==
@@ -3108,7 +3075,7 @@ export class CrewRuntime {
   async vetoGovernance(
     proposalId: string,
   ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       const { proposal } = await this.client.vetoGovernance(proposalId);
       this.pushAudit({
         type: "ProposalVetoed",
@@ -3130,7 +3097,7 @@ export class CrewRuntime {
   async executeGovernance(
     proposalId: string,
   ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       const { proposal } = await this.client.executeGovernance(proposalId);
       this.pushAudit({
         type: "ProposalExecuted",
@@ -3402,7 +3369,7 @@ export class CrewRuntime {
    * exist onchain.
    */
   listAssets(): AssetStack[] {
-    if (!isOnchainClient(this.client)) return [];
+    if (!isProtocolClient(this.client)) return [];
     return listAssetStacks(this.client.addresses);
   }
 
@@ -3552,7 +3519,7 @@ export class CrewRuntime {
   async getNodePolicies(
     opts: { asset?: string; node?: `0x${string}` } = {},
   ): Promise<NodePolicyStack[]> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       if (opts.asset) {
         throw new Error(
           `Policy reads for a specific asset require an onchain client; ` +
@@ -3578,7 +3545,7 @@ export class CrewRuntime {
     data?: `0x${string}`;
     policyModule?: `0x${string}`;
   }): Promise<{ verdict: Verdict }> {
-    if (!isOnchainClient(this.client)) {
+    if (!isProtocolClient(this.client)) {
       return { verdict: input.value > DEFAULT_SESSION_MAX_VALUE ? "ESCALATE" : "ALLOW" };
     }
     const verdict = await this.client.checkPolicy(input);
@@ -3596,7 +3563,7 @@ export class CrewRuntime {
    * escalate to a timelocked proposal.
    */
   private authorityPolicyModule(): `0x${string}` | undefined {
-    if (!isOnchainClient(this.client)) return undefined;
+    if (!isProtocolClient(this.client)) return undefined;
     return this.client.addresses.spendCapPolicy;
   }
 
@@ -3761,7 +3728,7 @@ export class CrewRuntime {
         return { proposalId: input.proposalId, txHash: r.txHash };
       }
       case "propose": {
-        if (!isOnchainClient(this.client)) {
+        if (!isProtocolClient(this.client)) {
           throw new Error("governance propose requires onchain mode");
         }
         const r = await this.client.proposeGovernance({
