@@ -5,6 +5,7 @@
  * Metadata only: session private keys never reach the store.
  */
 
+import type { Ledger } from "@lacrew/core";
 import type { AgentControlRecord } from "./agentControls.js";
 import type { CrewBindingStore } from "./crewBindings.js";
 import type { ConnectorAskRecord, ConnectorAskStore } from "./connectorAsks.js";
@@ -62,6 +63,7 @@ import {
   recentHumanGates,
   recentMessageRows,
   getDatabaseUrl,
+  deleteSandboxRuntimeRows,
   insertIntentRow,
   markSessionRevokedRow,
   recentIntentRows,
@@ -102,19 +104,35 @@ export interface RuntimeStore
     PlanRequiredStore,
     DualControlStore {
   readonly name: string;
-  /** Upsert a session by keyId; must never throw into the caller's flow. */
+  /**
+   * Upsert a session by keyId within its ledger (`record.ledger`, `chain`
+   * when absent); must never throw into the caller's flow.
+   */
   saveSession(record: SessionRecord): Promise<void>;
-  markSessionRevoked(keyId: string, revokedAt: string): Promise<void>;
-  /** Most recent sessions, newest → oldest. */
-  recentSessions(limit: number): Promise<SessionRecord[]>;
+  markSessionRevoked(keyId: string, revokedAt: string, ledger?: Ledger): Promise<void>;
+  /** Most recent sessions of one ledger (`chain` when omitted), newest → oldest. */
+  recentSessions(limit: number, ledger?: Ledger): Promise<SessionRecord[]>;
   saveIntent(record: IntentRecord): Promise<void>;
-  /** Close out pending records for an intent (approved | denied). */
+  /** Close out pending records for an intent (approved | denied) on one ledger. */
   markIntentResolved(
     intentId: string,
-    input: { status: "approved" | "denied"; resolveTxHash?: string; resolvedAt: string },
+    input: {
+      status: "approved" | "denied";
+      resolveTxHash?: string;
+      /** Sandbox only: the simulator's name for the resolve. */
+      resolveSimTxId?: string;
+      resolvedAt: string;
+      ledger?: Ledger;
+    },
   ): Promise<void>;
-  /** Most recent intents, newest → oldest. */
-  recentIntents(limit: number): Promise<IntentRecord[]>;
+  /** Most recent intents of one ledger (`chain` when omitted), newest → oldest. */
+  recentIntents(limit: number, ledger?: Ledger): Promise<IntentRecord[]>;
+  /**
+   * Delete every simulated (`ledger: "sandbox"`) session and intent record.
+   * Called by a sandbox reset; chain records, directives, messages and every
+   * other surface's rows are never touched.
+   */
+  clearSandbox(): Promise<void>;
   /**
    * Standing per-agent controls — the pause gate and the directive (F1.7).
    * Read once at boot to rehydrate; written through on every change.
@@ -140,6 +158,9 @@ const MEMORY_MAX = 200;
 /** Conversation is read as a thread, so it keeps more history than the event rings. */
 const MESSAGE_RING_MAX = 500;
 
+/** A record's ledger; rows written before the column existed are chain rows. */
+const ledgerOf = (record: { ledger?: Ledger }): Ledger => record.ledger ?? "chain";
+
 /** Bounded in-memory store so history endpoints work without a database. */
 export function createMemoryRuntimeStore(): RuntimeStore {
   const sessions: SessionRecord[] = [];
@@ -160,33 +181,56 @@ export function createMemoryRuntimeStore(): RuntimeStore {
   return {
     name: "memory",
     saveSession: async (record) => {
-      const existing = sessions.findIndex((s) => s.keyId === record.keyId);
+      const existing = sessions.findIndex(
+        (s) => s.keyId === record.keyId && ledgerOf(s) === ledgerOf(record),
+      );
       if (existing >= 0) sessions[existing] = record;
       else sessions.push(record);
       if (sessions.length > MEMORY_MAX) sessions.splice(0, sessions.length - MEMORY_MAX);
     },
-    markSessionRevoked: async (keyId, revokedAt) => {
-      const session = sessions.find((s) => s.keyId === keyId);
+    markSessionRevoked: async (keyId, revokedAt, ledger = "chain") => {
+      const session = sessions.find((s) => s.keyId === keyId && ledgerOf(s) === ledger);
       if (session) {
         session.status = "revoked";
         session.revokedAt = revokedAt;
       }
     },
-    recentSessions: async (limit) => sessions.slice(-limit).reverse(),
+    recentSessions: async (limit, ledger = "chain") =>
+      sessions
+        .filter((s) => ledgerOf(s) === ledger)
+        .slice(-limit)
+        .reverse(),
     saveIntent: async (record) => {
       intents.push(record);
       if (intents.length > MEMORY_MAX) intents.splice(0, intents.length - MEMORY_MAX);
     },
     markIntentResolved: async (intentId, input) => {
       for (const intent of intents) {
-        if (intent.intentId === intentId && intent.status === "pending") {
+        if (
+          intent.intentId === intentId &&
+          intent.status === "pending" &&
+          ledgerOf(intent) === (input.ledger ?? "chain")
+        ) {
           intent.status = input.status;
           intent.resolveTxHash = input.resolveTxHash;
+          if (input.resolveSimTxId) intent.resolveSimTxId = input.resolveSimTxId;
           intent.resolvedAt = input.resolvedAt;
         }
       }
     },
-    recentIntents: async (limit) => intents.slice(-limit).reverse(),
+    recentIntents: async (limit, ledger = "chain") =>
+      intents
+        .filter((i) => ledgerOf(i) === ledger)
+        .slice(-limit)
+        .reverse(),
+    clearSandbox: async () => {
+      const keep = <T extends { ledger?: Ledger }>(rows: T[]) => {
+        const kept = rows.filter((row) => ledgerOf(row) !== "sandbox");
+        rows.splice(0, rows.length, ...kept);
+      };
+      keep(sessions);
+      keep(intents);
+    },
     // Unbounded on purpose, unlike the rings above: there is one row per agent
     // and an org has tens of them, so trimming would silently drop a directive.
     loadAgentControls: async () => [...controls.values()],
@@ -591,16 +635,16 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         warn("session save", err);
       }
     },
-    markSessionRevoked: async (keyId, revokedAt) => {
+    markSessionRevoked: async (keyId, revokedAt, ledger) => {
       try {
-        await markSessionRevokedRow(db(), keyId, revokedAt);
+        await markSessionRevokedRow(db(), keyId, revokedAt, ledger);
       } catch (err) {
         warn("session revoke", err);
       }
     },
-    recentSessions: async (limit) => {
+    recentSessions: async (limit, ledger) => {
       try {
-        return await recentSessionRows(db(), limit);
+        return await recentSessionRows(db(), limit, ledger);
       } catch (err) {
         warn("sessions list", err);
         return [];
@@ -620,13 +664,18 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         warn("intent resolve", err);
       }
     },
-    recentIntents: async (limit) => {
+    recentIntents: async (limit, ledger) => {
       try {
-        return await recentIntentRows(db(), limit);
+        return await recentIntentRows(db(), limit, ledger);
       } catch (err) {
         warn("intents list", err);
         return [];
       }
+    },
+    clearSandbox: async () => {
+      // Not swallowed, unlike the writes above: a reset that left the old
+      // simulation's records behind has to tell its caller.
+      await deleteSandboxRuntimeRows(db());
     },
     loadAgentControls: async () => {
       try {
