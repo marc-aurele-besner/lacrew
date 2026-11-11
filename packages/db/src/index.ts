@@ -25,6 +25,7 @@ export {
   type AuditReadOptions,
 } from "./audit.js";
 export { loadSandboxState, saveSandboxState, type SandboxStateRow } from "./sandbox.js";
+export { deleteOrg, getOrg, listOrgs, upsertOrg, type OrgRow } from "./orgs.js";
 export {
   insertTxGas,
   setTxGasAgent,
