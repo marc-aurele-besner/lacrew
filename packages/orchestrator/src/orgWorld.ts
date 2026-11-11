@@ -259,6 +259,7 @@ export async function createOrgWorld(
   // Sealed credentials for attached servers (F2.30). Built before the registry
   // because a `secret` auth resolves through it at call time.
   const mcpSecrets = createMcpSecrets({
+    orgId,
     store: runtime.store,
     onEvent: (event) => runtime.recordAudit(event),
   });

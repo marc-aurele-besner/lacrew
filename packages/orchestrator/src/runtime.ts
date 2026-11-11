@@ -905,7 +905,7 @@ export class CrewRuntime {
 
     for (const row of persisted) {
       if (row.status !== "active" || !row.keyAddress) continue;
-      const privateKey = unsealSessionKey(row.sealedKey);
+      const privateKey = unsealSessionKey(row.sealedKey, this.orgId);
       if (!privateKey) continue;
 
       // The key must actually be the one the chain knows about; a mismatch
@@ -4373,7 +4373,7 @@ export class CrewRuntime {
       keyId: session.keyId,
       agent: session.agent,
       keyAddress: session.keyAddress,
-      sealedKey: privateKey ? sealSessionKey(privateKey) : null,
+      sealedKey: privateKey ? sealSessionKey(privateKey, this.orgId) : null,
       expiresAt: new Date(session.expiresAt).toISOString(),
       scopes: session.scopes,
       maxValue: session.maxValue,

@@ -264,7 +264,7 @@ export function createWebhookSurface(opts: {
     if (!sessionSealingAvailable()) {
       throw new Error("webhook_sealing_unavailable");
     }
-    return JSON.stringify(seal(secret));
+    return JSON.stringify(seal(secret, opts.runtime.orgId));
   };
 
   const persist = async (trigger: WebhookTrigger, secret: string | undefined): Promise<void> => {
@@ -315,7 +315,9 @@ export function createWebhookSurface(opts: {
       ...(row.secretVersion ? { secretVersion: row.secretVersion } : {}),
     };
     triggers.set(row.id, trigger);
-    const secret = row.secretSealed ? readSealed(row.id, row.secretSealed) : null;
+    const secret = row.secretSealed
+      ? readSealed(row.id, row.secretSealed, opts.runtime.orgId)
+      : null;
     if (secret) secrets.set(row.id, secret);
     else if (store.durable && getEventSource(trigger.scheme).usesSecret) {
       // Sealed material exists and could not be opened — wrong key, or a
@@ -678,12 +680,12 @@ export function createWebhookSurface(opts: {
  * invite an operator to create a second one, while the unreadable row stayed in
  * the database.
  */
-function readSealed(triggerId: string, raw: string): string | null {
+function readSealed(triggerId: string, raw: string, orgId: string): string | null {
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isSealedSecret(parsed)) return null;
-    return unseal(parsed);
+    return unseal(parsed, orgId);
   } catch (err) {
     console.error(
       `[@lacrew/orchestrator] webhook secret for ${triggerId} could not be read:`,

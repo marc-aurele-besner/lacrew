@@ -25,6 +25,14 @@
  * Key custody is exactly the thing that has to be public and auditable. The
  * envelope shape matches tenancy's so the two can collapse onto one helper.
  *
+ * BOUND TO ONE ORG. One key seals every org's secrets on a shared host, so the
+ * org id is authenticated with each envelope (AES-GCM associated data). A
+ * sealed value read under any other org fails its auth tag: a row copied from
+ * one org's rows to another's, by a bug or by somebody who can write to the
+ * database, is refused instead of handing one org's signing key or webhook
+ * secret to another. The org id is not stored in the envelope; whoever opens
+ * it names the org it is reading for.
+ *
  * Key management:
  *   - `LACREW_SESSION_KEY` — 32 random bytes, base64. Generate with:
  *     `openssl rand -base64 32`
@@ -41,7 +49,17 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
-const ENVELOPE_VERSION = 1;
+/**
+ * 2: the org id is authenticated with the ciphertext. Version 1 carried no
+ * binding and is no longer read: a version-1 row would open under any org.
+ */
+const ENVELOPE_VERSION = 2;
+
+/** What is authenticated beside the ciphertext: the org the secret belongs to. */
+function associatedData(orgId: string): Buffer {
+  if (!orgId) throw new Error("sealing_needs_an_org");
+  return Buffer.from(`lacrew:sealed:org:${orgId}`, "utf8");
+}
 
 export type SealedSecret = {
   v: number;
@@ -101,11 +119,14 @@ export function isSealedSecret(value: unknown): value is SealedSecret {
   );
 }
 
-export function seal(plaintext: string): SealedSecret {
+/** Seal a secret for one org. Only a read naming the same org opens it. */
+export function seal(plaintext: string, orgId: string): SealedSecret {
   const key = primaryKey();
   if (!key) throw new SessionKeyMissingError();
+  const aad = associatedData(orgId);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGO, key, iv);
+  cipher.setAAD(aad);
   const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return {
     v: ENVELOPE_VERSION,
@@ -115,8 +136,9 @@ export function seal(plaintext: string): SealedSecret {
   };
 }
 
-function openWith(sealed: SealedSecret, key: Buffer): string {
+function openWith(sealed: SealedSecret, key: Buffer, aad: Buffer): string {
   const decipher = createDecipheriv(ALGO, key, Buffer.from(sealed.iv, "base64"));
+  decipher.setAAD(aad);
   decipher.setAuthTag(Buffer.from(sealed.tag, "base64"));
   return Buffer.concat([
     decipher.update(Buffer.from(sealed.ct, "base64")),
@@ -125,48 +147,53 @@ function openWith(sealed: SealedSecret, key: Buffer): string {
 }
 
 /**
- * Decrypt, trying the previous key so rotation is seamless.
+ * Decrypt for one org, trying the previous key so rotation is seamless.
  *
- * Throws on an unknown envelope version or a failed auth tag: a key that cannot
- * be authenticated must not be silently treated as absent, because "absent"
- * leads the caller to mint a replacement and quietly move on from a row that
- * may have been tampered with.
+ * Throws on an unknown envelope version or a failed auth tag, which is also
+ * how a value sealed for another org fails: a key that cannot be authenticated
+ * must not be silently treated as absent, because "absent" leads the caller to
+ * mint a replacement and quietly move on from a row that may have been
+ * tampered with.
  */
-export function unseal(sealed: SealedSecret): string {
+export function unseal(sealed: SealedSecret, orgId: string): string {
   const key = primaryKey();
   if (!key) throw new SessionKeyMissingError();
   if (sealed.v !== ENVELOPE_VERSION) {
     throw new Error(`unsupported_session_envelope_v${sealed.v}`);
   }
+  const aad = associatedData(orgId);
   try {
-    return openWith(sealed, key);
+    return openWith(sealed, key, aad);
   } catch (err) {
     const prev = previousKey();
     if (!prev) throw err;
-    return openWith(sealed, prev);
+    return openWith(sealed, prev, aad);
   }
 }
 
-/** Seal a session private key for storage. Returns null when sealing is off. */
-export function sealSessionKey(privateKey: string): string | null {
+/** Seal one org's session private key for storage. Returns null when sealing is off. */
+export function sealSessionKey(privateKey: string, orgId: string): string | null {
   if (!sessionSealingAvailable()) return null;
-  return JSON.stringify(seal(privateKey));
+  return JSON.stringify(seal(privateKey, orgId));
 }
 
 /**
  * Recover a sealed session key, or null when it cannot be read.
  *
- * Null on any failure — sealing disabled, wrong key, tampered row, malformed
- * JSON — because the caller's correct response to all of them is the same:
+ * Null on any failure — sealing disabled, wrong key, another org's row,
+ * tampered row, malformed JSON — because the caller's correct response to all of them is the same:
  * treat the session as unrecoverable and issue a new one. The reason is logged
  * so a silent decrypt failure is still visible.
  */
-export function unsealSessionKey(raw: string | null | undefined): `0x${string}` | null {
+export function unsealSessionKey(
+  raw: string | null | undefined,
+  orgId: string,
+): `0x${string}` | null {
   if (!raw || !sessionSealingAvailable()) return null;
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!isSealedSecret(parsed)) return null;
-    const key = unseal(parsed);
+    const key = unseal(parsed, orgId);
     return /^0x[0-9a-fA-F]{64}$/.test(key) ? (key as `0x${string}`) : null;
   } catch (err) {
     console.error(

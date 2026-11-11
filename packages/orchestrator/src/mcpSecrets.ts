@@ -44,6 +44,7 @@
 import type { ProtocolEvent } from "@lacrew/core";
 import type { ExternalMcpScope } from "./externalMcp.js";
 import { externalMcpScopeKey } from "./externalMcp.js";
+import { DEFAULT_ORG_ID } from "@lacrew/db";
 import { isSealedSecret, seal, sessionSealingAvailable, unseal } from "./secretBox.js";
 
 /** A stored credential. `sealed` is an envelope; nothing here is cleartext. */
@@ -94,6 +95,8 @@ export type McpSecretsSurface = {
 };
 
 export type McpSecretsOptions = {
+  /** The org these credentials belong to: each is sealed for it and opens for no other. */
+  orgId?: string;
   store?: McpSecretStore;
   onEvent?: (event: ProtocolEvent) => void;
   now?: () => Date;
@@ -131,6 +134,7 @@ function hintOf(value: string): string {
 
 export function createMcpSecrets(opts: McpSecretsOptions = {}): McpSecretsSurface {
   const now = opts.now ?? (() => new Date());
+  const orgId = opts.orgId ?? DEFAULT_ORG_ID;
   const records = new Map<string, McpSecretRecord>();
   const key = (ownerKey: string, ref: string): string => `${ownerKey}|${ref}`;
 
@@ -158,7 +162,7 @@ export function createMcpSecrets(opts: McpSecretsOptions = {}): McpSecretsSurfac
       const record: McpSecretRecord = {
         ref,
         ...(owner ? { owner } : {}),
-        sealed: JSON.stringify(seal(value)),
+        sealed: JSON.stringify(seal(value, orgId)),
         hint: hintOf(value),
         at: now().toISOString(),
       };
@@ -206,7 +210,7 @@ export function createMcpSecrets(opts: McpSecretsOptions = {}): McpSecretsSurfac
       try {
         const parsed = JSON.parse(record.sealed) as unknown;
         if (!isSealedSecret(parsed)) return undefined;
-        return unseal(parsed);
+        return unseal(parsed, orgId);
       } catch (err) {
         // Loud, and still undefined: an unreadable credential must fail the
         // call rather than silently send an unauthenticated request that the
