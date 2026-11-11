@@ -19,6 +19,14 @@ export {
   type OnchainResolveResult,
   type WriteReceipt,
 } from "./onchain.js";
+export type {
+  IssueSessionInput,
+  ProtocolClient,
+  ProtocolLedger,
+  ProtocolResolveResult,
+  SessionKeyLimits,
+  WriteRef,
+} from "./protocolClient.js";
 export { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "./policy.js";
 export type { ResolveResult } from "./types.js";
 export {

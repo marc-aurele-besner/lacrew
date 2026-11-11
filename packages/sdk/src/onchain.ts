@@ -66,6 +66,7 @@ import {
   type Verdict,
 } from "@lacrew/core";
 import { resolveWorkspacePath } from "@lacrew/core/node";
+import type { ProtocolClient, SessionKeyLimits } from "./protocolClient.js";
 
 const TIER_MAP: Record<GovernanceTier, number> = {
   low: 0,
@@ -216,7 +217,8 @@ export type OnchainClientOptions = {
   indexerPath?: string;
 };
 
-export class OnchainLacrewClient {
+export class OnchainLacrewClient implements ProtocolClient {
+  readonly ledger = "chain" as const;
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient | null;
   readonly resolverWalletClient: WalletClient | null;
@@ -1238,6 +1240,52 @@ export class OnchainLacrewClient {
       }
     }
     return out.sort((x, y) => y.expiresAt - x.expiresAt);
+  }
+
+  /**
+   * `SessionRegistry.keyLimits` for one key, with the window and rate of the
+   * session behind it. Those two live outside `keyLimits`, and a caller keying
+   * a cache on a key's bounds needs all of them: a windowed or rate-limited key
+   * read without them looks looser than the chain will treat it.
+   */
+  async readKeyLimits(agent: `0x${string}`, key: `0x${string}`): Promise<SessionKeyLimits> {
+    const registry = this.requireSessionRegistry();
+    const [valid, maxValue, allowedTarget] = (await this.publicClient.readContract({
+      address: registry,
+      abi: sessionRegistryAbi,
+      functionName: "keyLimits",
+      args: [agent, key],
+    })) as readonly [boolean, bigint, `0x${string}`, bigint];
+    if (!valid) return { valid, maxValue, allowedTarget };
+    const id = (await this.publicClient.readContract({
+      address: registry,
+      abi: sessionRegistryAbi,
+      functionName: "activeKeySession",
+      args: [agent, key],
+    })) as bigint;
+    const session = (await this.publicClient.readContract({
+      address: registry,
+      abi: sessionRegistryAbi,
+      functionName: "sessions",
+      args: [id],
+    })) as readonly unknown[];
+    const rl = (await this.publicClient.readContract({
+      address: registry,
+      abi: sessionRegistryAbi,
+      functionName: "rateLimits",
+      args: [id],
+    })) as readonly unknown[];
+    const windowStart = Number(session[8]);
+    const windowEnd = Number(session[9]);
+    const maxProposals = Number(rl[0]);
+    const ratePeriod = Number(rl[1]);
+    return {
+      valid,
+      maxValue,
+      allowedTarget,
+      window: windowEnd === 0 ? undefined : { start: windowStart, end: windowEnd },
+      rate: maxProposals === 0 ? undefined : { maxProposals, ratePeriod },
+    };
   }
 
   // ——— Marketplace settlement ———
