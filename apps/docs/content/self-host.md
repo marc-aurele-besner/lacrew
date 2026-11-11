@@ -119,27 +119,39 @@ pnpm --filter @lacrew/orchestrator dev
 Every read answers from the chain (or the persisted trail) — mock mode serves
 `[]`, never fixtures; the unavailable app answers 503, never an empty org:
 
-| Endpoint                 | What it reads                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /policies`          | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router)                                                                                                                                                                                                                                                                                   |
-| `GET /usage`             | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total                                                                                                                                                                                                                                                          |
-| `GET /usage/daily`       | The same counts per UTC day over `[from, to)` (`?from=`, `?to=` ISO; default the 30 days up to now, at most 92 days). Every day in the window is present, empty when quiet. `?by=agent` groups by the event's `agent` instead (`null` for events that name none). `complete: false` as on `/usage` Each day (and each agent row) also carries `gasFeeWei` and `gasTxCount` — see [gas cost](#gas-cost); `gasComplete` is `complete` for those two |
-| `GET /audit`             | The audit trail, newest first. Each event carries `chainId`, the EIP-155 id of the chain it happened on — the one `/health` reports for this orchestrator's own events. Absent on an event that reached the trail without one, and on a runtime with no chain                                                                                                                                                                                     |
-| `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                                                                                                                                                                                                                                                            |
-| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                                                                                                                                                                                                                                                          |
-| `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                                                                                                                                                                  |
-| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                                                                                                                                                                    |
+| Endpoint                 | What it reads                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /policies`          | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router)                                                                                                                                                                                                                                                                                             |
+| `GET /usage`             | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total                                                                                                                                                                                                                                                                    |
+| `GET /usage/daily`       | The same counts per UTC day over `[from, to)` (`?from=`, `?to=` ISO; default the 30 days up to now, at most 92 days). Every day in the window is present, empty when quiet. `?by=agent` groups by the event's `agent` instead (`null` for events that name none). `complete: false` as on `/usage` Each day (and each agent row) also carries `gasFeeWei`, `gasTxCount` and `gasByPayer` — see [gas cost](#gas-cost); `gasComplete` is `complete` for those |
+| `GET /audit`             | The audit trail, newest first. Each event carries `chainId`, the EIP-155 id of the chain it happened on — the one `/health` reports for this orchestrator's own events. Absent on an event that reached the trail without one, and on a runtime with no chain                                                                                                                                                                                               |
+| `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                                                                                                                                                                            |
+| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### Gas cost
 
 Every transaction the orchestrator sends is recorded with what it cost, read
 off its receipt: `gasUsed`, `effectiveGasPrice`, and the fee in wei
 (`gasUsed × effectiveGasPrice`, plus the L1 data fee on an OP-stack chain such
-as Base), with the chain id, the paying account, and what the transaction was
-for. Amounts are decimal strings everywhere — a fee in wei does not fit a JSON
-number. With `DATABASE_URL` set the rows live in `orchestrator_tx_gas`, one per
-`(chain_id, tx_hash)`; without it the last 5,000 are kept in memory.
+as Base), with the chain id, the sending account, what the transaction was
+for, and **who paid**. Transactions it does not send are recorded too, once
+something reports them — see [what is recorded](#what-is-recorded). Amounts are
+decimal strings everywhere — a fee in wei does not fit a JSON number. With
+`DATABASE_URL` set the rows live in `orchestrator_tx_gas`, one per
+`(chain_id, tx_hash, user_op_hash)`; without it the last 5,000 are kept in
+memory.
+
+Each row names one of four payers:
+
+| `payer`        | Who bore the fee                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `orchestrator` | A key the operator runs: the orchestrator's signer, the session keys it holds and funds, its relayers, and operator tooling that reports to it |
+| `agent`        | An agent seat's own wallet                                                                                                                     |
+| `approver`     | A human approver's own wallet                                                                                                                  |
+| `sponsored`    | A paymaster. The user operation cost its sender no native token; the paymaster's address is stored in the row's `paymaster` column             |
 
 `GET /usage/daily` serves the sums:
 
@@ -151,10 +163,27 @@ number. With `DATABASE_URL` set the rows live in `orchestrator_tx_gas`, one per
     {
       "day": "2026-03-01",
       "counts": { "IntentCreated": 2 },
-      "gasFeeWei": "412000000000000",
-      "gasTxCount": 3
+      "gasFeeWei": "472000000000000",
+      "gasTxCount": 5,
+      "gasByPayer": {
+        "orchestrator": { "feeWei": "412000000000000", "txCount": 3 },
+        "agent": { "feeWei": "21000000000000", "txCount": 1 },
+        "approver": { "feeWei": "39000000000000", "txCount": 1 },
+        "sponsored": { "feeWei": "18000000000000", "txCount": 2 }
+      }
     },
-    { "day": "2026-03-02", "counts": {}, "gasFeeWei": "0", "gasTxCount": 0 }
+    {
+      "day": "2026-03-02",
+      "counts": {},
+      "gasFeeWei": "0",
+      "gasTxCount": 0,
+      "gasByPayer": {
+        "orchestrator": { "feeWei": "0", "txCount": 0 },
+        "agent": { "feeWei": "0", "txCount": 0 },
+        "approver": { "feeWei": "0", "txCount": 0 },
+        "sponsored": { "feeWei": "0", "txCount": 0 }
+      }
+    }
   ],
   "complete": true,
   "gasComplete": true,
@@ -163,40 +192,159 @@ number. With `DATABASE_URL` set the rows live in `orchestrator_tx_gas`, one per
 }
 ```
 
-`gasFeeWei` is the summed fee of the transactions sent that UTC day (bucketed
-by when the receipt was read) and `gasTxCount` is how many of them had a fee.
-A receipt with no effective gas price has an unknown fee: its gas used is
-stored, and it adds to neither figure rather than counting as zero. With
-`?by=agent`, each `agents` row carries the same two fields. A transaction is
-listed under the agent named by the audit event that carries its hash
-(`payload.agent` beside `payload.txHash`); transactions no such event names an
-agent for — a session key's gas stipend, a token approve, a policy deploy —
-are summed under `agent: null`, so the rows add up to the window's total.
-`gasComplete: false` means the in-memory ring answered, as `complete: false`
-does for the counts.
+`gasFeeWei` is the summed fee of the transactions recorded that UTC day
+(bucketed by when the receipt was read) that somebody actually paid —
+`orchestrator`, `agent` and `approver` together — and `gasTxCount` is how many
+of them had a fee. `sponsored` fees are left out of both: a paymaster bore
+them. `gasByPayer` carries the same two figures for each payer, `sponsored`
+included, and all four keys are always present. A receipt with no effective gas
+price has an unknown fee: its gas used is stored, and it adds to no figure
+rather than counting as zero.
 
-What is recorded: every write through the orchestrator's SDK client — propose
-(with the root key or a session key), resolve, session issue / revoke and the
-session key's gas stipend, governance propose / vote / veto / execute, epoch
-runs, policy-module deploys, marketplace listing / purchase / withdraw and the
-approve before a purchase, delegation redemptions, sandbox top-ups — and the
-root Safe's approval when this orchestrator's relayer broadcasts it. A
-transaction that reverted is recorded too; it was still paid for.
+With `?by=agent`, each `agents` row carries the same three fields. A
+transaction is listed under the agent its reporter named (a wallet adapter
+knows which seat it sent for), or else the agent named by the audit event that
+carries its hash (`payload.agent` beside `payload.txHash`); transactions
+neither names an agent for — a session key's gas stipend, a token approve, a
+policy deploy — are summed under `agent: null`, so the rows add up to the
+window's total. `gasComplete: false` means the in-memory ring answered, as
+`complete: false` does for the counts.
 
-What is not, because the orchestrator does not send it and never sees a
-receipt as the payer:
+The sums cover this orchestrator's own chain. A receipt reported from another
+chain (an agent wallet transacting elsewhere) is stored under its own chain id
+and left out of these figures: wei of two chains' native tokens do not add up.
 
-- A root-Safe approval broadcast from the approver's own wallet and reported
-  through `POST /intents/confirm`.
-- Anything an agent's own wallet sends through a wallet adapter (AgentKit,
-  GOAT, a Safe or smart account acting for itself), including user operations
-  submitted to a bundler.
-- Transactions sent by other processes — `lacrew deploy`, the CLI's own
-  client, the root-Safe deployment relayer.
+#### What is recorded
 
-Also missing: a relayed root-Safe approval that reverts (the relay refuses
-without handing back a receipt), and a transaction that was broadcast but
-whose receipt never arrived.
+| Path                                                                                                 | `payer`                     | How it gets there                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every write through the orchestrator's SDK client                                                    | `orchestrator`              | Automatic. Propose (root key or session key), resolve, session issue / revoke and the gas stipend, governance, epoch runs, policy deploys, marketplace, delegation redemptions, sandbox top-ups                 |
+| The root Safe's approval, relayed by this orchestrator                                               | `orchestrator`              | Automatic, including one that is mined and reverts — `/intents/resolve` then answers `502` with `error: "safe_exec_reverted: …"` and the `txHash` that was paid for                                             |
+| The root Safe's approval, sent from the approver's own wallet                                        | `approver`                  | `POST /intents/confirm` with the `txHash`. The receipt is read from the chain and recorded only if the transaction was sent to the root Safe (or straight to the EscalationRouter); the answer says so in `gas` |
+| A send through the GOAT policy gate (`gateGoatWallet`)                                               | `agent`                     | Pass `onReceipt` and `receipts` (a viem `PublicClient`) to the gate                                                                                                                                             |
+| A Safe transaction executed with an owner key (`executeSafeTransactions`, `enableSafeModule`)        | `agent` (or `payer`)        | Pass `onReceipt` in the config; the Safe is recorded as the agent                                                                                                                                               |
+| A relayed Safe transaction or root-Safe deployment (`relaySafeExecution`, `relayRootSafeDeployment`) | `orchestrator` (or `payer`) | Pass `onReceipt`                                                                                                                                                                                                |
+| A transaction built by an adapter and sent by your own code (CDP, MetaMask, Safe allowances)         | yours to state              | Call `reportTransactionGas(publicClient, hash, { chainId, kind, payer, agent }, onReceipt)` after the send                                                                                                      |
+| A user operation sent through a bundler                                                              | `agent`, or `sponsored`     | Call `reportUserOperationGas(bundlerClient, userOpHash, { chainId, kind, agent }, onReceipt)`                                                                                                                   |
+| Anything another process sent — the CLI, a deploy, a script                                          | `orchestrator` by default   | `POST /usage/gas`, or the CLI's `--report-gas` / `lacrew gas report`                                                                                                                                            |
+
+`onReceipt` is one hook, exported by `@lacrew/core` and re-exported by every
+wallet adapter:
+
+```ts
+type GasReceipt = {
+  chainId: number;
+  txHash: `0x${string}`; // for a user operation: the bundle transaction
+  userOpHash?: `0x${string}`;
+  kind: string; // what it was for
+  status: "success" | "reverted";
+  gasUsed: bigint;
+  effectiveGasPrice?: bigint;
+  l1Fee?: bigint;
+  feeWei?: bigint; // absent when unknown
+  payer: "orchestrator" | "agent" | "approver" | "sponsored";
+  sender?: `0x${string}`;
+  paymaster?: `0x${string}`;
+  agent?: `0x${string}`;
+};
+type GasReceiptSink = (receipt: GasReceipt) => void | Promise<void>;
+```
+
+The orchestrator's sink is `runtime.gasReceiptSink`. Hand it to whatever sends
+in the same process:
+
+```ts
+const wallet = gateGoatWallet({
+  wallet: goatClient,
+  reader,
+  receipts: publicClient,
+  onReceipt: runtime.gasReceiptSink,
+});
+```
+
+The sink is passed, never registered process-wide: a process hosting two
+orchestrators must not report one's gas into the other's ledger. A sink that
+throws is ignored by every reporter, and a receipt that cannot be read reports
+nothing — bookkeeping never fails a send, and a fee is never guessed.
+
+For a user operation the fee is the operation's own `actualGasCost` from its
+UserOperation receipt, never the bundle transaction's fee: a bundle carries
+other senders' operations and the bundler pays for it. An operation whose
+receipt names a `paymaster` is recorded as `sponsored` with that address;
+otherwise the smart account paid from its own deposit and it is recorded as
+`agent`. Two operations in one bundle are two rows.
+
+#### `POST /usage/gas`
+
+Reports a transaction this orchestrator did not send. Bearer-authenticated like
+every other route.
+
+```bash
+curl -s -X POST http://127.0.0.1:8788/usage/gas \
+  -H 'content-type: application/json' \
+  -d '{"txHash":"0x…","kind":"cli governance vote","payer":"approver"}' | jq .
+```
+
+| Field    | Meaning                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| `txHash` | Required. The transaction, on this orchestrator's chain                                         |
+| `kind`   | What it was for, at most 64 characters. Default `reported`                                      |
+| `payer`  | `orchestrator` (default), `agent` or `approver`. `sponsored` is refused: a hash cannot prove it |
+| `agent`  | The agent seat it was sent for, when there is one                                               |
+
+The body states no fee. The orchestrator reads the receipt from its own RPC and
+records the transaction only if it was sent to a contract of this deployment or
+to the root Safe, or deployed one of them — so an arbitrary hash cannot be
+charged to the org. The first report of a transaction stands; reporting it
+again changes nothing.
+
+```json
+{
+  "recorded": true,
+  "chainId": 31337,
+  "txHash": "0x…",
+  "payer": "approver",
+  "status": "success",
+  "feeWei": "39000000000000"
+}
+```
+
+| Status | `error`             | Meaning                                                          |
+| ------ | ------------------- | ---------------------------------------------------------------- |
+| 400    | `txHash_required`   | Missing, or not a 32-byte hash                                   |
+| 400    | `invalid_payer`     | Not one of the three payers a hash can stand for                 |
+| 400    | `invalid_agent`     | `agent` is not an address                                        |
+| 404    | `receipt_not_found` | No receipt on this chain: not mined yet, or another chain's hash |
+| 409    | `no_chain`          | This orchestrator is running in mock mode                        |
+| 422    | `unexpected_target` | Mined, but sent to nothing this deployment owns                  |
+
+From the CLI, any command that writes takes `--report-gas` (or
+`LACREW_REPORT_GAS=1`) and reports each transaction it sends to `ORCH_URL`;
+`--gas-payer` (or `LACREW_GAS_PAYER`) names the payer. Reporting is printed on
+stderr and never fails the command. After the fact:
+
+```bash
+lacrew gas report 0x… 0x… --gas-payer approver
+lacrew gas report --deploy          # what the last `lacrew deploy` broadcast
+```
+
+`--deploy` reads the hashes from forge's broadcast record and needs an
+orchestrator already running on that deployment. Deploy transactions that
+created a contract the address book does not list are refused with
+`unexpected_target`, so a deploy's total can come up short; the command prints
+how many were recorded.
+
+#### What is still not recorded
+
+- A transaction nobody reports. An agent wallet that sends outside the hooks
+  above, with no `onReceipt` wired, is invisible to this ledger.
+- A user operation, unless your own code reports it: no adapter in this repo
+  submits one to a bundler, so the hook is there and nothing calls it for you.
+- What an ERC-20 paymaster charges the account in tokens. The operation is
+  recorded as `sponsored` with its native fee; the token charge is not read.
+- A transaction that was broadcast but whose receipt never arrived.
+- A relayed approval that fails gas estimation. That is the usual way a bad
+  approval fails, nothing is broadcast, and nothing was paid.
 
 ### Sandbox play money
 
@@ -540,7 +688,9 @@ curl -s -X POST http://127.0.0.1:8788/intents/confirm \
   -d '{"intentId":"12","approved":true,"txHash":"0x…"}' | jq .
 ```
 
-`confirmed: false` with an `awaitingApprover` means the router still awaits the Safe: the transaction did not land, and nothing was written.
+`confirmed: false` with an `awaitingApprover` means the router still awaits the Safe: the transaction did not land, and nothing was written to the audit trail.
+
+When a `txHash` is given, the answer also carries `gas`: what that transaction cost your wallet, recorded under `payer: "approver"` (see [gas cost](#gas-cost)). It is recorded whether the transaction landed or reverted — you paid either way — but only when the chain shows it was sent to the root Safe or to the EscalationRouter. Otherwise `gas` is `{ "recorded": false, "reason": "unexpected_target" }` (or `receipt_not_found`), and the confirmation itself is unaffected.
 
 ##### The recipe, on Anvil
 
