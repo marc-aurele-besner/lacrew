@@ -95,6 +95,7 @@ export function streamAllowance(ctx: Ctx, node_: Address, amount: bigint, epoch:
   } else if (ctx.sender !== state.deployer) {
     throw new SimRevert("NotAuthorized", { caller: ctx.sender });
   }
+  if (node === ZERO_ADDRESS) throw new SimRevert("ZeroAddress");
   const liquid = liquidBalance(ctx);
   if (liquid < amount) {
     throw new SimRevert("InsufficientTreasury", { requested: amount, available: liquid });

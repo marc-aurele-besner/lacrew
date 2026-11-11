@@ -20,6 +20,11 @@ export interface GovernanceProposal {
   noVotes: number;
   /** Human-seat yes votes (high-tier quorum). */
   yesHumanVotes?: number;
+  /**
+   * Human-seat no votes. On high tier this, not `noVotes`, is what defeats a
+   * proposal once its deadline has passed: agent seats review, they do not decide.
+   */
+  noHumanVotes?: number;
   deadline: number;
   eta: number;
   state: GovernanceProposalState;

@@ -827,6 +827,7 @@ export class SandboxLacrewClient implements ProtocolClient {
       yesVotes: Number(p.yesVotes),
       noVotes: Number(p.noVotes),
       yesHumanVotes: Number(p.yesHumanVotes),
+      noHumanVotes: Number(governance.noHumanVotes(ctx, id)),
       deadline: Number(p.deadline),
       eta: Number(p.eta),
       state: STATE_FROM[p.state] ?? "active",

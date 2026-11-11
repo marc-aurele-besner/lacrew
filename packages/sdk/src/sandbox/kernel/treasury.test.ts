@@ -97,6 +97,15 @@ describe("kernel Treasury", () => {
     assert.deepEqual(err.args, { requested: 41n * USDC, available: 40n * USDC });
   });
 
+  it("refuses to stream to the zero address", () => {
+    const sim = deployed();
+    deposit(sim, 100n * USDC);
+    sim.reverts("ZeroAddress", DEPLOYER, (ctx) =>
+      treasury.streamAllowance(ctx, ZERO_ADDRESS, 1n, 1n),
+    );
+    assert.equal(sim.world.treasury.totalReserved, 0n);
+  });
+
   it("lets only the deployer stream while bootstrapping, then only governor or streamer", () => {
     const sim = deployed();
     deposit(sim, 1_000n * USDC);

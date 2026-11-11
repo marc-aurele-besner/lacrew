@@ -19,6 +19,7 @@ const ACTIONS: Record<Hex, (ctx: Ctx) => void> = {
   "0xaa04": (ctx) => governance.setQuorumYes(ctx, 5n),
   "0xaa05": (ctx) => governance.setVotingPower(ctx, ROOT, 0n, SeatRole.None),
   "0xaa06": (ctx) => governance.setTiming(ctx, HOUR, 0n),
+  "0xaa07": (ctx) => governance.admitHuman(ctx, SECOND_HUMAN, 1n),
   "0xff00": () => {
     throw new SimRevert("Boom");
   },
@@ -396,13 +397,50 @@ describe("kernel GovernanceModule: proposals", () => {
     sim.reverts("ProposalNotActive", ROOT, (ctx) => governance.vote(ctx, id, true));
   });
 
-  it("a veto of an id not yet created is overwritten when that proposal is", () => {
+  it("refuses to veto an id no proposal holds yet", () => {
     const sim = module();
-    sim.send(ROOT, (ctx) => governance.veto(ctx, 1n));
-    assert.equal(proposal(sim, 1n).state, ProposalState.Vetoed);
+    sim.reverts("ProposalNotFound", ROOT, (ctx) => governance.veto(ctx, 1n));
+    sim.reverts("ProposalNotFound", ROOT, (ctx) => governance.veto(ctx, 0n));
     const id = low(sim);
     assert.equal(id, 1n);
     assert.equal(proposal(sim, id).state, ProposalState.Active);
+    sim.send(ROOT, (ctx) => governance.veto(ctx, id));
+    assert.equal(proposal(sim, id).state, ProposalState.Vetoed);
+  });
+
+  it("high tier is defeated by human no-weight alone", () => {
+    const sim = module();
+    agentSeat(sim, MANAGER, 5n);
+    // A second human with half the root's weight, so the humans can disagree unevenly.
+    const admit = high(sim, self(sim), "0xaa07");
+    vote(sim, ROOT, admit);
+    sim.send(ROOT, execute(admit));
+    // Agent no-weight outweighs the human yes and changes nothing.
+    const backed = high(sim, TARGET, "0x1234");
+    vote(sim, ROOT, backed);
+    vote(sim, MANAGER, backed, false);
+    // Agent yes-weight outweighs the human no and changes nothing either.
+    const refused = high(sim, TARGET, "0x1234");
+    vote(sim, SECOND_HUMAN, refused);
+    vote(sim, ROOT, refused, false);
+    vote(sim, MANAGER, refused);
+    sim.warp(VOTING_PERIOD + TIMELOCK + 1n);
+
+    sim.send(ROOT, execute(backed));
+    assert.equal(proposal(sim, backed).state, ProposalState.Executed);
+    assert.equal(
+      sim.read((ctx) => governance.noHumanVotes(ctx, backed)),
+      0n,
+    );
+
+    const mark = sim.events.length;
+    sim.send(ROOT, execute(refused));
+    assert.equal(proposal(sim, refused).state, ProposalState.Defeated);
+    assert.deepEqual(sim.eventNames(mark), ["ProposalDefeated"]);
+    assert.equal(
+      sim.read((ctx) => governance.noHumanVotes(ctx, refused)),
+      2n,
+    );
   });
 
   it("is defeated when no outweighs yes after the deadline", () => {

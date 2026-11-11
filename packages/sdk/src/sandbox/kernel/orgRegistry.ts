@@ -87,6 +87,7 @@ export function addNode(ctx: Ctx, account_: Address, kind: number, parent_: Addr
   const account = addr(account_);
   const parent = addr(parent_);
   authorize(ctx);
+  if (account === ZERO_ADDRESS) throw new SimRevert("ZeroAddress");
   if (nodeAt(state, account).account !== ZERO_ADDRESS) {
     throw new SimRevert("NodeAlreadyExists", { account });
   }

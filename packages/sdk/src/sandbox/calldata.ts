@@ -198,6 +198,7 @@ const EPOCH_STREAMER: HandlerTable = {
 const GOVERNANCE: HandlerTable = {
   nextProposalId: (ctx) => ctx.world.governance.nextProposalId,
   proposals: (ctx, [id]) => governance.proposals(ctx, big(id)),
+  noHumanVotes: (ctx, [id]) => governance.noHumanVotes(ctx, big(id)),
   hasVoted: (ctx, [id, voter]) => governance.hasVoted(ctx, big(id), voter),
   votingPower: (ctx, [voter]) => ctx.world.governance.votingPower[addr(voter)] ?? 0n,
   seatRole: (ctx, [voter]) => ctx.world.governance.seatRole[addr(voter)] ?? 0,
