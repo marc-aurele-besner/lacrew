@@ -27,6 +27,7 @@ export type {
   SessionKeyLimits,
   WriteRef,
 } from "./protocolClient.js";
+export { deployOrg, type DeployOrgOptions, type DeployedOrg } from "./deployOrg.js";
 export { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "./policy.js";
 export type { ResolveResult } from "./types.js";
 export {

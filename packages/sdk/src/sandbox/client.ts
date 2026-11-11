@@ -357,6 +357,16 @@ export class SandboxLacrewClient implements ProtocolClient {
   }
 
   /**
+   * Run kernel functions directly as one transaction from `sender`: the way to
+   * reach what the client has no method for (a constructor, a bootstrap
+   * setter). Atomic like every other write, and named by its `simTxId`.
+   */
+  transact<T>(sender: Address, fn: (ctx: Ctx) => T): { result: T; simTxId: string; at: number } {
+    const at = this.state.clock.now();
+    return { ...this.commit(addr(sender), fn), at };
+  }
+
+  /**
    * Send calldata to a simulated contract by address, as a transaction.
    * `from` defaults to this client's account. A target that holds no
    * simulated contract accepts the call the way an address without code does.

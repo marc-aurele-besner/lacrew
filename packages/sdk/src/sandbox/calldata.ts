@@ -71,6 +71,16 @@ type HandlerTable = Record<string, Handler>;
 
 const big = (value: unknown): bigint => BigInt(value as bigint | number);
 
+/**
+ * An enum argument. Solidity's ABI decoder rejects a value past the last
+ * member before the function body runs, with no error data.
+ */
+function enumValue(value: unknown, members: number): number {
+  const n = Number(value);
+  if (n >= members) throw new SimRevert(EVM_REVERT);
+  return n;
+}
+
 const needsChain =
   (what: string): Handler =>
   () => {
@@ -84,7 +94,7 @@ const ORG_REGISTRY: HandlerTable = {
   getChildren: (ctx, [parent]) => orgRegistry.getChildren(ctx, parent),
   setGovernor: (ctx, [governor]) => orgRegistry.setGovernor(ctx, governor),
   addNode: (ctx, [account, kind, parent]) =>
-    orgRegistry.addNode(ctx, account, Number(kind), parent),
+    orgRegistry.addNode(ctx, account, enumValue(kind, 3), parent),
   setActive: (ctx, [account, active]) => orgRegistry.setActive(ctx, account, active),
   removeNode: (ctx, [account]) => orgRegistry.removeNode(ctx, account),
   reparent: (ctx, [account, newParent]) => orgRegistry.reparent(ctx, account, newParent),
@@ -194,14 +204,14 @@ const GOVERNANCE: HandlerTable = {
   effectiveQuorumYes: (ctx) => governance.effectiveQuorumYes(ctx),
   effectiveQuorumHumanYes: (ctx) => governance.effectiveQuorumHumanYes(ctx),
   setVotingPower: (ctx, [voter, power, role]) =>
-    governance.setVotingPower(ctx, voter, big(power), Number(role)),
+    governance.setVotingPower(ctx, voter, big(power), enumValue(role, 3)),
   admitHuman: (ctx, [human, power]) => governance.admitHuman(ctx, human, big(power)),
   removeHuman: (ctx, [human]) => governance.removeHuman(ctx, human),
   setQuorumYes: (ctx, [q]) => governance.setQuorumYes(ctx, big(q)),
   setQuorumHumanYes: (ctx, [q]) => governance.setQuorumHumanYes(ctx, big(q)),
   setTiming: (ctx, [period, timelock]) => governance.setTiming(ctx, big(period), big(timelock)),
   setUnanimityFastPath: (ctx, [enabled]) => governance.setUnanimityFastPath(ctx, enabled),
-  propose: (ctx, [tier, target, data]) => governance.propose(ctx, Number(tier), target, data),
+  propose: (ctx, [tier, target, data]) => governance.propose(ctx, enumValue(tier, 2), target, data),
   vote: (ctx, [id, support]) => governance.vote(ctx, big(id), support),
   veto: (ctx, [id]) => governance.veto(ctx, big(id)),
   execute: (ctx, [id]) => governance.execute(ctx, big(id)),

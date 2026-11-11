@@ -684,6 +684,45 @@ describe("sandbox client: calls by address", () => {
     );
   });
 
+  it("refuses an enum value past its last member, as the ABI decoder does", () => {
+    const { client } = sandbox();
+    const send = (data: `0x${string}`, to: `0x${string}`) => () =>
+      client.sendTransaction({ to, data });
+    assert.throws(
+      send(
+        encodeFunctionData({
+          abi: orgRegistryAbi,
+          functionName: "addNode",
+          args: [WORKER, 3, ROOT],
+        }),
+        client.addresses.orgRegistry,
+      ),
+      revertsWith("EvmRevert"),
+    );
+    assert.throws(
+      send(
+        encodeFunctionData({
+          abi: governanceModuleAbi,
+          functionName: "propose",
+          args: [2, TARGET, "0x"],
+        }),
+        client.addresses.governanceModule,
+      ),
+      revertsWith("EvmRevert"),
+    );
+    assert.throws(
+      send(
+        encodeFunctionData({
+          abi: governanceModuleAbi,
+          functionName: "setVotingPower",
+          args: [WORKER, 1n, 3],
+        }),
+        client.addresses.governanceModule,
+      ),
+      revertsWith("EvmRevert"),
+    );
+  });
+
   it("names a function it does not model instead of guessing", () => {
     const { client } = sandbox();
     assert.throws(

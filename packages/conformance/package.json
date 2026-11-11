@@ -1,0 +1,23 @@
+{
+  "name": "@lacrew/conformance",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "One scenario suite run against the sandbox simulator and the real contracts",
+  "type": "module",
+  "scripts": {
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/sim.test.ts src/coverage.test.ts src/fuzz.test.ts",
+    "test:anvil": "node --import tsx --test --test-concurrency=1 src/anvil.test.ts"
+  },
+  "dependencies": {
+    "@lacrew/core": "workspace:*",
+    "@lacrew/sdk": "workspace:*",
+    "viem": "^2.55.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.4",
+    "typescript": "^7.0.0"
+  }
+}
