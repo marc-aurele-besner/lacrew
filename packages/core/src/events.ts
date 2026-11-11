@@ -376,6 +376,20 @@ export type ProtocolEventType =
    */
   | "FaucetTopUp"
   /**
+   * Sandbox controls. Raised only by an orchestrator in sandbox mode, always
+   * with `ledger: "sandbox"`: nothing here happened on a chain.
+   *
+   * `SandboxFunded` — play money was credited to the simulated treasury
+   * (`amount`, `simTxId`); no allowance, cap or policy moved.
+   * `SandboxTimeAdvanced` — the simulator's clock was moved forward
+   * (`seconds`, `now`), which is why later events can carry timestamps ahead
+   * of wall time. `SandboxReset` — the simulation was rebuilt from genesis and
+   * the trail before it deleted; it is the first event of the new one.
+   */
+  | "SandboxFunded"
+  | "SandboxTimeAdvanced"
+  | "SandboxReset"
+  /**
    * An operator stopped or restarted an agent at the orchestrator (F1.7).
    *
    * Off-chain, like `FlowRun` and `ToolCalled`: a pause gates session issuance
@@ -453,5 +467,15 @@ export interface ProtocolEvent {
    */
   chainId?: number;
   orgId?: string;
+  /**
+   * Which ledger the event happened on. `"sandbox"` marks a simulated event:
+   * the contract rules were applied by the in-process simulator and nothing
+   * was mined, so the payload names a `simTxId` and never a `txHash`. Absent
+   * means `"chain"`.
+   */
+  ledger?: Ledger;
   payload: Record<string, unknown>;
 }
+
+/** Where an answer came from: mined blocks, or the in-process simulator. */
+export type Ledger = "chain" | "sandbox";
