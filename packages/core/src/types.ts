@@ -137,6 +137,29 @@ export interface EpochGrant {
   amount: string;
 }
 
+/**
+ * One node's allowance as a caller budgets against it: what the Treasury would
+ * let it spend right now, beside what a payroll run streams into it. Amounts
+ * are the asset's base units as exact strings, like `EpochGrant.amount`.
+ */
+export interface AllowanceStatus {
+  account: `0x${string}`;
+  /** The asset these amounts are denominated in. */
+  token: `0x${string}`;
+  /**
+   * The Treasury's `allowanceBalance` for the node: the most it can still
+   * spend before the next payroll run adds to it. Null when the ledger gave no
+   * balance for this account (a grant recipient that is not in the org tree).
+   */
+  remaining: string | null;
+  /** Per-epoch grant on the asset's EpochStreamer; "0" when none is set. */
+  grant: string;
+  /** Per-call ceiling (`Allowance.cap`); null when no SpendCapPolicy is enforced. */
+  cap: string | null;
+  /** The streamer's current epoch; null alongside a null `remaining`. */
+  epoch: number | null;
+}
+
 /** Human-readable preflight of the agent's intended action (PRD F1.16). */
 export type IntentSimulation = {
   status: "ok" | "warning" | "revert";

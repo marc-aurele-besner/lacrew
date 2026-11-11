@@ -126,7 +126,8 @@ Every read answers from the chain (or the persisted trail) — mock mode serves
 | `GET /usage/daily`       | The same counts per UTC day over `[from, to)` (`?from=`, `?to=` ISO; default the 30 days up to now, at most 92 days). Every day in the window is present, empty when quiet. `?by=agent` groups by the event's `agent` instead (`null` for events that name none). `complete: false` as on `/usage` Each day (and each agent row) also carries `gasFeeWei`, `gasTxCount` and `gasByPayer` — see [gas cost](#gas-cost); `gasComplete` is `complete` for those |
 | `GET /audit`             | The audit trail, newest first. Each event carries `chainId`, the EIP-155 id of the chain it happened on — the one `/health` reports for this orchestrator's own events. Absent on an event that reached the trail without one, and on a runtime with no chain                                                                                                                                                                                               |
 | `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `GET /allowances`        | Every node's `remaining` allowance (the Treasury balance it can still spend) beside its per-epoch `grant`, `cap` and `epoch`, as base-unit strings (`?asset=`). `GET /org` carries the same figures on each node as `allowance`                                                                                                                                                                                                                             |
+| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer, each with the node's `remaining` allowance (`?asset=`)                                                                                                                                                                                                                                                                                                                                                        |
 | `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                                                                                                                                                                            |
 | `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -520,6 +521,34 @@ told (no schedule, or an `EPOCH_INTERVAL_MS` loop).
 On an orchestrator bound to a chain, every `/sandbox` route answers 409
 `not_sandbox`. A revert from the simulated contracts is a 422 whose `error` is
 the contract's own error name, with `reverted: true`.
+
+A propose the agent's policy denies is that 422 on either ledger, with
+`error: "UnexpectedVerdict"`, `verdict: "DENY"` and a `denial` naming the rule:
+
+```json
+{
+  "error": "UnexpectedVerdict",
+  "reverted": true,
+  "verdict": "DENY",
+  "denial": {
+    "module": "0x…",
+    "kind": "whitelist",
+    "reason": "target_not_allowlisted",
+    "detail": "Target 0x… is not on the allowlist.",
+    "target": "0x…"
+  }
+}
+```
+
+`denial.module` is the first module of the agent's stack that answers DENY on
+its own, and `kind` is `whitelist`, `time_window`, `spend_cap`, `rate_limit`,
+`stack` or `unknown`. `reason` is `target_not_allowlisted`,
+`outside_time_window` (with `startSecondOfDay`, `endSecondOfDay` and the
+ledger's own `secondOfDay`) or `policy_denied` for a module whose rule cannot
+be named. The contracts name no module in the revert, so a chain orchestrator
+finds it with view calls afterwards; `denial` is `null` when it could not (the
+rule changed in between, or the read failed). A sandbox response also carries
+`simulated: true`.
 
 State is written through after every committed simulator transaction to
 `orchestrator_sandbox_state` (one row per org, `default` here) when

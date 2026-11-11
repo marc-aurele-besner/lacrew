@@ -112,6 +112,7 @@ import {
   type PlanRequiredMode,
 } from "@lacrew/flows";
 import { FaucetError, type CrewRuntime, type NodeStackModuleSpec } from "./runtime.js";
+import { PolicyDeniedError, policyDenialOf } from "@lacrew/sdk";
 import { SandboxNeedsChainError, SimRevert } from "@lacrew/sdk/sandbox";
 import { NotSandboxError, SandboxControlError } from "./sandboxLedger.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
@@ -376,9 +377,16 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (err instanceof SandboxControlError) {
       return jsonBig(c, { error: err.code, ...err.detail }, 400);
     }
+    // A propose the policy denied names the module that denied it, on either
+    // ledger: `denial` is null only when that module could not be found.
+    const denial = policyDenialOf(err);
+    const denied = denial === undefined ? {} : { verdict: "DENY" as const, denial };
     if (err instanceof SimRevert) {
       // The simulated contracts said no, by the same name the real ones would.
-      return jsonBig(c, { error: err.errorName, reverted: true, simulated: true }, 422);
+      return jsonBig(c, { error: err.errorName, reverted: true, simulated: true, ...denied }, 422);
+    }
+    if (err instanceof PolicyDeniedError) {
+      return jsonBig(c, { error: err.errorName, reverted: true, ...denied }, 422);
     }
     return null;
   };
@@ -2886,11 +2894,44 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    */
   app.get("/org", async (c) => {
     const nodes = (await runtime.getClient().getOrgTree()) as OrgNode[];
+    // Each seat's allowance rides along: what it can still spend and what a
+    // payroll run grants it, in the primary asset or `?asset=SYMBOL|token`.
+    // A chart is still a chart when that read fails, so the nodes are served
+    // without it and `allowancesAvailable` says the figures are missing, not zero.
+    const asset = c.req.query("asset") || undefined;
+    const allowances = await runtime.getAllowanceStatus(asset).catch((err) => {
+      console.error("[@lacrew/orchestrator] /org: allowance read failed:", err);
+      return null;
+    });
+    const allowanceOf = new Map((allowances ?? []).map((a) => [a.account.toLowerCase(), a]));
+    const bound = crewBindings ? crewBindings.apply(nodes) : nodes;
     return jsonBig(c, {
-      nodes: crewBindings ? crewBindings.apply(nodes) : nodes,
+      nodes: bound.map((node) => {
+        const allowance = allowanceOf.get(node.account.toLowerCase());
+        if (!allowance) return node;
+        const { account: _account, ...figures } = allowance;
+        return { ...node, allowance: figures };
+      }),
+      allowancesAvailable: allowances !== null,
       mode: runtime.mode,
       chainId: runtime.chainId,
     });
+  });
+
+  /**
+   * Every node's remaining allowance beside its per-epoch grant, as base-unit
+   * strings. `remaining` is the Treasury's own balance for the node, so a
+   * caller budgeting against it needs no second read and no inference.
+   * Optional ?asset=SYMBOL|token; omit for the primary (USDC) stack.
+   */
+  app.get("/allowances", async (c) => {
+    const asset = c.req.query("asset") || undefined;
+    try {
+      const allowances = await runtime.getAllowanceStatus(asset);
+      return jsonBig(c, { allowances, asset, mode: runtime.mode });
+    } catch (err) {
+      return jsonBig(c, { error: msgOf(err, "allowances_read_failed") }, 400);
+    }
   });
 
   /* ——— blueprint seat bindings (F2.25) ——— */
@@ -3889,10 +3930,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   app.get("/governance/grants", async (c) => {
     // Configured per-epoch grants for an asset's EpochStreamer — the current
     // budget the cloud reads to rescale when the workspace cadence changes.
+    // Each grant carries the node's `remaining` allowance beside it (null when
+    // the balance could not be read: missing is not zero).
     // Optional ?asset=SYMBOL|token; omit for the primary (USDC) stack.
     const asset = c.req.query("asset") || undefined;
     try {
-      const grants = await runtime.getGrants(asset);
+      const configured = await runtime.getGrants(asset);
+      const allowances = await runtime.getAllowanceStatus(asset).catch((err) => {
+        console.error("[@lacrew/orchestrator] /governance/grants: allowance read failed:", err);
+        return [];
+      });
+      const remainingOf = new Map(allowances.map((a) => [a.account.toLowerCase(), a.remaining]));
+      const grants = configured.map((grant) => ({
+        ...grant,
+        remaining: remainingOf.get(grant.account.toLowerCase()) ?? null,
+      }));
       return jsonBig(c, { grants, asset, mode: runtime.mode });
     } catch (err) {
       return jsonBig(c, { error: err instanceof Error ? err.message : "grants_read_failed" }, 400);

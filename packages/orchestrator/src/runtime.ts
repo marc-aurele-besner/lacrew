@@ -45,6 +45,7 @@ import {
   type AgentWallet,
   type ApprovalAuthority,
   type Allowance,
+  type AllowanceStatus,
   type AssetStack,
   type ChainWallets,
   type NodeKind,
@@ -3593,6 +3594,43 @@ export class CrewRuntime {
   /** Per-epoch grants configured on an asset's EpochStreamer (for cadence rescale). */
   async getGrants(asset?: string): Promise<EpochGrant[]> {
     return this.client.getGrants(asset);
+  }
+
+  /**
+   * Every node's remaining allowance beside its per-epoch grant, in one
+   * asset's stack: the ledger's own two reads, joined by account. A node
+   * appears when it holds an allowance row or a grant. [] in mock mode, like
+   * `getAllowances`.
+   */
+  async getAllowanceStatus(asset?: string): Promise<AllowanceStatus[]> {
+    if (!isProtocolClient(this.client)) return [];
+    const [allowances, grants] = await Promise.all([
+      this.client.getAllowances(undefined, asset),
+      this.client.getGrants(asset),
+    ]);
+    const grantOf = new Map(grants.map((g) => [g.account.toLowerCase(), g.amount]));
+    const token = allowances[0]?.token ?? resolveAssetStack(this.client.addresses, asset).token;
+    const out: AllowanceStatus[] = allowances.map((a) => ({
+      account: a.node,
+      token: a.token,
+      remaining: a.balance.toString(),
+      grant: grantOf.get(a.node.toLowerCase()) ?? "0",
+      cap: a.cap === null ? null : a.cap.toString(),
+      epoch: a.epoch,
+    }));
+    const listed = new Set(allowances.map((a) => a.node.toLowerCase()));
+    for (const g of grants) {
+      if (listed.has(g.account.toLowerCase())) continue;
+      out.push({
+        account: g.account,
+        token,
+        remaining: null,
+        grant: g.amount,
+        cap: null,
+        epoch: null,
+      });
+    }
+    return out;
   }
 
   /** Real per-asset treasury holdings ([] in mock mode — no real treasury). */

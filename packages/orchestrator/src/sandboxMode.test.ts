@@ -20,6 +20,7 @@ import {
   DEFAULT_SESSION_TTL_MS,
   type ProtocolEvent,
 } from "@lacrew/core";
+import { PolicyDeniedError } from "@lacrew/sdk";
 import { createLacrewClient } from "@lacrew/sdk/testing";
 import { createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import { createFlowsSurface } from "./flows.js";
@@ -415,6 +416,67 @@ describe("sandbox story over HTTP", () => {
     assert.equal(res.body.simulated, true);
     assert.equal(res.body.ledger, "sandbox");
     assert.match(res.body.error, /^[A-Z][A-Za-z]+$/);
+  });
+
+  it("names the policy module behind a denied propose", async () => {
+    const api = appFor(createSandboxRuntime());
+    const { worker } = await hiredAndFunded(api);
+    const stranger = addr("8");
+    const res = await api.post("/mcp/call", {
+      name: "lacrew_propose_intent",
+      arguments: { agent: worker, target: stranger, value: USDC(1) },
+    });
+    assert.equal(res.status, 422, JSON.stringify(res.body));
+    assert.equal(res.body.error, "UnexpectedVerdict");
+    assert.equal(res.body.reverted, true);
+    assert.equal(res.body.simulated, true);
+    assert.equal(res.body.verdict, "DENY");
+    const policies = (await api.get("/policies")).body;
+    assert.equal(res.body.denial.kind, "whitelist");
+    assert.equal(res.body.denial.reason, "target_not_allowlisted");
+    assert.equal(res.body.denial.target, stranger);
+    assert.match(res.body.denial.detail, /is not on the allowlist/);
+    assert.ok(
+      JSON.stringify(policies).includes(res.body.denial.module),
+      "the module named is one of the org's own",
+    );
+    // Any other revert carries no verdict and no denial.
+    const other = await api.post("/governance/execute", { proposalId: "99" });
+    assert.equal(other.body.verdict, undefined);
+    assert.equal("denial" in other.body, false);
+  });
+
+  it("serves each node's remaining allowance beside its grant, and moves it with a spend", async () => {
+    const api = appFor(createSandboxRuntime());
+    const { worker } = await hiredAndFunded(api);
+    const row = async () =>
+      ((await api.get("/allowances")).body.allowances as Json[]).find(
+        (entry) => entry.account === worker,
+      );
+    const before = await row();
+    assert.equal(before?.remaining, USDC(100));
+    assert.equal(before?.grant, USDC(100));
+    assert.equal(before?.epoch, 1);
+    assert.match(before?.token, /^0x[0-9a-f]{40}$/);
+
+    assert.equal((await spend(api, worker, USDC(10))).body.result?.verdict, "ALLOW");
+    const after = await row();
+    assert.equal(after?.remaining, USDC(90), "the spend left the allowance");
+    assert.equal(after?.grant, USDC(100), "the grant is the per-period figure, unchanged");
+
+    // The same figures on the two reads a control plane already makes.
+    const org = (await api.get("/org")).body;
+    assert.equal(org.allowancesAvailable, true);
+    const { account: _account, ...figures } = after as Json;
+    assert.deepEqual(
+      (org.nodes as Json[]).find((node) => node.account === worker)?.allowance,
+      figures,
+    );
+    assert.deepEqual((await api.get("/governance/grants")).body.grants, [
+      { account: worker, amount: USDC(100), remaining: USDC(90) },
+    ]);
+    const unknownAsset = await api.get("/allowances?asset=WETH");
+    assert.equal(unknownAsset.status, 400, JSON.stringify(unknownAsset.body));
   });
 
   it("issues a session key and expires it when time is advanced", async () => {
@@ -920,12 +982,13 @@ describe("sandbox persistence", () => {
 
 describe("an orchestrator on a chain is unchanged", () => {
   /** Reads as onchain; answers only what these routes ask. */
-  function chainRuntime(): CrewRuntime {
+  function chainRuntime(overrides: Record<string, unknown> = {}): CrewRuntime {
     const client = Object.assign(createLacrewClient({ useMock: true }), {
       publicClient: {},
       chainId: ANVIL_CHAIN_ID,
       addresses: { chainId: ANVIL_CHAIN_ID, sessionRegistry: addr("5"), humanRoot: addr("a") },
       revokeSession: async () => ({ txHash: `0x${"cd".repeat(32)}` as `0x${string}` }),
+      ...overrides,
     });
     return new CrewRuntime({
       client,
@@ -990,6 +1053,104 @@ describe("an orchestrator on a chain is unchanged", () => {
     assert.equal(res.body.simTxId, undefined);
     assert.equal(res.body.simulated, undefined);
     assert.equal(res.body.ledger, undefined);
+  });
+
+  it("names the module behind a denied propose, with no simulator label", async () => {
+    const denial = {
+      module: addr("9"),
+      kind: "time_window" as const,
+      reason: "outside_time_window" as const,
+      detail: "Outside the allowed time window (09:00-17:00 UTC; the ledger's clock reads 22:13).",
+      startSecondOfDay: 32_400,
+      endSecondOfDay: 61_200,
+      secondOfDay: 80_000,
+    };
+    // The chain client's propose is what throws; the session issued ahead of
+    // it needs a registry this stub does not have, so the denial starts here.
+    const denying = (found: typeof denial | null) => {
+      const runtime = chainRuntime();
+      runtime.propose = async () => {
+        throw new PolicyDeniedError(found);
+      };
+      return appFor(runtime);
+    };
+    const res = await spend(denying(denial), addr("b"), USDC(1));
+    assert.equal(res.status, 422, JSON.stringify(res.body));
+    assert.deepEqual(res.body, {
+      error: "UnexpectedVerdict",
+      reverted: true,
+      verdict: "DENY",
+      denial,
+    });
+
+    // A denial whose module could not be found afterwards is still a denial.
+    const bare = await spend(denying(null), addr("b"), USDC(1));
+    assert.equal(bare.status, 422, JSON.stringify(bare.body));
+    assert.equal(bare.body.verdict, "DENY");
+    assert.equal(bare.body.denial, null);
+  });
+
+  it("serves each node's remaining allowance beside its grant", async () => {
+    const token = addr("e");
+    const api = appFor(
+      chainRuntime({
+        getOrgTree: async () => [
+          { account: addr("a"), kind: "human_root", parent: null, active: true },
+          { account: addr("b"), kind: "worker_agent", parent: addr("a"), active: true },
+        ],
+        // The chain reports addresses in its own casing; the join ignores it.
+        getAllowances: async () => [
+          { node: addr("B"), token, balance: 40_000_000n, epoch: 3, cap: 25_000_000n },
+        ],
+        getGrants: async () => [
+          { account: addr("b"), amount: USDC(100) },
+          // A recipient the allowance read did not cover: unknown, not zero.
+          { account: addr("f"), amount: USDC(5) },
+        ],
+      }),
+    );
+    const worker = {
+      token,
+      remaining: USDC(40),
+      grant: USDC(100),
+      cap: USDC(25),
+      epoch: 3,
+    };
+    const allowances = await api.get("/allowances");
+    assert.equal(allowances.status, 200, JSON.stringify(allowances.body));
+    assert.deepEqual(allowances.body.allowances, [
+      { account: addr("B"), ...worker },
+      { account: addr("f"), token, remaining: null, grant: USDC(5), cap: null, epoch: null },
+    ]);
+
+    const org = (await api.get("/org")).body;
+    assert.equal(org.allowancesAvailable, true);
+    assert.deepEqual(
+      org.nodes.map((node: Json) => node.allowance),
+      [undefined, worker],
+    );
+    assert.deepEqual((await api.get("/governance/grants")).body.grants, [
+      { account: addr("b"), amount: USDC(100), remaining: USDC(40) },
+      { account: addr("f"), amount: USDC(5), remaining: null },
+    ]);
+  });
+
+  it("serves the chart without allowances when that read fails, and says so", async () => {
+    const api = appFor(
+      chainRuntime({
+        getAllowances: async () => {
+          throw new Error("rpc down");
+        },
+      }),
+    );
+    const org = await api.get("/org");
+    assert.equal(org.status, 200, JSON.stringify(org.body));
+    assert.equal(org.body.allowancesAvailable, false);
+    assert.ok(org.body.nodes.length > 0);
+    assert.ok(org.body.nodes.every((node: Json) => node.allowance === undefined));
+    const grants = (await api.get("/governance/grants")).body.grants as Json[];
+    assert.ok(grants.length > 0 && grants.every((grant) => grant.remaining === null));
+    assert.equal((await api.get("/allowances")).status, 400);
   });
 
   it("keeps the test client labelled as neither ledger", async () => {
