@@ -54,8 +54,13 @@ export async function listenHttp(
     } catch (err) {
       lastErr = err;
       const code = (err as NodeJS.ErrnoException).code;
-      // Some Node builds reject unknown listen options — retry without reusePort.
-      if (code === "ERR_INVALID_ARG_VALUE" || code === "ERR_INVALID_ARG_TYPE") {
+      // Some Node builds reject unknown listen options, and some platforms
+      // (macOS) refuse reusePort itself with ENOTSUP — retry without it.
+      if (
+        code === "ERR_INVALID_ARG_VALUE" ||
+        code === "ERR_INVALID_ARG_TYPE" ||
+        code === "ENOTSUP"
+      ) {
         await new Promise<void>((resolve, reject) => {
           const onError = (e: NodeJS.ErrnoException) => {
             server.off("listening", onListen);
