@@ -83,6 +83,8 @@ function stubTransport(opts: {
   calls?: Hex[];
   /** Latest block's timestamp, in seconds (default 1). */
   blockTimestamp?: number;
+  /** Collects one entry per block read. */
+  blockReads?: unknown[];
   /** Revert data gas estimation fails with, as a node reports a reverting call. */
   estimateGasRevert?: Hex;
   /** Receipt fields to replace or (with `undefined`) drop, as a node may report them. */
@@ -107,6 +109,7 @@ function stubTransport(opts: {
         case "eth_maxPriorityFeePerGas":
           return "0x3b9aca00";
         case "eth_getBlockByNumber":
+          opts.blockReads?.push(params);
           return {
             baseFeePerGas: "0x3b9aca00",
             number: "0x1",
@@ -325,6 +328,7 @@ describe("getSessions maps every bound the registry holds", () => {
 
   it("reports an expired key as revoked even when the registry has not marked it", async () => {
     const client = clientWith({
+      blockTimestamp: 2000,
       onCall: answerCalls([sessionRegistryAbi as Abi], {
         sessionsOf: () => [1n],
         sessions: () => [WORKER, KEY, 1000n, 3n, 1000n, TARGET_A, false, true, 0, 0],
@@ -336,6 +340,54 @@ describe("getSessions maps every bound the registry holds", () => {
     assert.equal(session!.revoked, true);
     assert.equal(session!.window, undefined);
     assert.equal(session!.rate, undefined);
+  });
+
+  it("judges expiry against the latest block's time, not the local clock, reading it once", async () => {
+    // Expiries the local clock gets wrong both ways: 1_500 is decades past by
+    // wall time and still ahead of this chain; the registry's own rule is
+    // `block.timestamp < expiresAt`, so the boundary second is already expired.
+    const blockTimestamp = 1_000;
+    const expiries: Record<string, bigint> = { "1": 1_500n, "2": 1_000n, "3": 999n, "4": 1_001n };
+    const blockReads: unknown[] = [];
+    const client = clientWith({
+      blockTimestamp,
+      blockReads,
+      onCall: answerCalls([sessionRegistryAbi as Abi], {
+        sessionsOf: () => [1n, 2n, 3n, 4n],
+        sessions: ([id]) => [
+          WORKER,
+          KEY,
+          expiries[String(id)]!,
+          3n,
+          1000n,
+          TARGET_A,
+          false,
+          true,
+          0,
+          0,
+        ],
+        rateLimits: () => [0, 0, 0n, 0],
+        allowedTargetsOf: () => [],
+      }),
+    });
+    const sessions = await client.getSessions(WORKER);
+    const revoked = Object.fromEntries(sessions.map((s) => [s.keyId, s.revoked]));
+    assert.deepEqual(revoked, { "1": false, "2": true, "3": true, "4": false });
+    assert.equal(blockReads.length, 1);
+  });
+
+  it("a chain ahead of the local clock expires a key the local clock would call live", async () => {
+    const client = clientWith({
+      blockTimestamp: 5_000_000_000,
+      onCall: answerCalls([sessionRegistryAbi as Abi], {
+        sessionsOf: () => [1n],
+        sessions: () => [WORKER, KEY, 4102444800n, 3n, 1000n, TARGET_A, false, true, 0, 0],
+        rateLimits: () => [0, 0, 0n, 0],
+        allowedTargetsOf: () => [],
+      }),
+    });
+    const [session] = await client.getSessions(WORKER);
+    assert.equal(session!.revoked, true);
   });
 });
 
