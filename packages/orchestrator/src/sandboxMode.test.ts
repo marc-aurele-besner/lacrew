@@ -14,8 +14,14 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ADDRESS_ENV_VARS, ANVIL_CHAIN_ID, DEFAULT_SESSION_TTL_MS } from "@lacrew/core";
+import {
+  ADDRESS_ENV_VARS,
+  ANVIL_CHAIN_ID,
+  DEFAULT_SESSION_TTL_MS,
+  type ProtocolEvent,
+} from "@lacrew/core";
 import { createLacrewClient } from "@lacrew/sdk/testing";
+import { createMemoryAuditStore, type AuditStore } from "./auditStore.js";
 import { createFlowsSurface } from "./flows.js";
 import { createMemoryFlowStore } from "./flowStore.js";
 import { createOrchestratorApp } from "./httpApp.js";
@@ -729,6 +735,61 @@ describe("sandbox persistence", () => {
     const spent = await spend(resumed, worker, USDC(5));
     assert.equal(spent.body.result.verdict, "ALLOW", JSON.stringify(spent.body));
     assert.equal((await resumed.get("/sandbox")).body.version > before.version, true);
+  });
+
+  it("keeps the simulator's own events in the stored trail, each fact once", async () => {
+    // A store that keeps what it is given, as Postgres does.
+    const stored: ProtocolEvent[] = [];
+    const auditStore: AuditStore = {
+      ...createMemoryAuditStore(),
+      append: async (event) => {
+        stored.push(event);
+      },
+      recent: async (limit) => stored.slice(-limit),
+    };
+    const store = createMemorySandboxStateStore();
+    const first = createSandboxRuntime({ store, auditStore });
+    await first.hydrateSandbox();
+    const api = appFor(first);
+    const { worker } = await hiredAndFunded(api);
+    const spent = await spend(api, worker, USDC(10));
+    assert.equal(spent.body.result.verdict, "ALLOW", JSON.stringify(spent.body));
+
+    const before = (await api.get("/audit")).body.events as Json[];
+    const typesOf = (events: Json[], simTxId: string) =>
+      events.filter((e) => e.payload.simTxId === simTxId).map((e) => e.type);
+    // What only the simulator knows happened: the deposit behind a fund, the
+    // execution behind a spend.
+    const funded = before.find((e) => e.type === "SandboxFunded")!;
+    assert.deepEqual(typesOf(before, funded.payload.simTxId).sort(), [
+      "SandboxFunded",
+      "TreasuryDeposit",
+    ]);
+    const spendTx = spent.body.result.simTxId as string;
+    assert.ok(typesOf(before, spendTx).includes("ActionExecuted"));
+    // What the runtime records itself is not recorded a second time.
+    for (const type of ["ProposalCreated", "ProposalVoted", "ProposalExecuted", "AllowanceSpent"]) {
+      const seen = before.filter((e) => e.type === type).map((e) => e.payload.simTxId);
+      assert.ok(seen.length > 0, type);
+      assert.equal(new Set(seen).size, seen.length, `${type} once per simulated transaction`);
+    }
+    assert.ok(before.every((e) => e.ledger === "sandbox"));
+
+    // Reading the trail again adds nothing to it.
+    const again = (await api.get("/audit")).body.events as Json[];
+    assert.equal(again.length, before.length);
+    await first.drain();
+    assert.ok(stored.some((e) => e.type === "TreasuryDeposit" && e.ledger === "sandbox"));
+    assert.equal(stored.length, before.length, "everything served is stored");
+
+    // A second process over the same stores serves the same trail.
+    const second = createSandboxRuntime({ store, auditStore });
+    assert.equal(await second.hydrateSandbox(), true);
+    await second.hydrateAudit();
+    const after = (await appFor(second).get("/audit")).body.events as Json[];
+    const key = (e: Json) => `${e.type}:${e.payload.simTxId ?? ""}:${e.payload.seq}`;
+    assert.deepEqual(after.map(key).sort(), before.map(key).sort());
+    assert.equal(stored.length, before.length, "and stores nothing twice");
   });
 
   it("writes through on every committed call, one version each", async () => {

@@ -2142,6 +2142,7 @@ export class CrewRuntime {
     complete: boolean;
     store: string;
   }> {
+    await this.settleSandboxTrail();
     const now = new Date();
     const sinceIso =
       since ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -2215,6 +2216,7 @@ export class CrewRuntime {
     gasComplete: boolean;
     store: string;
   }> {
+    await this.settleSandboxTrail();
     const from = Date.parse(fromIso);
     const to = Date.parse(toIso);
     const byDay = new Map<string, Record<string, number>>();
@@ -2286,6 +2288,7 @@ export class CrewRuntime {
     gasComplete: boolean;
     store: string;
   }> {
+    await this.settleSandboxTrail();
     const byAgent = new Map<string | null, Record<string, number>>();
     const add = (agent: string | null, type: string, count: number) => {
       const counts = byAgent.get(agent) ?? {};
@@ -2348,6 +2351,7 @@ export class CrewRuntime {
     toIso: string,
     limit = 5_000,
   ): Promise<{ events: ProtocolEvent[]; complete: boolean; store: string }> {
+    await this.settleSandboxTrail();
     const persisted = await this.auditStore.between(fromIso, toIso, limit);
     if (persisted) {
       return { ...persisted, store: this.auditStore.name };
@@ -2374,8 +2378,11 @@ export class CrewRuntime {
   }
 
   async audit(): Promise<ProtocolEvent[]> {
+    await this.settleSandboxTrail();
     const [remote, persisted] = await Promise.all([
-      this.client.getAuditTrail(),
+      // A sandbox's simulator events are already in this runtime's own trail
+      // (`settleSandboxTrail`); reading them again here would show each twice.
+      this.sandboxLedger ? [] : this.client.getAuditTrail(),
       this.recentPersistedAudit(),
     ]);
     const seen = new Set<string>();
@@ -4156,6 +4163,62 @@ export class CrewRuntime {
   /** The simulator behind a sandbox runtime; undefined on every other. */
   get sandbox(): SandboxLedger | undefined {
     return this.sandboxLedger;
+  }
+
+  /**
+   * The newest simulator transaction whose events were reconciled with this
+   * runtime's own trail, per simulator. Keyed by the simulator because a
+   * reset, a restart and an adopted state each replace it, and each one
+   * numbers its transactions on its own.
+   */
+  private readonly simSettled = new WeakMap<object, number>();
+  private settling: Promise<void> = Promise.resolve();
+
+  /**
+   * Bring the simulator's own events into the trail this runtime keeps.
+   *
+   * The simulator emits an event for everything its rules did. Most have a
+   * twin here: the runtime records the same fact itself, under the same
+   * `simTxId`, with what it knows around it. The rest (a treasury deposit, the
+   * execution behind a spend, an escalation) exist nowhere else, and the
+   * simulator holds them in memory only. Each one without a twin is recorded
+   * like any other event, so it is stored, counted and still there after a
+   * restart. Nothing is recorded twice. A no-op on a runtime that is not a
+   * sandbox.
+   */
+  settleSandboxTrail(): Promise<void> {
+    if (!this.sandboxLedger) return this.settling;
+    // One pass at a time: two overlapping passes would each record the same event.
+    this.settling = this.settling.then(async () => {
+      const client = this.sandboxLedger?.client;
+      if (!client) return;
+      const settled = this.simSettled.get(client) ?? 0;
+      let newest = settled;
+      const trail = await client.getAuditTrail();
+      // What this runtime recorded itself, read before anything below is added:
+      // a simulator event is no twin of another simulator event.
+      const own = new Set(this.localAudit.map((e) => `${e.type}:${String(e.payload.simTxId)}`));
+      for (const event of trail) {
+        const simTxId = event.payload.simTxId;
+        const n = typeof simTxId === "string" ? Number(simTxId.replace(/^simtx_/, "")) : NaN;
+        if (!Number.isInteger(n) || n <= settled) continue;
+        newest = Math.max(newest, n);
+        if (!own.has(`${event.type}:${simTxId}`)) this.pushAudit(event);
+      }
+      this.simSettled.set(client, newest);
+    });
+    return this.settling;
+  }
+
+  /**
+   * Wait until everything this runtime has raised is in its stores: the
+   * simulator's events reconciled, the simulator's state written, and every
+   * background write settled. Called before a runtime is let go of.
+   */
+  async drain(): Promise<void> {
+    await this.settleSandboxTrail();
+    await this.sandboxLedger?.flush();
+    await Promise.all(this.inFlight);
   }
 
   private requireSandbox(): SandboxLedger {
