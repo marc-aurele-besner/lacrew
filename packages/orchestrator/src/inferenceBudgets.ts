@@ -296,7 +296,7 @@ export function createInferenceBudgets(opts: {
           (view.budget.policy === "hard"
             ? "Further model calls are refused until the cap is raised or the period rolls."
             : "This is a soft budget: nothing is blocked.") +
-          " This does not affect onchain spending, which its policy stack bounds separately." +
+          " This does not affect what it may spend from its allowance, which its policy stack bounds separately." +
           qualifier
         : `INFERENCE_BUDGET_WARNING — ${view.scopeKey} is at ${pct}% of its ${dimension} budget for ${view.period.key}.` +
           qualifier;

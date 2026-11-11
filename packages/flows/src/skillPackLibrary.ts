@@ -98,7 +98,7 @@ const stablecoinYieldDesk: SkillPack = {
       body: [
         "Run the `yield-rotation-check` flow with the current allocation, the cash floor, and the protocol to read TVL for. It reads the admitted market's reserves and the protocol's TVL before it forms a view.",
         "The verdict is one word: ROTATE, HOLD, or DERISK. A rate you cannot exit is not a rate, and a move that breaks the cash floor is not a move.",
-        "The allocation itself is a gate. A size past the clip does not fail — it escalates and waits for the treasury lead onchain, so report it as waiting rather than as refused.",
+        "The allocation itself is a gate. A size past the clip does not fail — it escalates and waits for the treasury lead, so report it as waiting rather than as refused.",
       ].join("\n"),
     },
     {

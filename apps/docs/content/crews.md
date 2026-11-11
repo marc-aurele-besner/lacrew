@@ -524,7 +524,7 @@ that — the `trade` gate's verdict, and the `receipt` step that must not exist.
 
 A trade the desk _has_ admitted a venue for is not automatically taken either.
 Over the executor's clip size the propose escalates, the intent parks for the
-risk manager onchain, and the run writes the memo they read before approving —
+risk manager, and the run writes the memo they read before approving —
 which the eval suite pins alongside the refusal
 (`lacrew flows eval --blueprint defi-desk`).
 

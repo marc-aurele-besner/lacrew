@@ -89,7 +89,7 @@ const deskExecuteTrade: FlowTemplate = {
   id: "tpl-desk-execute-trade",
   name: "Desk: execute trade",
   description:
-    "Pre-flight a route plan, ask policy about the venue, then propose the trade at clip size. Under the executor's cap it executes; over it, the intent sits pending the risk manager onchain and the flow writes the memo they will read; at a venue nobody admitted it stands down without proposing anything.",
+    "Pre-flight a route plan, ask policy about the venue, then propose the trade at clip size. Under the executor's cap it executes; over it, the intent sits pending the risk manager and the flow writes the memo they will read; at a venue nobody admitted it stands down without proposing anything.",
   category: "trading",
   author: "LaCrew",
   definition: flow("desk-execute-trade", "Desk: execute trade")
@@ -155,7 +155,7 @@ const deskExecuteTrade: FlowTemplate = {
     .model("risk-memo", {
       label: "Memo for the risk manager",
       prompt:
-        "The trade escalated and the intent is pending the risk manager's approval onchain: {{steps.trade.json}}\nPlan: {{input}}\n\nWrite the two-sentence memo the risk manager reads before approving or denying. Lead with the loss if the route is wrong.",
+        "The trade escalated and the intent is pending the risk manager's approval: {{steps.trade.json}}\nPlan: {{input}}\n\nWrite the two-sentence memo the risk manager reads before approving or denying. Lead with the loss if the route is wrong.",
       next: null,
     })
     .model("stand-down", {
@@ -930,7 +930,7 @@ const yieldRotationCheck: FlowTemplate = {
   id: "tpl-yield-rotation-check",
   name: "Yield: rotation check",
   description:
-    "Every epoch, compare the admitted lending markets against where the capital already sits and rotate only when the spread pays for the move. The allocation is a gate, so a size past the clip waits for the treasury lead onchain.",
+    "Every epoch, compare the admitted lending markets against where the capital already sits and rotate only when the spread pays for the move. The allocation is a gate, so a size past the clip waits for the treasury lead.",
   category: "treasury",
   author: "LaCrew",
   definition: flow("yield-rotation-check", "Yield: rotation check")
@@ -989,7 +989,7 @@ const yieldRotationCheck: FlowTemplate = {
     .model("lead-memo", {
       label: "Memo for the treasury lead",
       prompt:
-        "The allocation escalated and sits pending the treasury lead onchain: {{steps.allocate.json}}\nReserves: {{steps.reserves.json}}\n\nWrite the two-sentence memo they read before approving. Lead with what happens to the capital if the market's liquidity dries up, not with the rate.",
+        "The allocation escalated and sits pending the treasury lead: {{steps.allocate.json}}\nReserves: {{steps.reserves.json}}\n\nWrite the two-sentence memo they read before approving. Lead with what happens to the capital if the market's liquidity dries up, not with the rate.",
       next: null,
     })
     .model("denied-note", {

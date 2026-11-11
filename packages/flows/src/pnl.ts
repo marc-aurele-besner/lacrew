@@ -923,12 +923,10 @@ export function buildPnlReport(input: PnlBuildInput): PnlReport {
 
   const notes: string[] = [];
   if (!input.sources.onchain.available) {
-    notes.push(
-      "No chain-derived rows are readable for this period — zeros here are not a claim of zero.",
-    );
+    notes.push("No ledger rows are readable for this period — zeros here are not a claim of zero.");
   } else if (!input.sources.onchain.complete) {
     notes.push(
-      "Onchain rows were answered from a bounded ring, so older activity in this period may be missing.",
+      "Ledger rows were answered from a bounded ring, so older activity in this period may be missing.",
     );
   }
   if (!input.sources.inference.available) {

@@ -32,20 +32,25 @@ function amount(base: string, decimals = 6): string {
   return `${whole}.${frac}`;
 }
 
-function printReport(report: PnlReport): void {
+/**
+ * `sandbox` is true when the figures came from the simulator: its spends are
+ * labelled as such, since nothing in them was mined.
+ */
+function printReport(report: PnlReport, sandbox = false): void {
+  const ledger = sandbox ? "Sandbox" : "Onchain";
   const who = report.scope.kind === "agent" ? report.scope.agentId! : report.scope.crewId;
   console.log(`${who}  ${report.period.key}  (${report.period.from} → ${report.period.to} UTC)`);
   console.log(`  asOf        ${report.asOf}`);
 
   for (const asset of report.totals.onchain.assets) {
     console.log(
-      `  Onchain     ${amount(asset.spent)} ${asset.asset} spent · ` +
+      `  ${ledger}     ${amount(asset.spent)} ${asset.asset} spent · ` +
         `${amount(asset.pending)} pending · ${amount(asset.granted)} granted` +
         (asset.marketplace !== "0" ? ` · ${amount(asset.marketplace)} marketplace` : ""),
     );
   }
   if (report.totals.onchain.assets.length === 0) {
-    console.log(`  Onchain     nothing settled in this window`);
+    console.log(`  ${ledger}     nothing settled in this window`);
   }
 
   const inf = report.totals.inference;
@@ -102,7 +107,7 @@ function printReport(report: PnlReport): void {
 
   console.log("");
   console.log(
-    `  sources: onchain ${sourceLabel(report.sources.onchain)} · ` +
+    `  sources: ${sandbox ? "sandbox" : "onchain"} ${sourceLabel(report.sources.onchain)} · ` +
       `inference ${sourceLabel(report.sources.inference)} · ` +
       `connectors ${sourceLabel(report.sources.connectors)}`,
   );
@@ -161,11 +166,13 @@ shown, and neither is added to the other.`);
   }
   const body = (await res.json().catch(() => ({}))) as PnlReport & {
     error?: string;
+    mode?: string;
+    ledger?: string | null;
   };
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   if (args.includes("--json")) {
     console.log(JSON.stringify(body, null, 2));
     return;
   }
-  printReport(body);
+  printReport(body, body.ledger === "sandbox" || body.mode === "sandbox");
 }
