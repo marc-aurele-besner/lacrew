@@ -12,6 +12,7 @@ import {
   getDatabaseUrl,
   getOrg,
   listOrgs,
+  setOrgEpoch,
   upsertOrg,
   type DbHandle,
   type OrgRow,
@@ -46,7 +47,20 @@ export interface OrgRecord {
   addresses: Record<string, string> | null;
   /** Accounts holding the org's seats, by role (`root`, ...). Addresses only. */
   seats: Record<string, string> | null;
+  /** The org's own epoch cron; null when it runs on the operator's default. */
+  epochCron: string | null;
+  /** ISO time the org's next scheduled epoch is due, on the org's own clock. */
+  epochNextAt: string | null;
+  /** The same moment on the wall clock: `epochNextAt` less the time the org has skipped. */
+  epochDueAt: string | null;
   createdAt: string;
+}
+
+/** A write to an org's epoch cadence. `cron` is left as it is when not given. */
+export interface OrgEpochChange {
+  cron?: string | null;
+  nextAt: string | null;
+  dueAt: string | null;
 }
 
 export interface OrgDirectory {
@@ -59,6 +73,17 @@ export interface OrgDirectory {
    * addresses and seats are left as they are.
    */
   put(orgId: string, input: { mode: OrgMode }): Promise<{ org: OrgRecord; created: boolean }>;
+  /**
+   * Write an org's epoch cadence. With `ifNextAt`, only while the stored
+   * `epochNextAt` is still that value, which is how one due epoch is claimed
+   * by one caller. Null when the org is not registered or the stored time had
+   * already moved.
+   */
+  setEpoch(
+    orgId: string,
+    change: OrgEpochChange,
+    ifNextAt?: string | null,
+  ): Promise<OrgRecord | null>;
   /**
    * Remove an org and everything stored under it. False when it was not
    * registered.
@@ -112,10 +137,26 @@ export function createMemoryOrgDirectory(): OrgDirectory {
             chainId: null,
             addresses: null,
             seats: null,
+            epochCron: null,
+            epochNextAt: null,
+            epochDueAt: null,
             createdAt: new Date().toISOString(),
           };
       rows.set(orgId, org);
       return { org: structuredClone(org), created: !existing };
+    },
+    setEpoch: async (orgId, change, ifNextAt) => {
+      const existing = rows.get(orgId);
+      if (!existing) return null;
+      if (ifNextAt !== undefined && existing.epochNextAt !== ifNextAt) return null;
+      const org: OrgRecord = {
+        ...existing,
+        ...(change.cron === undefined ? {} : { epochCron: change.cron }),
+        epochNextAt: change.nextAt,
+        epochDueAt: change.dueAt,
+      };
+      rows.set(orgId, org);
+      return structuredClone(org);
     },
     remove: async (orgId) => rows.delete(orgId),
     close: async () => {},
@@ -131,6 +172,9 @@ function toRecord(row: OrgRow): OrgRecord {
     chainId: row.chainId,
     addresses: row.addresses,
     seats: row.seats,
+    epochCron: row.epochCron,
+    epochNextAt: row.epochNextAt,
+    epochDueAt: row.epochDueAt,
     createdAt: row.createdAt,
   };
 }
@@ -147,6 +191,10 @@ export function createPgOrgDirectory(options: { db: DbHandle }): OrgDirectory {
     put: async (orgId, input) => {
       const { org, created } = await upsertOrg(db(), { orgId, mode: input.mode });
       return { org: toRecord(org), created };
+    },
+    setEpoch: async (orgId, change, ifNextAt) => {
+      const row = await setOrgEpoch(db(), orgId, change, ifNextAt);
+      return row ? toRecord(row) : null;
     },
     remove: (orgId) => deleteOrg(db(), orgId),
     // The pool belongs to whoever injected it, and is closed there.

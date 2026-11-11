@@ -121,6 +121,12 @@ import { describeEventSources } from "./eventSources.js";
 import type { EventSourceId } from "./eventSources.js";
 import type { QueueProvider } from "./queue/index.js";
 import type { ModelProvider } from "./model/index.js";
+import {
+  InvalidEpochCronError,
+  processEpochStatus,
+  type EpochCadence,
+  type EpochCadenceStatus,
+} from "./epochCadence.js";
 
 export interface OrchestratorAppOptions {
   runtime: CrewRuntime;
@@ -199,6 +205,12 @@ export interface OrchestratorAppOptions {
   mcpEgress?: McpEgressPolicy;
   /** Whether due governance proposals are executed unprompted. Defaults to `LACREW_AUTO_EXECUTE`. */
   autoExecute?: boolean;
+  /**
+   * This org's own epoch cadence. Present when the process serves many orgs,
+   * each on its own schedule and its own clock; absent, the queue's one epoch
+   * schedule is this org's.
+   */
+  epochCadence?: EpochCadence;
 }
 
 /** JSON response with bigint-safe serialization (matches SDK return shapes). */
@@ -286,9 +298,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     pnl,
     mcpUseMock,
     authToken,
+    epochCadence,
   } = options;
   const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.LACREW_ORCH_CORS_ORIGINS);
   const app = new Hono();
+
+  /** When the next scheduled epoch runs, and on which clock that is told. */
+  const epochStatus = async (): Promise<EpochCadenceStatus> =>
+    epochCadence ? epochCadence.status() : processEpochStatus(queue.status().epochSchedule ?? null);
 
   /** True only for a runtime built on the simulator; never inferred from a missing chain. */
   const sandboxed = runtime.ledger === "sandbox";
@@ -656,6 +673,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
       governance: { autoExecute: options.autoExecute ?? autoExecuteEnabled() },
+      // The schedule the next epoch runs on and when that is: what a caller
+      // needs to offer "skip to the next pay period" on a sandbox.
+      epoch: await epochStatus(),
       runtimeStore: runtime.runtimeStoreName,
       ...options.healthExtra?.(),
     }),
@@ -3677,9 +3697,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * orchestrator bound to a chain, every `/sandbox` route answers 409
    * `not_sandbox` — there is no simulator to report on, and none is started.
    */
-  app.get("/sandbox", async (c) =>
-    jsonBig(c, { ...(await runtime.sandboxStatus()), mode: runtime.mode }),
-  );
+  /** The simulator's status with the epoch cadence a caller skips its clock towards. */
+  const sandboxView = async (): Promise<Record<string, unknown>> => ({
+    ...(await runtime.sandboxStatus()),
+    epoch: await epochStatus(),
+    mode: runtime.mode,
+  });
+
+  app.get("/sandbox", async (c) => jsonBig(c, await sandboxView()));
 
   /**
    * Credit play money to the simulated treasury: `{ amount }`, a positive
@@ -3696,7 +3721,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!runtime.sandbox) throw new NotSandboxError();
     if (amount === null) return jsonBig(c, { error: "invalid_amount" }, 400);
     const funded = await runtime.sandboxFund(amount);
-    return jsonBig(c, { ...funded, ...(await runtime.sandboxStatus()), mode: runtime.mode });
+    return jsonBig(c, { ...funded, ...(await sandboxView()) });
   });
 
   /**
@@ -3704,16 +3729,22 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * at most `limits.maxAdvanceSeconds`. Session keys expire, rate windows
    * roll and timelocks lapse as they would have. Time only moves forward; a
    * reset puts the clock back on wall time.
+   *
+   * An org with a cadence of its own (`epoch.clock: "org"`) has its scheduled
+   * epoch run here, before the answer, when the clock moves past
+   * `epoch.nextAt`: `epochRan` says whether it did. Advancing by
+   * `epoch.secondsUntilNext` is "skip to the next pay period".
    */
   app.post("/sandbox/time/advance", async (c) => {
     const body = await bodyOf<{ seconds?: unknown }>(c);
     if (!runtime.sandbox) throw new NotSandboxError();
     if (typeof body.seconds !== "number") return jsonBig(c, { error: "invalid_seconds" }, 400);
     const advanced = await runtime.sandboxAdvanceTime(body.seconds);
+    const epoch = (await epochCadence?.clockMoved("advanced")) ?? { ran: false };
     return jsonBig(c, {
       advancedSeconds: advanced.seconds,
-      ...(await runtime.sandboxStatus()),
-      mode: runtime.mode,
+      epochRan: epoch.ran,
+      ...(await sandboxView()),
     });
   });
 
@@ -3725,7 +3756,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    */
   app.post("/sandbox/reset", async (c) => {
     await runtime.sandboxReset();
-    return jsonBig(c, { reset: true, ...(await runtime.sandboxStatus()), mode: runtime.mode });
+    // The clock is back on wall time: the next epoch is worked out from there.
+    await epochCadence?.clockMoved("reset");
+    return jsonBig(c, { reset: true, ...(await sandboxView()) });
   });
 
   /**
@@ -3872,12 +3905,14 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const asset = c.req.query("asset") || undefined;
     try {
       const currentEpoch = await runtime.getCurrentEpoch(asset);
+      const cadence = await epochStatus();
       return jsonBig(c, {
         currentEpoch,
         asset,
         mode: runtime.mode,
         chainId: runtime.chainId,
-        schedule: q.epochSchedule ?? null,
+        schedule: cadence.schedule,
+        cadence,
         queue: q.provider,
       });
     } catch (err) {
@@ -3923,8 +3958,37 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // Reschedule the recurring epoch at runtime. The cadence is a workspace
     // setting owned by the cloud; it pushes the chosen cron here, and the
     // durable queue persists it so the schedule survives restart.
-    const body = await bodyOf<{ cron?: string }>(c);
+    const body = await bodyOf<{ cron?: string | null }>(c);
     const cron = typeof body.cron === "string" ? body.cron.trim().replace(/\s+/g, " ") : "";
+    // An org with a cadence of its own keeps it with the org: nothing about
+    // the queue's schedule changes, and no other org is touched. `cron: null`
+    // goes back to the operator's default.
+    if (epochCadence) {
+      if (body.cron !== null && !isValidCron(cron)) {
+        return jsonBig(
+          c,
+          { error: "invalid_cron", detail: "Expected a 5-field cron expression, or null." },
+          400,
+        );
+      }
+      let cadence: EpochCadenceStatus;
+      try {
+        cadence = await epochCadence.setSchedule(body.cron === null ? null : cron);
+      } catch (err) {
+        if (!(err instanceof InvalidEpochCronError)) throw err;
+        return jsonBig(
+          c,
+          { error: "invalid_cron", detail: "That expression never matches a date." },
+          400,
+        );
+      }
+      return jsonBig(c, {
+        schedule: cadence.schedule,
+        cadence,
+        queue: queue.status().provider,
+        mode: runtime.mode,
+      });
+    }
     if (!isValidCron(cron)) {
       return jsonBig(
         c,
@@ -3940,6 +4004,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const q = queue.status();
     return jsonBig(c, {
       schedule: q.epochSchedule ?? null,
+      cadence: await epochStatus(),
       queue: q.provider,
       mode: runtime.mode,
     });

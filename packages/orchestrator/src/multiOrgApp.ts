@@ -24,6 +24,7 @@ import {
   rejectsNonJsonBody,
 } from "./httpGuards.js";
 import type { ModelProvider } from "./model/index.js";
+import { DEFAULT_EPOCH_CRON, type EpochScheduleStore } from "./epochCadence.js";
 import {
   isOrgId,
   isOrgMode,
@@ -168,7 +169,7 @@ const SETTINGS: Array<Omit<MultiOrgSetting, "configured">> = [
     env: ["EPOCH_CRON", "EPOCH_INTERVAL_MS"],
     handling: "shared",
     reason:
-      "One schedule runs every org's epoch. An org cannot change it (POST /epoch/schedule is refused); POST /epoch still runs that org's epoch on demand.",
+      "EPOCH_CRON is the cadence of an org that has set none. Each org sets its own with POST /epoch/schedule, kept with the org and read on the org's own clock; the shared minute sweep only checks which orgs are due. EPOCH_INTERVAL_MS is not used.",
   },
   {
     surface: "queue.tick",
@@ -299,6 +300,16 @@ export interface OrgWorldContext {
   env: NodeJS.ProcessEnv;
   /** Where one org's state is kept. Defaults to Postgres when DATABASE_URL is set, else memory. */
   stores?: (orgId: string) => OrgStores;
+  /**
+   * Where one org's epoch cadence is kept. Absent, a world is built with no
+   * cadence of its own and its scheduled epoch never runs unprompted.
+   */
+  epoch?: (orgId: string) => EpochScheduleStore;
+}
+
+/** The cadence of an org that has set none: the operator's `EPOCH_CRON`, else hourly. */
+export function defaultEpochCron(env: NodeJS.ProcessEnv = process.env): string {
+  return env.EPOCH_CRON?.trim() || DEFAULT_EPOCH_CRON;
 }
 
 /** What an org's `/health` adds in multi-org mode. */
@@ -316,8 +327,9 @@ function orgHealth(org: OrgRecord, env: NodeJS.ProcessEnv): () => Record<string,
 
 /**
  * A queue as one org sees it: what it enqueues carries its id, so the worker
- * that picks the job up knows whose it is, and the one schedule every org
- * shares is not its to change.
+ * that picks the job up knows whose it is. The queue's own schedules are the
+ * process's and not an org's to change: an org's epoch cadence is kept with
+ * the org, not in the queue.
  */
 function orgQueue(queue: QueueProvider, orgId: string): QueueProvider {
   return {
@@ -374,7 +386,14 @@ export async function buildOrgWorld(org: OrgRecord, context: OrgWorldContext): P
     auditStore: stores.audit,
     runtimeStore: stores.runtime,
   });
-  return createOrgWorld(org.orgId, { runtime, env: orgEnvironment(context.env), health }, shared);
+  const epoch = context.epoch
+    ? { store: context.epoch(org.orgId), defaultCron: defaultEpochCron(context.env) }
+    : undefined;
+  return createOrgWorld(
+    org.orgId,
+    { runtime, env: orgEnvironment(context.env), health, ...(epoch ? { epoch } : {}) },
+    shared,
+  );
 }
 
 export interface MultiOrgOptions {
@@ -411,11 +430,14 @@ export interface MultiOrgOptions {
 
 export interface MultiOrgHost {
   readonly app: Hono;
-  /** The scheduled epoch, for every registered org. */
+  /**
+   * The shared tick: run the scheduled epoch of each org whose own cadence
+   * says it is due. Returns how many orgs were looked at closely.
+   */
   onEpoch(): Promise<unknown>;
   /** A queued tick names no org; it is dropped. */
   onTick(): Promise<unknown>;
-  /** The minute sweep, for every org that has something scheduled. */
+  /** The minute sweep: due epochs first, then every org that has something scheduled. */
   onFlowCron(): Promise<unknown>;
   /** One accepted webhook delivery, for the org its job names. */
   onWebhook(data: Record<string, unknown>): Promise<unknown>;
@@ -457,6 +479,8 @@ function describeOrg(org: OrgRecord): Record<string, unknown> {
     provisioned: isProvisioned(org),
     served: SERVED_ORG_MODES.includes(org.mode),
     ...(org.mode === "sandbox" ? { root: sandboxRootOf(org) } : {}),
+    // The org's own cron (null: the operator's default) and its next epoch on its own clock.
+    epoch: { schedule: org.epochCron, nextAtIso: org.epochNextAt },
     createdAt: org.createdAt,
   };
 }
@@ -482,6 +506,18 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     isDbConfigured: options.isDbConfigured,
     env,
     ...(options.stores ? { stores: options.stores } : {}),
+    // An org's cadence is kept on its directory row.
+    epoch: (orgId) => ({
+      read: async () => {
+        const org = await directory.get(orgId);
+        return org ? { cron: org.epochCron, nextAt: org.epochNextAt, dueAt: org.epochDueAt } : null;
+      },
+      write: async (change, ifNextAt) => {
+        const org = await directory.setEpoch(orgId, change, ifNextAt);
+        if (org) remember(orgId, org);
+        return org !== null;
+      },
+    }),
   };
 
   const worlds = new Map<string, Entry>();
@@ -558,6 +594,7 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     what: string,
     work: (world: OrgWorld) => Promise<unknown>,
     wake: "every" | "scheduled",
+    only: (org: OrgRecord) => boolean = () => true,
   ): Promise<number> {
     const orgs = await directory.list();
     const registered = new Set(orgs.map((org) => org.orgId));
@@ -571,6 +608,7 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     let ran = 0;
     for (const org of orgs) {
       remember(org.orgId, org);
+      if (!only(org)) continue;
       if (wake === "scheduled" && !worlds.has(org.orgId)) {
         const since = dormant.get(org.orgId);
         if (since !== undefined && now() - since < dormantRecheckMs) continue;
@@ -584,6 +622,22 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     }
     return ran;
   }
+
+  /**
+   * The shared tick. It decides nothing about cadence: it passes over every
+   * org whose next epoch is still ahead on the wall clock, and asks each of
+   * the others, on its own clock, whether its epoch is due. An org whose due
+   * time was never worked out is asked once, which works it out.
+   */
+  const runDueEpochs = (): Promise<number> =>
+    forEachOrg(
+      "scheduled epoch",
+      (world) => world.onEpochDue(),
+      "every",
+      (org) =>
+        SERVED_ORG_MODES.includes(org.mode) &&
+        (org.epochDueAt === null || Date.parse(org.epochDueAt) <= now()),
+    );
 
   async function evictIdle(): Promise<string[]> {
     if (idleMs <= 0) return [];
@@ -770,9 +824,18 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
 
   return {
     app,
-    onEpoch: () => forEachOrg("scheduled epoch", (world) => world.onEpoch(), "every"),
+    onEpoch: runDueEpochs,
     onTick: async () => undefined,
-    onFlowCron: () => forEachOrg("minute sweep", (world) => world.onFlowCron(), "scheduled"),
+    onFlowCron: async () => {
+      // The minute sweep is the tick every queue provider fires, so due epochs
+      // ride it: a cadence finer than the queue's own epoch schedule still runs.
+      try {
+        await runDueEpochs();
+      } catch (err) {
+        console.error("[@lacrew/orchestrator] due epoch sweep failed:", err);
+      }
+      return forEachOrg("minute sweep", (world) => world.onFlowCron(), "scheduled");
+    },
     onWebhook: async (data) => {
       const orgId = data.orgId;
       const org = isOrgId(orgId) ? await lookup(orgId) : null;

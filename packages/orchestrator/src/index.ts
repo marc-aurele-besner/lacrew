@@ -379,13 +379,25 @@ export {
   sandboxRootFor,
   sandboxRootOf,
   type OrgDirectory,
+  type OrgEpochChange,
   type OrgMode,
   type OrgRecord,
 } from "./orgDirectory.js";
 export {
+  createEpochCadence,
+  DEFAULT_EPOCH_CRON,
+  InvalidEpochCronError,
+  processEpochStatus,
+  type EpochCadence,
+  type EpochCadenceStatus,
+  type EpochScheduleRow,
+  type EpochScheduleStore,
+} from "./epochCadence.js";
+export {
   buildOrgWorld,
   createMultiOrgHost,
   DEFAULT_ORG_IDLE_MS,
+  defaultEpochCron,
   multiOrgSettings,
   orgEnvironment,
   SERVED_ORG_MODES,

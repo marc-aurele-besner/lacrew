@@ -37,6 +37,7 @@ import { createInferenceBudgets, crewIdForSeat } from "./inferenceBudgets.js";
 import { connectorPricesFromEnv, createPnl } from "./pnl.js";
 import { ancestorsOf } from "./flowScope.js";
 import type { OrgNode } from "@lacrew/core";
+import { createEpochCadence, type EpochScheduleStore } from "./epochCadence.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 import { createRootAuthSurface, readRootAuthConfig } from "./rootAuth.js";
@@ -61,6 +62,12 @@ export interface OrgConfig {
    * here which org this is and which process-wide settings it is not given.
    */
   health?: () => Record<string, unknown>;
+  /**
+   * Where this org's own epoch cadence is kept, and the cron it runs on until
+   * it sets one. Absent, the queue's one epoch schedule runs this org's epoch,
+   * which is right for a process that serves a single org.
+   */
+  epoch?: { store: EpochScheduleStore; defaultCron: string };
 }
 
 /** What every org in the process shares. */
@@ -82,6 +89,11 @@ export interface OrgWorld {
   readonly runtime: CrewRuntime | null;
   /** The scheduled epoch: stream allowances, then run epoch-triggered flows. */
   onEpoch(): Promise<unknown>;
+  /**
+   * Run the scheduled epoch if this org's own cadence says it is due on the
+   * org's own clock. Never runs for an org with no cadence of its own.
+   */
+  onEpochDue(): Promise<{ ran: boolean }>;
   onTick(): Promise<unknown>;
   /** The minute sweep: due cron flows, timeouts, heartbeats, discovery. */
   onFlowCron(): Promise<unknown>;
@@ -430,12 +442,26 @@ export async function createOrgWorld(
     );
   }
 
+  // Bound once the handlers exist: the cadence is handed to the app first.
+  let scheduledEpoch: () => Promise<unknown> = async () => undefined;
+  const epochCadence = config.epoch
+    ? createEpochCadence({
+        store: config.epoch.store,
+        defaultCron: config.epoch.defaultCron,
+        // The ledger's clock: the simulator's own in a sandbox, wall time otherwise.
+        now: () => (runtime.sandbox ? runtime.sandbox.now() : Math.floor(Date.now() / 1000)),
+        offset: () => runtime.sandbox?.clockOffset ?? 0,
+        run: () => scheduledEpoch(),
+      })
+    : undefined;
+
   const app = createOrchestratorApp({
     runtime,
     queue,
     model,
     flows,
     mcpBackend,
+    ...(epochCadence ? { epochCadence } : {}),
     connectors,
     connectorModes,
     crewBindings,
@@ -841,12 +867,14 @@ export async function createOrgWorld(
       return result;
     },
   } satisfies QueueHandlers;
+  scheduledEpoch = handlers.onEpoch;
 
   return {
     orgId,
     app,
     runtime,
     ...handlers,
+    onEpochDue: async () => (epochCadence ? epochCadence.runIfDue() : { ran: false }),
     onFlowCron: async () => {
       try {
         return await handlers.onFlowCron();
@@ -896,6 +924,7 @@ export function createUnavailableOrgWorld(
     }),
     runtime: null,
     onEpoch: async () => undefined,
+    onEpochDue: async () => ({ ran: false }),
     onTick: async () => undefined,
     onFlowCron: async () => undefined,
     onWebhook: async () => undefined,

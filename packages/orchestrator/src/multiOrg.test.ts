@@ -402,12 +402,14 @@ describe("multi-org host: the contract", () => {
         shared.includes("epoch.schedule") && shared.includes("model") && shared.includes("auth"),
       );
 
-      // The one schedule every org shares is not one org's to change.
+      // An org's cadence is its own: setting it leaves the queue's schedule alone.
+      const queueBefore = h.queue.status().epochSchedule;
       const reschedule = await h.call("POST", `/o/${orgId}/epoch/schedule`, {
         body: { cron: "*/5 * * * *" },
       });
-      assert.equal(reschedule.status, 400);
-      assert.equal(reschedule.body.error, "epoch_schedule_shared");
+      assert.equal(reschedule.status, 200, reschedule.text);
+      assert.equal(reschedule.body.schedule, "*/5 * * * *");
+      assert.equal(h.queue.status().epochSchedule, queueBefore);
     } finally {
       await h.close();
     }
@@ -749,6 +751,9 @@ describe("multi-org host: two orgs side by side", () => {
           chainId: null,
           addresses: null,
           seats: null,
+          epochCron: null,
+          epochNextAt: null,
+          epochDueAt: null,
           createdAt: "",
         },
         {
@@ -913,16 +918,201 @@ describe("multi-org host: two orgs side by side", () => {
       const epochOf = async (org: string) =>
         (await h.call("GET", `/o/${org}/epoch`)).body.currentEpoch as number;
       const before = { a: await epochOf(a), b: await epochOf(b) };
-      // The queue's one epoch job: every registered org's epoch, the unserved
-      // chain org skipped over without stopping the rest.
+      // Both orgs' epochs fell due a minute ago, as a tick on another replica
+      // would find them. The shared tick runs each, the unserved chain org
+      // passed over without stopping the rest.
+      const past = new Date(Date.now() - 60_000).toISOString();
+      for (const org of [a, b, chain]) {
+        assert.ok(await h.directory.setEpoch(org, { nextAt: past, dueAt: past }));
+      }
       await h.host.onEpoch();
       assert.equal(await epochOf(a), before.a + 1);
       assert.equal(await epochOf(b), before.b + 1);
+      // Each moved on to its next period, so the next tick runs nothing twice.
+      for (const org of [a, b]) {
+        const row = await h.directory.get(org);
+        assert.ok(Date.parse(row!.epochNextAt!) > Date.now(), "the due time moved on");
+      }
+      await h.host.onEpoch();
       await h.host.onFlowCron();
+      assert.equal(await epochOf(a), before.a + 1);
+      assert.equal(await epochOf(b), before.b + 1);
+      assert.equal((await h.directory.get(chain))!.epochNextAt, past);
       // A queued tick names no org, and a webhook job for no org is dropped.
       assert.equal(await h.host.onTick(), undefined);
       assert.equal(await h.host.onWebhook({ triggerId: "x" }), undefined);
       assert.equal(await h.host.onWebhook({ orgId: `gone-${tag()}`, triggerId: "x" }), undefined);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe("multi-org host: each org's epoch cadence", () => {
+  /** A funded org with one worker on a grant, so an epoch has something to stream. */
+  async function staffed(h: Harness, prefix: string): Promise<string> {
+    const org = await register(h, prefix);
+    ok(await h.call("POST", `/o/${org}/sandbox/fund`, { body: { amount: USDC(5000) } }), "fund");
+    const hire = await govern(h, org, "/governance/propose-hire", { label: "worker" });
+    await govern(h, org, "/governance/propose-set-grant", {
+      account: hire.account,
+      amount: USDC(50),
+    });
+    return org;
+  }
+  const epochOf = async (h: Harness, org: string) =>
+    (await h.call("GET", `/o/${org}/epoch`)).body.currentEpoch as number;
+  const cadenceOf = async (h: Harness, org: string) =>
+    (await h.call("GET", `/o/${org}/sandbox`)).body.epoch as Json;
+  const advance = async (h: Harness, org: string, seconds: number) => {
+    const res = await h.call("POST", `/o/${org}/sandbox/time/advance`, { body: { seconds } });
+    ok(res, "advance");
+    return res.body;
+  };
+
+  it("gives an org the operator's default until it sets its own, and says which it is", async () => {
+    const h = await harness({ env: { EPOCH_CRON: "0 0 * * *" } });
+    try {
+      const org = await register(h, "cad-default");
+      const first = await cadenceOf(h, org);
+      assert.equal(first.schedule, "0 0 * * *");
+      assert.equal(first.source, "default");
+      assert.equal(first.clock, "org");
+      assert.ok(first.nextAt > Date.now() / 1000);
+      assert.equal(first.nextAtIso, new Date(first.nextAt * 1000).toISOString());
+      assert.ok(first.secondsUntilNext > 0 && first.secondsUntilNext <= 86_400);
+
+      const set = await h.call("POST", `/o/${org}/epoch/schedule`, { body: { cron: "0 * * * *" } });
+      ok(set, "schedule");
+      assert.equal(set.body.schedule, "0 * * * *");
+      assert.equal(set.body.cadence.source, "org");
+      assert.ok(set.body.cadence.secondsUntilNext <= 3600);
+
+      // The same answer wherever it is read.
+      const health = (await h.call("GET", `/o/${org}/health`)).body;
+      assert.equal(health.epoch.schedule, "0 * * * *");
+      assert.equal(health.epoch.nextAt, set.body.cadence.nextAt);
+      const read = (await h.call("GET", `/o/${org}/epoch`)).body;
+      assert.equal(read.schedule, "0 * * * *");
+      assert.equal(read.cadence.nextAt, set.body.cadence.nextAt);
+      const listed = (await h.call("GET", `/orgs/${org}`)).body;
+      assert.deepEqual(listed.epoch, {
+        schedule: "0 * * * *",
+        nextAtIso: set.body.cadence.nextAtIso,
+      });
+
+      const back = await h.call("POST", `/o/${org}/epoch/schedule`, { body: { cron: null } });
+      ok(back, "back to default");
+      assert.equal(back.body.cadence.source, "default");
+      assert.equal(back.body.schedule, "0 0 * * *");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("refuses a cron that does not parse or never fires", async () => {
+    const h = await harness();
+    try {
+      const org = await register(h, "cad-bad");
+      for (const cron of ["every day", "0 0 31 2 *", "", 5]) {
+        const res = await h.call("POST", `/o/${org}/epoch/schedule`, { body: { cron } });
+        assert.equal(res.status, 400, `${JSON.stringify(cron)}: ${res.text}`);
+        assert.equal(res.body.error, "invalid_cron");
+      }
+      assert.equal((await cadenceOf(h, org)).source, "default");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("runs two orgs on different cadences, each when its own clock reaches its own epoch", async () => {
+    const h = await harness();
+    try {
+      const hourly = await staffed(h, "cad-hourly");
+      const monthly = await staffed(h, "cad-monthly");
+      ok(
+        await h.call("POST", `/o/${hourly}/epoch/schedule`, { body: { cron: "0 * * * *" } }),
+        "hourly",
+      );
+      ok(
+        await h.call("POST", `/o/${monthly}/epoch/schedule`, { body: { cron: "0 0 1 * *" } }),
+        "monthly",
+      );
+      const before = { hourly: await epochOf(h, hourly), monthly: await epochOf(h, monthly) };
+
+      // Skip the hourly org to its next pay period: its epoch runs before the answer.
+      const skip = (await cadenceOf(h, hourly)).secondsUntilNext as number;
+      const skipped = await advance(h, hourly, skip + 1);
+      assert.equal(skipped.epochRan, true);
+      assert.equal(await epochOf(h, hourly), before.hourly + 1);
+      assert.ok(skipped.epoch.secondsUntilNext <= 3600, "the next one is within the hour");
+      assert.ok(skipped.epoch.nextAt > skipped.clock.now);
+      // Its neighbour's clock and epoch did not move.
+      assert.equal(await epochOf(h, monthly), before.monthly);
+
+      // The monthly org moved the same distance is not due, unless the month turned.
+      const untilMonthly = (await cadenceOf(h, monthly)).secondsUntilNext as number;
+      if (untilMonthly > skip + 120) {
+        const short = await advance(h, monthly, skip + 1);
+        assert.equal(short.epochRan, false);
+        assert.equal(await epochOf(h, monthly), before.monthly);
+        assert.equal(short.epoch.nextAt, (await cadenceOf(h, monthly)).nextAt);
+      }
+      // The shared tick finds neither due, however often it fires.
+      await h.host.onEpoch();
+      await h.host.onFlowCron();
+      assert.equal(await epochOf(h, hourly), before.hourly + 1);
+      assert.equal(await epochOf(h, monthly), before.monthly);
+
+      // Skipped to its own pay period, the monthly org runs, and only it.
+      const rest = (await cadenceOf(h, monthly)).secondsUntilNext as number;
+      const ran = await advance(h, monthly, rest + 1);
+      assert.equal(ran.epochRan, true);
+      assert.equal(await epochOf(h, monthly), before.monthly + 1);
+      assert.equal(await epochOf(h, hourly), before.hourly + 1);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("runs a due epoch on the tick, for an org it had let go, and passes over the others", async () => {
+    const h = await harness({ idleMs: 60_000 });
+    try {
+      const due = await staffed(h, "cad-due");
+      const ahead = await staffed(h, "cad-ahead");
+      const before = { due: await epochOf(h, due), ahead: await epochOf(h, ahead) };
+      await cadenceOf(h, ahead);
+
+      // Both idle past the limit and let go; then one falls due.
+      h.clock.now += 61_000;
+      assert.deepEqual((await h.host.evictIdle()).sort(), [due, ahead].sort());
+      const past = new Date(Date.now() - 60_000).toISOString();
+      assert.ok(await h.directory.setEpoch(due, { nextAt: past, dueAt: past }));
+
+      await h.host.onFlowCron();
+      // The tick loaded the org whose epoch was due, and no other.
+      assert.deepEqual(h.host.loaded(), [due]);
+      assert.equal(await epochOf(h, due), before.due + 1);
+      assert.equal(await epochOf(h, ahead), before.ahead);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("works the next epoch out again from wall time when the sandbox is reset", async () => {
+    const h = await harness();
+    try {
+      const org = await register(h, "cad-reset");
+      ok(
+        await h.call("POST", `/o/${org}/epoch/schedule`, { body: { cron: "0 * * * *" } }),
+        "hourly",
+      );
+      await advance(h, org, 40 * 86_400);
+      assert.ok((await cadenceOf(h, org)).nextAt > Date.now() / 1000 + 39 * 86_400);
+      const reset = await h.call("POST", `/o/${org}/sandbox/reset`, { body: {} });
+      ok(reset, "reset");
+      assert.ok(reset.body.epoch.nextAt <= Date.now() / 1000 + 3600);
+      assert.equal(reset.body.epoch.schedule, "0 * * * *");
     } finally {
       await h.close();
     }
