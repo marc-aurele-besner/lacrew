@@ -21,6 +21,7 @@ import {
   type TokenLookup,
 } from "@lacrew/sdk";
 import type { LacrewClient } from "@lacrew/sdk/testing";
+import { SandboxNeedsChainError } from "@lacrew/sdk/sandbox";
 import {
   type DelegationProvider,
   type SessionDelegation,
@@ -59,6 +60,7 @@ import {
   type GasPayer,
   type GasReceipt,
   type GasReceiptSink,
+  type Ledger,
   type NodePolicyStack,
   narrowScopesForEscalation,
   policyForcesEscalation,
@@ -109,6 +111,14 @@ import {
   type RuntimeStore,
   type SessionRecord,
 } from "./runtimeStore.js";
+import {
+  NotSandboxError,
+  SANDBOX_MAX_ADVANCE_SECONDS,
+  SANDBOX_MAX_FUND,
+  SandboxLedger,
+  createSandboxStateStoreFromEnv,
+  type SandboxStateStore,
+} from "./sandboxLedger.js";
 
 /** Anvil/demo gas stipend so the ephemeral session key can submit propose. */
 /** Full authority: what a session gets when the caller does not narrow it. */
@@ -149,7 +159,13 @@ function sessionGasStipend(): bigint {
 /** Default session maxValue: 200 USDC (matches DeployMockOrg worker stream; over policy cap → escalate). */
 const DEFAULT_SESSION_MAX_VALUE = 200n * 10n ** 6n;
 
-export type RuntimeMode = "mock" | "onchain";
+/**
+ * What a runtime's answers are backed by. `onchain`: deployed contracts.
+ * `sandbox`: the in-process simulator, chosen explicitly and labelled on
+ * everything it produces — it applies the contract rules, and no contract
+ * enforces them. `mock`: the in-memory test client, in tests only.
+ */
+export type RuntimeMode = "mock" | "onchain" | "sandbox";
 
 /** The shape of a directive, for the audit trail — counts and labels, never text. */
 function summarizeBrief(brief: AgentBrief | null): {
@@ -266,8 +282,15 @@ export interface CrewRuntimeOptions {
    * Required. It used to default to the in-memory test client, which is how a
    * runtime with no chain still answered every read with an invented org.
    * Tests inject a client explicitly; production builds one from env.
+   * Omitted only for a sandbox runtime, whose client is the simulator's.
    */
-  client: LacrewClient | ProtocolClient;
+  client?: LacrewClient | ProtocolClient;
+  /**
+   * The simulator a sandbox runtime runs on. Given together with
+   * `mode: "sandbox"` and without `client`, or not at all: a sandbox is
+   * never something a runtime arrives at by missing a chain.
+   */
+  sandbox?: SandboxLedger;
   workerAgent?: `0x${string}`;
   spendTarget?: `0x${string}`;
   managerAgent?: `0x${string}`;
@@ -281,6 +304,15 @@ export interface CrewRuntimeOptions {
   gasStore?: GasStore;
   /** Persistence for session/intent records; defaults to bounded memory. */
   runtimeStore?: RuntimeStore;
+}
+
+/**
+ * A simulated write's name. Empty for a chain write, which is named by a
+ * `txHash` instead; the two never appear together.
+ */
+function simRef(result: object): { simTxId?: string } {
+  const id = (result as { simTxId?: unknown }).simTxId;
+  return typeof id === "string" ? { simTxId: id } : {};
 }
 
 function normalizePk(raw: string | undefined): `0x${string}` | undefined {
@@ -321,7 +353,8 @@ export type RuntimeBootFailure =
   | "incomplete_deployment"
   | "rpc_unreachable"
   | "chain_id_mismatch"
-  | "delegations_unavailable";
+  | "delegations_unavailable"
+  | "invalid_mode";
 
 /**
  * Whether this deployment has a play-money faucet, and what a top-up gives.
@@ -370,6 +403,42 @@ export class FaucetError extends Error {
   }
 }
 
+/**
+ * A sandbox as its control surface reports it. Every figure is simulated:
+ * the clock is the simulator's, and the treasury holds play money that exists
+ * nowhere else.
+ */
+export type SandboxStatus = {
+  ledger: "sandbox";
+  simulated: true;
+  orgId: string;
+  /** The org's human root. No key exists for it; the caller stands in. */
+  root: `0x${string}`;
+  /** How many writes produced this state; rises by one per simulator transaction. */
+  version: number;
+  clock: {
+    /** Unix seconds on the simulator's clock. */
+    now: number;
+    nowIso: string;
+    /** Seconds the clock has been advanced past wall time. */
+    offsetSeconds: number;
+  };
+  /** The simulated treasury, in the play-money token's base units. */
+  treasury: {
+    token: `0x${string}`;
+    symbol: string;
+    decimals: number;
+    total: string;
+    liquid: string;
+    reserved: string;
+  };
+  /** Where state is kept between restarts: `postgres`, or `memory` (lost on exit). */
+  store: string;
+  /** Why the last state write did not land; absent when state is durable. */
+  persistError?: string;
+  limits: { maxFund: string; maxAdvanceSeconds: number };
+};
+
 export type RuntimeBoot =
   { ok: true; runtime: CrewRuntime } | { ok: false; reason: RuntimeBootFailure; detail: string };
 
@@ -386,6 +455,19 @@ export type RuntimeBoot =
  * claims to be onchain and throws on every read.
  */
 export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
+  // Sandbox is opted into by name and by nothing else. A missing RPC, a dead
+  // chain or an incomplete address book all stay the failures they are below:
+  // none of them is ever answered with a simulator.
+  const requested = process.env.LACREW_MODE?.trim().toLowerCase();
+  if (requested === "sandbox") return createSandboxRuntimeFromEnv();
+  if (requested && requested !== "chain") {
+    return {
+      ok: false,
+      reason: "invalid_mode",
+      detail: `LACREW_MODE is "${requested}"; use "sandbox", or "chain" (the default).`,
+    };
+  }
+
   const rpc = process.env.ANVIL_RPC ?? process.env.RPC_URL;
   if (!rpc) {
     return {
@@ -540,8 +622,66 @@ export async function createRuntimeFromEnv(): Promise<RuntimeBoot> {
   };
 }
 
+/**
+ * Build a sandbox runtime: the simulator from an empty genesis (one root
+ * node, no funds, no other seat), with no chain dialed and no key read.
+ * Stored state is resumed later by `hydrateSandbox`, once migrations ran.
+ */
+function createSandboxRuntimeFromEnv(): RuntimeBoot {
+  const root = process.env.LACREW_SANDBOX_ROOT?.trim();
+  if (root && !/^0x[0-9a-fA-F]{40}$/.test(root)) {
+    return {
+      ok: false,
+      reason: "invalid_mode",
+      detail: "LACREW_SANDBOX_ROOT must be a 20-byte hex address (or unset).",
+    };
+  }
+  return {
+    ok: true,
+    runtime: createSandboxRuntime({
+      ...(root ? { root: root as `0x${string}` } : {}),
+      store: createSandboxStateStoreFromEnv(),
+      auditStore: createAuditStoreFromEnv(undefined, "sandbox"),
+      runtimeStore: createRuntimeStoreFromEnv(),
+    }),
+  };
+}
+
+/** A sandbox runtime over the given stores; memory for whichever is omitted. */
+export function createSandboxRuntime(
+  options: {
+    root?: `0x${string}`;
+    orgId?: string;
+    store?: SandboxStateStore;
+    auditStore?: AuditStore;
+    runtimeStore?: RuntimeStore;
+    /** Wall time in ms, for tests; the sandbox clock is this plus its offset. */
+    wallClock?: () => number;
+  } = {},
+): CrewRuntime {
+  return new CrewRuntime({
+    mode: "sandbox",
+    sandbox: new SandboxLedger({
+      ...(options.root ? { root: options.root } : {}),
+      ...(options.orgId ? { orgId: options.orgId } : {}),
+      ...(options.store ? { store: options.store } : {}),
+      ...(options.wallClock ? { wallClock: options.wallClock } : {}),
+    }),
+    ...(options.auditStore ? { auditStore: options.auditStore } : {}),
+    ...(options.runtimeStore ? { runtimeStore: options.runtimeStore } : {}),
+  });
+}
+
 export class CrewRuntime {
-  private readonly client: LacrewClient | ProtocolClient;
+  private readonly baseClient: LacrewClient | ProtocolClient | undefined;
+  private readonly sandboxLedger: SandboxLedger | undefined;
+  /**
+   * The injected client, or in sandbox mode the simulator's — read on every
+   * use, because a sandbox reset replaces it.
+   */
+  private get client(): LacrewClient | ProtocolClient {
+    return this.sandboxLedger?.client ?? this.baseClient!;
+  }
   private readonly workerAgent: `0x${string}`;
   private readonly spendTarget: `0x${string}`;
   private readonly managerAgent: `0x${string}`;
@@ -592,6 +732,21 @@ export class CrewRuntime {
 
   constructor(options: CrewRuntimeOptions) {
     this.mode = options.mode ?? "mock";
+    // One way in: the mode and the simulator are named together. A runtime
+    // labelled sandbox over some other client, or a simulator behind a runtime
+    // that calls itself onchain, would each mislabel every answer it gave.
+    if (
+      (this.mode === "sandbox") !== Boolean(options.sandbox) ||
+      (options.sandbox && options.client)
+    ) {
+      throw new Error(
+        'A sandbox CrewRuntime takes `mode: "sandbox"` and a `sandbox` ledger together, and no `client`.',
+      );
+    }
+    if (!options.sandbox && !options.client) {
+      throw new Error("A CrewRuntime needs a client; there is none to fall back to.");
+    }
+    this.sandboxLedger = options.sandbox;
     // The demo fixtures below belong to the in-memory client only. An onchain
     // runtime that adopted them would sign as an address the org does not
     // contain, so the caller must name real seats or not claim to be onchain.
@@ -605,10 +760,18 @@ export class CrewRuntime {
         );
       }
     }
-    this.client = options.client;
-    this.workerAgent = options.workerAgent ?? MOCK_WORKER;
-    this.spendTarget = options.spendTarget ?? "0x4444444444444444444444444444444444444444";
-    this.managerAgent = options.managerAgent ?? MOCK_MANAGER;
+    this.baseClient = options.client;
+    // A sandbox starts with one seat, the root, and borrows no fixture: until
+    // an agent is hired the root is the only default there is, and the zero
+    // target leaves session keys unpinned (any target policy allows).
+    const sandboxRoot = options.sandbox?.root;
+    this.workerAgent = options.workerAgent ?? sandboxRoot ?? MOCK_WORKER;
+    this.spendTarget =
+      options.spendTarget ??
+      (sandboxRoot
+        ? "0x0000000000000000000000000000000000000000"
+        : "0x4444444444444444444444444444444444444444");
+    this.managerAgent = options.managerAgent ?? sandboxRoot ?? MOCK_MANAGER;
     this.chainId = options.chainId ?? null;
     this.watchlist = options.watchlist ?? [];
     this.auditStore = options.auditStore ?? createMemoryAuditStore();
@@ -646,6 +809,56 @@ export class CrewRuntime {
     this.delegations = options.delegations;
   }
 
+  /**
+   * Which ledger this runtime's answers come from: `sandbox` for the
+   * simulator, `chain` for deployed contracts, null for the test client.
+   */
+  get ledger(): Ledger | null {
+    if (this.sandboxLedger) return "sandbox";
+    return isProtocolClient(this.client) ? "chain" : null;
+  }
+
+  /** The ledger rows are stored under; everything that is not a sandbox row is a chain row. */
+  private get rowLedger(): Ledger {
+    return this.sandboxLedger ? "sandbox" : "chain";
+  }
+
+  /** The `ledger` label a stored record carries: present on sandbox records only. */
+  private ledgerTag(): { ledger?: "sandbox" } {
+    return this.sandboxLedger ? { ledger: "sandbox" } : {};
+  }
+
+  /** The ledger's clock in ms: the simulator's own in a sandbox, wall time otherwise. */
+  private nowMs(): number {
+    return this.sandboxLedger ? this.sandboxLedger.now() * 1000 : Date.now();
+  }
+
+  private nowIso(): string {
+    return new Date(this.nowMs()).toISOString();
+  }
+
+  /** Store writes started and not yet settled. */
+  private readonly inFlight = new Set<Promise<unknown>>();
+
+  /**
+   * Start a store write nobody waits for, and remember it until it settles.
+   * A sandbox reset waits for these before it deletes the simulated rows, so
+   * a write begun a moment earlier cannot land after the delete and survive it.
+   */
+  private background(write: Promise<unknown>): void {
+    const tracked = write.catch(() => {}).finally(() => this.inFlight.delete(tracked));
+    this.inFlight.add(tracked);
+  }
+
+  /**
+   * Refuse what only a chain can do. A sandbox simulates the org's rules, not
+   * settlement, deployment or anything else that needs a network; saying so by
+   * name beats a revert from a contract that is not there.
+   */
+  private requireChain(feature: string): void {
+    if (this.sandboxLedger) throw new SandboxNeedsChainError(feature);
+  }
+
   /** Replay persisted audit events into the local ring (call once on boot). */
   async hydrateAudit(): Promise<number> {
     const persisted = await this.auditStore.recent(AUDIT_RING_MAX);
@@ -674,7 +887,7 @@ export class CrewRuntime {
     if (!sessionSealingAvailable()) return 0;
     if (!isProtocolClient(this.client) || !this.addressesHasSessions()) return 0;
 
-    const persisted = await this.runtimeStore.recentSessions(AUDIT_RING_MAX);
+    const persisted = await this.runtimeStore.recentSessions(AUDIT_RING_MAX, this.rowLedger);
     let restored = 0;
 
     for (const row of persisted) {
@@ -708,7 +921,7 @@ export class CrewRuntime {
         window: limits.window,
         revoked: false,
       };
-      if (isSessionExpired(session)) continue;
+      if (isSessionExpired(session, this.nowMs())) continue;
 
       // Top up if the key has spent down since it was issued. Reuse removed the
       // implicit refill that re-issuing used to provide, so without this a
@@ -846,14 +1059,14 @@ export class CrewRuntime {
     if (
       held &&
       !held.session.revoked &&
-      !isSessionExpired(held.session) &&
+      !isSessionExpired(held.session, this.nowMs()) &&
       sameScopes(held.session.scopes, scopes)
     ) {
       return held.session;
     }
 
     if (isProtocolClient(this.client) && this.addressesHasSessions()) {
-      const ephemeral = createEphemeralSession({ agent: forAgent, scopes });
+      const ephemeral = createEphemeralSession({ agent: forAgent, scopes, now: this.nowMs() });
       // The chain enforces maxValue on every propose, so the ceiling becomes a
       // real limit rather than a check the orchestrator has to remember.
       const maxValue =
@@ -863,7 +1076,7 @@ export class CrewRuntime {
             ? ceiling
             : this.sessionMaxValue();
       const allowedTarget = limits?.allowedTarget ?? this.sessionAllowedTarget();
-      const { sessionId, txHash } = await this.client.issueSession({
+      const issued = await this.client.issueSession({
         agent: ephemeral.agent,
         key: ephemeral.keyAddress!,
         expiresAtSec: ephemeral.expiresAtSec,
@@ -876,6 +1089,7 @@ export class CrewRuntime {
         window: limits?.window,
         rate: limits?.rate,
       });
+      const { sessionId, txHash } = issued;
       // Root sponsors gas so the session key can submit propose (Phase 0; AA/paymaster later).
       const fundTxHash = await this.fundSessionKey(ephemeral.keyAddress!);
       const delegation = await this.issueSessionDelegation(
@@ -916,6 +1130,7 @@ export class CrewRuntime {
           allowedTarget: session.allowedTarget,
           scopes: session.scopes,
           txHash,
+          ...simRef(issued),
           fundTxHash,
         },
       });
@@ -986,7 +1201,7 @@ export class CrewRuntime {
     if (!stack) return standing;
     const forced = policyForcesEscalation(stack.modules, {
       value,
-      nowSec: Math.floor(Date.now() / 1000),
+      nowSec: Math.floor(this.nowMs() / 1000),
       rateWindowMarginSec: RATE_WINDOW_MARGIN_SEC,
     });
     return narrowScopesForEscalation(standing, forced);
@@ -1201,13 +1416,13 @@ export class CrewRuntime {
   async revokeSessionById(
     sessionId: string,
     authorizedBy?: string,
-  ): Promise<{ txHash?: `0x${string}` }> {
+  ): Promise<{ txHash?: `0x${string}`; simTxId?: string }> {
     if (!isProtocolClient(this.client)) {
       const held = this.findSessionEntry(sessionId);
       if (held) {
         this.sessions.set(held[0], { session: revokeSession(held[1].session) });
       }
-      void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
+      void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString(), "chain");
       this.pushAudit({
         type: "SessionRevoked",
         at: new Date().toISOString(),
@@ -1215,20 +1430,26 @@ export class CrewRuntime {
       });
       return {};
     }
-    const { txHash } = await this.client.revokeSession(sessionId);
+    const revoked = await this.client.revokeSession(sessionId);
+    const { txHash } = revoked;
     const held = this.findSessionEntry(sessionId);
     if (held) {
       // Drop the private key with the session; a revoked key must not sign again.
       this.sessions.set(held[0], { session: revokeSession(held[1].session) });
     }
-    void this.runtimeStore.markSessionRevoked(sessionId, new Date().toISOString());
+    this.background(this.runtimeStore.markSessionRevoked(sessionId, this.nowIso(), this.rowLedger));
     this.pushAudit({
       type: "SessionRevoked",
       at: new Date().toISOString(),
-      payload: { keyId: sessionId, txHash, ...(authorizedBy ? { authorizedBy } : {}) },
+      payload: {
+        keyId: sessionId,
+        txHash,
+        ...simRef(revoked),
+        ...(authorizedBy ? { authorizedBy } : {}),
+      },
     });
     await this.disableSessionDelegation(sessionId, held?.[1].session.delegation);
-    return { txHash };
+    return { txHash, ...simRef(revoked) };
   }
 
   /**
@@ -1246,7 +1467,7 @@ export class CrewRuntime {
     sessionId: string,
     authorizedBy?: string,
   ): Promise<{
-    revoked: { sessionId: string; txHash?: `0x${string}` };
+    revoked: { sessionId: string; txHash?: `0x${string}`; simTxId?: string };
     session: SessionKey;
     /** False when the prior key could not be read — the caller must not assume its scope carried. */
     preserved: boolean;
@@ -1424,7 +1645,10 @@ export class CrewRuntime {
     const changed = this.agentControls.pause(agent, at, reason);
 
     const live = (await this.listSessions()).filter(
-      (s) => s.agent.toLowerCase() === agent.toLowerCase() && !s.revoked && !isSessionExpired(s),
+      (s) =>
+        s.agent.toLowerCase() === agent.toLowerCase() &&
+        !s.revoked &&
+        !isSessionExpired(s, this.nowMs()),
     );
     const revoked: string[] = [];
     const failed: Array<{ keyId: string; error: string }> = [];
@@ -1561,6 +1785,7 @@ export class CrewRuntime {
     intentId: string;
     verdict: string;
     txHash?: `0x${string}`;
+    simTxId?: string;
   }> {
     const agent = input.agent ?? this.workerAgent;
     const target = input.target ?? this.spendTarget;
@@ -1579,7 +1804,7 @@ export class CrewRuntime {
       // A flow's scope narrows this run's key, not the agent's standing policy.
       persistScopePolicy: false,
     });
-    if (isSessionExpired(session)) {
+    if (isSessionExpired(session, this.nowMs())) {
       this.sessions.set(
         this.sessionCacheKey(agent, ceilingValue, undefined, input.window, input.rate),
         { session: revokeSession(session) },
@@ -1597,23 +1822,27 @@ export class CrewRuntime {
     });
 
     const txHash = "txHash" in result ? result.txHash : undefined;
-    void this.runtimeStore.saveIntent({
-      intentId: result.intentId,
-      agent,
-      target,
-      value: value.toString(),
-      verdict: result.verdict,
-      status:
-        result.verdict === "ALLOW"
-          ? "executed"
-          : result.verdict === "ESCALATE"
-            ? "pending"
-            : "denied",
-      txHash,
-      sessionKeyId: session.keyId,
-      chainId: this.chainId ?? undefined,
-      proposedAt: new Date().toISOString(),
-    });
+    this.background(
+      this.runtimeStore.saveIntent({
+        intentId: result.intentId,
+        agent,
+        target,
+        value: value.toString(),
+        verdict: result.verdict,
+        status:
+          result.verdict === "ALLOW"
+            ? "executed"
+            : result.verdict === "ESCALATE"
+              ? "pending"
+              : "denied",
+        txHash,
+        ...simRef(result),
+        sessionKeyId: session.keyId,
+        chainId: this.chainId ?? undefined,
+        proposedAt: this.nowIso(),
+        ...this.ledgerTag(),
+      }),
+    );
     if (result.verdict === "ALLOW") {
       this.pushAudit({
         type: "AllowanceSpent",
@@ -1623,6 +1852,7 @@ export class CrewRuntime {
           target,
           value: value.toString(),
           txHash,
+          ...simRef(result),
         },
       });
     } else if (result.verdict === "ESCALATE") {
@@ -1636,6 +1866,7 @@ export class CrewRuntime {
           value: value.toString(),
           awaitingApprover: this.managerAgent,
           txHash,
+          ...simRef(result),
         },
       });
     }
@@ -1647,6 +1878,7 @@ export class CrewRuntime {
       intentId: result.intentId,
       verdict: result.verdict,
       txHash,
+      ...simRef(result),
     };
   }
 
@@ -1659,6 +1891,7 @@ export class CrewRuntime {
     intentId: string;
     verdict: string;
     txHash?: `0x${string}`;
+    simTxId?: string;
   }> {
     return this.propose({ value });
   }
@@ -1720,6 +1953,7 @@ export class CrewRuntime {
     authorizedBy: string,
     send: () => Promise<`0x${string}`>,
   ): Promise<ResolveResult> {
+    this.requireChain("A Safe approval");
     const before = await this.pendingIntent(intentId);
     if (!before) throw new Error("intent_not_pending");
     return this.resolve(intentId, approved, safeAddress, authorizedBy, async () => {
@@ -1757,6 +1991,7 @@ export class CrewRuntime {
     txHash?: `0x${string}`;
     gas?: GasRecordOutcome;
   }> {
+    this.requireChain("A Safe approval");
     // The approver's own wallet paid for the reported transaction, landed or
     // reverted. Recorded only when the chain shows it was sent to the root
     // Safe (or straight to the router); any other hash is somebody else's.
@@ -1823,10 +2058,13 @@ export class CrewRuntime {
     const unsimulated = intents.filter((i) => !i.simulation);
     if (unsimulated.length === 0) return intents;
 
-    // Onchain: enrich with real allowance state + a dry-run of the approval
-    // (eth_call through resolve → finalize → the agent's target call).
+    // Any ledger that enforces the rules: enrich with real allowance state and
+    // a dry-run of the approval (resolve → finalize → the agent's target call),
+    // an eth_call on a chain and a discarded transaction in the simulator.
+    // Measured state diffs and call traces are a node's to give, so chain only.
+    const ledger = isProtocolClient(this.client) ? this.client : null;
     const onchain = isOnchainClient(this.client) ? this.client : null;
-    const allowances = onchain ? await onchain.getAllowances().catch(() => []) : [];
+    const allowances = ledger ? await ledger.getAllowances().catch(() => []) : [];
     const balanceOf = (agent: string) =>
       allowances.find((a) => a.node.toLowerCase() === agent.toLowerCase())?.balance;
 
@@ -1840,12 +2078,14 @@ export class CrewRuntime {
           verdict: intent.verdict,
           allowanceBalance: balanceOf(intent.agent),
         });
-        if (onchain) {
-          const approval = await onchain.simulateResolveApproval(intent.id).catch(() => null);
+        if (ledger) {
+          const approval = await ledger.simulateResolveApproval(intent.id).catch(() => null);
           if (approval && !approval.ok) {
             simulation.status = "revert";
             simulation.warnings.push(`Approval dry-run reverted: ${approval.reason ?? "unknown"}`);
-          } else if (approval?.ok) {
+          } else if (approval?.ok && !onchain) {
+            simulation.warnings.push("Approval dry-run succeeded (simulated; no chain).");
+          } else if (approval?.ok && onchain) {
             simulation.warnings.push("Approval dry-run succeeded (eth_call).");
             // Measured movements from executing the approval in a simulated
             // block — what the chain would actually do, including anything
@@ -1886,6 +2126,7 @@ export class CrewRuntime {
   async usage(since?: string): Promise<{
     since: string;
     counts: Record<string, number>;
+    sandboxCounts?: Record<string, number>;
     complete: boolean;
     store: string;
   }> {
@@ -1894,7 +2135,12 @@ export class CrewRuntime {
       since ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
     const persisted = await this.auditStore.countByTypeSince(sinceIso);
     if (persisted) {
-      return { since: sinceIso, counts: persisted, complete: true, store: this.auditStore.name };
+      return {
+        since: sinceIso,
+        ...this.metered(persisted),
+        complete: true,
+        store: this.auditStore.name,
+      };
     }
     // The ring, not the merged audit() view: that merge also carries the
     // client's own copy of each event (different timestamps defeat its dedupe
@@ -1906,7 +2152,20 @@ export class CrewRuntime {
         counts[event.type] = (counts[event.type] ?? 0) + 1;
       }
     }
-    return { since: sinceIso, counts, complete: false, store: "memory" };
+    return { since: sinceIso, ...this.metered(counts), complete: false, store: "memory" };
+  }
+
+  /**
+   * Where this runtime's operation counts go. `counts` is what a billing
+   * meter reads, and it only ever holds chain-ledger activity: a sandbox
+   * runtime answers it empty and reports its simulated activity beside it as
+   * `sandboxCounts`, so nothing that was simulated can be billed by mistake.
+   */
+  private metered(counts: Record<string, number>): {
+    counts: Record<string, number>;
+    sandboxCounts?: Record<string, number>;
+  } {
+    return this.sandboxLedger ? { counts: {}, sandboxCounts: counts } : { counts };
   }
 
   /**
@@ -1933,7 +2192,13 @@ export class CrewRuntime {
   ): Promise<{
     from: string;
     to: string;
-    days: Array<{ day: string; counts: Record<string, number> } & GasTotals>;
+    days: Array<
+      {
+        day: string;
+        counts: Record<string, number>;
+        sandboxCounts?: Record<string, number>;
+      } & GasTotals
+    >;
     complete: boolean;
     gasComplete: boolean;
     store: string;
@@ -1977,7 +2242,7 @@ export class CrewRuntime {
     return {
       from: fromIso,
       to: toIso,
-      days: [...byDay].map(([day, counts]) => ({ day, counts, ...gas.of(day) })),
+      days: [...byDay].map(([day, counts]) => ({ day, ...this.metered(counts), ...gas.of(day) })),
       complete: persisted !== null,
       gasComplete: persistedGas !== null,
       store: persisted ? this.auditStore.name : "memory",
@@ -1998,7 +2263,13 @@ export class CrewRuntime {
   ): Promise<{
     from: string;
     to: string;
-    agents: Array<{ agent: string | null; counts: Record<string, number> } & GasTotals>;
+    agents: Array<
+      {
+        agent: string | null;
+        counts: Record<string, number>;
+        sandboxCounts?: Record<string, number>;
+      } & GasTotals
+    >;
     complete: boolean;
     gasComplete: boolean;
     store: string;
@@ -2039,7 +2310,7 @@ export class CrewRuntime {
       if (!byAgent.has(agent)) byAgent.set(agent, {});
     }
     const agents = [...byAgent]
-      .map(([agent, counts]) => ({ agent, counts, ...gas.of(agent) }))
+      .map(([agent, counts]) => ({ agent, ...this.metered(counts), ...gas.of(agent) }))
       .sort((a, b) => (a.agent === null ? 1 : b.agent === null ? -1 : a.agent < b.agent ? -1 : 1));
     return {
       from: fromIso,
@@ -2113,7 +2384,10 @@ export class CrewRuntime {
 
     take([...this.localAudit].reverse());
     take(persisted);
-    take([...remote].reverse());
+    // The simulator's own trail carries no label of its own; every event of a
+    // sandbox runtime leaves here marked as simulated.
+    const tag = this.ledgerTag();
+    take([...remote].reverse().map((e) => (tag.ledger ? { ...e, ...tag } : e)));
     return out;
   }
 
@@ -2168,11 +2442,15 @@ export class CrewRuntime {
 
     // Escalated intents climbed the tree and are still pending upstream.
     if (!result.escalated) {
-      void this.runtimeStore.markIntentResolved(intentId, {
-        status: approved ? "approved" : "denied",
-        resolveTxHash: txHash,
-        resolvedAt: new Date().toISOString(),
-      });
+      this.background(
+        this.runtimeStore.markIntentResolved(intentId, {
+          status: approved ? "approved" : "denied",
+          resolveTxHash: txHash,
+          ...(simRef(result).simTxId ? { resolveSimTxId: simRef(result).simTxId } : {}),
+          resolvedAt: this.nowIso(),
+          ...this.ledgerTag(),
+        }),
+      );
     }
 
     this.pushAudit({
@@ -2185,6 +2463,7 @@ export class CrewRuntime {
         approver,
         ...(authorizedBy ? { authorizedBy } : {}),
         txHash,
+        ...simRef(result),
       },
     });
 
@@ -2313,6 +2592,7 @@ export class CrewRuntime {
     fee: string;
     net: string;
   }> {
+    this.requireChain("Marketplace payments");
     if (!isOnchainClient(this.client)) {
       throw new Error("marketplace_purchase_requires_chain");
     }
@@ -2378,6 +2658,7 @@ export class CrewRuntime {
     price: string;
     txHash?: `0x${string}`;
   }> {
+    this.requireChain("Marketplace payments");
     if (!isOnchainClient(this.client)) {
       throw new Error("marketplace_requires_chain");
     }
@@ -2418,6 +2699,7 @@ export class CrewRuntime {
     seller: `0x${string}`;
     withdrawn: string;
   }> {
+    this.requireChain("Marketplace payments");
     if (!isOnchainClient(this.client)) throw new Error("marketplace_requires_chain");
     const seller = this.client.walletClient?.account?.address;
     if (!seller) throw new Error("marketplace_requires_chain");
@@ -2441,6 +2723,7 @@ export class CrewRuntime {
     proposalId: string;
     account: `0x${string}`;
     txHash?: `0x${string}`;
+    simTxId?: string;
   }> {
     const result = await this.client.proposeHire(input);
     this.pushAudit({
@@ -2453,6 +2736,7 @@ export class CrewRuntime {
         kind: input.kind ?? "worker_agent",
         action: "hire",
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2466,15 +2750,19 @@ export class CrewRuntime {
    * orchestrator therefore cannot seat a partner on its own authority, which is
    * the point — a cloud session that could would be a second root key.
    */
-  async proposeAdmitHuman(input: {
+  async proposeAdmitHuman(input: { account: `0x${string}`; power?: bigint }): Promise<{
+    proposalId: string;
     account: `0x${string}`;
-    power?: bigint;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const client = this.client as {
-      proposeAdmitHuman?: (i: {
+      proposeAdmitHuman?: (i: { account: `0x${string}`; power: bigint }) => Promise<{
+        proposalId: string;
         account: `0x${string}`;
-        power: bigint;
-      }) => Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }>;
+        txHash?: `0x${string}`;
+        simTxId?: string;
+      }>;
     };
     if (!client.proposeAdmitHuman) throw new Error("seat_admin_unsupported_by_client");
     // Weight 2 by default: the root is seeded at 2 so humans outweigh agent
@@ -2492,6 +2780,7 @@ export class CrewRuntime {
         power: (input.power ?? 2n).toString(),
         action: "admit-human",
         txHash: result.txHash,
+        ...simRef(result),
       },
     });
     return result;
@@ -2501,13 +2790,19 @@ export class CrewRuntime {
    * Propose revoking a human's seat. The contract refuses the last one, so this
    * lands only while another human remains seated.
    */
-  async proposeRemoveHuman(input: {
+  async proposeRemoveHuman(input: { account: `0x${string}` }): Promise<{
+    proposalId: string;
     account: `0x${string}`;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const client = this.client as {
-      proposeRemoveHuman?: (i: {
+      proposeRemoveHuman?: (i: { account: `0x${string}` }) => Promise<{
+        proposalId: string;
         account: `0x${string}`;
-      }) => Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }>;
+        txHash?: `0x${string}`;
+        simTxId?: string;
+      }>;
     };
     if (!client.proposeRemoveHuman) throw new Error("seat_admin_unsupported_by_client");
     const result = await client.proposeRemoveHuman({ account: input.account });
@@ -2519,16 +2814,19 @@ export class CrewRuntime {
         account: result.account,
         action: "remove-human",
         txHash: result.txHash,
+        ...simRef(result),
       },
     });
     return result;
   }
 
   /** Propose firing a node (OrgRegistry.removeNode — children rewire to parent). */
-  async proposeFire(input: {
+  async proposeFire(input: { account: `0x${string}`; tier?: GovernanceTier }): Promise<{
+    proposalId: string;
     account: `0x${string}`;
-    tier?: GovernanceTier;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const result = await this.client.proposeFire(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -2538,6 +2836,7 @@ export class CrewRuntime {
         account: result.account,
         action: "fire",
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2548,7 +2847,12 @@ export class CrewRuntime {
     account: `0x${string}`;
     newParent: `0x${string}`;
     tier?: GovernanceTier;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    account: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const result = await this.client.proposeReparent(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -2559,6 +2863,7 @@ export class CrewRuntime {
         newParent: input.newParent,
         action: "reparent",
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2572,7 +2877,12 @@ export class CrewRuntime {
     account: `0x${string}`;
     active: boolean;
     tier?: GovernanceTier;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    account: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const result = await this.client.proposeSetActive(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -2582,6 +2892,7 @@ export class CrewRuntime {
         account: result.account,
         action: input.active ? "activate" : "deactivate",
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2594,7 +2905,12 @@ export class CrewRuntime {
     tier?: GovernanceTier;
     /** Asset stack the grant targets (symbol or token); omit for primary (USDC). */
     asset?: string;
-  }): Promise<{ proposalId: string; account: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    account: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     const result = await this.client.proposeSetGrant(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -2606,6 +2922,7 @@ export class CrewRuntime {
         action: "setGrant",
         asset: input.asset,
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2616,7 +2933,7 @@ export class CrewRuntime {
     entries: Array<{ account: `0x${string}`; amount: bigint }>;
     tier?: GovernanceTier;
     asset?: string;
-  }): Promise<{ proposalId: string; count: number; txHash?: `0x${string}` }> {
+  }): Promise<{ proposalId: string; count: number; txHash?: `0x${string}`; simTxId?: string }> {
     const result = await this.client.proposeSetGrants(input);
     this.pushAudit({
       type: "ProposalCreated",
@@ -2627,6 +2944,7 @@ export class CrewRuntime {
         action: "setGrants",
         asset: input.asset,
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
       },
     });
     return result;
@@ -2636,7 +2954,12 @@ export class CrewRuntime {
     node: `0x${string}`;
     policyModule: `0x${string}`;
     tier?: GovernanceTier;
-  }): Promise<{ proposalId: string; node: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    node: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     if (!isProtocolClient(this.client)) {
       throw new Error("proposeSetNodePolicy requires onchain mode");
     }
@@ -2650,6 +2973,7 @@ export class CrewRuntime {
         policyModule: input.policyModule,
         action: "setNodePolicy",
         txHash: result.txHash,
+        ...simRef(result),
       },
     });
     return result;
@@ -2679,10 +3003,16 @@ export class CrewRuntime {
     stack: `0x${string}`;
     deployed: Array<{ kind: string; address: `0x${string}` }>;
     reused: Array<{ kind: string; address: `0x${string}` }>;
-    proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }>;
+    proposals: Array<{
+      action: string;
+      proposalId: string;
+      txHash?: `0x${string}`;
+      simTxId?: string;
+    }>;
     /** True when the chain already binds exactly this — nothing was proposed. */
     unchanged?: boolean;
   }> {
+    this.requireChain("Deploying a policy module");
     if (!isOnchainClient(this.client)) {
       throw new Error("policy_deploy_requires_chain");
     }
@@ -2743,7 +3073,12 @@ export class CrewRuntime {
       }
     }
 
-    const proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }> = [];
+    const proposals: Array<{
+      action: string;
+      proposalId: string;
+      txHash?: `0x${string}`;
+      simTxId?: string;
+    }> = [];
 
     // The recorder binding is checked even when the stack is unchanged: a
     // stack whose rate module never records is the exact silent failure the
@@ -2782,7 +3117,12 @@ export class CrewRuntime {
       tier: input.tier,
       asset: input.asset,
     });
-    proposals.push({ action: "setNodePolicy", proposalId: bind.proposalId, txHash: bind.txHash });
+    proposals.push({
+      action: "setNodePolicy",
+      proposalId: bind.proposalId,
+      txHash: bind.txHash,
+      ...simRef(bind),
+    });
     this.pushAudit({
       type: "ProposalCreated",
       at: new Date().toISOString(),
@@ -2810,7 +3150,7 @@ export class CrewRuntime {
     rateRecorder: `0x${string}`,
     tier?: GovernanceTier,
     asset?: string,
-  ): Promise<{ action: string; proposalId: string; txHash?: `0x${string}` }> {
+  ): Promise<{ action: string; proposalId: string; txHash?: `0x${string}`; simTxId?: string }> {
     if (!isOnchainClient(this.client)) throw new Error("policy_deploy_requires_chain");
     const recorder = await this.client.proposeSetNodeRateRecorder({
       node,
@@ -2865,10 +3205,16 @@ export class CrewRuntime {
     stack?: `0x${string}`;
     /** Resolved member order of that stack, the listed module last. */
     members: `0x${string}`[];
-    proposals: Array<{ action: string; proposalId: string; txHash?: `0x${string}` }>;
+    proposals: Array<{
+      action: string;
+      proposalId: string;
+      txHash?: `0x${string}`;
+      simTxId?: string;
+    }>;
     /** True when this node's stack already carries the module — no proposal. */
     alreadyBound?: boolean;
   }> {
+    this.requireChain("Attaching a policy module");
     // The payload is screened before the chain is consulted: a listing that
     // resolves to nothing is bad input whether or not a chain is wired, and an
     // answer of "no chain here" would send the seller to fix the wrong thing.
@@ -2927,7 +3273,14 @@ export class CrewRuntime {
       module,
       stack: stack.address,
       members,
-      proposals: [{ action: "setNodePolicy", proposalId: bind.proposalId, txHash: bind.txHash }],
+      proposals: [
+        {
+          action: "setNodePolicy",
+          proposalId: bind.proposalId,
+          txHash: bind.txHash,
+          ...simRef(bind),
+        },
+      ],
     };
   }
 
@@ -2961,7 +3314,12 @@ export class CrewRuntime {
     allowed: boolean;
     tier?: GovernanceTier;
     asset?: string;
-  }): Promise<{ proposalId: string; target: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    target: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     if (!isProtocolClient(this.client)) {
       if (input.asset) {
         throw new Error(
@@ -2981,6 +3339,7 @@ export class CrewRuntime {
         allowed: input.allowed,
         action: "setWhitelist",
         txHash: result.txHash,
+        ...simRef(result),
       },
     });
     return result;
@@ -2992,7 +3351,12 @@ export class CrewRuntime {
     tier?: GovernanceTier;
     /** Asset stack the cap targets (symbol or token); omit for primary (USDC). */
     asset?: string;
-  }): Promise<{ proposalId: string; agent: `0x${string}`; txHash?: `0x${string}` }> {
+  }): Promise<{
+    proposalId: string;
+    agent: `0x${string}`;
+    txHash?: `0x${string}`;
+    simTxId?: string;
+  }> {
     if (!isProtocolClient(this.client)) {
       throw new Error("proposeSetAgentCap requires onchain mode");
     }
@@ -3007,6 +3371,7 @@ export class CrewRuntime {
         action: "setAgentCap",
         asset: input.asset,
         txHash: result.txHash,
+        ...simRef(result),
       },
     });
     return result;
@@ -3020,7 +3385,7 @@ export class CrewRuntime {
   async voteGovernance(
     proposalId: string,
     support: boolean,
-  ): Promise<{ txHashes: `0x${string}`[]; proposal: GovernanceProposal }> {
+  ): Promise<{ txHashes: `0x${string}`[]; simTxIds?: string[]; proposal: GovernanceProposal }> {
     if (!isProtocolClient(this.client)) {
       await this.client.voteGovernance(proposalId, support);
       const proposal = await this.client.getProposal(proposalId);
@@ -3039,6 +3404,7 @@ export class CrewRuntime {
     const txHashes: `0x${string}`[] = [];
     const first = await this.client.voteGovernance(proposalId, support);
     if (first.txHash) txHashes.push(first.txHash);
+    const simTxIds = first.simTxId ? [first.simTxId] : [];
 
     // Second seated voter (manager) when available — real weight, not a free-for-all.
     if (
@@ -3067,14 +3433,15 @@ export class CrewRuntime {
         yesVotes: proposal.yesVotes,
         noVotes: proposal.noVotes,
         txHash: txHashes[txHashes.length - 1],
+        ...simRef(first),
       },
     });
-    return { txHashes, proposal };
+    return { txHashes, ...(simTxIds.length > 0 ? { simTxIds } : {}), proposal };
   }
 
   async vetoGovernance(
     proposalId: string,
-  ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
+  ): Promise<{ txHash?: `0x${string}`; simTxId?: string; proposal: GovernanceProposal }> {
     if (!isProtocolClient(this.client)) {
       const { proposal } = await this.client.vetoGovernance(proposalId);
       this.pushAudit({
@@ -3084,19 +3451,20 @@ export class CrewRuntime {
       });
       return { proposal };
     }
-    const { txHash } = await this.client.vetoGovernance(proposalId);
+    const vetoed = await this.client.vetoGovernance(proposalId);
+    const { txHash } = vetoed;
     const proposal = await this.client.getProposal(proposalId);
     this.pushAudit({
       type: "ProposalVetoed",
       at: new Date().toISOString(),
-      payload: { proposalId, txHash },
+      payload: { proposalId, txHash, ...simRef(vetoed) },
     });
-    return { txHash, proposal };
+    return { txHash, ...simRef(vetoed), proposal };
   }
 
   async executeGovernance(
     proposalId: string,
-  ): Promise<{ txHash?: `0x${string}`; proposal: GovernanceProposal }> {
+  ): Promise<{ txHash?: `0x${string}`; simTxId?: string; proposal: GovernanceProposal }> {
     if (!isProtocolClient(this.client)) {
       const { proposal } = await this.client.executeGovernance(proposalId);
       this.pushAudit({
@@ -3106,43 +3474,46 @@ export class CrewRuntime {
       });
       return { proposal };
     }
-    const { txHash } = await this.client.executeGovernance(proposalId);
+    const executed = await this.client.executeGovernance(proposalId);
+    const { txHash } = executed;
     const proposal = await this.client.getProposal(proposalId);
     this.pushAudit({
       type: "ProposalExecuted",
       at: new Date().toISOString(),
-      payload: { proposalId, txHash, state: proposal.state },
+      payload: { proposalId, txHash, ...simRef(executed), state: proposal.state },
     });
-    return { txHash, proposal };
+    return { txHash, ...simRef(executed), proposal };
   }
 
   /**
-   * Execute every proposal the chain would accept right now (F0.6 sweep).
-   * The chain stays the enforcer — `decideAutoExecute` mirrors its rules only
+   * Execute every proposal the ledger would accept right now (F0.6 sweep).
+   * The ledger stays the enforcer — `decideAutoExecute` mirrors its rules only
    * to avoid burning gas on reverts, and a failed execute is logged and
-   * skipped, never retried in the same pass. Chainless runtimes do nothing:
-   * there is no timelock to lapse on a mock ledger.
+   * skipped, never retried in the same pass. "Now" is the ledger's own clock,
+   * so a timelock lapses in a sandbox when its time is advanced past it. The
+   * test client does nothing: there is no timelock to lapse on it.
    */
   async executeDueProposals(): Promise<{
-    executed: Array<{ proposalId: string; txHash?: `0x${string}` }>;
+    executed: Array<{ proposalId: string; txHash?: `0x${string}`; simTxId?: string }>;
     checked: number;
   }> {
-    if (!isOnchainClient(this.client)) return { executed: [], checked: 0 };
+    if (!isProtocolClient(this.client)) return { executed: [], checked: 0 };
     const [proposals, config] = await Promise.all([
       this.client.getProposals(),
       this.client.readGovernanceConfig(),
     ]);
-    const now = Math.floor(Date.now() / 1000);
-    const executed: Array<{ proposalId: string; txHash?: `0x${string}` }> = [];
+    const now = Math.floor(this.nowMs() / 1000);
+    const executed: Array<{ proposalId: string; txHash?: `0x${string}`; simTxId?: string }> = [];
     for (const p of proposals) {
       const decision = decideAutoExecute(p, config, now);
       if (!decision.execute) continue;
       try {
         const result = await this.executeGovernance(p.id);
-        executed.push({ proposalId: p.id, txHash: result.txHash });
+        executed.push({ proposalId: p.id, txHash: result.txHash, ...simRef(result) });
         console.log(
           `[@lacrew/orchestrator] auto-executed proposal ${p.id} (${decision.via})` +
-            (result.txHash ? ` tx ${result.txHash}` : ""),
+            (result.txHash ? ` tx ${result.txHash}` : "") +
+            (result.simTxId ? ` simulated ${result.simTxId}` : ""),
         );
       } catch (err) {
         // The mirror was wrong or the state moved under us; the chain said no
@@ -3154,7 +3525,9 @@ export class CrewRuntime {
   }
 
   /** Run the next payroll epoch (EpochStreamer onchain; mock streams caps). */
-  async runEpoch(asset?: string): Promise<{ epoch: number; txHash?: `0x${string}` }> {
+  async runEpoch(
+    asset?: string,
+  ): Promise<{ epoch: number; txHash?: `0x${string}`; simTxId?: string }> {
     const result = await this.client.runEpoch(asset);
     this.pushAudit({
       type: "AllowanceStreamed",
@@ -3163,6 +3536,7 @@ export class CrewRuntime {
         epoch: result.epoch,
         asset,
         txHash: "txHash" in result ? result.txHash : undefined,
+        ...simRef(result),
         via: "EpochStreamer",
       },
     });
@@ -3196,6 +3570,10 @@ export class CrewRuntime {
    * empty (that is a chain entry whose wallets all read zero).
    */
   async getAgentWallets(): Promise<ChainWallets[]> {
+    // A simulated account holds nothing anywhere a node could read, and an
+    // empty list here would say "no chain answered" about a question that
+    // was never asked of one.
+    this.requireChain("Native balances");
     if (!isOnchainClient(this.client) || this.chainId == null) return [];
     const client = this.client;
     const bound = this.chainId;
@@ -3446,6 +3824,7 @@ export class CrewRuntime {
    * the deployment's MockUSDC. Never true in mock mode or on a mainnet id.
    */
   async faucetStatus(): Promise<FaucetStatus> {
+    this.requireChain("The test-chain faucet");
     return (await this.readFaucet()).status;
   }
 
@@ -3469,6 +3848,7 @@ export class CrewRuntime {
    * deployment. The amount is the contract's `FAUCET_AMOUNT` on both paths.
    */
   async faucetTopUp(input: { account: string }): Promise<FaucetTopUp> {
+    this.requireChain("The test-chain faucet");
     const { status, faucet } = await this.readFaucet();
     const client = this.client;
     if (!status.available || !status.token || !faucet || !isOnchainClient(client)) {
@@ -3601,7 +3981,7 @@ export class CrewRuntime {
    */
   async orgAction(
     input: OrgActionInput & { principal?: `0x${string}`; ceiling?: `0x${string}` },
-  ): Promise<{ verdict: Verdict; proposalId?: string; txHash?: `0x${string}` }> {
+  ): Promise<{ verdict: Verdict; proposalId?: string; txHash?: `0x${string}`; simTxId?: string }> {
     const agent = input.principal ?? this.workerAgent;
     const { verdict } = await this.checkEffectivePolicy({
       agent,
@@ -3621,11 +4001,11 @@ export class CrewRuntime {
           kind: input.nodeKind ?? "worker_agent",
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "fire": {
         const r = await this.proposeFire({ account: input.node!, tier });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "activate":
       case "deactivate": {
@@ -3634,7 +4014,7 @@ export class CrewRuntime {
           active: input.action === "activate",
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "reparent": {
         const r = await this.proposeReparent({
@@ -3642,7 +4022,7 @@ export class CrewRuntime {
           newParent: input.parent!,
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "set-cap": {
         const r = await this.proposeSetAgentCap({
@@ -3650,7 +4030,7 @@ export class CrewRuntime {
           cap: input.cap ?? 0n,
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "set-whitelist": {
         const r = await this.proposeSetWhitelist({
@@ -3658,7 +4038,7 @@ export class CrewRuntime {
           allowed: input.allowed ?? true,
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "set-policy": {
         const r = await this.proposeSetNodePolicy({
@@ -3666,7 +4046,7 @@ export class CrewRuntime {
           policyModule: input.target!,
           tier,
         });
-        return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+        return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       default:
         throw new Error(`org action "${input.action}" is not supported yet`);
@@ -3686,6 +4066,7 @@ export class CrewRuntime {
     proposalId?: string;
     epoch?: number;
     txHash?: `0x${string}`;
+    simTxId?: string;
   }> {
     const agent = input.principal ?? this.workerAgent;
     const { verdict } = await this.checkEffectivePolicy({
@@ -3699,7 +4080,7 @@ export class CrewRuntime {
 
     if (input.action === "run-epoch") {
       const r = await this.runEpoch();
-      return { verdict, epoch: r.epoch, txHash: r.txHash };
+      return { verdict, epoch: r.epoch, txHash: r.txHash, ...simRef(r) };
     }
 
     const r = await this.proposeSetGrant({
@@ -3707,25 +4088,29 @@ export class CrewRuntime {
       amount: input.amount ?? 0n,
       tier: verdict === "ALLOW" ? "low" : "high",
     });
-    return { verdict, proposalId: r.proposalId, txHash: r.txHash };
+    return { verdict, proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
   }
 
   /** Act on the GovernanceModule directly (seat-gated onchain, not by policy). */
   async governanceAction(
     input: GovernanceActionInput,
-  ): Promise<{ proposalId?: string; txHash?: `0x${string}` }> {
+  ): Promise<{ proposalId?: string; txHash?: `0x${string}`; simTxId?: string }> {
     switch (input.action) {
       case "vote": {
         const r = await this.voteGovernance(input.proposalId!, input.support ?? true);
-        return { proposalId: input.proposalId, txHash: r.txHashes[0] };
+        return {
+          proposalId: input.proposalId,
+          txHash: r.txHashes[0],
+          ...(r.simTxIds?.[0] ? { simTxId: r.simTxIds[0] } : {}),
+        };
       }
       case "veto": {
         const r = await this.vetoGovernance(input.proposalId!);
-        return { proposalId: input.proposalId, txHash: r.txHash };
+        return { proposalId: input.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "execute": {
         const r = await this.executeGovernance(input.proposalId!);
-        return { proposalId: input.proposalId, txHash: r.txHash };
+        return { proposalId: input.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       case "propose": {
         if (!isProtocolClient(this.client)) {
@@ -3747,11 +4132,119 @@ export class CrewRuntime {
             txHash: r.txHash,
           },
         });
-        return { proposalId: r.proposalId, txHash: r.txHash };
+        return { proposalId: r.proposalId, txHash: r.txHash, ...simRef(r) };
       }
       default:
         throw new Error(`unknown governance action "${input.action}"`);
     }
+  }
+
+  /* ——— sandbox controls ——— */
+
+  /** The simulator behind a sandbox runtime; undefined on every other. */
+  get sandbox(): SandboxLedger | undefined {
+    return this.sandboxLedger;
+  }
+
+  private requireSandbox(): SandboxLedger {
+    if (!this.sandboxLedger) throw new NotSandboxError();
+    return this.sandboxLedger;
+  }
+
+  /**
+   * Resume the stored simulation, or store this genesis when there is none.
+   * Call once at boot, after migrations. False on a runtime that is not a
+   * sandbox and on a sandbox with nothing stored.
+   */
+  async hydrateSandbox(): Promise<boolean> {
+    return this.sandboxLedger ? this.sandboxLedger.hydrate() : false;
+  }
+
+  /** Clock, treasury and version of the simulator. Refuses unless this is a sandbox. */
+  async sandboxStatus(): Promise<SandboxStatus> {
+    const sandbox = this.requireSandbox();
+    const now = sandbox.now();
+    const [holding] = await sandbox.client.getTreasuryBalances();
+    return {
+      ledger: "sandbox",
+      simulated: true,
+      orgId: sandbox.orgId,
+      root: sandbox.root,
+      version: sandbox.version,
+      clock: {
+        now,
+        nowIso: new Date(now * 1000).toISOString(),
+        offsetSeconds: sandbox.clockOffset,
+      },
+      treasury: {
+        token: holding!.token,
+        symbol: holding!.symbol,
+        decimals: holding!.decimals,
+        total: holding!.total.toString(),
+        liquid: holding!.liquid.toString(),
+        reserved: holding!.reserved.toString(),
+      },
+      store: sandbox.storeName,
+      ...(sandbox.persistError ? { persistError: sandbox.persistError } : {}),
+      limits: {
+        maxFund: SANDBOX_MAX_FUND.toString(),
+        maxAdvanceSeconds: SANDBOX_MAX_ADVANCE_SECONDS,
+      },
+    };
+  }
+
+  /**
+   * Credit play money to the simulated treasury. Not an approval and not a
+   * budget: no allowance, grant, cap or policy moves, and spending it still
+   * goes through the simulated policy stack.
+   */
+  async sandboxFund(amount: bigint): Promise<{ simTxId: string; amount: string }> {
+    const sandbox = this.requireSandbox();
+    const { simTxId } = await sandbox.fund(amount);
+    this.pushAudit({
+      type: "SandboxFunded",
+      at: new Date().toISOString(),
+      payload: { amount: amount.toString(), simTxId },
+    });
+    return { simTxId, amount: amount.toString() };
+  }
+
+  /**
+   * Move the simulator's clock forward. Everything time-bound follows it:
+   * session keys expire, rate windows roll over, timelocks lapse.
+   */
+  async sandboxAdvanceTime(seconds: number): Promise<{ seconds: number; now: number }> {
+    const sandbox = this.requireSandbox();
+    const { now } = await sandbox.advance(seconds);
+    this.pushAudit({
+      type: "SandboxTimeAdvanced",
+      at: new Date().toISOString(),
+      payload: { seconds, now },
+    });
+    return { seconds, now };
+  }
+
+  /**
+   * Throw the simulation away and start again from genesis: one root node, no
+   * funds, the clock back on wall time. The simulated trail goes with it —
+   * every `ledger: "sandbox"` audit, intent and session record is deleted and
+   * the session keys held here are dropped. Flows, directives, pauses and the
+   * conversation are kept: they are configuration and talk, not ledger state.
+   */
+  async sandboxReset(): Promise<void> {
+    const sandbox = this.requireSandbox();
+    await sandbox.reset();
+    await Promise.all(this.inFlight);
+    this.sessions.clear();
+    this.sessionScopePolicy.clear();
+    this.localAudit.length = 0;
+    this.auditCache = undefined;
+    await Promise.all([this.auditStore.clearSandbox(), this.runtimeStore.clearSandbox()]);
+    this.pushAudit({
+      type: "SandboxReset",
+      at: new Date().toISOString(),
+      payload: { root: sandbox.root },
+    });
   }
 
   /** Append an event to the audit ring on behalf of a sibling surface (flows). */
@@ -3761,7 +4254,7 @@ export class CrewRuntime {
 
   /** Persisted session records, newest first (restart-surviving history). */
   async sessionHistory(limit = 50): Promise<SessionRecord[]> {
-    const rows = await this.runtimeStore.recentSessions(limit);
+    const rows = await this.runtimeStore.recentSessions(limit, this.rowLedger);
     // `sealedKey` is stripped here rather than at the route, because this is
     // the only path out of the store and a second caller must not have to
     // remember. Sealed or not, key material has no business in a response.
@@ -3770,7 +4263,7 @@ export class CrewRuntime {
 
   /** Persisted intent records, newest first (restart-surviving history). */
   async intentHistory(limit = 50): Promise<IntentRecord[]> {
-    return this.runtimeStore.recentIntents(limit);
+    return this.runtimeStore.recentIntents(limit, this.rowLedger);
   }
 
   get runtimeStoreName(): string {
@@ -3798,7 +4291,8 @@ export class CrewRuntime {
       mode: this.mode,
       chainId: this.chainId ?? undefined,
       status: "active",
-      issuedAt: new Date().toISOString(),
+      issuedAt: this.nowIso(),
+      ...this.ledgerTag(),
     });
   }
 
@@ -3831,17 +4325,20 @@ export class CrewRuntime {
     this.auditSeq += 1;
     // Runtime rows carry the runtime's chain so the persisted trail is
     // uniformly keyed by chain_id alongside the indexer's log rows.
+    // A sandbox runtime's rows are all simulated, whichever surface raised
+    // them, and are stamped on the simulator's clock: one ledger, one time.
     event = {
       ...event,
       ...(event.chainId == null && this.chainId != null ? { chainId: this.chainId } : {}),
+      ...(this.sandboxLedger ? { ledger: "sandbox" as const, at: this.nowIso() } : {}),
       payload: { ...event.payload, seq: this.auditSeq },
     };
     this.localAudit.push(event);
     if (this.localAudit.length > AUDIT_RING_MAX) {
       this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);
     }
-    // Fire-and-forget; the store swallows its own errors.
-    void this.auditStore.append(event);
+    // Not awaited; the store swallows its own errors.
+    this.background(this.auditStore.append(event));
     this.attributeTxGas(event);
   }
 
@@ -3894,6 +4391,9 @@ export class CrewRuntime {
       targets?: readonly string[];
     },
   ): Promise<GasRecordOutcome> {
+    // Nothing a sandbox does costs gas, and a hash it is handed names a
+    // transaction on a chain this runtime is not on.
+    this.requireChain("Gas receipts");
     const chainId = this.gasChainId();
     if (!isOnchainClient(this.client) || chainId === undefined) {
       return { recorded: false, reason: "no_chain" };

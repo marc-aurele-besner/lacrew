@@ -20,6 +20,8 @@ export interface IssueSessionInput {
   agent: `0x${string}`;
   scopes?: SessionScope[];
   ttlMs?: number;
+  /** The ledger's clock in ms; expiry is counted from it. Defaults to wall time. */
+  now?: number;
 }
 
 export interface IssuedSession extends SessionKey {
@@ -36,7 +38,7 @@ export function createEphemeralSession(input: IssueSessionInput): IssuedSession 
   const scopes: SessionScope[] = input.scopes ?? ["propose:intent", "spend:whitelist"];
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
-  const expiresAt = Date.now() + ttl;
+  const expiresAt = (input.now ?? Date.now()) + ttl;
   return {
     agent: input.agent,
     keyId: "pending",

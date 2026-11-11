@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -25,8 +26,11 @@ export const runtimeSessions = pgTable(
     /**
      * Session id (onchain uint as string, or mock id). Onchain ids restart
      * from 0 on a fresh local deploy; the upsert overwrites the stale row.
+     * Unique per ledger: a sandbox numbers its sessions from 1 as well.
      */
-    keyId: text("key_id").primaryKey(),
+    keyId: text("key_id").notNull(),
+    /** `chain` or `sandbox`; see `orchestrator_audit_events.ledger`. */
+    ledger: text("ledger").notNull().default("chain"),
     agent: text("agent").notNull(),
     /** Ephemeral EOA registered in SessionRegistry (onchain mode only). */
     keyAddress: text("key_address"),
@@ -47,7 +51,10 @@ export const runtimeSessions = pgTable(
     issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
-  (table) => [index("sessions_issued_idx").on(table.issuedAt)],
+  (table) => [
+    primaryKey({ columns: [table.keyId, table.ledger] }),
+    index("sessions_issued_idx").on(table.issuedAt),
+  ],
 );
 
 export const runtimeIntents = pgTable(
@@ -63,8 +70,17 @@ export const runtimeIntents = pgTable(
     status: text("status").notNull(),
     txHash: text("tx_hash"),
     resolveTxHash: text("resolve_tx_hash"),
+    /**
+     * What a sandbox intent's propose and resolve were named by the simulator.
+     * Set only on `sandbox` rows, which never carry a `tx_hash`: nothing was
+     * mined, and an id in the hash column would read as though something was.
+     */
+    simTxId: text("sim_tx_id"),
+    resolveSimTxId: text("resolve_sim_tx_id"),
     sessionKeyId: text("session_key_id"),
     chainId: integer("chain_id"),
+    /** `chain` or `sandbox`; see `orchestrator_audit_events.ledger`. */
+    ledger: text("ledger").notNull().default("chain"),
     proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
