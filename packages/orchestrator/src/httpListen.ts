@@ -4,7 +4,19 @@
  * previous process finishes closing.
  */
 
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
+import { getRequestListener } from "@hono/node-server";
+
+/**
+ * The HTTP server every mode of the orchestrator is served by: a Fetch handler
+ * behind the node adapter. Tests that need a real socket build theirs here, so
+ * they receive requests exactly as the running process does.
+ */
+export function createHttpServer(
+  handler: (request: Request) => Response | Promise<Response>,
+): Server {
+  return createServer(getRequestListener(handler));
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

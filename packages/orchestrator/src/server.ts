@@ -12,15 +12,13 @@
  * a sandbox. That mode refuses to start without `LACREW_ORCH_TOKEN`.
  */
 
-import { createServer } from "node:http";
-import { getRequestListener } from "@hono/node-server";
 import { checkDbReady, getDatabaseUrl, runDbMigrations } from "@lacrew/db";
 import { getOrchToken } from "./auth.js";
 import { closeSharedDb } from "./dbPool.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createQueueFromEnv, type QueueProvider } from "./queue/index.js";
 import { createModelProviderFromEnv, type ModelProvider } from "./model/index.js";
-import { installShutdownHooks, listenHttp } from "./httpListen.js";
+import { createHttpServer, installShutdownHooks, listenHttp } from "./httpListen.js";
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createUnavailableApp } from "./httpApp.js";
 import { createOrgWorld } from "./orgWorld.js";
@@ -108,7 +106,7 @@ async function mainMultiOrg(): Promise<void> {
     isDbConfigured: () => Boolean(getDatabaseUrl()),
     idleMs,
   });
-  const server = createServer(getRequestListener(hostApp.app.fetch));
+  const server = createHttpServer(hostApp.app.fetch);
 
   await queue.start({
     onEpoch: hostApp.onEpoch,
@@ -166,16 +164,14 @@ async function main(): Promise<void> {
     // Listen anyway. A process that refuses to start is indistinguishable from
     // one that crashed, and the caller needs to know *which* thing is missing.
     console.error(`[@lacrew/orchestrator] no chain (${boot.reason}): ${boot.detail}`);
-    const server = createServer(
-      getRequestListener(
-        createUnavailableApp({
-          reason: boot.reason,
-          detail: boot.detail,
-          isDbReady: () => dbReady,
-          isDbConfigured: () => Boolean(getDatabaseUrl()),
-          ...(authToken ? { authToken } : {}),
-        }).fetch,
-      ),
+    const server = createHttpServer(
+      createUnavailableApp({
+        reason: boot.reason,
+        detail: boot.detail,
+        isDbReady: () => dbReady,
+        isDbConfigured: () => Boolean(getDatabaseUrl()),
+        ...(authToken ? { authToken } : {}),
+      }).fetch,
     );
     installShutdownHooks(server, async () => {});
     await listenHttp(
@@ -204,7 +200,7 @@ async function main(): Promise<void> {
       isDbConfigured: () => Boolean(getDatabaseUrl()),
     },
   );
-  const server = createServer(getRequestListener(world.app.fetch));
+  const server = createHttpServer(world.app.fetch);
 
   await queue.start({
     onEpoch: world.onEpoch,
