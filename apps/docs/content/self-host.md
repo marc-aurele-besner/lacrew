@@ -431,6 +431,98 @@ and `callTrace` (`debug_traceCall` callTracer — the exact contracts the
 approval executes, revert named on its frame). Both are absent when the node
 lacks the RPC — absent means "not measured/traced", never "no movement".
 
+## Sandbox mode (no chain, simulated)
+
+```bash
+pnpm dev:sandbox        # LACREW_MODE=sandbox, no RPC, no key, no deploy
+```
+
+`LACREW_MODE=sandbox` runs the orchestrator on an in-process simulator instead
+of a chain. The simulator restates the contracts in TypeScript (the org tree,
+treasury, epochs, sessions, policy stack, escalation and governance), and CI
+holds it to the real contracts on Anvil. An org starts empty: one root node, an
+empty treasury, no agents, no fixtures. You fund it with play money, hire
+through governance, and everything else works as it does on a chain.
+
+**A sandbox is simulated, not enforced by contracts.** Nothing is mined, no key
+signs, and nothing you see there is evidence that a chain would do the same
+beyond what the conformance suite checks. Use it to try the product and to
+develop against the API, not to make a claim about funds.
+
+It is never a fallback. The mode is chosen only by `LACREW_MODE=sandbox`:
+without the flag a missing RPC is still `no_rpc`, a dead chain is still
+`rpc_unreachable`, and every data route still answers 503. With the flag, an
+RPC or key that is also set is ignored. `LACREW_MODE=chain` (or unset) is the
+ordinary mode; any other value is refused as `invalid_mode`.
+
+### Labels
+
+| Where               | What marks it                                                                                                                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`       | `mode: "sandbox"`, `ledger: "sandbox"`, `chain: { reachable: false, chainId: null }`, and a `sandbox` block with the state version and store. On a chain, `ledger` is `"chain"`                       |
+| Every JSON response | `ledger: "sandbox"`, on refusals too. Chain responses are unchanged and carry no `ledger` outside `/health`                                                                                           |
+| Write responses     | `simTxId` (`simtx_00000042`) and never a `txHash`. `POST /governance/vote` answers `simTxIds` with `txHashes: []`                                                                                     |
+| Audit events        | `ledger: "sandbox"` on every event, a `simTxId` in the payload where a chain event has a `txHash`, and timestamps on the sandbox clock                                                                |
+| Stored rows         | `ledger = 'sandbox'` on `orchestrator_audit_events`, `orchestrator_intents` and `orchestrator_sessions` (default `chain`). Intents keep `sim_tx_id` / `resolve_sim_tx_id`; their `tx_hash` stays null |
+| Root-gated routes   | `authorizedBy: "root:simulated"` and `simulated: true`                                                                                                                                                |
+
+**The root.** A sandbox root has no key, so no signature is verified: whoever
+may call the orchestrator stands in for the root, and `LACREW_ROOT_AUTH` is
+ignored (said at boot). Session revoke, rotate and root-depth approvals go
+through and say `root:simulated`. Put `LACREW_ORCH_TOKEN` in front of a
+sandbox you expose, as with any orchestrator. `LACREW_SANDBOX_ROOT` sets the
+root's address; unset, it is a fixed placeholder nobody holds a key for.
+
+**Usage meters.** `GET /usage` and `GET /usage/daily` never count sandbox
+activity in `counts`, the field a billing meter reads: a sandbox answers
+`counts: {}` and reports its simulated activity beside it as `sandboxCounts`
+(per day and per agent on `/usage/daily`). An orchestrator on a chain reads
+only `ledger = 'chain'` rows, so sandbox rows left in a shared database never
+reach its counts either. Gas is `gas: { available: false, reason: "sandbox" }`
+on `/usage/daily`: nothing simulated costs gas.
+
+### Controls
+
+| Endpoint                     | What it does                                                                                                                                                                                                                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /sandbox`               | The simulator's status: `ledger`, `simulated`, `orgId`, `root`, `version`, `clock { now, nowIso, offsetSeconds }`, `treasury { token, symbol, decimals, total, liquid, reserved }`, `store`, `limits`, and `persistError` when the last state write did not land                         |
+| `POST /sandbox/fund`         | Body `{ "amount": "250000000" }`, base units. Credits play money to the treasury; at most 1,000,000 USDC per call. Answers the `simTxId`, the `amount` and the status. Not an approval: no allowance, grant, cap or policy changes. Refusals: `invalid_amount`, `amount_too_large` (400) |
+| `POST /sandbox/time/advance` | Body `{ "seconds": 3600 }`, a positive integer of at most 366 days. Session keys expire, rate windows roll and timelocks lapse as they would have. Time only moves forward. Refusals: `invalid_seconds`, `seconds_too_large` (400)                                                       |
+| `POST /sandbox/reset`        | Body `{}`. Rebuilds genesis, puts the clock back on wall time, and deletes every `ledger = 'sandbox'` audit, intent and session row. Flows, directives, pauses and the conversation are kept                                                                                             |
+
+On an orchestrator bound to a chain, every `/sandbox` route answers 409
+`not_sandbox`. A revert from the simulated contracts is a 422 whose `error` is
+the contract's own error name, with `reverted: true`.
+
+State is written through after every committed simulator transaction to
+`orchestrator_sandbox_state` (one row per org, `default` here) when
+`DATABASE_URL` is set, and held in memory otherwise, where a restart starts
+over. Each write names the version it read; a process that loses that check
+adopts the stored state and answers the call that lost with 409
+`sandbox_conflict`.
+
+### What a sandbox refuses
+
+These need a chain and answer 409 `needs_chain` instead of pretending:
+
+- Marketplace payments: `POST /marketplace/purchase`, `/marketplace/list`,
+  `/marketplace/withdraw`. The read routes answer "not listed".
+- Deploying or attaching policy modules: `POST /governance/propose-node-stack`,
+  `/governance/attach-policy-module`. The genesis stack (time window,
+  whitelist, spend cap, rate limit) is there, and caps and the whitelist are
+  set through governance as usual.
+- Native and token balances: `GET /agents/balances`.
+- Gas: `POST /usage/gas`.
+- Safe approvals: `POST /intents/confirm`.
+- The test-chain faucet: `GET /faucet`, `POST /faucet/top-up`. Use
+  `POST /sandbox/fund`.
+
+x402 payments are not settled either. The orchestrator has no route that makes
+one, so there is nothing to refuse over HTTP: an allowed spend to an x402
+endpoint's address is recorded and succeeds the way a call to an address
+without code does, and no payment authorisation is created. The simulated token
+itself refuses `transferWithAuthorization` with the same `needs_chain` error.
+
 ## Postgres (Neon or Docker)
 
 Orchestrator state and pg-boss jobs use one Postgres via `DATABASE_URL` (Neon hosted, or local Docker). Redis is not required.

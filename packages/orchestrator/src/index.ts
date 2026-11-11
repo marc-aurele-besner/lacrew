@@ -1,6 +1,8 @@
 export {
   CrewRuntime,
   createRuntimeFromEnv,
+  createSandboxRuntime,
+  type SandboxStatus,
   FaucetError,
   type FaucetErrorCode,
   type FaucetStatus,
@@ -9,6 +11,21 @@ export {
   type GasRecordOutcome,
   type RuntimeMode,
 } from "./runtime.js";
+export {
+  DEFAULT_SANDBOX_ORG,
+  DEFAULT_SANDBOX_ROOT,
+  NotSandboxError,
+  SANDBOX_MAX_ADVANCE_SECONDS,
+  SANDBOX_MAX_FUND,
+  SandboxControlError,
+  SandboxLedger,
+  createMemorySandboxStateStore,
+  createPgSandboxStateStore,
+  createSandboxStateStoreFromEnv,
+  type SandboxLedgerOptions,
+  type SandboxStateRecord,
+  type SandboxStateStore,
+} from "./sandboxLedger.js";
 export { getOrchToken, isAuthorized } from "./auth.js";
 export { createOrchestratorApp, type OrchestratorAppOptions } from "./httpApp.js";
 export {

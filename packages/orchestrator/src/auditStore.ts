@@ -10,12 +10,13 @@ import {
   countAuditEventsByDay,
   countAuditEventsByType,
   createDb,
+  deleteSandboxAuditEvents,
   getDatabaseUrl,
   insertAuditEvent,
   recentAuditEvents,
   type DbHandle,
 } from "@lacrew/db";
-import type { ProtocolEvent } from "@lacrew/core";
+import type { Ledger, ProtocolEvent } from "@lacrew/core";
 
 export interface AuditStore {
   readonly name: string;
@@ -62,6 +63,11 @@ export interface AuditStore {
     toIso: string,
     limit: number,
   ): Promise<{ events: ProtocolEvent[]; complete: boolean } | null>;
+  /**
+   * Delete every simulated (`ledger: "sandbox"`) event. Called by a sandbox
+   * reset; rows of the chain ledger are never touched.
+   */
+  clearSandbox(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -75,6 +81,7 @@ export function createMemoryAuditStore(): AuditStore {
     countByDayBetween: async () => null,
     countByAgentBetween: async () => null,
     between: async () => null,
+    clearSandbox: async () => {},
     close: async () => {},
   };
 }
@@ -84,18 +91,38 @@ export function createMemoryAuditStore(): AuditStore {
  * set, rows are stamped with it on write and every read answers only that
  * chain — a testnet orchestrator and a mainnet one can share a database
  * without hydrating or billing from each other's trail. Without it the store
- * reads the whole table (mock demos, single-chain deployments).
+ * reads every chain (mock demos, single-chain deployments).
+ *
+ * Always scoped to one `ledger`: rows are stamped with it on write and every
+ * read and count answers only that ledger, so a sandbox's simulated trail and a
+ * chain's real one never hydrate, report or bill from each other.
  */
-export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): AuditStore {
+export function createPgAuditStore(
+  url = getDatabaseUrl(),
+  chainId?: number,
+  ledger: Ledger = "chain",
+): AuditStore {
   let handle: DbHandle | undefined;
   const db = () => (handle ??= createDb(url));
-  const scope = chainId === undefined ? undefined : { chainId };
+  const scope = chainId === undefined ? { ledger } : { chainId, ledger };
+  const toEvent = (row: Awaited<ReturnType<typeof recentAuditEvents>>[number]): ProtocolEvent => ({
+    type: row.type as ProtocolEvent["type"],
+    at: row.at,
+    ...(row.chainId == null ? {} : { chainId: row.chainId }),
+    ...(row.orgId ? { orgId: row.orgId } : {}),
+    ...(row.ledger === "sandbox" ? { ledger: "sandbox" as const } : {}),
+    payload: row.payload,
+  });
 
   return {
     name: "postgres",
     append: async (event) => {
       try {
-        await insertAuditEvent(db(), { ...event, chainId: event.chainId ?? chainId ?? null });
+        await insertAuditEvent(db(), {
+          ...event,
+          chainId: event.chainId ?? chainId ?? null,
+          ledger: event.ledger ?? ledger,
+        });
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit append failed:", err);
       }
@@ -103,13 +130,7 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
     recent: async (limit) => {
       try {
         const rows = await recentAuditEvents(db(), limit, scope);
-        return rows.map((row) => ({
-          type: row.type as ProtocolEvent["type"],
-          at: row.at,
-          ...(row.chainId == null ? {} : { chainId: row.chainId }),
-          ...(row.orgId ? { orgId: row.orgId } : {}),
-          payload: row.payload,
-        }));
+        return rows.map(toEvent);
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit recent failed:", err);
         return [];
@@ -144,13 +165,7 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
       try {
         const rows = await auditEventsBetween(db(), fromIso, toIso, limit, scope);
         return {
-          events: rows.map((row) => ({
-            type: row.type as ProtocolEvent["type"],
-            at: row.at,
-            ...(row.chainId == null ? {} : { chainId: row.chainId }),
-            ...(row.orgId ? { orgId: row.orgId } : {}),
-            payload: row.payload,
-          })),
+          events: rows.map(toEvent),
           // A window that filled the cap was cut short, and a cut window is a
           // prefix of the period rather than the period.
           complete: rows.length < limit,
@@ -162,6 +177,11 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
         return null;
       }
     },
+    clearSandbox: async () => {
+      // Not swallowed: a reset that left the old simulation's trail behind
+      // would show it under the new one, and the caller has to be told.
+      await deleteSandboxAuditEvents(db());
+    },
     close: async () => {
       await handle?.close();
       handle = undefined;
@@ -170,8 +190,8 @@ export function createPgAuditStore(url = getDatabaseUrl(), chainId?: number): Au
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createAuditStoreFromEnv(chainId?: number): AuditStore {
+export function createAuditStoreFromEnv(chainId?: number, ledger: Ledger = "chain"): AuditStore {
   return getDatabaseUrl()
-    ? createPgAuditStore(getDatabaseUrl(), chainId)
+    ? createPgAuditStore(getDatabaseUrl(), chainId, ledger)
     : createMemoryAuditStore();
 }

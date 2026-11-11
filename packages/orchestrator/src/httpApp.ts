@@ -107,6 +107,8 @@ import {
   type PlanRequiredMode,
 } from "@lacrew/flows";
 import { FaucetError, type CrewRuntime, type NodeStackModuleSpec } from "./runtime.js";
+import { SandboxNeedsChainError, SimRevert } from "@lacrew/sdk/sandbox";
+import { NotSandboxError, SandboxControlError } from "./sandboxLedger.js";
 import type { McpToolBackend } from "@lacrew/adapter-agents-mcp";
 import type { createFlowsSurface } from "./flows.js";
 import { webhookMaxBodyBytes, type WebhookInputMap, type WebhookSurface } from "./webhooks.js";
@@ -183,7 +185,7 @@ export interface OrchestratorAppOptions {
 }
 
 /** JSON response with bigint-safe serialization (matches SDK return shapes). */
-function jsonBig(c: Context, body: unknown, status = 200): Response {
+function sendJson(c: Context, body: unknown, status = 200): Response {
   return c.newResponse(
     JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
     status as 200,
@@ -265,13 +267,87 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     heartbeats,
     budgets,
     pnl,
-    rootAuth,
-    safeApproval,
     mcpUseMock,
     authToken,
   } = options;
   const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.LACREW_ORCH_CORS_ORIGINS);
   const app = new Hono();
+
+  /** True only for a runtime built on the simulator; never inferred from a missing chain. */
+  const sandboxed = runtime.ledger === "sandbox";
+
+  /**
+   * Every JSON object a sandbox serves says so. One place rather than a field
+   * remembered per route: a simulated answer that reached a caller unlabelled
+   * is how a simulation gets mistaken for a chain. Chain answers are served as
+   * they are.
+   */
+  const jsonBig = (c: Context, body: unknown, status = 200): Response =>
+    sendJson(
+      c,
+      sandboxed && body !== null && typeof body === "object" && !Array.isArray(body)
+        ? { ...body, ledger: "sandbox" }
+        : body,
+      status,
+    );
+
+  /**
+   * Root proofs and the Safe path belong to a chain. A sandbox verifies no
+   * signature — there is no key behind its root — so neither surface is
+   * consulted there, whatever the environment configured.
+   */
+  const rootAuth = sandboxed ? undefined : options.rootAuth;
+  const safeApproval = sandboxed ? undefined : options.safeApproval;
+
+  /**
+   * The root's consent to one action.
+   *
+   * On a chain this is the configured proof, verified, or `unconfigured` when
+   * the deployment set none. In a sandbox it is `simulated`: whoever may call
+   * this orchestrator stands in for the root, and every response that rests on
+   * it says so, so a simulated approval never reads as one a root signed.
+   */
+  const proveRoot = async (
+    input: Parameters<RootAuthSurface["verify"]>[0],
+  ): Promise<
+    | { ok: true; via: "passkey" | "wallet" | "safe-passkey" | "unconfigured" | "simulated" }
+    | Extract<Awaited<ReturnType<RootAuthSurface["verify"]>>, { ok: false }>
+  > => {
+    if (sandboxed) return { ok: true, via: "simulated" };
+    return rootAuth ? rootAuth.verify(input) : { ok: true, via: "unconfigured" };
+  };
+  /** The marker a sandbox response carries wherever a chain would have asked for a signature. */
+  const simulatedMark = sandboxed ? { simulated: true as const } : {};
+
+  /**
+   * A refusal that names the ledger, as a response: something only a chain can
+   * do asked of a sandbox, a sandbox control asked of a chain, a bad control
+   * argument, or a revert from the simulated contracts. Null for anything else.
+   */
+  const ledgerRefusal = (c: Context, err: unknown): Response | null => {
+    if (err instanceof SandboxNeedsChainError) {
+      return jsonBig(c, { error: "needs_chain", detail: err.message }, 409);
+    }
+    if (err instanceof NotSandboxError) {
+      return jsonBig(
+        c,
+        {
+          error: "not_sandbox",
+          detail:
+            "This orchestrator runs on a chain. The simulator's controls exist only under LACREW_MODE=sandbox.",
+        },
+        409,
+      );
+    }
+    if (err instanceof SandboxControlError) {
+      return jsonBig(c, { error: err.code, ...err.detail }, 400);
+    }
+    if (err instanceof SimRevert) {
+      // The simulated contracts said no, by the same name the real ones would.
+      return jsonBig(c, { error: err.errorName, reverted: true, simulated: true }, 422);
+    }
+    return null;
+  };
 
   /**
    * The seat's reporting line, nearest first — what a crew-scoped write rule
@@ -442,11 +518,32 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         return jsonBig(c, { error: "unauthorized" }, 401);
       }
     }
+    // A sandbox write is answered once its state is stored, and a write that
+    // lost the version check to another process is reported as lost: its state
+    // was discarded in favour of the stored one, so a 200 would be a lie.
+    const sandbox = runtime.sandbox;
+    const conflictsBefore = sandbox?.conflicts ?? 0;
     await next();
+    if (sandbox && c.req.method !== "GET") {
+      await sandbox.flush();
+      if (sandbox.conflicts !== conflictsBefore) {
+        c.res = jsonBig(
+          c,
+          {
+            error: "sandbox_conflict",
+            detail:
+              "Another process wrote this sandbox first. Its state stands and this call was discarded; read the state again before retrying.",
+          },
+          409,
+        );
+      }
+    }
     for (const [name, value] of Object.entries(cors)) c.res.headers.set(name, value);
   });
 
-  app.onError((err, c) => jsonBig(c, { error: err.message || "unknown" }, 500));
+  app.onError(
+    (err, c) => ledgerRefusal(c, err) ?? jsonBig(c, { error: err.message || "unknown" }, 500),
+  );
   app.notFound((c) => jsonBig(c, { error: "not_found" }, 404));
 
   app.get("/health", async (c) =>
@@ -457,13 +554,32 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // it can trust the data, and the runtime is the only thing that knows.
       mocked: runtime.mode === "mock",
       mode: runtime.mode,
+      // Which ledger answers: `chain`, `sandbox` (simulated, enforced by no
+      // contract), or null for the test client.
+      ledger: runtime.ledger,
       chainId: runtime.chainId,
-      chain: { reachable: true, chainId: runtime.chainId },
+      // A sandbox has no chain to reach, and says so instead of claiming one.
+      chain: sandboxed
+        ? { reachable: false, chainId: null }
+        : { reachable: true, chainId: runtime.chainId },
+      ...(runtime.sandbox
+        ? {
+            sandbox: {
+              simulated: true,
+              version: runtime.sandbox.version,
+              store: runtime.sandbox.storeName,
+              clockOffsetSeconds: runtime.sandbox.clockOffset,
+            },
+          }
+        : {}),
       db: { configured: options.isDbConfigured(), ready: options.isDbReady() },
       queue: queue.status(),
       // A deployment that believes revoke is root-anchored and is not needs to
       // learn it from its own health check, not from an incident.
-      rootAuth: rootAuth?.status() ?? { required: false, kind: null, configError: null },
+      rootAuth: {
+        ...(rootAuth?.status() ?? { required: false, kind: null, configError: null }),
+        ...simulatedMark,
+      },
       model: { provider: model.name },
       mcp: {
         tools: listLacrewMcpTools().length,
@@ -2059,6 +2175,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         pendingChallenges: 0,
         challengeTtlSec: 0,
       }),
+      ...simulatedMark,
       mode: runtime.mode,
     }),
   );
@@ -2074,7 +2191,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       // No challenge is minted for a root that does not exist. Handing back a
       // nonce here would let a client render a signing prompt whose result
       // nothing would ever check.
-      return jsonBig(c, { required: false, challenge: null, kind: null }, 200);
+      return jsonBig(c, { required: false, challenge: null, kind: null, ...simulatedMark }, 200);
     }
     // An approval only needs the root when the intent has actually climbed to
     // the root. Minting a challenge for a manager-depth intent would put an
@@ -2177,17 +2294,17 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!body.sessionId) return jsonBig(c, { error: "sessionId_required" }, 400);
     let authorizedBy = "containment";
     if (!body.containment) {
-      const proof = await (rootAuth?.verify({
+      const proof = await proveRoot({
         action: "session:revoke",
         subject: body.sessionId,
         ...(body.challenge ? { challenge: body.challenge } : {}),
         ...(body.rootProof ? { proof: body.rootProof } : {}),
-      }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+      });
       if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
       authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
     }
     const result = await runtime.revokeSessionById(body.sessionId, authorizedBy);
-    return jsonBig(c, { ...result, authorizedBy, mode: runtime.mode });
+    return jsonBig(c, { ...result, authorizedBy, ...simulatedMark, mode: runtime.mode });
   });
 
   /**
@@ -2205,16 +2322,16 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       rootProof?: RootProof;
     }>(c);
     if (!body.sessionId) return jsonBig(c, { error: "sessionId_required" }, 400);
-    const proof = await (rootAuth?.verify({
+    const proof = await proveRoot({
       action: "session:rotate",
       subject: body.sessionId,
       ...(body.challenge ? { challenge: body.challenge } : {}),
       ...(body.rootProof ? { proof: body.rootProof } : {}),
-    }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+    });
     if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
     const authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
     const result = await runtime.rotateSessionById(body.sessionId, authorizedBy);
-    return jsonBig(c, { ...result, authorizedBy, mode: runtime.mode });
+    return jsonBig(c, { ...result, authorizedBy, ...simulatedMark, mode: runtime.mode });
   });
 
   /* ——— standing agent controls (F1.7) ——— */
@@ -2661,7 +2778,13 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       by === "agent"
         ? await runtime.usageByAgent(fromIso, toIso)
         : await runtime.usageDaily(fromIso, toIso);
-    return jsonBig(c, { ...usage, mode: runtime.mode });
+    return jsonBig(c, {
+      ...usage,
+      // Nothing simulated costs gas: the zeros beside this are "no chain", not
+      // "free transactions".
+      ...(sandboxed ? { gas: { available: false, reason: "sandbox" } } : {}),
+      mode: runtime.mode,
+    });
   });
 
   /**
@@ -2859,12 +2982,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
 
     let authorizedBy = "approver";
     if (authority.isRoot) {
-      const proof = await (rootAuth?.verify({
+      const proof = await proveRoot({
         action: body.approved ? "intent:approve" : "intent:deny",
         subject: body.intentId,
         ...(body.challenge ? { challenge: body.challenge } : {}),
         ...(body.rootProof ? { proof: body.rootProof } : {}),
-      }) ?? Promise.resolve({ ok: true as const, via: "unconfigured" as const }));
+      });
       if (!proof.ok) return jsonBig(c, { error: proof.error }, proof.status);
       authorizedBy = proof.via === "unconfigured" ? "unauthenticated" : `root:${proof.via}`;
 
@@ -2899,7 +3022,12 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       authority.awaitingApprover ?? undefined,
       authorizedBy,
     );
-    return jsonBig(c, { ...result, authorizedBy, approver: authority.awaitingApprover });
+    return jsonBig(c, {
+      ...result,
+      authorizedBy,
+      approver: authority.awaitingApprover,
+      ...simulatedMark,
+    });
   });
 
   /**
@@ -2920,6 +3048,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     if (!body.intentId || typeof body.approved !== "boolean") {
       return jsonBig(c, { error: "intentId_and_approved_required" }, 400);
     }
+    if (sandboxed) throw new SandboxNeedsChainError("A Safe approval");
     if (!safeApproval) return jsonBig(c, { error: "safe_approval_unavailable" }, 501);
     try {
       const outcome = await runtime.confirmSafeResolve({
@@ -2992,6 +3121,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
       return jsonBig(c, { ...result, mode: runtime.mode });
     } catch (err) {
+      const refused = ledgerRefusal(c, err);
+      if (refused) return refused;
       const message = err instanceof Error ? err.message : "register_failed";
       return jsonBig(c, { error: message }, message === "marketplace_requires_chain" ? 409 : 400);
     }
@@ -3007,6 +3138,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       const result = await runtime.marketplaceWithdraw();
       return jsonBig(c, { ...result, mode: runtime.mode });
     } catch (err) {
+      const refused = ledgerRefusal(c, err);
+      if (refused) return refused;
       const message = err instanceof Error ? err.message : "withdraw_failed";
       const status =
         message === "marketplace_requires_chain" ? 409 : message === "nothing_owed" ? 409 : 400;
@@ -3030,6 +3163,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
       return jsonBig(c, { ...result, mode: runtime.mode });
     } catch (err) {
+      const refused = ledgerRefusal(c, err);
+      if (refused) return refused;
       const message = err instanceof Error ? err.message : "purchase_failed";
       // A chainless runtime cannot settle, and saying so beats a fake receipt.
       return jsonBig(
@@ -3299,6 +3434,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
       return jsonBig(c, { ...result, asset: body.asset || undefined, mode: runtime.mode });
     } catch (err) {
+      const refused = ledgerRefusal(c, err);
+      if (refused) return refused;
       const message = err instanceof Error ? err.message : "propose_node_stack_failed";
       // No chain → 409 (nothing can be deployed honestly); anything else on
       // this route traces to input or wiring the caller can see.
@@ -3332,6 +3469,8 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       });
       return jsonBig(c, { ...result, asset: body.asset || undefined, mode: runtime.mode });
     } catch (err) {
+      const refused = ledgerRefusal(c, err);
+      if (refused) return refused;
       const message = err instanceof Error ? err.message : "attach_policy_module_failed";
       // No chain → 409: nothing can be proposed, and that is a deployment
       // fact rather than something the caller phrased wrong.
@@ -3447,7 +3586,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
   /**
    * Whether this deployment has a play-money faucet — a test chain whose Treasury spends
    * the deployment's MockUSDC — and what a top-up gives. `available: false`
-   * carries a stable `reason`; it is an answer, not an error.
+   * carries a stable `reason`; it is an answer, not an error. In sandbox mode
+   * both faucet routes refuse with 409 `needs_chain`: a faucet mints a token on
+   * a test chain, and a sandbox has `POST /sandbox/fund` instead.
    */
   app.get("/faucet", async (c) =>
     jsonBig(c, { ...(await runtime.faucetStatus()), mode: runtime.mode }),
@@ -3485,6 +3626,65 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       }
       return res;
     }
+  });
+
+  /* ——— the simulator's controls (sandbox mode only) ——— */
+
+  /**
+   * The simulator as it stands: its clock, its treasury of play money, and the
+   * version of its stored state. Everything here is simulated. On an
+   * orchestrator bound to a chain, every `/sandbox` route answers 409
+   * `not_sandbox` — there is no simulator to report on, and none is started.
+   */
+  app.get("/sandbox", async (c) =>
+    jsonBig(c, { ...(await runtime.sandboxStatus()), mode: runtime.mode }),
+  );
+
+  /**
+   * Credit play money to the simulated treasury: `{ amount }`, a positive
+   * integer in the token's base units, at most `limits.maxFund` per call.
+   * Not an approval — no allowance, grant, cap or policy changes, and a spend
+   * of it still goes through the simulated policy stack.
+   */
+  app.post("/sandbox/fund", async (c) => {
+    const body = await bodyOf<{ amount?: unknown }>(c);
+    const amount =
+      typeof body.amount === "string" || typeof body.amount === "number"
+        ? parseBigInt(body.amount)
+        : null;
+    if (!runtime.sandbox) throw new NotSandboxError();
+    if (amount === null) return jsonBig(c, { error: "invalid_amount" }, 400);
+    const funded = await runtime.sandboxFund(amount);
+    return jsonBig(c, { ...funded, ...(await runtime.sandboxStatus()), mode: runtime.mode });
+  });
+
+  /**
+   * Move the simulator's clock forward: `{ seconds }`, a positive integer of
+   * at most `limits.maxAdvanceSeconds`. Session keys expire, rate windows
+   * roll and timelocks lapse as they would have. Time only moves forward; a
+   * reset puts the clock back on wall time.
+   */
+  app.post("/sandbox/time/advance", async (c) => {
+    const body = await bodyOf<{ seconds?: unknown }>(c);
+    if (!runtime.sandbox) throw new NotSandboxError();
+    if (typeof body.seconds !== "number") return jsonBig(c, { error: "invalid_seconds" }, 400);
+    const advanced = await runtime.sandboxAdvanceTime(body.seconds);
+    return jsonBig(c, {
+      advancedSeconds: advanced.seconds,
+      ...(await runtime.sandboxStatus()),
+      mode: runtime.mode,
+    });
+  });
+
+  /**
+   * Start the simulation over: genesis again (one root node, no funds), the
+   * clock back on wall time, and every simulated audit, intent and session
+   * record deleted. Flows, directives, pauses and the conversation are kept.
+   * Takes no body; there is nothing to choose.
+   */
+  app.post("/sandbox/reset", async (c) => {
+    await runtime.sandboxReset();
+    return jsonBig(c, { reset: true, ...(await runtime.sandboxStatus()), mode: runtime.mode });
   });
 
   /**
@@ -3728,6 +3928,7 @@ export function createUnavailableApp(options: {
   corsOrigins?: ReadonlySet<string>;
 }): Hono {
   const app = new Hono();
+  const jsonBig = sendJson;
   const corsOrigins = options.corsOrigins ?? parseCorsOrigins(process.env.LACREW_ORCH_CORS_ORIGINS);
 
   app.use("*", async (c, next) => {
