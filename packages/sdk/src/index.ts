@@ -17,6 +17,7 @@ export {
   OnchainLacrewClient,
   type OnchainClientOptions,
   type OnchainResolveResult,
+  type WriteReceipt,
 } from "./onchain.js";
 export { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "./policy.js";
 export type { ResolveResult } from "./types.js";

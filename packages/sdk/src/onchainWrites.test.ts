@@ -30,7 +30,12 @@ import {
   sessionRegistryAbi,
   sessionScopesFromMask,
 } from "@lacrew/core";
-import { createOnchainClient, FaucetCooldownError, readTokenMetadata } from "./onchain.js";
+import {
+  createOnchainClient,
+  FaucetCooldownError,
+  readTokenMetadata,
+  type WriteReceipt,
+} from "./onchain.js";
 
 /** Anvil account 0 — signing only; the stub transport swallows everything. */
 const MAIN = privateKeyToAccount(
@@ -80,6 +85,8 @@ function stubTransport(opts: {
   blockTimestamp?: number;
   /** Revert data gas estimation fails with, as a node reports a reverting call. */
   estimateGasRevert?: Hex;
+  /** Receipt fields to replace or (with `undefined`) drop, as a node may report them. */
+  receipt?: Record<string, unknown>;
 }) {
   return custom({
     async request({ method, params }: { method: string; params?: unknown }) {
@@ -126,6 +133,7 @@ function stubTransport(opts: {
             to: getAddresses(ANVIL_CHAIN_ID).escalationRouter,
             contractAddress: null,
             logsBloom: "0x" + "00".repeat(256),
+            ...opts.receipt,
           };
         case "eth_call": {
           const data = (params as Array<{ data: Hex }>)[0]!.data;
@@ -167,6 +175,66 @@ describe("confirmWrite refuses reverted receipts", () => {
     const client = clientWith({ receiptStatus: "0x1" });
     const { txHash } = await client.voteGovernance("3", true);
     assert.match(txHash, /^0x11/);
+  });
+});
+
+describe("observeWrites reports what each write cost", () => {
+  it("reports gas used and the effective gas price off the receipt", async () => {
+    const client = clientWith({});
+    const seen: WriteReceipt[] = [];
+    client.observeWrites((receipt) => seen.push(receipt));
+    const { txHash } = await client.voteGovernance("3", true);
+    assert.deepEqual(seen, [
+      {
+        txHash,
+        action: "governance vote",
+        from: MAIN.address,
+        status: "success",
+        gasUsed: 100_000n,
+        effectiveGasPrice: 1_000_000_000n,
+      },
+    ]);
+  });
+
+  it("leaves the price absent when the receipt carries none", async () => {
+    const client = clientWith({ receipt: { effectiveGasPrice: undefined } });
+    const seen: WriteReceipt[] = [];
+    client.observeWrites((receipt) => seen.push(receipt));
+    await client.voteGovernance("3", true);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.gasUsed, 100_000n);
+    assert.equal("effectiveGasPrice" in seen[0]!, false);
+  });
+
+  it("carries an OP-stack receipt's L1 fee", async () => {
+    const client = clientWith({ receipt: { l1Fee: "0x2540be400" } });
+    const seen: WriteReceipt[] = [];
+    client.observeWrites((receipt) => seen.push(receipt));
+    await client.voteGovernance("3", true);
+    assert.equal(seen[0]!.l1Fee, 10_000_000_000n);
+  });
+
+  it("reports a reverted write too: it was still paid for", async () => {
+    const client = clientWith({ receiptStatus: "0x0" });
+    const seen: WriteReceipt[] = [];
+    client.observeWrites((receipt) => seen.push(receipt));
+    await assert.rejects(() => client.revokeSession("5"), /reverted onchain/);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.status, "reverted");
+    assert.equal(seen[0]!.action, "session revoke");
+  });
+
+  it("a throwing observer does not fail the write, and unsubscribing stops reports", async () => {
+    const client = clientWith({});
+    let calls = 0;
+    const stop = client.observeWrites(() => {
+      calls += 1;
+      throw new Error("observer broke");
+    });
+    await client.voteGovernance("3", true);
+    stop();
+    await client.voteGovernance("3", true);
+    assert.equal(calls, 1);
   });
 });
 
