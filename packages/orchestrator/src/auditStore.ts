@@ -10,7 +10,6 @@ import {
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
-  DEFAULT_ORG_ID,
   deleteSandboxAuditEvents,
   getDatabaseUrl,
   insertAuditEvent,
@@ -113,7 +112,6 @@ export function createPgAuditStore(options: {
     type: row.type as ProtocolEvent["type"],
     at: row.at,
     ...(row.chainId == null ? {} : { chainId: row.chainId }),
-    ...(row.orgId && row.orgId !== DEFAULT_ORG_ID ? { orgId: row.orgId } : {}),
     ...(row.ledger === "sandbox" ? { ledger: "sandbox" as const } : {}),
     payload: row.payload,
   });

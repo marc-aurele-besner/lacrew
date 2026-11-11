@@ -523,6 +523,132 @@ endpoint's address is recorded and succeeds the way a call to an address
 without code does, and no payment authorisation is created. The simulated token
 itself refuses `transferWithAuthorization` with the same `needs_chain` error.
 
+The simulator's own events (a treasury deposit, the execution behind a spend)
+are stored with the rest of the trail, so `GET /audit` reads the same after a
+restart. Where the orchestrator records the same fact itself, under the same
+`simTxId`, the fact is kept once.
+
+## Multi-org mode (many orgs, one process)
+
+By default one orchestrator serves one org: the one its environment describes,
+with its routes at the root. Everything it stores is filed under the org id
+`default`, and nothing on this page changes for it.
+
+`LACREW_MULTI_ORG=1` turns the same process into a host for many orgs. Each org
+is registered by name, addressed under `/o/<orgId>/...`, and kept apart from
+every other: its own simulator state and clock, its own audit trail, its own
+flows, sessions, messages, budgets and settings. Every orchestrator table
+carries `org_id`, and every key includes it.
+
+```bash
+export LACREW_MULTI_ORG=1
+export LACREW_ORCH_TOKEN=$(openssl rand -hex 32)   # required: it will not start without one
+export DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew
+pnpm --filter @lacrew/orchestrator dev
+
+AUTH="authorization: Bearer $LACREW_ORCH_TOKEN"
+# Register an org. The same call again changes nothing.
+curl -X PUT -H "$AUTH" -H 'content-type: application/json' \
+  -d '{"mode":"sandbox"}' localhost:8788/orgs/acme
+# Every route of a single-org orchestrator, under the org's prefix.
+curl -H "$AUTH" localhost:8788/o/acme/health
+curl -X POST -H "$AUTH" -H 'content-type: application/json' \
+  -d '{"amount":"5000000"}' localhost:8788/o/acme/sandbox/fund
+```
+
+No RPC endpoint, key or deployment is needed: a `sandbox` org runs on the
+[simulator](#sandbox-mode-no-chain-simulated). This version serves sandbox orgs
+only. A `testnet` or `mainnet` org can be registered and is kept in the
+directory, but nothing provisions contracts or keys for it yet, so it is not
+served (see below).
+
+### Routes
+
+| Route                          | Auth  | Answer                                                                                                  |
+| ------------------------------ | ----- | ------------------------------------------------------------------------------------------------------- |
+| `GET /health`                  | open  | The process: `multiOrg: true`, `orgModes: ["sandbox"]`, database and queue status. Names no org.        |
+| `PUT /orgs/:id` `{ mode }`     | token | Register an org or change its mode. Idempotent. `mode` is `sandbox`, `testnet` or `mainnet`.            |
+| `GET /orgs/:id`                | token | The org: `mode`, `ledger`, `chainId`, `provisioned`, `served`, `root` (sandbox), `createdAt`, `loaded`. |
+| `GET /orgs`                    | token | Every registered org.                                                                                   |
+| `DELETE /orgs/:id`             | token | Remove the org **and every row stored under it**. Not reversible.                                       |
+| `ANY /o/:id/...`               | token | The org's own orchestrator API: every route documented on this page, served for that org alone.         |
+| `GET /o/:id/health`            | token | The org's health: `mode`, `ledger`, `chainId`, plus `org` and `multiOrg` (what it is and is not given). |
+| `POST /o/:id/hooks/:triggerId` | HMAC  | A webhook delivery. Authenticated by the trigger's signing secret, as on a single-org orchestrator.     |
+| anything else                  | token | `400 { "error": "org_required" }`: a data route with no org in it.                                      |
+
+An org id is 1 to 64 of `a-z`, `0-9`, `_` and `-`. Errors:
+
+- `401 unauthorized`: no token, or a wrong one. Without the token a registered
+  org and an unknown one answer the same.
+- `404 org_not_found`: the org is not registered. Addressing an org never
+  creates it; only `PUT /orgs/:id` does.
+- `400 invalid_org_id` / `400 invalid_mode`: a registration that names neither.
+- `503 org_unavailable`: the org's world could not be built (the detail says why).
+
+`PUT /orgs/:id` answers `200` with the org and `created: true` the first time,
+`created: false` after. A sandbox org's human root is derived from its id, so
+every org has a root of its own and the same org always gets the same one.
+
+A chain org that is not provisioned answers honestly rather than as an empty
+organisation: `GET /o/:id/health` is `200` with `mode: "unavailable"`,
+`ledger: null`, `chain.reason: "org_not_provisioned"` and
+`org: { mode: "testnet", provisioned: false }`, and every other route under it
+is `503 { "error": "chain_unavailable", "reason": "org_not_provisioned" }`.
+
+### What an org is not given
+
+A single-org orchestrator reads its one org's settings from the environment.
+On a shared host those belong to nobody in particular, so each is either
+disabled for every org or shared by all of them for a stated reason. The full
+list, and whether this process has each one set, is on every org's health
+under `multiOrg.disabled` and `multiOrg.shared`.
+
+Disabled (set or not, no org sees them):
+
+- `LACREW_CONNECTORS`: connectors configured in the environment carry one
+  deployment's credentials. An org has no connectors in this mode.
+- `LACREW_MCP_SERVERS`: each org attaches its own MCP servers through the API.
+- `LACREW_MCP_ALLOW_ENV`, `LACREW_MCP_ALLOW_STDIO`, `LACREW_MCP_ALLOW_LOOPBACK`:
+  an attached server cannot read this process's environment, start a
+  subprocess, or reach the host's own network. Every org is held to the hosted
+  egress policy whatever `LACREW_MCP_HOSTED` says; `LACREW_MCP_ALLOW_HOSTS`
+  is the operator's allowlist for all of them.
+- `LACREW_ROOT_AUTH` and the root address, passkey and Safe variables: a root
+  proof names one org's root. A sandbox org verifies no signature.
+- `LACREW_PLAN_REQUIRED`, `LACREW_DUAL_CONTROL`: each org sets its own rules
+  through the API.
+- `WALLET_WATCHLIST`, `LACREW_AUTO_EXECUTE`.
+- `RPC_URL`, `PRIVATE_KEY`, `MANAGER_PRIVATE_KEY`, `LACREW_ISSUER_PRIVATE_KEY`:
+  this process's chain endpoint and keys serve no org.
+- `LACREW_MODE`, `LACREW_SANDBOX_ROOT`: an org's mode comes from the directory.
+
+Shared (one value for every org):
+
+- The bearer token. One token opens every org, so it belongs to the control
+  plane in front of the orchestrator, which decides which org a caller may
+  address. Do not hand it to an org's users.
+- The model provider and its key. Each org's usage is metered and budgeted
+  under that org alone.
+- `EPOCH_CRON`: one schedule runs every org's epoch. `POST /o/:id/epoch/schedule`
+  is refused with `epoch_schedule_shared`; `POST /o/:id/epoch` still runs that
+  org's epoch on demand.
+- `LACREW_SESSION_KEY` (sealing), timeouts, size limits and session defaults.
+
+### Idle orgs
+
+An org's world is built on its first request and let go after
+`LACREW_ORG_IDLE_MS` (default 15 minutes; `0` never lets one go) without one,
+provided it has nothing scheduled: no cron flow, no enabled heartbeat, no run
+parked or in flight, no question waiting for an answer. Nothing is lost: the
+next request rebuilds it from the store. The scheduled epoch runs for every
+registered org, loaded or not.
+
+Run it with a database. Without `DATABASE_URL` the directory and every org's
+state live in memory, are lost when the process stops, and no world is ever
+let go. With more than one replica on one database, a replica can take up to
+ten minutes to notice that another replica scheduled something for an org it
+had let go.
+
 ## Postgres (Neon or Docker)
 
 Orchestrator state and pg-boss jobs use one Postgres via `DATABASE_URL` (Neon hosted, or local Docker). Redis is not required.
@@ -566,8 +692,14 @@ migrated database and the store tests stop skipping:
 DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew \
   pnpm --filter @lacrew/orchestrator exec node --import tsx --test \
   src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts \
-  src/gasStore.test.ts
+  src/gasStore.test.ts src/sandboxLedger.test.ts src/orgScope.test.ts \
+  src/multiOrg.test.ts
 ```
+
+Every table carries `org_id` and every key includes it, so two orgs can use
+the same id for different things. `orgScope.test.ts` writes one key under two
+orgs in every table and checks each reads only its own; `multiOrg.test.ts` does
+the same over HTTP, on every GET route.
 
 ### More than one orchestrator per database
 

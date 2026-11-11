@@ -638,7 +638,6 @@ describe("org scope (postgres)", { skip: !PG }, () => {
     assert.deepEqual(await storeA.countByTypeSince("2000-01-01T00:00:00.000Z"), {
       SandboxFunded: 2,
     });
-    assert.ok((await storeA.recent(10)).every((e) => e.orgId === a.orgId));
     // The reader other services use: scoped when asked, spanning when not.
     assert.equal((await recentAuditEvents(sharedDb(), 50, { orgId: a.orgId })).length, 2);
     assert.equal((await recentAuditEvents(sharedDb(), 50, { orgId: b.orgId })).length, 1);
