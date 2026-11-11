@@ -91,6 +91,59 @@ describe("AuditStore", () => {
     },
   );
 
+  it(
+    "postgres store keeps an identified event once and lets its fuller record replace it",
+    { skip: !process.env.DATABASE_URL },
+    async () => {
+      const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const orgId = `audit-key-${run}`;
+      const other = `audit-key-other-${run}`;
+      const store = createPgAuditStore({ db: sharedDb(), orgId, ledger: "sandbox" });
+      const neighbour = createPgAuditStore({ db: sharedDb(), orgId: other, ledger: "sandbox" });
+      const key = `sim-${run}:simtx_00000007:AllowanceStreamed`;
+      const copy = (node: string): ProtocolEvent => ({
+        type: "AllowanceStreamed",
+        at: new Date().toISOString(),
+        ledger: "sandbox",
+        payload: { simTxId: "simtx_00000007", node },
+      });
+      const typesOf = async (s: typeof store) =>
+        (await s.recent(50)).map((e) => `${e.type}:${String(e.payload.node ?? e.payload.via)}`);
+      try {
+        // Two events of one transaction share the key and differ by index.
+        await store.append(copy("a"), { identity: { key, index: 0 } });
+        await store.append(copy("b"), { identity: { key, index: 1 } });
+        // The same two again, as a second pass over the same trail would send them.
+        await store.append(copy("a"), { identity: { key, index: 0 } });
+        await store.append(copy("b"), { identity: { key, index: 1 } });
+        assert.deepEqual((await typesOf(store)).sort(), [
+          "AllowanceStreamed:a",
+          "AllowanceStreamed:b",
+        ]);
+        // The same identity in another org is another event.
+        await neighbour.append(copy("a"), { identity: { key, index: 0 } });
+        // Events with no identity are never taken for one another.
+        await store.append({ ...EVENT, ledger: "sandbox" });
+        await store.append({ ...EVENT, ledger: "sandbox" });
+
+        // The runtime's own record of the transaction stands for both copies.
+        await store.append(
+          { ...copy("-"), payload: { simTxId: "simtx_00000007", via: "EpochStreamer" } },
+          { supersedes: key },
+        );
+        assert.deepEqual((await typesOf(store)).sort(), [
+          "ActionExecuted:undefined",
+          "ActionExecuted:undefined",
+          "AllowanceStreamed:EpochStreamer",
+        ]);
+        assert.deepEqual(await typesOf(neighbour), ["AllowanceStreamed:a"]);
+      } finally {
+        await store.clearSandbox();
+        await neighbour.clearSandbox();
+      }
+    },
+  );
+
   it("postgres store round-trips an event", { skip: !process.env.DATABASE_URL }, async () => {
     const store = createPgAuditStore({ db: sharedDb(), orgId: "default" });
     const marker = `test-${Date.now()}`;

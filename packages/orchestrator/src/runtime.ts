@@ -7,6 +7,7 @@
  * createRuntimeMcpBackend. Queue: QueueProvider (pg-boss when DATABASE_URL set).
  */
 
+import { randomUUID } from "node:crypto";
 import {
   createOnchainClient,
   readAccountBalances,
@@ -98,7 +99,12 @@ import { sealSessionKey, unsealSessionKey, sessionSealingAvailable } from "./sec
 import { planNodeStack, stackUnchanged } from "./policyPlan.js";
 import { watchlistFromEnv } from "./walletWatchlist.js";
 import { DEFAULT_ORG_ID } from "@lacrew/db";
-import { createAuditStoreFromEnv, createMemoryAuditStore, type AuditStore } from "./auditStore.js";
+import {
+  createAuditStoreFromEnv,
+  createMemoryAuditStore,
+  type AuditAppendOptions,
+  type AuditStore,
+} from "./auditStore.js";
 import {
   createGasStoreFromEnv,
   createMemoryGasStore,
@@ -2394,6 +2400,9 @@ export class CrewRuntime {
 
   async audit(): Promise<ProtocolEvent[]> {
     await this.settleSandboxTrail();
+    // A simulator event's copy that its fuller record replaced is out of the
+    // store before the store is read.
+    await this.keyedAppends;
     const [remote, persisted] = await Promise.all([
       // A sandbox's simulator events are already in this runtime's own trail
       // (`settleSandboxTrail`); reading them again here would show each twice.
@@ -4188,6 +4197,30 @@ export class CrewRuntime {
    */
   private readonly simSettled = new WeakMap<object, number>();
   private settling: Promise<void> = Promise.resolve();
+  /** A name for each simulator this runtime has held, so two never share an event key. */
+  private readonly simInstances = new WeakMap<object, string>();
+  /** The key each simulator event recorded on its own is stored under, by its entry in the ring. */
+  private readonly simCopyKeys = new WeakMap<ProtocolEvent, string>();
+  /** Stored writes that name a simulator transaction, one after another, in the order raised. */
+  private keyedAppends: Promise<void> = Promise.resolve();
+
+  /**
+   * What one fact the simulator recorded is stored under: the simulator it
+   * happened in, its transaction, and the event type.
+   *
+   * The simulator is part of the key because transaction numbers are only
+   * unique within one. A process that lost a version check to another has run
+   * a transaction with a number the winner also used; the two must not be
+   * taken for the same event.
+   */
+  private simEventKey(client: object, simTxId: string, type: string): string {
+    let instance = this.simInstances.get(client);
+    if (!instance) {
+      instance = randomUUID();
+      this.simInstances.set(client, instance);
+    }
+    return `${instance}:${simTxId}:${type}`;
+  }
 
   /**
    * Bring the simulator's own events into the trail this runtime keeps.
@@ -4198,8 +4231,13 @@ export class CrewRuntime {
    * execution behind a spend, an escalation) exist nowhere else, and the
    * simulator holds them in memory only. Each one without a twin is recorded
    * like any other event, so it is stored, counted and still there after a
-   * restart. Nothing is recorded twice. A no-op on a runtime that is not a
-   * sandbox.
+   * restart. A no-op on a runtime that is not a sandbox.
+   *
+   * Nothing is recorded twice, including when a pass runs between a write's
+   * simulator transaction and the write recording its own twin (a read racing
+   * a write does exactly that). Each simulator event is stored under a stable
+   * identity, so storing it again changes nothing, and the twin, when it
+   * arrives, takes the place of the simulator's copy (`pushAudit`).
    */
   settleSandboxTrail(): Promise<void> {
     if (!this.sandboxLedger) return this.settling;
@@ -4213,12 +4251,19 @@ export class CrewRuntime {
       // What this runtime recorded itself, read before anything below is added:
       // a simulator event is no twin of another simulator event.
       const own = new Set(this.localAudit.map((e) => `${e.type}:${String(e.payload.simTxId)}`));
+      // Where each event stands among those of its type in its transaction:
+      // counted over the whole trail, so it is the same on every pass.
+      const places = new Map<string, number>();
       for (const event of trail) {
         const simTxId = event.payload.simTxId;
-        const n = typeof simTxId === "string" ? Number(simTxId.replace(/^simtx_/, "")) : NaN;
+        if (typeof simTxId !== "string") continue;
+        const key = this.simEventKey(client, simTxId, event.type);
+        const index = places.get(key) ?? 0;
+        places.set(key, index + 1);
+        const n = Number(simTxId.replace(/^simtx_/, ""));
         if (!Number.isInteger(n) || n <= settled) continue;
         newest = Math.max(newest, n);
-        if (!own.has(`${event.type}:${simTxId}`)) this.pushAudit(event);
+        if (!own.has(`${event.type}:${simTxId}`)) this.pushAudit(event, { key, index });
       }
       this.simSettled.set(client, newest);
     });
@@ -4395,7 +4440,7 @@ export class CrewRuntime {
     return this.spendTarget;
   }
 
-  private pushAudit(event: ProtocolEvent): void {
+  private pushAudit(event: ProtocolEvent, simCopy?: { key: string; index: number }): void {
     /*
       Stamp a monotonic sequence before the event goes anywhere.
 
@@ -4423,12 +4468,47 @@ export class CrewRuntime {
       ...(this.sandboxLedger ? { ledger: "sandbox" as const, at: this.nowIso() } : {}),
       payload: { ...event.payload, seq: this.auditSeq },
     };
+    /*
+      An event that names a simulator transaction is one of two records of the
+      same fact: the simulator's own copy (`simCopy`, from `settleSandboxTrail`)
+      or this runtime's fuller one. The copy is stored under a stable identity,
+      at most once. The runtime's record takes the place of every copy of its
+      type in that transaction, in the ring and in the store: a copy can have
+      been recorded first, when a read settled the trail between the
+      simulator's transaction and this line.
+    */
+    const simulator = this.sandboxLedger?.client;
+    const simTxId = event.payload.simTxId;
+    let keyed: AuditAppendOptions | undefined;
+    if (simCopy) {
+      keyed = { identity: simCopy };
+    } else if (simulator && typeof simTxId === "string") {
+      const supersedes = this.simEventKey(simulator, simTxId, event.type);
+      keyed = { supersedes };
+      const kept = this.localAudit.filter((e) => this.simCopyKeys.get(e) !== supersedes);
+      if (kept.length !== this.localAudit.length) {
+        this.localAudit.splice(0, this.localAudit.length, ...kept);
+        // The stored copy is about to go too; a cached read would still show it.
+        this.auditCache = undefined;
+      }
+    }
     this.localAudit.push(event);
+    if (simCopy) this.simCopyKeys.set(event, simCopy.key);
     if (this.localAudit.length > AUDIT_RING_MAX) {
       this.localAudit.splice(0, this.localAudit.length - AUDIT_RING_MAX);
     }
     // Not awaited; the store swallows its own errors.
-    this.background(this.auditStore.append(event));
+    if (keyed) {
+      // In the order raised: a copy's insert must land before the delete of
+      // the record that replaces it, or the copy would outlive it.
+      const options = keyed;
+      this.keyedAppends = this.keyedAppends
+        .then(() => this.auditStore.append(event, options))
+        .catch(() => {});
+      this.background(this.keyedAppends);
+    } else {
+      this.background(this.auditStore.append(event));
+    }
     this.attributeTxGas(event);
   }
 
