@@ -2240,6 +2240,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           challenge: null,
           kind: null,
           awaitingApprover: authority.awaitingApprover,
+          resolver: authority.resolver,
         });
       }
       // A Safe root signs its own transaction, so the nonce is not ours to
@@ -2960,9 +2961,10 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
    * Settle a pending intent (PRD F2.6 / F1.3).
    *
    * The chain already refuses a `resolve` from anyone but the intent's
-   * `awaitingApprover`. What this route adds is the half the chain cannot see:
-   * when the waiter is the human root, holding this orchestrator's credential
-   * is not being the root. Without the gate, a deployment whose keyring happens
+   * `awaitingApprover` (or, once that node is inactive or removed, the org root
+   * standing in for it). What this route adds is the half the chain cannot see:
+   * when the seat that must resolve is the human root, holding this
+   * orchestrator's credential is not being the root. Without the gate, a deployment whose keyring happens
    * to include the root key — every Anvil fixture, and any self-host that put
    * root in `LACREW_PRIVATE_KEY` — would let a bearer token spend the root's
    * reserved authority, and the receipt would name the root as the approver.
@@ -3000,6 +3002,21 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       );
     }
     if (!authority.found) return jsonBig(c, { error: "intent_not_pending" }, 404);
+    // The ledger refuses to approve for an agent that is inactive or gone
+    // (`InactiveAgent`), so no proof is collected and nothing is signed for a
+    // decision that cannot land. Rejection stays open: it is how such an
+    // intent is closed.
+    if (body.approved && !authority.agentActive) {
+      return jsonBig(
+        c,
+        {
+          error: "agent_inactive",
+          detail:
+            "The agent that proposed this intent is no longer an active node; it can only be denied.",
+        },
+        409,
+      );
+    }
 
     let authorizedBy = "approver";
     if (authority.isRoot) {
@@ -3028,25 +3045,28 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
           safeApproval,
           intentId: body.intentId,
           approved: body.approved,
-          awaitingApprover: authority.awaitingApprover,
+          // The seat that must send: the Safe when the intent awaits it, and
+          // equally when it stands in for an approver that is gone.
+          awaitingApprover: authority.resolver,
           proof: body.rootProof,
           authorizedBy,
         });
       }
     }
 
-    // The awaiting approver, not the caller's suggestion: a body that could
-    // name its own approver would pick which of this process's keys signs.
+    // The seat the ledger accepts, not the caller's suggestion: a body that
+    // could name its own approver would pick which of this process's keys signs.
     const result = await runtime.resolve(
       body.intentId,
       body.approved,
-      authority.awaitingApprover ?? undefined,
+      authority.resolver ?? undefined,
       authorizedBy,
     );
     return jsonBig(c, {
       ...result,
       authorizedBy,
-      approver: authority.awaitingApprover,
+      approver: authority.resolver,
+      ...(authority.standIn ? { standInFor: authority.awaitingApprover } : {}),
       ...simulatedMark,
     });
   });

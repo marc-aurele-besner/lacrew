@@ -105,6 +105,70 @@ describe("decideAutoExecute", () => {
     });
   });
 
+  it("does not let agent no-weight defeat a lapsed high-tier proposal", () => {
+    // Outvoted in total, backed by the humans: the contract executes it.
+    const p = proposal({
+      tier: "high",
+      deadline: NOW - 10,
+      eta: NOW - 1,
+      yesVotes: 2,
+      noVotes: 5,
+      yesHumanVotes: 2,
+      noHumanVotes: 0,
+    });
+    assert.deepEqual(decideAutoExecute(p, CONFIG, NOW), {
+      execute: true,
+      via: "timelock_elapsed",
+    });
+  });
+
+  it("skips a lapsed high-tier proposal the human noes won", () => {
+    // Ahead in total, refused by the humans: the contract marks it Defeated.
+    const p = proposal({
+      tier: "high",
+      deadline: NOW - 10,
+      eta: NOW - 1,
+      yesVotes: 6,
+      noVotes: 2,
+      yesHumanVotes: 1,
+      noHumanVotes: 2,
+    });
+    assert.deepEqual(decideAutoExecute(p, CONFIG, NOW), {
+      execute: false,
+      reason: "would_defeat",
+    });
+  });
+
+  it("ignores the human no tally until the deadline has passed", () => {
+    const p = proposal({ tier: "high", eta: NOW - 1, yesHumanVotes: 1, noHumanVotes: 2 });
+    assert.deepEqual(decideAutoExecute(p, CONFIG, NOW), {
+      execute: true,
+      via: "timelock_elapsed",
+    });
+  });
+
+  it("keeps defeating a lapsed low-tier proposal on total weight", () => {
+    const p = proposal({
+      deadline: NOW - 10,
+      yesVotes: 2,
+      noVotes: 3,
+      yesHumanVotes: 2,
+      noHumanVotes: 0,
+    });
+    assert.deepEqual(decideAutoExecute(p, CONFIG, NOW), {
+      execute: false,
+      reason: "would_defeat",
+    });
+  });
+
+  it("skips a lapsed high-tier proposal whose human no tally is missing", () => {
+    const p = proposal({ tier: "high", deadline: NOW - 10, eta: NOW - 1, yesHumanVotes: 1 });
+    assert.deepEqual(decideAutoExecute(p, CONFIG, NOW), {
+      execute: false,
+      reason: "config_unreadable",
+    });
+  });
+
   it("skips rather than guesses when the config or tally is unreadable", () => {
     assert.deepEqual(decideAutoExecute(proposal(), {}, NOW), {
       execute: false,

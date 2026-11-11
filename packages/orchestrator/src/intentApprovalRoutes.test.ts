@@ -118,16 +118,19 @@ function intent(id: string, awaitingApprover: `0x${string}`): Intent {
 }
 
 /** Records every resolve the runtime asks the chain for, and as whom. */
-function approvalClient(state: {
-  resolved: Array<{ id: string; approved: boolean; approver?: string }>;
-}) {
+function approvalClient(
+  state: {
+    resolved: Array<{ id: string; approved: boolean; approver?: string }>;
+  },
+  org: OrgNode[] = ORG,
+) {
   const base = createLacrewClient({ useMock: true }) as unknown as Record<string, unknown>;
   const pending = [intent("root-1", ROOT), intent("mgr-1", MANAGER)];
   return {
     ...base,
     addresses: { chainId: ANVIL_CHAIN_ID, humanRoot: ROOT },
     async getOrgTree() {
-      return ORG;
+      return org;
     },
     async getPendingIntents() {
       return pending.filter((i) => !i.resolved);
@@ -145,9 +148,9 @@ function approvalClient(state: {
   };
 }
 
-function buildApp(rootAuth?: ReturnType<typeof createRootAuthSurface>) {
+function buildApp(rootAuth?: ReturnType<typeof createRootAuthSurface>, org: OrgNode[] = ORG) {
   const state = { resolved: [] as Array<{ id: string; approved: boolean; approver?: string }> };
-  const runtime = new CrewRuntime({ client: approvalClient(state) as never });
+  const runtime = new CrewRuntime({ client: approvalClient(state, org) as never });
   const model = new MemoryModelProvider();
   const app = createOrchestratorApp({
     runtime,
@@ -372,6 +375,84 @@ describe("POST /intents/resolve — manager-depth approvals", () => {
     assert.equal(res.status, 404);
     assert.equal(((await res.json()) as { error: string }).error, "intent_not_pending");
     assert.deepEqual(state.resolved, []);
+  });
+});
+
+describe("POST /intents/resolve — an approver or agent that is no longer active", () => {
+  const withManager = (active: boolean): OrgNode[] =>
+    ORG.map((n) => (n.account === MANAGER ? { ...n, active } : n));
+  const withoutManager: OrgNode[] = ORG.filter((n) => n.account !== MANAGER).map((n) =>
+    n.account === WORKER ? { ...n, parent: ROOT } : n,
+  );
+  const withWorker = (active: boolean): OrgNode[] =>
+    ORG.map((n) => (n.account === WORKER ? { ...n, active } : n));
+
+  it("asks the root for an intent whose approver was deactivated", async () => {
+    const { app, state } = buildApp(walletAuth(), withManager(false));
+    const res = await post(app, "/intents/resolve", { intentId: "mgr-1", approved: true });
+    // The manager key would be refused by the ledger (InactiveApprover); the
+    // root stands in, and standing in is still the root deciding.
+    assert.equal(res.status, 401);
+    assert.deepEqual(state.resolved, []);
+  });
+
+  it("settles as the root, and says for whom, once the root proves itself", async () => {
+    const rootAuth = walletAuth();
+    for (const org of [withManager(false), withoutManager]) {
+      const { app, state } = buildApp(rootAuth, org);
+      const challenge = rootAuth.issueChallenge("intent:approve", "mgr-1");
+      const res = await post(app, "/intents/resolve", {
+        intentId: "mgr-1",
+        approved: true,
+        challenge: challenge.challenge,
+        rootProof: {
+          kind: "wallet",
+          address: ROOT_WALLET.address,
+          signature: await ROOT_WALLET.signMessage({
+            message: rootChallengeStatement({
+              action: "intent:approve",
+              subject: "mgr-1",
+              challenge: challenge.challenge,
+            }),
+          }),
+        },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        approver: string;
+        standInFor?: string;
+        authorizedBy: string;
+      };
+      assert.equal(body.approver, ROOT);
+      assert.equal(body.standInFor, MANAGER);
+      assert.equal(body.authorizedBy, "root:wallet");
+      assert.deepEqual(state.resolved, [{ id: "mgr-1", approved: true, approver: ROOT }]);
+    }
+  });
+
+  it("issues a root challenge for an intent whose approver is gone", async () => {
+    const { app } = buildApp(walletAuth(), withManager(false));
+    const res = await post(app, "/root-auth/challenge", {
+      action: "intent:approve",
+      subject: "mgr-1",
+    });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { required: boolean }).required, true);
+  });
+
+  it("refuses to approve for an agent that is no longer active, and signs nothing", async () => {
+    const { app, state } = buildApp(walletAuth(), withWorker(false));
+    const res = await post(app, "/intents/resolve", { intentId: "mgr-1", approved: true });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { error: string }).error, "agent_inactive");
+    assert.deepEqual(state.resolved, []);
+  });
+
+  it("still lets the approver deny an inactive agent's intent", async () => {
+    const { app, state } = buildApp(walletAuth(), withWorker(false));
+    const res = await post(app, "/intents/resolve", { intentId: "mgr-1", approved: false });
+    assert.equal(res.status, 200);
+    assert.deepEqual(state.resolved, [{ id: "mgr-1", approved: false, approver: MANAGER }]);
   });
 });
 

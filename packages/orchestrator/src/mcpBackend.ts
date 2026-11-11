@@ -43,7 +43,8 @@ export function createRuntimeMcpBackend(
       return { intentId, verdict, txHash, ...(simTxId ? { simTxId } : {}) };
     },
     /*
-      An agent settling an intent that has climbed to the human root would be
+      An agent settling an intent the human root must settle (one that climbed
+      there, or one whose approver is inactive so the root stands in) would be
       the agent approving its own escalation — the tree's top step answered by
       the thing it exists to hold. A tool call carries no root proof and never
       can, so root-depth intents are refused here rather than attempted: on a
@@ -61,7 +62,7 @@ export function createRuntimeMcpBackend(
       const resolved = await runtime.resolve(
         intentId,
         approved,
-        authority.awaitingApprover ?? undefined,
+        authority.resolver ?? undefined,
         "approver",
       );
       const { intent, escalated, txHash } = resolved;

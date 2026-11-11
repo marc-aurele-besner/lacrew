@@ -181,6 +181,46 @@ describe("sandbox client: an org's life", () => {
     assert.equal(balances!.liquid, 10_000n * USDC - 200n * USDC);
   });
 
+  it("settles as the root when the awaiting approver has been deactivated", async () => {
+    const { client } = sandbox();
+    await crew(client);
+    const { intentId } = await client.as(WORKER).proposeIntent({
+      agent: WORKER,
+      target: TARGET,
+      value: 75n * USDC,
+    });
+    await pass(client, client.proposeSetActive({ account: MANAGER, active: false }));
+
+    // Named, the manager is refused; unnamed, the client signs as the stand-in.
+    await assert.rejects(
+      client.resolveIntent(intentId, true, MANAGER),
+      revertsWith("InactiveApprover"),
+    );
+    assert.deepEqual(await client.simulateResolveApproval(intentId), { ok: true });
+    const settled = await client.resolveIntent(intentId, true);
+    assert.equal(settled.escalated, false);
+    assert.equal(settled.intent.approved, true);
+  });
+
+  it("reports an approval for a deactivated agent as one that would revert", async () => {
+    const { client } = sandbox();
+    await crew(client);
+    const { intentId } = await client.as(WORKER).proposeIntent({
+      agent: WORKER,
+      target: TARGET,
+      value: 75n * USDC,
+    });
+    await pass(client, client.proposeSetActive({ account: WORKER, active: false }));
+
+    assert.deepEqual(await client.simulateResolveApproval(intentId), {
+      ok: false,
+      reason: "InactiveAgent",
+    });
+    await assert.rejects(client.resolveIntent(intentId, true), revertsWith("InactiveAgent"));
+    const denied = await client.resolveIntent(intentId, false);
+    assert.equal(denied.intent.approved, false);
+  });
+
   it("a rejected intent closes as denied and moves nothing", async () => {
     const { client } = sandbox();
     await crew(client);

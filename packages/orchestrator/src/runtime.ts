@@ -33,6 +33,7 @@ import {
   hasDeployment,
   listAssetStacks,
   resolveAssetStack,
+  approvalSeat,
   faucetVerdict,
   gasReceiptFromTransaction,
   ADDRESS_ENV_VARS,
@@ -1909,8 +1910,9 @@ export class CrewRuntime {
   }
 
   /**
-   * Who the chain is waiting on for one pending intent, and whether that is the
-   * workspace's human root (PRD F2.6).
+   * Who must settle one pending intent, and whether that is the workspace's
+   * human root (PRD F2.6): the awaiting approver while it is an active node,
+   * the root in its place once it has been deactivated or removed.
    *
    * Read without simulating. `listPending` dry-runs every approval, traces it
    * and measures its state diffs — worth it for an approver reading a queue,
@@ -1925,13 +1927,26 @@ export class CrewRuntime {
   async approvalAuthority(intentId: string): Promise<ApprovalAuthority> {
     const intents = await this.client.getPendingIntents();
     const intent = intents.find((i) => i.id === intentId);
-    if (!intent) return { found: false, awaitingApprover: null, isRoot: false };
-    const awaiting = intent.awaitingApprover;
-    if (!awaiting) return { found: true, awaitingApprover: null, isRoot: false };
+    if (!intent) {
+      return {
+        found: false,
+        awaitingApprover: null,
+        resolver: null,
+        standIn: false,
+        agentActive: false,
+        isRoot: false,
+      };
+    }
+    // A chart this process cannot read raises: guessing that the approver is
+    // still seated would sign as a node the ledger no longer accepts, and
+    // guessing that it is not would hand its intent to the root.
+    const seat = approvalSeat(intent, await this.client.getOrgTree());
     return {
       found: true,
-      awaitingApprover: awaiting,
-      isRoot: await this.isHumanRoot(awaiting),
+      awaitingApprover: intent.awaitingApprover,
+      ...seat,
+      // A stand-in is the root by definition; the address book is not asked.
+      isRoot: seat.resolver ? seat.standIn || (await this.isHumanRoot(seat.resolver)) : false,
     };
   }
 

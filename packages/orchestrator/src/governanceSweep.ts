@@ -13,6 +13,11 @@
  *    costs gas for bookkeeping nobody asked this process to do.
  *  - Anything unreadable (missing human tally on a high-tier row) is skipped,
  *    not guessed.
+ *
+ * Each tier is defeated by the electorate that can pass it: a low-tier ballot
+ * by total weight (`noVotes > yesVotes`), a high-tier one by human weight alone
+ * (`noHumanVotes > yesHumanVotes`). Agent seats review a high-tier proposal;
+ * however many of them vote no, they cannot defeat it.
  */
 
 import type { GovernanceProposal } from "@lacrew/core";
@@ -41,10 +46,7 @@ export function decideAutoExecute(
 ): SweepDecision {
   if (p.state !== "active") return { execute: false, reason: "not_active" };
 
-  // A lapsed ballot the noes won: execute() would finalize it as Defeated.
-  if (p.deadline > 0 && nowSeconds > p.deadline && p.noVotes > p.yesVotes) {
-    return { execute: false, reason: "would_defeat" };
-  }
+  const lapsed = p.deadline > 0 && nowSeconds > p.deadline;
 
   if (p.tier === "high") {
     if (config.effectiveQuorumHumanYes === undefined) {
@@ -52,6 +54,12 @@ export function decideAutoExecute(
     }
     const humanYes = p.yesHumanVotes;
     if (humanYes === undefined) return { execute: false, reason: "config_unreadable" };
+    // A lapsed ballot the human noes won: execute() would finalize it as
+    // Defeated. Agent no-weight is not counted, so `noVotes` says nothing here.
+    if (lapsed) {
+      if (p.noHumanVotes === undefined) return { execute: false, reason: "config_unreadable" };
+      if (p.noHumanVotes > humanYes) return { execute: false, reason: "would_defeat" };
+    }
     if (BigInt(humanYes) < BigInt(config.effectiveQuorumHumanYes)) {
       return { execute: false, reason: "quorum_not_met" };
     }
@@ -66,6 +74,9 @@ export function decideAutoExecute(
       via: unanimous && nowSeconds < p.eta ? "unanimity" : "timelock_elapsed",
     };
   }
+
+  // A lapsed low-tier ballot the noes won: execute() would finalize it as Defeated.
+  if (lapsed && p.noVotes > p.yesVotes) return { execute: false, reason: "would_defeat" };
 
   if (config.effectiveQuorumYes === undefined) {
     return { execute: false, reason: "config_unreadable" };

@@ -843,6 +843,8 @@ lacrew session status
 
 `EscalationRouter.resolve` already reverts for any sender that is not the intent's `awaitingApprover`. What the orchestrator adds is the half the chain cannot see: when the waiter is the human root, holding the orchestrator's bearer token is not being the root. Without that check, any deployment whose keyring happens to include the root key — every Anvil fixture, and any self-host that put root in `PRIVATE_KEY` — would let a token spend the root's reserved authority, and the receipt would name the root as the approver.
 
+The seat that must resolve is not always the one the intent names. The router accepts the `awaitingApprover` only while that node is active; once it has been deactivated or removed, the org root resolves in its place and nobody else does. The orchestrator reads the org chart first and signs as the seat the router will accept, so an intent stranded on a suspended manager is asked of the root (with the root proof below), and the answer carries `approver` (the root) and `standInFor` (the approver it covered). Approving for an agent that is itself no longer an active node is refused with `409 agent_inactive` before anything is signed, because the router would revert it; denying stays open, and is how such an intent is closed.
+
 Ask whether one intent needs the root before you build a button for it, because the answer is per-intent:
 
 ```bash

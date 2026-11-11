@@ -169,6 +169,57 @@ describe("LacrewClient resolve recursion", () => {
   });
 });
 
+describe("mock resolve authority (EscalationRouter.resolve parity)", () => {
+  const TARGET = "0x4444444444444444444444444444444444444444" as const;
+
+  async function suspended(account: `0x${string}`) {
+    const client = createLacrewClient({ useMock: true });
+    await client.runEpoch();
+    await client.runEpoch();
+    const { intentId } = await client.proposeIntent({
+      agent: MOCK_WORKER,
+      target: TARGET,
+      value: 75n * 10n ** 6n,
+    });
+    const off = await client.proposeSetActive({ account, active: false });
+    await client.voteGovernance(off.proposalId, true);
+    await client.executeGovernance(off.proposalId);
+    return { client, intentId };
+  }
+
+  it("refuses a deactivated approver, for approval and for rejection", async () => {
+    const { client, intentId } = await suspended(MOCK_MANAGER);
+    await assert.rejects(client.resolveIntent(intentId, true, MOCK_MANAGER), /InactiveApprover/);
+    await assert.rejects(client.resolveIntent(intentId, false, MOCK_MANAGER), /InactiveApprover/);
+  });
+
+  it("lets the root, and only the root, stand in for a deactivated approver", async () => {
+    const { client, intentId } = await suspended(MOCK_MANAGER);
+    await assert.rejects(client.resolveIntent(intentId, true, MOCK_WORKER), /NotAwaitingApprover/);
+    // Unnamed, the mock resolves as the seat the router would accept.
+    const result = await client.resolveIntent(intentId, true);
+    assert.equal(result.intent.approved, true);
+  });
+
+  it("refuses to approve for a deactivated agent, and still lets it be rejected", async () => {
+    const { client, intentId } = await suspended(MOCK_WORKER);
+    await assert.rejects(client.resolveIntent(intentId, true, MOCK_MANAGER), /InactiveAgent/);
+    const result = await client.resolveIntent(intentId, false, MOCK_MANAGER);
+    assert.equal(result.intent.approved, false);
+  });
+});
+
+describe("mock governance defeat (GovernanceModule.execute parity)", () => {
+  it("counts the root's no vote as human weight", async () => {
+    const client = createLacrewClient({ useMock: true });
+    const { proposalId } = await client.proposeSetActive({ account: MOCK_WORKER, active: false });
+    const { proposal } = await client.voteGovernance(proposalId, false);
+    assert.equal(proposal.noVotes, 2);
+    assert.equal(proposal.noHumanVotes, 2);
+    assert.equal(proposal.yesHumanVotes, 0);
+  });
+});
+
 describe("mock allowance book (Treasury.spendAllowance parity)", () => {
   const target = "0x4444444444444444444444444444444444444444" as const;
 

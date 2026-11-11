@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./approval.js";
 export * from "./rootAuth.js";
 export * from "./constants.js";
 export * from "./abis.js";
