@@ -129,6 +129,11 @@ export type WebhookSurface = {
   list(): WebhookTrigger[];
   get(id: string): WebhookTrigger | undefined;
   /**
+   * Whether a trigger with this id exists, read through the store: one minted
+   * on another replica counts, one removed there does not.
+   */
+  exists(id: string): Promise<boolean>;
+  /**
    * Returns the cleartext secret exactly once — it is not readable again.
    * Absent for sources that authenticate the sender rather than share a key.
    */
@@ -396,6 +401,7 @@ export function createWebhookSurface(opts: {
       const found = triggers.get(id);
       return found ? view(found) : undefined;
     },
+    exists: async (id) => (await resolve(id)) !== undefined,
 
     create: async (input) => {
       await requireWebhookFlow(input.flowId);

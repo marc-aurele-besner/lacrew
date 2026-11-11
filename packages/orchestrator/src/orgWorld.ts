@@ -99,6 +99,8 @@ export interface OrgWorld {
   onFlowCron(): Promise<unknown>;
   /** Run one accepted webhook delivery. */
   onWebhook(data: Record<string, unknown>): Promise<unknown>;
+  /** Whether this org has a webhook trigger with this id. */
+  hasWebhookTrigger(triggerId: string): Promise<boolean>;
   /**
    * Whether the minute sweep has anything to do for this org: a cron flow, an
    * enabled heartbeat, a run parked or in flight, a question still waiting for
@@ -876,6 +878,7 @@ export async function createOrgWorld(
     runtime,
     ...handlers,
     onEpochDue: async () => (epochCadence ? epochCadence.runIfDue() : { ran: false }),
+    hasWebhookTrigger: (triggerId) => webhooks.exists(triggerId),
     onFlowCron: async () => {
       try {
         return await handlers.onFlowCron();
@@ -929,6 +932,7 @@ export function createUnavailableOrgWorld(
     onTick: async () => undefined,
     onFlowCron: async () => undefined,
     onWebhook: async () => undefined,
+    hasWebhookTrigger: async () => false,
     hasScheduledWork: async () => false,
     close: async () => {},
   };
