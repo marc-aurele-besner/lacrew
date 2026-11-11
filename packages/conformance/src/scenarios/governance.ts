@@ -50,8 +50,9 @@ export const governanceScenarios: Scenario[] = [
     // An id nobody proposed: no votes to count, and a deadline long past.
     b.reverts("QuorumNotMet", "root", "@gov", "execute", [99n]);
     b.reverts("ProposalNotActive", "root", "@gov", "vote", [99n, true]);
-    // A veto of an id not yet created is accepted, and overwritten when that proposal is.
-    b.veto("root", p + 1, { events: ["ProposalVetoed"] });
+    // A veto has to name a proposal that exists: an id not yet created is refused.
+    b.reverts("ProposalNotFound", "root", "@gov", "veto", [BigInt(p + 1)]);
+    b.reverts("ProposalNotFound", "root", "@gov", "veto", [0n]);
     const next = b.propose("root", LOW, hire("worker", KIND.worker, "manager"));
     b.expect({ proposals: { [next]: { state: "active" } } });
   }),
@@ -272,10 +273,10 @@ export const governanceScenarios: Scenario[] = [
       // C + 4 days - 1: the last second of the timelock.
       b.reverts("TimelockNotElapsed", "root", "@gov", "execute", [BigInt(p)]);
       b.warp(1);
-      // C + 4 days: the timelock is over, and the tally is read. Agent no-weight
-      // outweighs the human yes, so the proposal is defeated rather than executed.
-      b.execute("root", p, { events: ["ProposalDefeated"] });
-      b.expect({ proposals: { [p]: { state: "defeated", yesVotes: 2, noVotes: 5 } } });
+      // C + 4 days: the timelock is over, and the tally is read. The agent seat's
+      // no outweighs the human yes, but high tier counts human weight alone.
+      b.execute("root", p);
+      b.expect({ proposals: { [p]: { state: "executed", yesVotes: 2, noVotes: 5 } } });
 
       // Defeat needs the deadline to have passed: at the deadline itself, quorum still executes.
       const first = b.propose("root", LOW, { to: "target", data: "0x" });
@@ -293,6 +294,35 @@ export const governanceScenarios: Scenario[] = [
       b.expect({ proposals: { [first]: { state: "defeated" }, [second]: { state: "executed" } } });
     },
   ),
+
+  governed("high tier is decided by human weight alone, for and against", (b) => {
+    b.pass({ to: "@gov", fn: "admitHuman", args: ["human2", 1n] }, HIGH);
+    b.call("root", "@gov", "setVotingPower", ["manager", 5n, SEAT.agent]);
+
+    // The humans back it and the agent seat votes it down.
+    const backed = b.propose("root", HIGH, whitelist("target"));
+    b.vote("root", backed);
+    b.vote("manager", backed, false);
+    // The humans vote it down and the agent seat backs it.
+    const refused = b.propose("root", HIGH, whitelist("target2"));
+    b.vote("human2", refused);
+    b.vote("root", refused, false);
+    b.vote("manager", refused);
+
+    b.warp(4 * DAY);
+    b.execute("stranger", backed, { events: ["TargetAllowed", "ProposalExecuted"] });
+    b.execute("stranger", refused, { events: ["ProposalDefeated"] });
+    b.expect({
+      proposals: {
+        [backed]: { state: "executed", yesVotes: 2, noVotes: 5 },
+        [refused]: { state: "defeated", yesVotes: 6, noVotes: 2 },
+      },
+      verdicts: [
+        { agent: "root", target: "target", value: 0n, verdict: "ALLOW", module: "@whitelist" },
+        { agent: "root", target: "target2", value: 0n, verdict: "DENY", module: "@whitelist" },
+      ],
+    });
+  }),
 
   governed("quorum is a weight, met exactly, and never more than is seated", (b) => {
     b.call("root", "@gov", "setVotingPower", ["manager", 1n, SEAT.agent]);
