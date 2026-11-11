@@ -214,17 +214,25 @@ export interface Intent {
 /**
  * Whose signature a pending intent's next decision needs (PRD F2.6).
  *
- * `EscalationRouter.resolve` reverts for any sender that is not the intent's
- * `awaitingApprover`, so this is a read of the chain's own gate rather than a
- * policy this stack invents. `isRoot` is what decides whether a fresh root
- * proof is demanded before anything is signed: an intent that has climbed to
- * the human root is settled by the human, not by whichever key the
- * orchestrator happens to hold.
+ * `EscalationRouter.resolve` accepts the intent's `awaitingApprover` while that
+ * node is active, and the org root in its place once it is inactive or removed,
+ * so this is a read of the chain's own gate rather than a policy this stack
+ * invents. `isRoot` is what decides whether a fresh root proof is demanded
+ * before anything is signed: an intent the human root must settle, because it
+ * climbed there or because its approver is gone, is settled by the human, not
+ * by whichever key the orchestrator happens to hold.
  */
 export interface ApprovalAuthority {
   /** False when the intent is not pending — never read as "no proof needed". */
   found: boolean;
   awaitingApprover: `0x${string}` | null;
+  /** The seat that must send `resolve`: the awaiting approver, or the root standing in. */
+  resolver: `0x${string}` | null;
+  /** True when the root resolves in place of an inactive or removed approver. */
+  standIn: boolean;
+  /** False when the proposing agent is inactive or gone: approval reverts, rejection stays open. */
+  agentActive: boolean;
+  /** Whether `resolver` is the org's human root. */
   isRoot: boolean;
 }
 
