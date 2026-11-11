@@ -1,11 +1,15 @@
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { closeSharedDb, sharedDb } from "./dbPool.js";
 import type { ProtocolEvent } from "@lacrew/core";
 import {
   createAuditStoreFromEnv,
   createMemoryAuditStore,
   createPgAuditStore,
 } from "./auditStore.js";
+
+// One pool for the file, as one process has; closed so the runner can exit.
+after(async () => closeSharedDb());
 
 const EVENT: ProtocolEvent = {
   type: "ActionExecuted",
@@ -45,7 +49,7 @@ describe("AuditStore", () => {
       // A chain id of its own, so the shared table's other rows stay out of
       // this run's counts.
       const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-      const store = createPgAuditStore(undefined, chainId);
+      const store = createPgAuditStore({ db: sharedDb(), chainId });
       const agent = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
       const at = (iso: string, type: ProtocolEvent["type"], payload = {}): ProtocolEvent => ({
         type,
@@ -88,7 +92,7 @@ describe("AuditStore", () => {
   );
 
   it("postgres store round-trips an event", { skip: !process.env.DATABASE_URL }, async () => {
-    const store = createPgAuditStore();
+    const store = createPgAuditStore({ db: sharedDb() });
     const marker = `test-${Date.now()}`;
     await store.append({ ...EVENT, payload: { ...EVENT.payload, marker } });
     const recent = await store.recent(50);

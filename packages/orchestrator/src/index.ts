@@ -359,6 +359,7 @@ export {
   createPgAuditStore,
   type AuditStore,
 } from "./auditStore.js";
+export { closeSharedDb, sharedDb } from "./dbPool.js";
 export {
   createGasStoreFromEnv,
   createMemoryGasStore,

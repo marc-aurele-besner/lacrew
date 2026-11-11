@@ -42,7 +42,6 @@ import {
 import type { Message } from "./conversation.js";
 import {
   allAgentControlRows,
-  createDb,
   deleteConnectorMode,
   deleteCrewBinding,
   deleteDualControlRule,
@@ -89,6 +88,7 @@ import {
   type IntentRow,
   type SessionRow,
 } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 
 export type SessionRecord = SessionRow;
 export type IntentRecord = IntentRow;
@@ -620,9 +620,8 @@ export function messageToRow(message: Message): StoredMessageRow {
   };
 }
 
-export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgRuntimeStore(options: { db: DbHandle }): RuntimeStore {
+  const db = () => options.db;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] runtime store ${op} failed:`, err);
 
@@ -1117,14 +1116,12 @@ export function createPgRuntimeStore(url = getDatabaseUrl()): RuntimeStore {
         warn("dual control review save", err);
       }
     },
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createRuntimeStoreFromEnv(): RuntimeStore {
-  return getDatabaseUrl() ? createPgRuntimeStore() : createMemoryRuntimeStore();
+  return getDatabaseUrl() ? createPgRuntimeStore({ db: sharedDb() }) : createMemoryRuntimeStore();
 }

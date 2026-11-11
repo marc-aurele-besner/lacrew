@@ -9,13 +9,13 @@ import {
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
-  createDb,
   deleteSandboxAuditEvents,
   getDatabaseUrl,
   insertAuditEvent,
   recentAuditEvents,
   type DbHandle,
 } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 import type { Ledger, ProtocolEvent } from "@lacrew/core";
 
 export interface AuditStore {
@@ -97,13 +97,13 @@ export function createMemoryAuditStore(): AuditStore {
  * read and count answers only that ledger, so a sandbox's simulated trail and a
  * chain's real one never hydrate, report or bill from each other.
  */
-export function createPgAuditStore(
-  url = getDatabaseUrl(),
-  chainId?: number,
-  ledger: Ledger = "chain",
-): AuditStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgAuditStore(options: {
+  db: DbHandle;
+  chainId?: number;
+  ledger?: Ledger;
+}): AuditStore {
+  const db = () => options.db;
+  const { chainId, ledger = "chain" } = options;
   const scope = chainId === undefined ? { ledger } : { chainId, ledger };
   const toEvent = (row: Awaited<ReturnType<typeof recentAuditEvents>>[number]): ProtocolEvent => ({
     type: row.type as ProtocolEvent["type"],
@@ -182,16 +182,14 @@ export function createPgAuditStore(
       // would show it under the new one, and the caller has to be told.
       await deleteSandboxAuditEvents(db());
     },
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createAuditStoreFromEnv(chainId?: number, ledger: Ledger = "chain"): AuditStore {
   return getDatabaseUrl()
-    ? createPgAuditStore(getDatabaseUrl(), chainId, ledger)
+    ? createPgAuditStore({ db: sharedDb(), chainId, ledger })
     : createMemoryAuditStore();
 }
