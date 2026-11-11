@@ -1,4 +1,13 @@
-import { index, pgTable, text, boolean, jsonb, timestamp, unique } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+} from "drizzle-orm/pg-core";
 
 /**
  * External MCP tool allowlist (F2.30): which third-party tool an operator has
@@ -15,6 +24,8 @@ import { index, pgTable, text, boolean, jsonb, timestamp, unique } from "drizzle
 export const externalMcpTools = pgTable(
   "orchestrator_external_mcp_tools",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** `workspace`, `crew:<address>`, or `agent:<address>`. */
     scopeKey: text("scope_key").notNull(),
     scope: jsonb("scope").notNull().$type<Record<string, unknown>>(),
@@ -34,8 +45,13 @@ export const externalMcpTools = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("external_mcp_tools_scope_server_tool").on(table.scopeKey, table.server, table.tool),
-    index("external_mcp_tools_server_idx").on(table.server),
+    unique("external_mcp_tools_scope_server_tool").on(
+      table.orgId,
+      table.scopeKey,
+      table.server,
+      table.tool,
+    ),
+    index("external_mcp_tools_server_idx").on(table.orgId, table.server),
   ],
 );
 
@@ -56,15 +72,20 @@ export const externalMcpTools = pgTable(
 export const externalMcpServers = pgTable(
   "orchestrator_external_mcp_servers",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Server id — the `mcp__<server>__<tool>` namespace. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     /** `ExternalMcpServer` as attached: transport, endpoint, env var names. */
     config: jsonb("config").notNull().$type<Record<string, unknown>>(),
     /** `crew:<address>` / `agent:<address>` of whoever attached it; null = the operator's. */
     ownerKey: text("owner_key"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("external_mcp_servers_owner_idx").on(table.ownerKey)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("external_mcp_servers_owner_idx").on(table.orgId, table.ownerKey),
+  ],
 );
 
 /**
@@ -85,6 +106,8 @@ export const externalMcpServers = pgTable(
 export const externalMcpSecrets = pgTable(
   "orchestrator_external_mcp_secrets",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** `crew:<address>` / `agent:<address>`, or `operator` for the boot config's own. */
     ownerKey: text("owner_key").notNull(),
     /** The name a server config references. Unique per owner, not globally. */
@@ -95,5 +118,5 @@ export const externalMcpSecrets = pgTable(
     hint: text("hint").notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique("external_mcp_secrets_owner_ref").on(table.ownerKey, table.ref)],
+  (table) => [unique("external_mcp_secrets_owner_ref").on(table.orgId, table.ownerKey, table.ref)],
 );

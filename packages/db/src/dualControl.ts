@@ -1,8 +1,8 @@
 /** Query helpers for dual control (keeps Drizzle inside @lacrew/db). */
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { dualControlReviews, dualControlRules } from "./schema/dualControl.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface DualControlRuleRow {
   scopeKey: string;
@@ -17,10 +17,7 @@ export interface DualControlRuleRow {
   updatedAt: string;
 }
 
-export async function upsertDualControlRule(
-  handle: DbHandle,
-  row: DualControlRuleRow,
-): Promise<void> {
+export async function upsertDualControlRule(handle: OrgDb, row: DualControlRuleRow): Promise<void> {
   const values = {
     scopeKey: row.scopeKey,
     scope: row.scope,
@@ -35,12 +32,17 @@ export async function upsertDualControlRule(
   };
   await handle.db
     .insert(dualControlRules)
-    .values(values)
-    .onConflictDoUpdate({ target: dualControlRules.scopeKey, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({
+      target: [dualControlRules.orgId, dualControlRules.scopeKey],
+      set: values,
+    });
 }
 
-export async function deleteDualControlRule(handle: DbHandle, scopeKey: string): Promise<void> {
-  await handle.db.delete(dualControlRules).where(eq(dualControlRules.scopeKey, scopeKey));
+export async function deleteDualControlRule(handle: OrgDb, scopeKey: string): Promise<void> {
+  await handle.db
+    .delete(dualControlRules)
+    .where(and(eq(dualControlRules.orgId, handle.orgId), eq(dualControlRules.scopeKey, scopeKey)));
 }
 
 /**
@@ -48,8 +50,11 @@ export async function deleteDualControlRule(handle: DbHandle, scopeKey: string):
  * an operator configured, and a trimmed row is a crew that silently stops
  * needing a second pair of eyes.
  */
-export async function listDualControlRules(handle: DbHandle): Promise<DualControlRuleRow[]> {
-  const rows = await handle.db.select().from(dualControlRules);
+export async function listDualControlRules(handle: OrgDb): Promise<DualControlRuleRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(dualControlRules)
+    .where(eq(dualControlRules.orgId, handle.orgId));
   return rows.map((row) => ({
     scopeKey: row.scopeKey,
     scope: row.scope ?? {},
@@ -94,7 +99,7 @@ export interface DualControlReviewRow {
 }
 
 export async function upsertDualControlReview(
-  handle: DbHandle,
+  handle: OrgDb,
   row: DualControlReviewRow,
 ): Promise<void> {
   const values = {
@@ -127,8 +132,8 @@ export async function upsertDualControlReview(
   };
   await handle.db
     .insert(dualControlReviews)
-    .values(values)
-    .onConflictDoUpdate({ target: dualControlReviews.id, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [dualControlReviews.orgId, dualControlReviews.id], set: values });
 }
 
 /**
@@ -140,12 +145,13 @@ export async function upsertDualControlReview(
  * deterministic id closes.
  */
 export async function recentDualControlReviews(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
 ): Promise<DualControlReviewRow[]> {
   const rows = await handle.db
     .select()
     .from(dualControlReviews)
+    .where(eq(dualControlReviews.orgId, handle.orgId))
     .orderBy(desc(dualControlReviews.createdAt))
     .limit(limit);
   return rows.map((row) => ({

@@ -23,6 +23,8 @@ import {
 export const runtimeSessions = pgTable(
   "orchestrator_sessions",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /**
      * Session id (onchain uint as string, or mock id). Onchain ids restart
      * from 0 on a fresh local deploy; the upsert overwrites the stale row.
@@ -52,14 +54,16 @@ export const runtimeSessions = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => [
-    primaryKey({ columns: [table.keyId, table.ledger] }),
-    index("sessions_issued_idx").on(table.issuedAt),
+    primaryKey({ columns: [table.orgId, table.keyId, table.ledger] }),
+    index("sessions_issued_idx").on(table.orgId, table.issuedAt),
   ],
 );
 
 export const runtimeIntents = pgTable(
   "orchestrator_intents",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     /** Router intent id; "0" for ALLOW spends (no pending intent created). */
     intentId: text("intent_id").notNull(),
@@ -85,9 +89,9 @@ export const runtimeIntents = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
-    index("intents_intent_idx").on(table.intentId),
-    index("intents_proposed_idx").on(table.proposedAt),
-    index("intents_status_idx").on(table.status),
+    index("intents_intent_idx").on(table.orgId, table.intentId),
+    index("intents_proposed_idx").on(table.orgId, table.proposedAt),
+    index("intents_status_idx").on(table.orgId, table.status),
   ],
 );
 
@@ -103,21 +107,27 @@ export const runtimeIntents = pgTable(
  * guidelines, no resources and no skills keeps working, and does the wrong
  * thing competently.
  */
-export const runtimeAgentControls = pgTable("orchestrator_agent_controls", {
-  /** Lowercased agent address; one row per agent. */
-  agent: text("agent").primaryKey(),
-  paused: boolean("paused").notNull().default(false),
-  pausedAt: timestamp("paused_at", { withTimezone: true }),
-  /** Free-text reason an operator gave; surfaced in the trail and the UI. */
-  pausedReason: text("paused_reason"),
-  /**
-   * Ordered directive layers, each `{label, text?, resources?, skills?}`.
-   * Stored as written rather than as rendered prompt text, so the editor can
-   * round-trip what an operator typed instead of re-parsing a rendering.
-   */
-  layers: jsonb("layers").notNull().default([]).$type<unknown[]>(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const runtimeAgentControls = pgTable(
+  "orchestrator_agent_controls",
+  {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
+    /** Lowercased agent address; one row per agent. */
+    agent: text("agent").notNull(),
+    paused: boolean("paused").notNull().default(false),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    /** Free-text reason an operator gave; surfaced in the trail and the UI. */
+    pausedReason: text("paused_reason"),
+    /**
+     * Ordered directive layers, each `{label, text?, resources?, skills?}`.
+     * Stored as written rather than as rendered prompt text, so the editor can
+     * round-trip what an operator typed instead of re-parsing a rendering.
+     */
+    layers: jsonb("layers").notNull().default([]).$type<unknown[]>(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.orgId, table.agent] })],
+);
 
 /**
  * Crew conversation (F1.7): the third channel, beside intents and proposals.
@@ -131,7 +141,9 @@ export const runtimeAgentControls = pgTable("orchestrator_agent_controls", {
 export const runtimeMessages = pgTable(
   "orchestrator_messages",
   {
-    id: text("id").primaryKey(),
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
+    id: text("id").notNull(),
     /** `crew:<id>`, `agent:<address>`, or `org`. */
     threadId: text("thread_id").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull(),
@@ -162,5 +174,8 @@ export const runtimeMessages = pgTable(
      */
     via: text("via"),
   },
-  (table) => [index("messages_thread_idx").on(table.threadId, table.at)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("messages_thread_idx").on(table.orgId, table.threadId, table.at),
+  ],
 );

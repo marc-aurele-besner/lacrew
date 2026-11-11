@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -29,8 +30,10 @@ import {
 export const inferenceBudgets = pgTable(
   "orchestrator_inference_budgets",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** `crew:<id>` or `crew:<id>/agent:<0x…>` — the metered subject. */
-    scopeKey: text("scope_key").primaryKey(),
+    scopeKey: text("scope_key").notNull(),
     crewId: text("crew_id").notNull(),
     /** Null for a crew-wide budget. */
     agentId: text("agent_id"),
@@ -53,12 +56,17 @@ export const inferenceBudgets = pgTable(
     enabled: boolean("enabled").notNull().default(false),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("inference_budgets_crew_idx").on(table.crewId)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.scopeKey] }),
+    index("inference_budgets_crew_idx").on(table.orgId, table.crewId),
+  ],
 );
 
 export const inferenceUsage = pgTable(
   "orchestrator_inference_usage",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     scopeKey: text("scope_key").notNull(),
     /** `2026-07`, `window:<ms>:<n>`, `epoch:<ms>:<n>` — rollover is a new key. */
     periodKey: text("period_key").notNull(),
@@ -78,12 +86,16 @@ export const inferenceUsage = pgTable(
     alertedState: text("alerted_state").notNull().default("ok"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique("inference_usage_scope_period").on(table.scopeKey, table.periodKey)],
+  (table) => [
+    unique("inference_usage_scope_period").on(table.orgId, table.scopeKey, table.periodKey),
+  ],
 );
 
 export const inferenceUsageEvents = pgTable(
   "orchestrator_inference_usage_events",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     scopeKey: text("scope_key").notNull(),
     periodKey: text("period_key").notNull(),
@@ -104,7 +116,7 @@ export const inferenceUsageEvents = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index("inference_usage_events_scope_idx").on(table.scopeKey, table.periodKey),
-    index("inference_usage_events_at_idx").on(table.at),
+    index("inference_usage_events_scope_idx").on(table.orgId, table.scopeKey, table.periodKey),
+    index("inference_usage_events_at_idx").on(table.orgId, table.at),
   ],
 );

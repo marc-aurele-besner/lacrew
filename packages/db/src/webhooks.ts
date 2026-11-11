@@ -2,7 +2,7 @@
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { webhookDeliveries, webhookTriggers } from "./schema/webhooks.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface WebhookTriggerRow {
   id: string;
@@ -29,10 +29,7 @@ export interface WebhookDeliveryRow {
   at: string;
 }
 
-export async function upsertWebhookTrigger(
-  handle: DbHandle,
-  row: WebhookTriggerRow,
-): Promise<void> {
+export async function upsertWebhookTrigger(handle: OrgDb, row: WebhookTriggerRow): Promise<void> {
   const values = {
     id: row.id,
     flowId: row.flowId,
@@ -49,18 +46,18 @@ export async function upsertWebhookTrigger(
   };
   await handle.db
     .insert(webhookTriggers)
-    .values(values)
-    .onConflictDoUpdate({ target: webhookTriggers.id, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [webhookTriggers.orgId, webhookTriggers.id], set: values });
 }
 
 export async function getWebhookTrigger(
-  handle: DbHandle,
+  handle: OrgDb,
   id: string,
 ): Promise<WebhookTriggerRow | null> {
   const rows = await handle.db
     .select()
     .from(webhookTriggers)
-    .where(eq(webhookTriggers.id, id))
+    .where(and(eq(webhookTriggers.orgId, handle.orgId), eq(webhookTriggers.id, id)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -79,15 +76,20 @@ export async function getWebhookTrigger(
   };
 }
 
-export async function deleteWebhookTrigger(handle: DbHandle, id: string): Promise<void> {
-  await handle.db.delete(webhookTriggers).where(eq(webhookTriggers.id, id));
-  await handle.db.delete(webhookDeliveries).where(eq(webhookDeliveries.triggerId, id));
+export async function deleteWebhookTrigger(handle: OrgDb, id: string): Promise<void> {
+  await handle.db
+    .delete(webhookTriggers)
+    .where(and(eq(webhookTriggers.orgId, handle.orgId), eq(webhookTriggers.id, id)));
+  await handle.db
+    .delete(webhookDeliveries)
+    .where(and(eq(webhookDeliveries.orgId, handle.orgId), eq(webhookDeliveries.triggerId, id)));
 }
 
-export async function listWebhookTriggers(handle: DbHandle): Promise<WebhookTriggerRow[]> {
+export async function listWebhookTriggers(handle: OrgDb): Promise<WebhookTriggerRow[]> {
   const rows = await handle.db
     .select()
     .from(webhookTriggers)
+    .where(eq(webhookTriggers.orgId, handle.orgId))
     .orderBy(desc(webhookTriggers.createdAt));
   return rows.map((row) => ({
     id: row.id,
@@ -112,7 +114,7 @@ export async function listWebhookTriggers(handle: DbHandle): Promise<WebhookTrig
  * enqueue. Doing the check as a prior SELECT would leave the race open.
  */
 export async function claimWebhookDelivery(
-  handle: DbHandle,
+  handle: OrgDb,
   row: Pick<WebhookDeliveryRow, "triggerId" | "deliveryKey" | "result"> & {
     bytes?: number | null;
   },
@@ -120,6 +122,7 @@ export async function claimWebhookDelivery(
   const inserted = await handle.db
     .insert(webhookDeliveries)
     .values({
+      orgId: handle.orgId,
       triggerId: row.triggerId,
       deliveryKey: row.deliveryKey,
       result: row.result,
@@ -133,12 +136,13 @@ export async function claimWebhookDelivery(
 
 /** Record a delivery outcome that carries no idempotency guarantee (rejections). */
 export async function insertWebhookDelivery(
-  handle: DbHandle,
+  handle: OrgDb,
   row: Omit<WebhookDeliveryRow, "at"> & { at?: string },
 ): Promise<void> {
   await handle.db
     .insert(webhookDeliveries)
     .values({
+      orgId: handle.orgId,
       triggerId: row.triggerId,
       deliveryKey: row.deliveryKey,
       result: row.result,
@@ -152,7 +156,7 @@ export async function insertWebhookDelivery(
 
 /** Update a claimed delivery once its run is known. */
 export async function settleWebhookDelivery(
-  handle: DbHandle,
+  handle: OrgDb,
   row: Pick<WebhookDeliveryRow, "triggerId" | "deliveryKey" | "result"> & {
     reason?: string | null;
     runId?: string | null;
@@ -167,6 +171,7 @@ export async function settleWebhookDelivery(
     })
     .where(
       and(
+        eq(webhookDeliveries.orgId, handle.orgId),
         eq(webhookDeliveries.triggerId, row.triggerId),
         eq(webhookDeliveries.deliveryKey, row.deliveryKey),
       ),
@@ -175,12 +180,19 @@ export async function settleWebhookDelivery(
 
 /** Most recent deliveries, newest → oldest; all triggers when `triggerId` is omitted. */
 export async function recentWebhookDeliveries(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
   triggerId?: string,
 ): Promise<WebhookDeliveryRow[]> {
-  const base = handle.db.select().from(webhookDeliveries);
-  const rows = await (triggerId ? base.where(eq(webhookDeliveries.triggerId, triggerId)) : base)
+  const rows = await handle.db
+    .select()
+    .from(webhookDeliveries)
+    .where(
+      and(
+        eq(webhookDeliveries.orgId, handle.orgId),
+        triggerId ? eq(webhookDeliveries.triggerId, triggerId) : undefined,
+      ),
+    )
     .orderBy(desc(webhookDeliveries.at), desc(webhookDeliveries.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -199,8 +211,13 @@ export async function recentWebhookDeliveries(
  * without bound. Replay protection past the retention window is the signature
  * timestamp's job, not this table's.
  */
-export async function pruneWebhookDeliveries(handle: DbHandle, days: number): Promise<void> {
+export async function pruneWebhookDeliveries(handle: OrgDb, days: number): Promise<void> {
   await handle.db
     .delete(webhookDeliveries)
-    .where(sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`);
+    .where(
+      and(
+        eq(webhookDeliveries.orgId, handle.orgId),
+        sql`${webhookDeliveries.at} < now() - make_interval(days => ${days})`,
+      ),
+    );
 }

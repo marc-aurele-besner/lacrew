@@ -1,11 +1,15 @@
 export {
+  assertValidOrgId,
   assertValidSchemaName,
   createDb,
+  DEFAULT_ORG_ID,
+  orgDb,
   checkDbReady,
   getDatabaseSchema,
   getDatabaseUrl,
   type DbHandle,
   type LacrewDb,
+  type OrgDb,
 } from "./client.js";
 export {
   auditEventsBetween,

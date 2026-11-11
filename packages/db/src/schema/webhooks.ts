@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -22,8 +23,10 @@ import {
 export const webhookTriggers = pgTable(
   "orchestrator_webhook_triggers",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Public trigger id — the path segment of the hook URL. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     flowId: text("flow_id").notNull(),
     /** Agent the run executes as; null means the crew's default worker. */
     principal: text("principal"),
@@ -44,12 +47,17 @@ export const webhookTriggers = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("webhook_triggers_flow_idx").on(table.flowId)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("webhook_triggers_flow_idx").on(table.orgId, table.flowId),
+  ],
 );
 
 export const webhookDeliveries = pgTable(
   "orchestrator_webhook_deliveries",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     triggerId: text("trigger_id").notNull(),
     /**
@@ -69,7 +77,7 @@ export const webhookDeliveries = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("webhook_deliveries_key_uq").on(table.triggerId, table.deliveryKey),
-    index("webhook_deliveries_at_idx").on(table.at),
+    unique("webhook_deliveries_key_uq").on(table.orgId, table.triggerId, table.deliveryKey),
+    index("webhook_deliveries_at_idx").on(table.orgId, table.at),
   ],
 );

@@ -29,7 +29,7 @@
     "build": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/migrate.ts",
-    "test": "node --import tsx --test src/client.test.ts",
+    "test": "node --import tsx --test src/client.test.ts src/schemaOrgScope.test.ts",
     "clean": "rm -rf dist",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
