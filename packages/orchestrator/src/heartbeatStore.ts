@@ -11,7 +11,6 @@
 
 import {
   claimCrewHeartbeatTick,
-  createDb,
   deleteCrewHeartbeat,
   getCrewHeartbeat,
   getDatabaseUrl,
@@ -24,6 +23,7 @@ import {
   type CrewHeartbeatTickRow,
   type DbHandle,
 } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 import type { CrewHeartbeat, InferenceUsage } from "@lacrew/flows";
 
 export type { CrewHeartbeatTickRow };
@@ -191,9 +191,8 @@ export function createMemoryHeartbeatStore(): HeartbeatStore {
   };
 }
 
-export function createPgHeartbeatStore(url = getDatabaseUrl()): HeartbeatStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgHeartbeatStore(options: { db: DbHandle }): HeartbeatStore {
+  const db = () => options.db;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] heartbeat ${op} failed:`, err);
 
@@ -255,14 +254,14 @@ export function createPgHeartbeatStore(url = getDatabaseUrl()): HeartbeatStore {
         warn("tick prune", err);
       }
     },
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createHeartbeatStoreFromEnv(): HeartbeatStore {
-  return getDatabaseUrl() ? createPgHeartbeatStore() : createMemoryHeartbeatStore();
+  return getDatabaseUrl()
+    ? createPgHeartbeatStore({ db: sharedDb() })
+    : createMemoryHeartbeatStore();
 }

@@ -7,7 +7,6 @@
 
 import {
   claimWaitingFlowRun,
-  createDb,
   deleteFlowDefinition,
   getChildFlowRunState,
   getDatabaseUrl,
@@ -27,6 +26,7 @@ import {
   upsertFlowRunState,
   type DbHandle,
 } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 import type {
   FlowAttempt,
   FlowCheckpoint,
@@ -272,9 +272,8 @@ export function createMemoryFlowStore(): FlowStore {
   };
 }
 
-export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgFlowStore(options: { db: DbHandle }): FlowStore {
+  const db = () => options.db;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] flow ${op} failed:`, err);
 
@@ -550,14 +549,12 @@ export function createPgFlowStore(url = getDatabaseUrl()): FlowStore {
         return [];
       }
     },
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createFlowStoreFromEnv(): FlowStore {
-  return getDatabaseUrl() ? createPgFlowStore() : createMemoryFlowStore();
+  return getDatabaseUrl() ? createPgFlowStore({ db: sharedDb() }) : createMemoryFlowStore();
 }

@@ -12,7 +12,8 @@
  * memory otherwise — the same provider pattern as the other stores.
  */
 
-import { createDb, getDatabaseUrl, loadSandboxState, saveSandboxState } from "@lacrew/db";
+import { getDatabaseUrl, loadSandboxState, saveSandboxState } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 import type { DbHandle } from "@lacrew/db";
 import {
   createSandboxClient,
@@ -72,9 +73,8 @@ export function createMemorySandboxStateStore(): SandboxStateStore {
   };
 }
 
-export function createPgSandboxStateStore(url = getDatabaseUrl()): SandboxStateStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgSandboxStateStore(options: { db: DbHandle }): SandboxStateStore {
+  const db = () => options.db;
   return {
     name: "postgres",
     load: async (orgId) => {
@@ -97,16 +97,16 @@ export function createPgSandboxStateStore(url = getDatabaseUrl()): SandboxStateS
         },
         expectedVersion,
       ),
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createSandboxStateStoreFromEnv(): SandboxStateStore {
-  return getDatabaseUrl() ? createPgSandboxStateStore() : createMemorySandboxStateStore();
+  return getDatabaseUrl()
+    ? createPgSandboxStateStore({ db: sharedDb() })
+    : createMemorySandboxStateStore();
 }
 
 /** Raised when a sandbox control is asked of a runtime that is not a sandbox. */

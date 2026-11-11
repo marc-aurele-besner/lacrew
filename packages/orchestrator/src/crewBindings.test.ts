@@ -7,11 +7,15 @@
  * checklist still binds every seat — including one somebody renamed.
  */
 
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { closeSharedDb, sharedDb } from "./dbPool.js";
 import { createCrewBindings } from "./crewBindings.js";
 import { createMemoryRuntimeStore, createPgRuntimeStore } from "./runtimeStore.js";
 import { getCrewBlueprint, resolveCrewSeats } from "@lacrew/flows";
+
+// One pool for the file, as one process has; closed so the runner can exit.
+after(async () => closeSharedDb());
 
 const A = "0x00000000000000000000000000000000000000aa";
 const B = "0x00000000000000000000000000000000000000bb";
@@ -159,7 +163,7 @@ describe("crew bindings on Postgres", { skip: !process.env.DATABASE_URL }, () =>
   it("round-trips every field a binding carries, and rehydrates a renamed seat", async () => {
     const bp = getCrewBlueprint("github-experts")!;
     const crew = crewId();
-    const store = createPgRuntimeStore();
+    const store = createPgRuntimeStore({ db: sharedDb() });
     const accounts = new Map(
       bp.roles.map((role, i) => [role.id, `0x${String(i + 1).padStart(40, "0")}`]),
     );
@@ -211,7 +215,7 @@ describe("crew bindings on Postgres", { skip: !process.env.DATABASE_URL }, () =>
   */
   it("deletes the displaced row when a seat moves, and when one is cleared", async () => {
     const crew = crewId();
-    const store = createPgRuntimeStore();
+    const store = createPgRuntimeStore({ db: sharedDb() });
     try {
       const writer = createCrewBindings({ store });
       await writer.set({ roleId: "reviewer", account: A, crewId: crew });

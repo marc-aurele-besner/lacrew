@@ -13,6 +13,7 @@ import { createServer } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 import { checkDbReady, getDatabaseUrl, runDbMigrations } from "@lacrew/db";
 import { getOrchToken } from "./auth.js";
+import { closeSharedDb } from "./dbPool.js";
 import { createRuntimeFromEnv } from "./runtime.js";
 import { createRuntimeMcpBackend } from "./mcpBackend.js";
 import { createFlowsSurface } from "./flows.js";
@@ -853,6 +854,8 @@ async function main(): Promise<void> {
     // Stdio servers are child processes this orchestrator started; leaving them
     // running after a redeploy is a slow leak of third-party binaries.
     await externalMcp?.close();
+    // Last: every store above writes through this pool.
+    await closeSharedDb();
   });
 
   await listenHttp(

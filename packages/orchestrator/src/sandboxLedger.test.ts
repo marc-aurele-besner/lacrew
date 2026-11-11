@@ -9,7 +9,8 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { closeSharedDb, sharedDb } from "./dbPool.js";
+import { after, describe, it } from "node:test";
 import type { ProtocolEvent } from "@lacrew/core";
 import { createPgAuditStore } from "./auditStore.js";
 import { createSandboxRuntime } from "./runtime.js";
@@ -22,6 +23,9 @@ import {
   createSandboxStateStoreFromEnv,
   type SandboxStateStore,
 } from "./sandboxLedger.js";
+
+// One pool for the file, as one process has; closed so the runner can exit.
+after(async () => closeSharedDb());
 
 const PG = Boolean(process.env.DATABASE_URL);
 /** An org of its own per run, so a shared database's other rows stay out. */
@@ -104,7 +108,7 @@ function storeContract(name: string, make: () => SandboxStateStore, skip: boolea
 }
 
 storeContract("memory", createMemorySandboxStateStore, false);
-storeContract("postgres", () => createPgSandboxStateStore(), !PG);
+storeContract("postgres", () => createPgSandboxStateStore({ db: sharedDb() }), !PG);
 
 describe("SandboxLedger", () => {
   it("falls back to the memory store without DATABASE_URL", () => {
@@ -277,8 +281,8 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
   it("counts and reads audit events per ledger, and never bills a sandbox row", async () => {
     // A chain id of its own, so this run sees only its own rows.
     const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-    const chain = createPgAuditStore(undefined, chainId);
-    const sandbox = createPgAuditStore(undefined, chainId, "sandbox");
+    const chain = createPgAuditStore({ db: sharedDb(), chainId });
+    const sandbox = createPgAuditStore({ db: sharedDb(), chainId, ledger: "sandbox" });
     const event = (type: ProtocolEvent["type"], at: string): ProtocolEvent => ({
       type,
       at,
@@ -329,9 +333,9 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
     const orgId = uniqueOrg();
     const stores: Array<{ close(): Promise<void> }> = [];
     const make = () => {
-      const store = createPgSandboxStateStore();
-      const auditStore = createPgAuditStore(undefined, undefined, "sandbox");
-      const runtimeStore = createPgRuntimeStore();
+      const store = createPgSandboxStateStore({ db: sharedDb() });
+      const auditStore = createPgAuditStore({ db: sharedDb(), ledger: "sandbox" });
+      const runtimeStore = createPgRuntimeStore({ db: sharedDb() });
       stores.push(store, auditStore, runtimeStore);
       return createSandboxRuntime({ orgId, store, auditStore, runtimeStore });
     };
@@ -378,7 +382,7 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
       assert.deepEqual(usage.counts, {});
       assert.ok(usage.sandboxCounts!.SandboxFunded! >= 1);
       // A chain-ledger store reading the same table sees none of it.
-      const chain = createPgAuditStore();
+      const chain = createPgAuditStore({ db: sharedDb() });
       stores.push(chain);
       assert.equal((await chain.countByTypeSince(since))?.SandboxFunded, undefined);
 
@@ -412,7 +416,7 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
   });
 
   it("keys sessions by ledger and round-trips the simTxId columns", async () => {
-    const store = createPgRuntimeStore();
+    const store = createPgRuntimeStore({ db: sharedDb() });
     const keyId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const intentId = `test-${keyId}`;
     const base = {

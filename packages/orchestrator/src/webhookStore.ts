@@ -11,7 +11,6 @@
 
 import {
   claimWebhookDelivery,
-  createDb,
   deleteWebhookTrigger,
   getDatabaseUrl,
   getWebhookTrigger,
@@ -25,6 +24,7 @@ import {
   type WebhookDeliveryRow,
   type WebhookTriggerRow,
 } from "@lacrew/db";
+import { sharedDb } from "./dbPool.js";
 
 export type { WebhookDeliveryRow, WebhookTriggerRow };
 
@@ -137,9 +137,8 @@ export function createMemoryWebhookStore(): WebhookStore {
   };
 }
 
-export function createPgWebhookStore(url = getDatabaseUrl()): WebhookStore {
-  let handle: DbHandle | undefined;
-  const db = () => (handle ??= createDb(url));
+export function createPgWebhookStore(options: { db: DbHandle }): WebhookStore {
+  const db = () => options.db;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] webhook ${op} failed:`, err);
 
@@ -201,14 +200,12 @@ export function createPgWebhookStore(url = getDatabaseUrl()): WebhookStore {
         warn("delivery prune", err);
       }
     },
-    close: async () => {
-      await handle?.close();
-      handle = undefined;
-    },
+    // The pool belongs to whoever injected it, and is closed there.
+    close: async () => {},
   };
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
 export function createWebhookStoreFromEnv(): WebhookStore {
-  return getDatabaseUrl() ? createPgWebhookStore() : createMemoryWebhookStore();
+  return getDatabaseUrl() ? createPgWebhookStore({ db: sharedDb() }) : createMemoryWebhookStore();
 }

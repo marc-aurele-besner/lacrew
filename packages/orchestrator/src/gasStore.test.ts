@@ -1,5 +1,6 @@
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { closeSharedDb, sharedDb } from "./dbPool.js";
 import {
   createGasStoreFromEnv,
   createMemoryGasStore,
@@ -8,6 +9,9 @@ import {
   type TxGasRecord,
 } from "./gasStore.js";
 import type { GasPayer, GasReceipt } from "@lacrew/core";
+
+// One pool for the file, as one process has; closed so the runner can exit.
+after(async () => closeSharedDb());
 
 const TX = `0x${"Ab".repeat(32)}` as `0x${string}`;
 const SENDER = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd" as `0x${string}`;
@@ -114,7 +118,7 @@ describe("GasStore", () => {
       // A chain id of its own, so the shared table's other rows stay out of
       // this run's sums.
       const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-      const store = createPgGasStore(undefined, chainId);
+      const store = createPgGasStore({ db: sharedDb(), chainId });
       const agent = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
       const other = "0x1111111111111111111111111111111111111111";
       let n = 0;
