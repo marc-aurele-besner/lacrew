@@ -159,6 +159,7 @@ export {
   cronMinuteGap,
   isValidCron,
   isValidTimeZone,
+  nextCronAfter,
   parseCron,
   zonedParts,
   type ZonedParts,

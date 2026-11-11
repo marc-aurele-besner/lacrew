@@ -25,7 +25,12 @@ import { autoExecuteEnabled } from "./governanceSweep.js";
 import { createUnavailableApp } from "./httpApp.js";
 import { createOrgWorld } from "./orgWorld.js";
 import { createOrgDirectoryFromEnv } from "./orgDirectory.js";
-import { createMultiOrgHost, DEFAULT_ORG_IDLE_MS, SERVED_ORG_MODES } from "./multiOrgApp.js";
+import {
+  createMultiOrgHost,
+  DEFAULT_ORG_IDLE_MS,
+  defaultEpochCron,
+  SERVED_ORG_MODES,
+} from "./multiOrgApp.js";
 
 const port = Number(process.env.PORT ?? 8788);
 const queue: QueueProvider = createQueueFromEnv();
@@ -111,10 +116,11 @@ async function mainMultiOrg(): Promise<void> {
     onWebhook: hostApp.onWebhook,
     onFlowCron: hostApp.onFlowCron,
   });
-  // One schedule for every org. An org cannot change it, so the environment's
-  // value always stands and a cadence left in the queue by an earlier
-  // single-org run is replaced.
-  await queue.scheduleEpoch(process.env.EPOCH_CRON ?? "0 * * * *");
+  // Each org's epoch runs on its own cadence, kept with the org. The queue's
+  // epoch job is one more tick that checks which orgs are due, beside the
+  // minute sweep; it is set from the environment, so a cadence left in the
+  // queue by an earlier single-org run is replaced.
+  await queue.scheduleEpoch(defaultEpochCron());
   await queue.scheduleFlowCron("* * * * *");
 
   installShutdownHooks(server, async () => {

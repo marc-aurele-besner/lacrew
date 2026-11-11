@@ -483,12 +483,39 @@ on `/usage/daily`: nothing simulated costs gas.
 
 ### Controls
 
-| Endpoint                     | What it does                                                                                                                                                                                                                                                                             |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /sandbox`               | The simulator's status: `ledger`, `simulated`, `orgId`, `root`, `version`, `clock { now, nowIso, offsetSeconds }`, `treasury { token, symbol, decimals, total, liquid, reserved }`, `store`, `limits`, and `persistError` when the last state write did not land                         |
-| `POST /sandbox/fund`         | Body `{ "amount": "250000000" }`, base units. Credits play money to the treasury; at most 1,000,000 USDC per call. Answers the `simTxId`, the `amount` and the status. Not an approval: no allowance, grant, cap or policy changes. Refusals: `invalid_amount`, `amount_too_large` (400) |
-| `POST /sandbox/time/advance` | Body `{ "seconds": 3600 }`, a positive integer of at most 366 days. Session keys expire, rate windows roll and timelocks lapse as they would have. Time only moves forward. Refusals: `invalid_seconds`, `seconds_too_large` (400)                                                       |
-| `POST /sandbox/reset`        | Body `{}`. Rebuilds genesis, puts the clock back on wall time, and deletes every `ledger = 'sandbox'` audit, intent and session row. Flows, directives, pauses and the conversation are kept                                                                                             |
+| Endpoint                     | What it does                                                                                                                                                                                                                                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /sandbox`               | The simulator's status: `ledger`, `simulated`, `orgId`, `root`, `version`, `clock { now, nowIso, offsetSeconds }`, `treasury { token, symbol, decimals, total, liquid, reserved }`, `store`, `limits`, `epoch` (the next scheduled epoch, below), and `persistError` when the last state write did not land |
+| `POST /sandbox/fund`         | Body `{ "amount": "250000000" }`, base units. Credits play money to the treasury; at most 1,000,000 USDC per call. Answers the `simTxId`, the `amount` and the status. Not an approval: no allowance, grant, cap or policy changes. Refusals: `invalid_amount`, `amount_too_large` (400)                    |
+| `POST /sandbox/time/advance` | Body `{ "seconds": 3600 }`, a positive integer of at most 366 days. Session keys expire, rate windows roll and timelocks lapse as they would have. Time only moves forward. Answers `advancedSeconds`, `epochRan` and the status. Refusals: `invalid_seconds`, `seconds_too_large` (400)                    |
+| `POST /sandbox/reset`        | Body `{}`. Rebuilds genesis, puts the clock back on wall time, and deletes every `ledger = 'sandbox'` audit, intent and session row. Flows, directives, pauses and the conversation are kept                                                                                                                |
+
+**The next epoch.** `GET /sandbox` (and every answer that carries the status),
+`GET /health` and `GET /epoch` (as `cadence`) say when the next scheduled epoch
+runs:
+
+```json
+"epoch": {
+  "schedule": "0 0 * * 0",
+  "source": "org",
+  "clock": "org",
+  "nextAt": 1794700800,
+  "nextAtIso": "2026-11-15T00:00:00.000Z",
+  "secondsUntilNext": 304800
+}
+```
+
+`clock` says which clock `nextAt` is on. `org` is the org's own clock, which
+includes the time a sandbox has skipped: advancing by `secondsUntilNext` is
+"skip to the next pay period", the scheduled epoch (allowances streamed, then
+epoch-triggered flows) runs before `POST /sandbox/time/advance` answers, and
+the answer says `epochRan: true`. Several periods skipped in one call are one
+epoch, as a cron that was down for them would run one. A reset works the next
+epoch out again from wall time. `wall` is real time: an orchestrator serving a
+single org runs its epoch from the queue's own schedule (`source: "process"`),
+which nothing skips, so advancing a sandbox's clock there does not run it and
+`epochRan` is `false`; call `POST /epoch`. `nextAt` is null where it cannot be
+told (no schedule, or an `EPOCH_INTERVAL_MS` loop).
 
 On an orchestrator bound to a chain, every `/sandbox` route answers 409
 `not_sandbox`. A revert from the simulated contracts is a 422 whose `error` is
@@ -629,10 +656,38 @@ Shared (one value for every org):
   address. Do not hand it to an org's users.
 - The model provider and its key. Each org's usage is metered and budgeted
   under that org alone.
-- `EPOCH_CRON`: one schedule runs every org's epoch. `POST /o/:id/epoch/schedule`
-  is refused with `epoch_schedule_shared`; `POST /o/:id/epoch` still runs that
-  org's epoch on demand.
+- `EPOCH_CRON` (default hourly) is the cadence of an org that has set none of
+  its own. See "Each org's epoch cadence" below. `EPOCH_INTERVAL_MS` is not
+  used in this mode.
 - `LACREW_SESSION_KEY` (sealing), timeouts, size limits and session defaults.
+
+### Each org's epoch cadence
+
+Every org runs its scheduled epoch on its own cadence, kept with the org in
+the directory (`orchestrator_orgs.epoch_cron`), not in the queue.
+
+```bash
+# Weekly for this org; { "cron": null } goes back to the operator's EPOCH_CRON
+curl -s -X POST http://127.0.0.1:8788/o/acme/epoch/schedule \
+  -H "authorization: Bearer $LACREW_ORCH_TOKEN" -H 'content-type: application/json' \
+  -d '{"cron":"0 0 * * 0"}'
+# → { "schedule": "0 0 * * 0", "cadence": { "schedule": "0 0 * * 0", "source": "org",
+#     "clock": "org", "nextAt": …, "nextAtIso": "…", "secondsUntilNext": … }, "queue": "pg-boss", "mode": "sandbox" }
+```
+
+A 5-field cron in UTC; `400 invalid_cron` for one that does not parse or never
+matches a date. Setting it works the next epoch out from now on the org's
+clock. `GET /o/:id/epoch` answers the same `cadence`, `GET /o/:id/sandbox` and
+`GET /o/:id/health` carry it as `epoch`, and `GET /orgs/:id` lists
+`epoch: { schedule, nextAtIso }` (`schedule: null` means the default).
+
+The process has one tick, the minute sweep (and the queue's epoch job beside
+it). It decides nothing about cadence: it passes over every org whose next
+epoch is still ahead and asks each of the others whether its epoch is due on
+its own clock. A due epoch is claimed in the directory before it runs, so two
+replicas that see it at once run it once. An epoch that fails is logged and is
+not retried until the org's next period; `POST /o/:id/epoch` runs one on
+demand and does not move the schedule.
 
 ### Idle orgs
 
@@ -640,8 +695,8 @@ An org's world is built on its first request and let go after
 `LACREW_ORG_IDLE_MS` (default 15 minutes; `0` never lets one go) without one,
 provided it has nothing scheduled: no cron flow, no enabled heartbeat, no run
 parked or in flight, no question waiting for an answer. Nothing is lost: the
-next request rebuilds it from the store. The scheduled epoch runs for every
-registered org, loaded or not.
+next request rebuilds it from the store. A scheduled epoch runs when it is due
+whether the org is loaded or not: the tick loads an org only when its epoch is.
 
 Run it with a database. Without `DATABASE_URL` the directory and every org's
 state live in memory, are lost when the process stops, and no world is ever

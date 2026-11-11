@@ -24,5 +24,21 @@ export const orgs = pgTable("orchestrator_orgs", {
    * only: no key is ever stored here.
    */
   seats: jsonb("seats").$type<Record<string, string>>(),
+  /**
+   * The 5-field cron this org's epoch runs on. Null runs it on the operator's
+   * default cadence.
+   */
+  epochCron: text("epoch_cron"),
+  /**
+   * When the org's next scheduled epoch is due, on the org's own clock: a
+   * sandbox org's clock includes the time it has skipped. Null until it is
+   * first worked out.
+   */
+  epochNextAt: timestamp("epoch_next_at", { withTimezone: true }),
+  /**
+   * The same moment on the wall clock, which is what a sweep that has not
+   * loaded the org can compare against: `epoch_next_at` less the skipped time.
+   */
+  epochDueAt: timestamp("epoch_due_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
