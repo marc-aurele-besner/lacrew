@@ -24,6 +24,7 @@ import { cmdBudget } from "./budget.js";
 import { cmdPnl } from "./pnl.js";
 import { cmdPlanRequired } from "./planRequired.js";
 import { cmdDualControl } from "./dualControl.js";
+import { cmdGas, flushGasReports, watchClientGas } from "./gas.js";
 import { loadEnvFile } from "./env.js";
 import { listTemplateIds, scaffoldTemplate } from "./scaffold.js";
 import { flagValue, hasFlag } from "./args.js";
@@ -66,7 +67,7 @@ function createClient(args: string[]) {
   const resolverAccount = managerPk ? privateKeyToAccount(managerPk) : undefined;
   const indexerPath = process.env.INDEXER_PATH;
 
-  return createOnchainClient({
+  const client = createOnchainClient({
     transport: http(rpcUrl),
     account,
     resolverAccount,
@@ -74,6 +75,10 @@ function createClient(args: string[]) {
     addresses,
     indexerPath,
   });
+  // With --report-gas, what this command's transactions cost is reported to a
+  // running orchestrator — see gas.ts.
+  watchClientGas(client, args);
+  return client;
 }
 
 function cmdInit(): void {
@@ -276,6 +281,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "scaffold") {
     cmdScaffold(rest);
+    return;
+  }
+  if (cmd === "gas") {
+    await cmdGas(rest, join(repoRoot, "contracts"));
     return;
   }
 
@@ -868,6 +877,10 @@ Commands:
   budget <sub>              A crew's inference cost budget — list, show,
                             set --crew <id> --usd 200 --hard, on/off, usage
                             (not an onchain budget; see: lacrew budget help)
+  gas report <txHash>…      Report transactions this CLI (or anyone) sent to a
+                            running orchestrator's gas ledger; --deploy reports
+                            the last deploy. Any writing command also takes
+                            --report-gas (see: lacrew gas help)
   pnl --crew <id>           What a crew cost over a period — onchain spend,
                             model cost and connector usage on one report,
                             --csv for accountants (see: lacrew pnl help)
@@ -889,7 +902,10 @@ Env:
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  // After the command, failed or not: a transaction it sent was paid for.
+  .then(() => flushGasReports());
