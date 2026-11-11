@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -19,11 +20,12 @@ import {
 export const auditEvents = pgTable(
   "orchestrator_audit_events",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     type: text("type").notNull(),
     /** Event timestamp (ISO from the runtime, block time from the indexer). */
     at: timestamp("at", { withTimezone: true }).notNull(),
-    orgId: text("org_id"),
     payload: jsonb("payload").notNull().$type<Record<string, unknown>>(),
     /**
      * EIP-155 chain id. Not null on every chain-sourced row (and on runtime
@@ -44,9 +46,14 @@ export const auditEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index("audit_events_at_idx").on(table.at),
-    index("audit_events_chain_at_idx").on(table.chainId, table.at),
-    index("audit_events_ledger_at_idx").on(table.ledger, table.at),
-    uniqueIndex("audit_events_chain_tx_log_idx").on(table.chainId, table.txHash, table.logIndex),
+    index("audit_events_at_idx").on(table.orgId, table.at),
+    index("audit_events_chain_at_idx").on(table.orgId, table.chainId, table.at),
+    index("audit_events_ledger_at_idx").on(table.orgId, table.ledger, table.at),
+    uniqueIndex("audit_events_chain_tx_log_idx").on(
+      table.orgId,
+      table.chainId,
+      table.txHash,
+      table.logIndex,
+    ),
   ],
 );

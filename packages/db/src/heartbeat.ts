@@ -2,7 +2,7 @@
 
 import { and, desc, eq, lt } from "drizzle-orm";
 import { crewHeartbeats, crewHeartbeatTicks } from "./schema/heartbeat.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface CrewHeartbeatRow {
   crewId: string;
@@ -49,7 +49,7 @@ function rowToHeartbeat(row: typeof crewHeartbeats.$inferSelect): CrewHeartbeatR
   };
 }
 
-export async function upsertCrewHeartbeat(handle: DbHandle, row: CrewHeartbeatRow): Promise<void> {
+export async function upsertCrewHeartbeat(handle: OrgDb, row: CrewHeartbeatRow): Promise<void> {
   const values = {
     crewId: row.crewId,
     schedule: row.schedule,
@@ -65,27 +65,32 @@ export async function upsertCrewHeartbeat(handle: DbHandle, row: CrewHeartbeatRo
   };
   await handle.db
     .insert(crewHeartbeats)
-    .values(values)
-    .onConflictDoUpdate({ target: crewHeartbeats.crewId, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [crewHeartbeats.orgId, crewHeartbeats.crewId], set: values });
 }
 
-export async function deleteCrewHeartbeat(handle: DbHandle, crewId: string): Promise<void> {
-  await handle.db.delete(crewHeartbeats).where(eq(crewHeartbeats.crewId, crewId));
+export async function deleteCrewHeartbeat(handle: OrgDb, crewId: string): Promise<void> {
+  await handle.db
+    .delete(crewHeartbeats)
+    .where(and(eq(crewHeartbeats.orgId, handle.orgId), eq(crewHeartbeats.crewId, crewId)));
 }
 
-export async function listCrewHeartbeats(handle: DbHandle): Promise<CrewHeartbeatRow[]> {
-  const rows = await handle.db.select().from(crewHeartbeats);
+export async function listCrewHeartbeats(handle: OrgDb): Promise<CrewHeartbeatRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(crewHeartbeats)
+    .where(eq(crewHeartbeats.orgId, handle.orgId));
   return rows.map(rowToHeartbeat);
 }
 
 export async function getCrewHeartbeat(
-  handle: DbHandle,
+  handle: OrgDb,
   crewId: string,
 ): Promise<CrewHeartbeatRow | null> {
   const rows = await handle.db
     .select()
     .from(crewHeartbeats)
-    .where(eq(crewHeartbeats.crewId, crewId))
+    .where(and(eq(crewHeartbeats.orgId, handle.orgId), eq(crewHeartbeats.crewId, crewId)))
     .limit(1);
   const row = rows[0];
   return row ? rowToHeartbeat(row) : null;
@@ -99,12 +104,13 @@ export async function getCrewHeartbeat(
  * is what keeps a crew's checklist from being worked through twice at once.
  */
 export async function claimCrewHeartbeatTick(
-  handle: DbHandle,
+  handle: OrgDb,
   row: { crewId: string; windowKey: string },
 ): Promise<boolean> {
   const inserted = await handle.db
     .insert(crewHeartbeatTicks)
     .values({
+      orgId: handle.orgId,
       crewId: row.crewId,
       windowKey: row.windowKey,
       status: "running",
@@ -117,7 +123,7 @@ export async function claimCrewHeartbeatTick(
 
 /** Attach the outcome to an already-claimed tick. */
 export async function settleCrewHeartbeatTick(
-  handle: DbHandle,
+  handle: OrgDb,
   row: {
     crewId: string;
     windowKey: string;
@@ -138,6 +144,7 @@ export async function settleCrewHeartbeatTick(
     })
     .where(
       and(
+        eq(crewHeartbeatTicks.orgId, handle.orgId),
         eq(crewHeartbeatTicks.crewId, row.crewId),
         eq(crewHeartbeatTicks.windowKey, row.windowKey),
       ),
@@ -145,12 +152,19 @@ export async function settleCrewHeartbeatTick(
 }
 
 export async function recentCrewHeartbeatTicks(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
   crewId?: string,
 ): Promise<CrewHeartbeatTickRow[]> {
-  const base = handle.db.select().from(crewHeartbeatTicks);
-  const rows = await (crewId ? base.where(eq(crewHeartbeatTicks.crewId, crewId)) : base)
+  const rows = await handle.db
+    .select()
+    .from(crewHeartbeatTicks)
+    .where(
+      and(
+        eq(crewHeartbeatTicks.orgId, handle.orgId),
+        crewId ? eq(crewHeartbeatTicks.crewId, crewId) : undefined,
+      ),
+    )
     .orderBy(desc(crewHeartbeatTicks.startedAt))
     .limit(limit);
   return rows.map((row) => ({
@@ -166,9 +180,13 @@ export async function recentCrewHeartbeatTicks(
 }
 
 export async function pruneCrewHeartbeatTicks(
-  handle: DbHandle,
+  handle: OrgDb,
   days = TICK_RETENTION_DAYS,
 ): Promise<void> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  await handle.db.delete(crewHeartbeatTicks).where(lt(crewHeartbeatTicks.startedAt, cutoff));
+  await handle.db
+    .delete(crewHeartbeatTicks)
+    .where(
+      and(eq(crewHeartbeatTicks.orgId, handle.orgId), lt(crewHeartbeatTicks.startedAt, cutoff)),
+    );
 }

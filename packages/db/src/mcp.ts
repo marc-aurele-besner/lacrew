@@ -2,7 +2,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { externalMcpSecrets, externalMcpServers, externalMcpTools } from "./schema/mcp.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface ExternalMcpToolRow {
   scopeKey: string;
@@ -17,10 +17,7 @@ export interface ExternalMcpToolRow {
   updatedAt: string;
 }
 
-export async function upsertExternalMcpTool(
-  handle: DbHandle,
-  row: ExternalMcpToolRow,
-): Promise<void> {
+export async function upsertExternalMcpTool(handle: OrgDb, row: ExternalMcpToolRow): Promise<void> {
   const values = {
     scopeKey: row.scopeKey,
     scope: row.scope,
@@ -35,9 +32,14 @@ export async function upsertExternalMcpTool(
   };
   await handle.db
     .insert(externalMcpTools)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: [externalMcpTools.scopeKey, externalMcpTools.server, externalMcpTools.tool],
+      target: [
+        externalMcpTools.orgId,
+        externalMcpTools.scopeKey,
+        externalMcpTools.server,
+        externalMcpTools.tool,
+      ],
       set: {
         scope: values.scope,
         enabled: values.enabled,
@@ -51,7 +53,7 @@ export async function upsertExternalMcpTool(
 }
 
 export async function deleteExternalMcpTool(
-  handle: DbHandle,
+  handle: OrgDb,
   scopeKey: string,
   server: string,
   tool: string,
@@ -60,6 +62,7 @@ export async function deleteExternalMcpTool(
     .delete(externalMcpTools)
     .where(
       and(
+        eq(externalMcpTools.orgId, handle.orgId),
         eq(externalMcpTools.scopeKey, scopeKey),
         eq(externalMcpTools.server, server),
         eq(externalMcpTools.tool, tool),
@@ -72,8 +75,11 @@ export async function deleteExternalMcpTool(
  * row is a tool that silently stops working, or — for a `*` deny — one that
  * silently starts.
  */
-export async function listExternalMcpTools(handle: DbHandle): Promise<ExternalMcpToolRow[]> {
-  const rows = await handle.db.select().from(externalMcpTools);
+export async function listExternalMcpTools(handle: OrgDb): Promise<ExternalMcpToolRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(externalMcpTools)
+    .where(eq(externalMcpTools.orgId, handle.orgId));
   return rows.map((row) => ({
     scopeKey: row.scopeKey,
     scope: row.scope ?? {},
@@ -96,7 +102,7 @@ export interface ExternalMcpServerRow {
 }
 
 export async function upsertExternalMcpServer(
-  handle: DbHandle,
+  handle: OrgDb,
   row: ExternalMcpServerRow,
 ): Promise<void> {
   const values = {
@@ -107,23 +113,28 @@ export async function upsertExternalMcpServer(
   };
   await handle.db
     .insert(externalMcpServers)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: externalMcpServers.id,
+      target: [externalMcpServers.orgId, externalMcpServers.id],
       set: { config: values.config, ownerKey: values.ownerKey, updatedAt: values.updatedAt },
     });
 }
 
-export async function deleteExternalMcpServer(handle: DbHandle, id: string): Promise<void> {
-  await handle.db.delete(externalMcpServers).where(eq(externalMcpServers.id, id));
+export async function deleteExternalMcpServer(handle: OrgDb, id: string): Promise<void> {
+  await handle.db
+    .delete(externalMcpServers)
+    .where(and(eq(externalMcpServers.orgId, handle.orgId), eq(externalMcpServers.id, id)));
 }
 
 /**
  * Every runtime-attached server. Read once at boot, before the first refresh
  * sweep, so a restart restores what was attached rather than quietly losing it.
  */
-export async function listExternalMcpServers(handle: DbHandle): Promise<ExternalMcpServerRow[]> {
-  const rows = await handle.db.select().from(externalMcpServers);
+export async function listExternalMcpServers(handle: OrgDb): Promise<ExternalMcpServerRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(externalMcpServers)
+    .where(eq(externalMcpServers.orgId, handle.orgId));
   return rows.map((row) => ({
     id: row.id,
     config: row.config ?? {},
@@ -141,7 +152,7 @@ export interface ExternalMcpSecretRow {
 }
 
 export async function upsertExternalMcpSecret(
-  handle: DbHandle,
+  handle: OrgDb,
   row: ExternalMcpSecretRow,
 ): Promise<void> {
   const values = {
@@ -153,21 +164,27 @@ export async function upsertExternalMcpSecret(
   };
   await handle.db
     .insert(externalMcpSecrets)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: [externalMcpSecrets.ownerKey, externalMcpSecrets.ref],
+      target: [externalMcpSecrets.orgId, externalMcpSecrets.ownerKey, externalMcpSecrets.ref],
       set: { sealed: values.sealed, hint: values.hint, updatedAt: values.updatedAt },
     });
 }
 
 export async function deleteExternalMcpSecret(
-  handle: DbHandle,
+  handle: OrgDb,
   ownerKey: string,
   ref: string,
 ): Promise<void> {
   await handle.db
     .delete(externalMcpSecrets)
-    .where(and(eq(externalMcpSecrets.ownerKey, ownerKey), eq(externalMcpSecrets.ref, ref)));
+    .where(
+      and(
+        eq(externalMcpSecrets.orgId, handle.orgId),
+        eq(externalMcpSecrets.ownerKey, ownerKey),
+        eq(externalMcpSecrets.ref, ref),
+      ),
+    );
 }
 
 /**
@@ -175,8 +192,11 @@ export async function deleteExternalMcpSecret(
  * whose token did not come back would fail every call with
  * `mcp_missing_credential`, which reads as a rotation nobody performed.
  */
-export async function listExternalMcpSecrets(handle: DbHandle): Promise<ExternalMcpSecretRow[]> {
-  const rows = await handle.db.select().from(externalMcpSecrets);
+export async function listExternalMcpSecrets(handle: OrgDb): Promise<ExternalMcpSecretRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(externalMcpSecrets)
+    .where(eq(externalMcpSecrets.orgId, handle.orgId));
   return rows.map((row) => ({
     ownerKey: row.ownerKey,
     ref: row.ref,

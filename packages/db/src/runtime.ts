@@ -7,7 +7,7 @@ import {
   runtimeMessages,
   runtimeSessions,
 } from "./schema/runtime.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface SessionRow {
   keyId: string;
@@ -51,7 +51,7 @@ export interface IntentRow {
   ledger?: RuntimeLedger;
 }
 
-export async function upsertSessionRow(handle: DbHandle, row: SessionRow): Promise<void> {
+export async function upsertSessionRow(handle: OrgDb, row: SessionRow): Promise<void> {
   const values = {
     keyId: row.keyId,
     agent: row.agent,
@@ -70,12 +70,15 @@ export async function upsertSessionRow(handle: DbHandle, row: SessionRow): Promi
   };
   await handle.db
     .insert(runtimeSessions)
-    .values(values)
-    .onConflictDoUpdate({ target: [runtimeSessions.keyId, runtimeSessions.ledger], set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({
+      target: [runtimeSessions.orgId, runtimeSessions.keyId, runtimeSessions.ledger],
+      set: values,
+    });
 }
 
 export async function markSessionRevokedRow(
-  handle: DbHandle,
+  handle: OrgDb,
   keyId: string,
   revokedAt: string,
   ledger: RuntimeLedger = "chain",
@@ -83,19 +86,25 @@ export async function markSessionRevokedRow(
   await handle.db
     .update(runtimeSessions)
     .set({ status: "revoked", revokedAt: new Date(revokedAt) })
-    .where(and(eq(runtimeSessions.keyId, keyId), eq(runtimeSessions.ledger, ledger)));
+    .where(
+      and(
+        eq(runtimeSessions.orgId, handle.orgId),
+        eq(runtimeSessions.keyId, keyId),
+        eq(runtimeSessions.ledger, ledger),
+      ),
+    );
 }
 
 /** Most recent sessions of one ledger, newest → oldest. */
 export async function recentSessionRows(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
   ledger: RuntimeLedger = "chain",
 ): Promise<SessionRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeSessions)
-    .where(eq(runtimeSessions.ledger, ledger))
+    .where(and(eq(runtimeSessions.orgId, handle.orgId), eq(runtimeSessions.ledger, ledger)))
     .orderBy(desc(runtimeSessions.issuedAt))
     .limit(limit);
   return rows.map((row) => ({
@@ -116,8 +125,9 @@ export async function recentSessionRows(
   }));
 }
 
-export async function insertIntentRow(handle: DbHandle, row: IntentRow): Promise<void> {
+export async function insertIntentRow(handle: OrgDb, row: IntentRow): Promise<void> {
   await handle.db.insert(runtimeIntents).values({
+    orgId: handle.orgId,
     intentId: row.intentId,
     agent: row.agent,
     target: row.target,
@@ -138,7 +148,7 @@ export async function insertIntentRow(handle: DbHandle, row: IntentRow): Promise
 
 /** Close out pending rows for an intent (approved or denied). */
 export async function resolveIntentRows(
-  handle: DbHandle,
+  handle: OrgDb,
   intentId: string,
   input: {
     status: string;
@@ -158,6 +168,7 @@ export async function resolveIntentRows(
     })
     .where(
       and(
+        eq(runtimeIntents.orgId, handle.orgId),
         eq(runtimeIntents.intentId, intentId),
         eq(runtimeIntents.status, "pending"),
         eq(runtimeIntents.ledger, input.ledger ?? "chain"),
@@ -169,21 +180,25 @@ export async function resolveIntentRows(
  * Delete every simulated session and intent record. Paired with a sandbox
  * reset; chain records are never touched.
  */
-export async function deleteSandboxRuntimeRows(handle: DbHandle): Promise<void> {
-  await handle.db.delete(runtimeSessions).where(eq(runtimeSessions.ledger, "sandbox"));
-  await handle.db.delete(runtimeIntents).where(eq(runtimeIntents.ledger, "sandbox"));
+export async function deleteSandboxRuntimeRows(handle: OrgDb): Promise<void> {
+  await handle.db
+    .delete(runtimeSessions)
+    .where(and(eq(runtimeSessions.orgId, handle.orgId), eq(runtimeSessions.ledger, "sandbox")));
+  await handle.db
+    .delete(runtimeIntents)
+    .where(and(eq(runtimeIntents.orgId, handle.orgId), eq(runtimeIntents.ledger, "sandbox")));
 }
 
 /** Most recent intents of one ledger, newest → oldest. */
 export async function recentIntentRows(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
   ledger: RuntimeLedger = "chain",
 ): Promise<IntentRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeIntents)
-    .where(eq(runtimeIntents.ledger, ledger))
+    .where(and(eq(runtimeIntents.orgId, handle.orgId), eq(runtimeIntents.ledger, ledger)))
     .orderBy(desc(runtimeIntents.proposedAt), desc(runtimeIntents.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -223,7 +238,7 @@ export interface AgentControlRow {
  * rather than merged — a partial update would let a caller that omitted
  * `layers` silently keep a directive it believed it had cleared.
  */
-export async function upsertAgentControlRow(handle: DbHandle, row: AgentControlRow): Promise<void> {
+export async function upsertAgentControlRow(handle: OrgDb, row: AgentControlRow): Promise<void> {
   const values = {
     agent: row.agent,
     paused: row.paused,
@@ -234,8 +249,11 @@ export async function upsertAgentControlRow(handle: DbHandle, row: AgentControlR
   };
   await handle.db
     .insert(runtimeAgentControls)
-    .values(values)
-    .onConflictDoUpdate({ target: runtimeAgentControls.agent, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({
+      target: [runtimeAgentControls.orgId, runtimeAgentControls.agent],
+      set: values,
+    });
 }
 
 /**
@@ -246,8 +264,11 @@ export async function upsertAgentControlRow(handle: DbHandle, row: AgentControlR
  * it does not re-create it, and the shape it reads back says plainly that
  * nothing is set.
  */
-export async function allAgentControlRows(handle: DbHandle): Promise<AgentControlRow[]> {
-  const rows = await handle.db.select().from(runtimeAgentControls);
+export async function allAgentControlRows(handle: OrgDb): Promise<AgentControlRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(runtimeAgentControls)
+    .where(eq(runtimeAgentControls.orgId, handle.orgId));
   return rows.map((row) => ({
     agent: row.agent,
     paused: row.paused,
@@ -279,10 +300,11 @@ export interface MessageRow {
 }
 
 /** Insert-only: a message is a statement someone made, and editing one would rewrite the record. */
-export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promise<void> {
+export async function insertMessageRow(handle: OrgDb, row: MessageRow): Promise<void> {
   await handle.db
     .insert(runtimeMessages)
     .values({
+      orgId: handle.orgId,
       id: row.id,
       threadId: row.threadId,
       at: new Date(row.at),
@@ -302,10 +324,11 @@ export async function insertMessageRow(handle: DbHandle, row: MessageRow): Promi
 }
 
 /** Most recent messages, returned oldest → newest so a reader follows them forward. */
-export async function recentMessageRows(handle: DbHandle, limit: number): Promise<MessageRow[]> {
+export async function recentMessageRows(handle: OrgDb, limit: number): Promise<MessageRow[]> {
   const rows = await handle.db
     .select()
     .from(runtimeMessages)
+    .where(eq(runtimeMessages.orgId, handle.orgId))
     .orderBy(desc(runtimeMessages.at), desc(runtimeMessages.id))
     .limit(limit);
   return rows.reverse().map((row) => ({

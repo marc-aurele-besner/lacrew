@@ -177,7 +177,7 @@ describe("createRuntimeStoreFromEnv", () => {
     const prev = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL;
     try {
-      assert.equal(createRuntimeStoreFromEnv().name, "memory");
+      assert.equal(createRuntimeStoreFromEnv("default").name, "memory");
     } finally {
       if (prev !== undefined) process.env.DATABASE_URL = prev;
     }

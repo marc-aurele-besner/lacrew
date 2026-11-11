@@ -2,7 +2,7 @@
 
 import { and, count, eq, gte, isNull, lt, sql, type SQL } from "drizzle-orm";
 import { txGas } from "./schema/gas.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface TxGasRow {
   chainId: number;
@@ -38,10 +38,11 @@ function chainScope(options?: TxGasReadOptions): SQL | undefined {
  * Record one transaction's gas. Idempotent on (chain_id, tx_hash,
  * user_op_hash): reported twice, it is still one row and one fee.
  */
-export async function insertTxGas(handle: DbHandle, row: TxGasRow): Promise<void> {
+export async function insertTxGas(handle: OrgDb, row: TxGasRow): Promise<void> {
   await handle.db
     .insert(txGas)
     .values({
+      orgId: handle.orgId,
       chainId: row.chainId,
       txHash: row.txHash.toLowerCase(),
       at: new Date(row.at),
@@ -66,7 +67,7 @@ export async function insertTxGas(handle: DbHandle, row: TxGasRow): Promise<void
  * not move a fee that a report may already have shown under the first.
  */
 export async function setTxGasAgent(
-  handle: DbHandle,
+  handle: OrgDb,
   chainId: number,
   txHash: string,
   agent: string,
@@ -75,7 +76,12 @@ export async function setTxGasAgent(
     .update(txGas)
     .set({ agent: agent.toLowerCase() })
     .where(
-      and(eq(txGas.chainId, chainId), eq(txGas.txHash, txHash.toLowerCase()), isNull(txGas.agent)),
+      and(
+        eq(txGas.orgId, handle.orgId),
+        eq(txGas.chainId, chainId),
+        eq(txGas.txHash, txHash.toLowerCase()),
+        isNull(txGas.agent),
+      ),
     );
 }
 
@@ -85,7 +91,7 @@ export async function setTxGasAgent(
  * to neither. Only (day, payer) pairs with a recorded transaction come back.
  */
 export async function sumTxGasByDay(
-  handle: DbHandle,
+  handle: OrgDb,
   fromIso: string,
   toIso: string,
   options?: TxGasReadOptions,
@@ -100,7 +106,12 @@ export async function sumTxGasByDay(
     })
     .from(txGas)
     .where(
-      and(gte(txGas.at, new Date(fromIso)), lt(txGas.at, new Date(toIso)), chainScope(options)),
+      and(
+        eq(txGas.orgId, handle.orgId),
+        gte(txGas.at, new Date(fromIso)),
+        lt(txGas.at, new Date(toIso)),
+        chainScope(options),
+      ),
     )
     .groupBy(day, txGas.payer)
     .orderBy(day, txGas.payer);
@@ -118,7 +129,7 @@ export async function sumTxGasByDay(
  * window's total.
  */
 export async function sumTxGasByAgent(
-  handle: DbHandle,
+  handle: OrgDb,
   fromIso: string,
   toIso: string,
   options?: TxGasReadOptions,
@@ -132,7 +143,12 @@ export async function sumTxGasByAgent(
     })
     .from(txGas)
     .where(
-      and(gte(txGas.at, new Date(fromIso)), lt(txGas.at, new Date(toIso)), chainScope(options)),
+      and(
+        eq(txGas.orgId, handle.orgId),
+        gte(txGas.at, new Date(fromIso)),
+        lt(txGas.at, new Date(toIso)),
+        chainScope(options),
+      ),
     )
     .groupBy(txGas.agent, txGas.payer)
     .orderBy(txGas.agent, txGas.payer);

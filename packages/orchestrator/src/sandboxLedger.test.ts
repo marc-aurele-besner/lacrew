@@ -30,25 +30,31 @@ after(async () => closeSharedDb());
 const PG = Boolean(process.env.DATABASE_URL);
 /** An org of its own per run, so a shared database's other rows stay out. */
 const uniqueOrg = () => `test-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+/** The org the tests below write under when they name no other. */
+const orgId = uniqueOrg();
 
 async function treasuryTotal(ledger: SandboxLedger): Promise<bigint> {
   return (await ledger.client.getTreasuryBalances())[0]!.total;
 }
 
-function storeContract(name: string, make: () => SandboxStateStore, skip: boolean): void {
+function storeContract(
+  name: string,
+  make: (orgId: string) => SandboxStateStore,
+  skip: boolean,
+): void {
   describe(`SandboxStateStore (${name})`, { skip }, () => {
     it("has nothing for an org never written", async () => {
-      const store = make();
+      const store = make(uniqueOrg());
       try {
-        assert.equal(await store.load(uniqueOrg()), null);
+        assert.equal(await store.load(), null);
       } finally {
         await store.close();
       }
     });
 
     it("round-trips state, version and clock offset", async () => {
-      const store = make();
       const orgId = uniqueOrg();
+      const store = make(orgId);
       try {
         const ledger = new SandboxLedger({ orgId, store });
         assert.equal(await ledger.hydrate(), false);
@@ -57,7 +63,7 @@ function storeContract(name: string, make: () => SandboxStateStore, skip: boolea
         await ledger.flush();
         assert.equal(ledger.persistError, null);
 
-        const stored = await store.load(orgId);
+        const stored = await store.load();
         assert.equal(stored?.version, 3, "genesis, fund, advance");
         assert.equal(stored?.clockOffset, 90);
 
@@ -73,49 +79,51 @@ function storeContract(name: string, make: () => SandboxStateStore, skip: boolea
     });
 
     it("lands a write only against the version it read", async () => {
-      const store = make();
       const orgId = uniqueOrg();
+      const store = make(orgId);
       try {
         const state = new SandboxLedger({ orgId }).client.snapshot();
         const record = (version: number) => ({ version, state, clockOffset: 0 });
-        assert.equal(await store.save(orgId, record(1), 0), true, "first write inserts");
-        assert.equal(await store.save(orgId, record(1), 0), false, "a second insert loses");
-        assert.equal(await store.save(orgId, record(2), 1), true);
-        assert.equal(await store.save(orgId, record(3), 1), false, "stale version loses");
-        assert.equal((await store.load(orgId))?.version, 2);
+        assert.equal(await store.save(record(1), 0), true, "first write inserts");
+        assert.equal(await store.save(record(1), 0), false, "a second insert loses");
+        assert.equal(await store.save(record(2), 1), true);
+        assert.equal(await store.save(record(3), 1), false, "stale version loses");
+        assert.equal((await store.load())?.version, 2);
       } finally {
         await store.close();
       }
     });
 
     it("keeps two orgs apart", async () => {
-      const store = make();
       const [a, b] = [uniqueOrg(), uniqueOrg()];
+      const [storeA, storeB] = [make(a), make(b)];
       try {
-        const first = new SandboxLedger({ orgId: a, store });
-        const second = new SandboxLedger({ orgId: b, store });
+        const first = new SandboxLedger({ orgId: a, store: storeA });
+        const second = new SandboxLedger({ orgId: b, store: storeB });
         await first.hydrate();
         await second.hydrate();
         await first.fund(10n);
         await first.flush();
-        assert.equal((await store.load(a))?.version, 2);
-        assert.equal((await store.load(b))?.version, 1);
+        assert.equal((await storeA.load())?.version, 2);
+        assert.equal((await storeB.load())?.version, 1);
+        assert.equal(await treasuryTotal(second), 0n);
       } finally {
-        await store.close();
+        await storeA.close();
+        await storeB.close();
       }
     });
   });
 }
 
-storeContract("memory", createMemorySandboxStateStore, false);
-storeContract("postgres", () => createPgSandboxStateStore({ db: sharedDb() }), !PG);
+storeContract("memory", () => createMemorySandboxStateStore(), false);
+storeContract("postgres", (orgId) => createPgSandboxStateStore({ db: sharedDb(), orgId }), !PG);
 
 describe("SandboxLedger", () => {
   it("falls back to the memory store without DATABASE_URL", () => {
     const prev = process.env.DATABASE_URL;
     try {
       delete process.env.DATABASE_URL;
-      assert.equal(createSandboxStateStoreFromEnv().name, "memory");
+      assert.equal(createSandboxStateStoreFromEnv("default").name, "memory");
     } finally {
       if (prev !== undefined) process.env.DATABASE_URL = prev;
     }
@@ -170,7 +178,7 @@ describe("SandboxLedger", () => {
     assert.equal(b.conflicts, 1, "one lost check, however many writes were queued behind it");
     assert.equal(await treasuryTotal(b), 100n, "the stored state stands");
     assert.equal(b.version, a.version);
-    assert.equal((await store.load("default"))?.version, a.version, "nothing forked was written");
+    assert.equal((await store.load())?.version, a.version, "nothing forked was written");
     assert.equal(a.conflicts, 0);
   });
 
@@ -213,7 +221,7 @@ describe("SandboxLedger", () => {
     assert.equal(ledger.version, before + 1);
     assert.equal(ledger.clockOffset, 0);
     assert.equal(await treasuryTotal(ledger), 0n);
-    assert.equal((await store.load("default"))?.version, before + 1);
+    assert.equal((await store.load())?.version, before + 1);
   });
 });
 
@@ -281,8 +289,8 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
   it("counts and reads audit events per ledger, and never bills a sandbox row", async () => {
     // A chain id of its own, so this run sees only its own rows.
     const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-    const chain = createPgAuditStore({ db: sharedDb(), chainId });
-    const sandbox = createPgAuditStore({ db: sharedDb(), chainId, ledger: "sandbox" });
+    const chain = createPgAuditStore({ db: sharedDb(), orgId, chainId });
+    const sandbox = createPgAuditStore({ db: sharedDb(), orgId, chainId, ledger: "sandbox" });
     const event = (type: ProtocolEvent["type"], at: string): ProtocolEvent => ({
       type,
       at,
@@ -333,9 +341,9 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
     const orgId = uniqueOrg();
     const stores: Array<{ close(): Promise<void> }> = [];
     const make = () => {
-      const store = createPgSandboxStateStore({ db: sharedDb() });
-      const auditStore = createPgAuditStore({ db: sharedDb(), ledger: "sandbox" });
-      const runtimeStore = createPgRuntimeStore({ db: sharedDb() });
+      const store = createPgSandboxStateStore({ db: sharedDb(), orgId });
+      const auditStore = createPgAuditStore({ db: sharedDb(), orgId, ledger: "sandbox" });
+      const runtimeStore = createPgRuntimeStore({ db: sharedDb(), orgId });
       stores.push(store, auditStore, runtimeStore);
       return createSandboxRuntime({ orgId, store, auditStore, runtimeStore });
     };
@@ -382,7 +390,7 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
       assert.deepEqual(usage.counts, {});
       assert.ok(usage.sandboxCounts!.SandboxFunded! >= 1);
       // A chain-ledger store reading the same table sees none of it.
-      const chain = createPgAuditStore({ db: sharedDb() });
+      const chain = createPgAuditStore({ db: sharedDb(), orgId });
       stores.push(chain);
       assert.equal((await chain.countByTypeSince(since))?.SandboxFunded, undefined);
 
@@ -416,7 +424,7 @@ describe("the ledger column (postgres)", { skip: !PG }, () => {
   });
 
   it("keys sessions by ledger and round-trips the simTxId columns", async () => {
-    const store = createPgRuntimeStore({ db: sharedDb() });
+    const store = createPgRuntimeStore({ db: sharedDb(), orgId });
     const keyId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const intentId = `test-${keyId}`;
     const base = {

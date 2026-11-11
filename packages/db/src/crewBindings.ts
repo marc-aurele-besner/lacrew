@@ -1,8 +1,8 @@
 /** Query helpers for persisted crew seat bindings (keeps Drizzle inside @lacrew/db). */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { crewBindings } from "./schema/crewBindings.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface CrewBindingRow {
   key: string;
@@ -15,7 +15,7 @@ export interface CrewBindingRow {
   updatedAt: string;
 }
 
-export async function upsertCrewBinding(handle: DbHandle, row: CrewBindingRow): Promise<void> {
+export async function upsertCrewBinding(handle: OrgDb, row: CrewBindingRow): Promise<void> {
   const values = {
     key: row.key,
     scopeKey: row.scopeKey,
@@ -28,12 +28,14 @@ export async function upsertCrewBinding(handle: DbHandle, row: CrewBindingRow): 
   };
   await handle.db
     .insert(crewBindings)
-    .values(values)
-    .onConflictDoUpdate({ target: crewBindings.key, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [crewBindings.orgId, crewBindings.key], set: values });
 }
 
-export async function deleteCrewBinding(handle: DbHandle, key: string): Promise<void> {
-  await handle.db.delete(crewBindings).where(eq(crewBindings.key, key));
+export async function deleteCrewBinding(handle: OrgDb, key: string): Promise<void> {
+  await handle.db
+    .delete(crewBindings)
+    .where(and(eq(crewBindings.orgId, handle.orgId), eq(crewBindings.key, key)));
 }
 
 /**
@@ -41,8 +43,11 @@ export async function deleteCrewBinding(handle: DbHandle, key: string): Promise<
  * seat a blueprint install landed, and a trimmed row is a seat the checklist
  * silently stops finding after a rename.
  */
-export async function listCrewBindings(handle: DbHandle): Promise<CrewBindingRow[]> {
-  const rows = await handle.db.select().from(crewBindings);
+export async function listCrewBindings(handle: OrgDb): Promise<CrewBindingRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(crewBindings)
+    .where(eq(crewBindings.orgId, handle.orgId));
   return rows.map((row) => ({
     key: row.key,
     scopeKey: row.scopeKey,

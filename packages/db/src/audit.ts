@@ -2,12 +2,13 @@
 
 import { and, count, desc, eq, gte, lt, sql, type SQL } from "drizzle-orm";
 import { auditEvents } from "./schema/audit.js";
-import type { DbHandle } from "./client.js";
+import { DEFAULT_ORG_ID, type DbHandle } from "./client.js";
 
 export interface AuditEventRow {
   type: string;
   /** ISO timestamp of the event itself. */
   at: string;
+  /** The org the event belongs to; `default` when absent. */
   orgId?: string | null;
   payload: Record<string, unknown>;
   /** EIP-155 chain id; null only for rows with no chain at all. */
@@ -31,6 +32,11 @@ export type AuditLedger = "chain" | "sandbox";
 export interface AuditReadOptions {
   chainId?: number;
   /**
+   * Only this org's rows answer. One database can hold many orgs, so a caller
+   * serving one org must pass it: without it the read spans every org.
+   */
+  orgId?: string;
+  /**
    * Only this ledger's rows answer. A usage meter must pass `chain`: sandbox
    * rows are simulated activity and billing them would charge for nothing.
    */
@@ -39,6 +45,7 @@ export interface AuditReadOptions {
 
 function chainScope(options?: AuditReadOptions): SQL | undefined {
   return and(
+    options?.orgId === undefined ? undefined : eq(auditEvents.orgId, options.orgId),
     options?.chainId === undefined ? undefined : eq(auditEvents.chainId, options.chainId),
     options?.ledger === undefined ? undefined : eq(auditEvents.ledger, options.ledger),
   );
@@ -48,7 +55,7 @@ export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): 
   await handle.db.insert(auditEvents).values({
     type: event.type,
     at: new Date(event.at),
-    orgId: event.orgId ?? null,
+    orgId: event.orgId ?? DEFAULT_ORG_ID,
     payload: event.payload,
     chainId: event.chainId ?? null,
     txHash: event.txHash ?? null,
@@ -58,17 +65,20 @@ export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): 
 }
 
 /**
- * Delete every simulated row. A sandbox reset rebuilds the simulator from
+ * Delete every simulated row of one org. A sandbox reset rebuilds the simulator from
  * genesis, so the trail of the simulation it replaces goes with it. Chain rows
- * are never touched: the predicate is the ledger column, not a time window.
+ * are never touched, and neither is any other org's simulation: the predicate
+ * is the org and the ledger column, not a time window.
  */
-export async function deleteSandboxAuditEvents(handle: DbHandle): Promise<void> {
-  await handle.db.delete(auditEvents).where(eq(auditEvents.ledger, "sandbox"));
+export async function deleteSandboxAuditEvents(handle: DbHandle, orgId: string): Promise<void> {
+  await handle.db
+    .delete(auditEvents)
+    .where(and(eq(auditEvents.orgId, orgId), eq(auditEvents.ledger, "sandbox")));
 }
 
 /**
  * Idempotent insert for chain-sourced events: rows sharing
- * (chain_id, tx_hash, log_index) are silently skipped, so re-running a
+ * (org_id, chain_id, tx_hash, log_index) are silently skipped, so re-running a
  * backfill never duplicates — and the chain id is part of the identity, so
  * two chains that happen to reuse a (tx_hash, log_index) pair (EIP-155 makes
  * that rare, not impossible) both keep their row.
@@ -82,7 +92,7 @@ export async function insertChainAuditEvent(
     .values({
       type: event.type,
       at: new Date(event.at),
-      orgId: event.orgId ?? null,
+      orgId: event.orgId ?? DEFAULT_ORG_ID,
       payload: event.payload,
       chainId: event.chainId,
       txHash: event.txHash,

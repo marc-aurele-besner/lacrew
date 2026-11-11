@@ -21,6 +21,7 @@ import {
   upsertCrewHeartbeat,
   type CrewHeartbeatRow,
   type CrewHeartbeatTickRow,
+  orgDb,
   type DbHandle,
 } from "@lacrew/db";
 import { sharedDb } from "./dbPool.js";
@@ -191,8 +192,9 @@ export function createMemoryHeartbeatStore(): HeartbeatStore {
   };
 }
 
-export function createPgHeartbeatStore(options: { db: DbHandle }): HeartbeatStore {
-  const db = () => options.db;
+export function createPgHeartbeatStore(options: { db: DbHandle; orgId: string }): HeartbeatStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] heartbeat ${op} failed:`, err);
 
@@ -260,8 +262,8 @@ export function createPgHeartbeatStore(options: { db: DbHandle }): HeartbeatStor
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createHeartbeatStoreFromEnv(): HeartbeatStore {
+export function createHeartbeatStoreFromEnv(orgId: string): HeartbeatStore {
   return getDatabaseUrl()
-    ? createPgHeartbeatStore({ db: sharedDb() })
+    ? createPgHeartbeatStore({ db: sharedDb(), orgId })
     : createMemoryHeartbeatStore();
 }

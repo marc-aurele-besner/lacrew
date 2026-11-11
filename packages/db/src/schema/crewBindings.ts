@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { index, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
  * Blueprint seat → account, kept by the orchestrator itself (F2.25).
@@ -14,8 +14,10 @@ import { index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 export const crewBindings = pgTable(
   "orchestrator_crew_bindings",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** `<scope>|<roleId>` — `crew:<id>`, `blueprint:<id>`, or `workspace`. */
-    key: text("key").primaryKey(),
+    key: text("key").notNull(),
     /** The scope half of the key, so a crew's bindings can be read as a set. */
     scopeKey: text("scope_key").notNull(),
     roleId: text("role_id").notNull(),
@@ -27,5 +29,8 @@ export const crewBindings = pgTable(
     crewId: text("crew_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("crew_bindings_account_idx").on(table.account)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.key] }),
+    index("crew_bindings_account_idx").on(table.orgId, table.account),
+  ],
 );

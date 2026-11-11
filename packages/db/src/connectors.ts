@@ -2,7 +2,7 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { connectorAsks, connectorWriteModes } from "./schema/connectors.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface ConnectorModeRow {
   scopeKey: string;
@@ -33,7 +33,7 @@ export interface ConnectorAskRow {
   resolvedAt?: string | null;
 }
 
-export async function upsertConnectorMode(handle: DbHandle, row: ConnectorModeRow): Promise<void> {
+export async function upsertConnectorMode(handle: OrgDb, row: ConnectorModeRow): Promise<void> {
   const values = {
     scopeKey: row.scopeKey,
     scope: row.scope,
@@ -43,25 +43,34 @@ export async function upsertConnectorMode(handle: DbHandle, row: ConnectorModeRo
   };
   await handle.db
     .insert(connectorWriteModes)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: [connectorWriteModes.scopeKey, connectorWriteModes.route],
+      target: [connectorWriteModes.orgId, connectorWriteModes.scopeKey, connectorWriteModes.route],
       set: { mode: values.mode, scope: values.scope, updatedAt: values.updatedAt },
     });
 }
 
 export async function deleteConnectorMode(
-  handle: DbHandle,
+  handle: OrgDb,
   scopeKey: string,
   route: string,
 ): Promise<void> {
   await handle.db
     .delete(connectorWriteModes)
-    .where(and(eq(connectorWriteModes.scopeKey, scopeKey), eq(connectorWriteModes.route, route)));
+    .where(
+      and(
+        eq(connectorWriteModes.orgId, handle.orgId),
+        eq(connectorWriteModes.scopeKey, scopeKey),
+        eq(connectorWriteModes.route, route),
+      ),
+    );
 }
 
-export async function listConnectorModes(handle: DbHandle): Promise<ConnectorModeRow[]> {
-  const rows = await handle.db.select().from(connectorWriteModes);
+export async function listConnectorModes(handle: OrgDb): Promise<ConnectorModeRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(connectorWriteModes)
+    .where(eq(connectorWriteModes.orgId, handle.orgId));
   return rows.map((row) => ({
     scopeKey: row.scopeKey,
     scope: row.scope ?? {},
@@ -71,7 +80,7 @@ export async function listConnectorModes(handle: DbHandle): Promise<ConnectorMod
   }));
 }
 
-export async function upsertConnectorAsk(handle: DbHandle, row: ConnectorAskRow): Promise<void> {
+export async function upsertConnectorAsk(handle: OrgDb, row: ConnectorAskRow): Promise<void> {
   const values = {
     id: row.id,
     connector: row.connector,
@@ -94,8 +103,8 @@ export async function upsertConnectorAsk(handle: DbHandle, row: ConnectorAskRow)
   };
   await handle.db
     .insert(connectorAsks)
-    .values(values)
-    .onConflictDoUpdate({ target: connectorAsks.id, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [connectorAsks.orgId, connectorAsks.id], set: values });
 }
 
 /**
@@ -106,12 +115,13 @@ export async function upsertConnectorAsk(handle: DbHandle, row: ConnectorAskRow)
  * them at hydration would reopen exactly the hole the fingerprint closes.
  */
 export async function recentConnectorAsks(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
 ): Promise<ConnectorAskRow[]> {
   const rows = await handle.db
     .select()
     .from(connectorAsks)
+    .where(eq(connectorAsks.orgId, handle.orgId))
     .orderBy(desc(connectorAsks.createdAt))
     .limit(limit);
   return rows.map((row) => ({

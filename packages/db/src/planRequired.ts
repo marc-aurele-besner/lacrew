@@ -1,8 +1,8 @@
 /** Query helpers for plan-required mode (keeps Drizzle inside @lacrew/db). */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { planRequirements } from "./schema/planRequired.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface PlanRequirementRow {
   scopeKey: string;
@@ -14,10 +14,7 @@ export interface PlanRequirementRow {
   updatedAt: string;
 }
 
-export async function upsertPlanRequirement(
-  handle: DbHandle,
-  row: PlanRequirementRow,
-): Promise<void> {
+export async function upsertPlanRequirement(handle: OrgDb, row: PlanRequirementRow): Promise<void> {
   const values = {
     scopeKey: row.scopeKey,
     scope: row.scope,
@@ -29,12 +26,17 @@ export async function upsertPlanRequirement(
   };
   await handle.db
     .insert(planRequirements)
-    .values(values)
-    .onConflictDoUpdate({ target: planRequirements.scopeKey, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({
+      target: [planRequirements.orgId, planRequirements.scopeKey],
+      set: values,
+    });
 }
 
-export async function deletePlanRequirement(handle: DbHandle, scopeKey: string): Promise<void> {
-  await handle.db.delete(planRequirements).where(eq(planRequirements.scopeKey, scopeKey));
+export async function deletePlanRequirement(handle: OrgDb, scopeKey: string): Promise<void> {
+  await handle.db
+    .delete(planRequirements)
+    .where(and(eq(planRequirements.orgId, handle.orgId), eq(planRequirements.scopeKey, scopeKey)));
 }
 
 /**
@@ -42,8 +44,11 @@ export async function deletePlanRequirement(handle: DbHandle, scopeKey: string):
  * scope an operator configured, and a trimmed row is a crew that silently stops
  * being asked to plan.
  */
-export async function listPlanRequirements(handle: DbHandle): Promise<PlanRequirementRow[]> {
-  const rows = await handle.db.select().from(planRequirements);
+export async function listPlanRequirements(handle: OrgDb): Promise<PlanRequirementRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(planRequirements)
+    .where(eq(planRequirements.orgId, handle.orgId));
   return rows.map((row) => ({
     scopeKey: row.scopeKey,
     scope: row.scope ?? {},

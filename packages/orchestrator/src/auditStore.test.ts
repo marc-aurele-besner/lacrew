@@ -29,7 +29,7 @@ describe("AuditStore", () => {
     const prev = process.env.DATABASE_URL;
     try {
       delete process.env.DATABASE_URL;
-      assert.equal(createAuditStoreFromEnv().name, "memory");
+      assert.equal(createAuditStoreFromEnv("default").name, "memory");
     } finally {
       if (prev !== undefined) process.env.DATABASE_URL = prev;
     }
@@ -49,7 +49,7 @@ describe("AuditStore", () => {
       // A chain id of its own, so the shared table's other rows stay out of
       // this run's counts.
       const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-      const store = createPgAuditStore({ db: sharedDb(), chainId });
+      const store = createPgAuditStore({ db: sharedDb(), orgId: "default", chainId });
       const agent = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
       const at = (iso: string, type: ProtocolEvent["type"], payload = {}): ProtocolEvent => ({
         type,
@@ -92,7 +92,7 @@ describe("AuditStore", () => {
   );
 
   it("postgres store round-trips an event", { skip: !process.env.DATABASE_URL }, async () => {
-    const store = createPgAuditStore({ db: sharedDb() });
+    const store = createPgAuditStore({ db: sharedDb(), orgId: "default" });
     const marker = `test-${Date.now()}`;
     await store.append({ ...EVENT, payload: { ...EVENT.payload, marker } });
     const recent = await store.recent(50);

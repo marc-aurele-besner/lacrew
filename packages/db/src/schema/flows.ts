@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -17,8 +18,10 @@ import {
 export const flowDefinitions = pgTable(
   "orchestrator_flows",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Flow id (definition.id) — one row per flow, upserted on save. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     name: text("name").notNull(),
     /** Full FlowDefinition JSON — the source of truth for scope. */
     definition: jsonb("definition").notNull().$type<Record<string, unknown>>(),
@@ -31,14 +34,19 @@ export const flowDefinitions = pgTable(
     scopeRef: text("scope_ref"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("flows_scope_idx").on(table.scopeLevel, table.scopeRef)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("flows_scope_idx").on(table.orgId, table.scopeLevel, table.scopeRef),
+  ],
 );
 
 export const flowRuns = pgTable(
   "orchestrator_flow_runs",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
-    runId: text("run_id").notNull().unique(),
+    runId: text("run_id").notNull(),
     flowId: text("flow_id").notNull(),
     status: text("status").notNull(),
     /** Agent the run executed as; null for runs predating scoped principals. */
@@ -49,8 +57,9 @@ export const flowRuns = pgTable(
     result: jsonb("result").notNull().$type<Record<string, unknown>>(),
   },
   (table) => [
-    index("flow_runs_flow_idx").on(table.flowId),
-    index("flow_runs_started_idx").on(table.startedAt),
+    unique("flow_runs_org_run_uq").on(table.orgId, table.runId),
+    index("flow_runs_flow_idx").on(table.orgId, table.flowId),
+    index("flow_runs_started_idx").on(table.orgId, table.startedAt),
   ],
 );
 
@@ -74,7 +83,9 @@ export const flowRuns = pgTable(
 export const flowRunState = pgTable(
   "orchestrator_flow_run_state",
   {
-    runId: text("run_id").primaryKey(),
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
+    runId: text("run_id").notNull(),
     flowId: text("flow_id").notNull(),
     /** running | paused | completed | error | cancelled | max_steps. */
     status: text("status").notNull(),
@@ -112,9 +123,10 @@ export const flowRunState = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index("flow_run_state_status_idx").on(table.status),
-    index("flow_run_state_updated_idx").on(table.updatedAt),
-    unique("flow_run_state_parent_step_uq").on(table.parentRunId, table.parentStepId),
+    primaryKey({ columns: [table.orgId, table.runId] }),
+    index("flow_run_state_status_idx").on(table.orgId, table.status),
+    index("flow_run_state_updated_idx").on(table.orgId, table.updatedAt),
+    unique("flow_run_state_parent_step_uq").on(table.orgId, table.parentRunId, table.parentStepId),
   ],
 );
 
@@ -131,6 +143,8 @@ export const flowRunState = pgTable(
 export const flowCheckpoints = pgTable(
   "orchestrator_flow_checkpoints",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     runId: text("run_id").notNull(),
     /** Monotonic within a run; 1 for the first completed step. */
@@ -146,8 +160,8 @@ export const flowCheckpoints = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("flow_checkpoints_run_seq_uq").on(table.runId, table.seq),
-    index("flow_checkpoints_run_idx").on(table.runId),
+    unique("flow_checkpoints_run_seq_uq").on(table.orgId, table.runId, table.seq),
+    index("flow_checkpoints_run_idx").on(table.orgId, table.runId),
   ],
 );
 
@@ -163,8 +177,10 @@ export const flowCheckpoints = pgTable(
 export const humanGates = pgTable(
   "orchestrator_human_gates",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Deterministic: run + flow + step + principal. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     flowId: text("flow_id"),
     runId: text("run_id"),
     stepId: text("step_id").notNull(),
@@ -192,8 +208,9 @@ export const humanGates = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
-    index("human_gates_question_idx").on(table.questionId),
-    index("human_gates_status_idx").on(table.status),
-    index("human_gates_run_idx").on(table.runId),
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("human_gates_question_idx").on(table.orgId, table.questionId),
+    index("human_gates_status_idx").on(table.orgId, table.status),
+    index("human_gates_run_idx").on(table.orgId, table.runId),
   ],
 );

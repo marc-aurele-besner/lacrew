@@ -105,7 +105,7 @@ describe("GasStore", () => {
     const prev = process.env.DATABASE_URL;
     try {
       delete process.env.DATABASE_URL;
-      assert.equal(createGasStoreFromEnv().name, "memory");
+      assert.equal(createGasStoreFromEnv("default").name, "memory");
     } finally {
       if (prev !== undefined) process.env.DATABASE_URL = prev;
     }
@@ -118,7 +118,7 @@ describe("GasStore", () => {
       // A chain id of its own, so the shared table's other rows stay out of
       // this run's sums.
       const chainId = 1_000_000_000 + Math.floor(Math.random() * 1_000_000_000);
-      const store = createPgGasStore({ db: sharedDb(), chainId });
+      const store = createPgGasStore({ db: sharedDb(), orgId: "default", chainId });
       const agent = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
       const other = "0x1111111111111111111111111111111111111111";
       let n = 0;

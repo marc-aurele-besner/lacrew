@@ -1,4 +1,13 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 /**
  * Dual control (F2.32): the rule one scope runs under.
@@ -10,32 +19,38 @@ import { boolean, index, integer, jsonb, pgTable, text, timestamp } from "drizzl
  * than quietly delivering the unreviewed merge the operator was paying to
  * prevent.
  */
-export const dualControlRules = pgTable("orchestrator_dual_control_rules", {
-  /** `workspace`, `crew:<address>`, or `agent:<address>`. */
-  scopeKey: text("scope_key").primaryKey(),
-  scope: jsonb("scope").notNull().$type<Record<string, unknown>>(),
-  /** `off` | `risky_writes` | `spends_and_writes`. */
-  mode: text("mode").notNull(),
-  /** `manager` | `seat:<address>` | `role:human` | `any_peer_in_crew`. */
-  reviewer: text("reviewer").notNull(),
-  /** Base units, as a decimal string: the propose carries the same number. */
-  minSpend: text("min_spend").notNull().default("0"),
-  /** Whether connector and external-MCP writes qualify. */
-  connectorWrites: boolean("connector_writes").notNull().default(true),
-  /** Whether `org` / `budget` / `governance` mutators qualify. */
-  orgMutators: boolean("org_mutators").notNull().default(true),
-  /** How long a review waits before the effect fails closed. */
-  timeoutMs: integer("timeout_ms").notNull(),
-  /**
-   * `per_effect` | `per_run`: how much one concurrence releases.
-   *
-   * Defaulted to the narrower of the two, so a row written before this column
-   * existed keeps asking per effect rather than being read as a run-wide
-   * agreement nobody gave.
-   */
-  reviewScope: text("review_scope").notNull().default("per_effect"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const dualControlRules = pgTable(
+  "orchestrator_dual_control_rules",
+  {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
+    /** `workspace`, `crew:<address>`, or `agent:<address>`. */
+    scopeKey: text("scope_key").notNull(),
+    scope: jsonb("scope").notNull().$type<Record<string, unknown>>(),
+    /** `off` | `risky_writes` | `spends_and_writes`. */
+    mode: text("mode").notNull(),
+    /** `manager` | `seat:<address>` | `role:human` | `any_peer_in_crew`. */
+    reviewer: text("reviewer").notNull(),
+    /** Base units, as a decimal string: the propose carries the same number. */
+    minSpend: text("min_spend").notNull().default("0"),
+    /** Whether connector and external-MCP writes qualify. */
+    connectorWrites: boolean("connector_writes").notNull().default(true),
+    /** Whether `org` / `budget` / `governance` mutators qualify. */
+    orgMutators: boolean("org_mutators").notNull().default(true),
+    /** How long a review waits before the effect fails closed. */
+    timeoutMs: integer("timeout_ms").notNull(),
+    /**
+     * `per_effect` | `per_run`: how much one concurrence releases.
+     *
+     * Defaulted to the narrower of the two, so a row written before this column
+     * existed keeps asking per effect rather than being read as a run-wide
+     * agreement nobody gave.
+     */
+    reviewScope: text("review_scope").notNull().default("per_effect"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.orgId, table.scopeKey] })],
+);
 
 /**
  * The reviews themselves: the effects held, and the decisions that released or
@@ -51,8 +66,10 @@ export const dualControlRules = pgTable("orchestrator_dual_control_rules", {
 export const dualControlReviews = pgTable(
   "orchestrator_dual_control_reviews",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Deterministic: run + actor + tool + fingerprint. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     tool: text("tool").notNull(),
     /** `spend` | `write`. */
     effect: text("effect").notNull(),
@@ -94,8 +111,9 @@ export const dualControlReviews = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
-    index("dual_control_question_idx").on(table.questionId),
-    index("dual_control_status_idx").on(table.status),
-    index("dual_control_run_idx").on(table.runId),
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("dual_control_question_idx").on(table.orgId, table.questionId),
+    index("dual_control_status_idx").on(table.orgId, table.status),
+    index("dual_control_run_idx").on(table.orgId, table.runId),
   ],
 );

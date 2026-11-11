@@ -2,7 +2,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { sandboxState } from "./schema/sandbox.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface SandboxStateRow {
   orgId: string;
@@ -14,19 +14,16 @@ export interface SandboxStateRow {
   clockOffset: number;
 }
 
-export async function loadSandboxState(
-  handle: DbHandle,
-  orgId: string,
-): Promise<SandboxStateRow | null> {
+export async function loadSandboxState(handle: OrgDb): Promise<SandboxStateRow | null> {
   const rows = await handle.db
     .select()
     .from(sandboxState)
-    .where(eq(sandboxState.orgId, orgId))
+    .where(eq(sandboxState.orgId, handle.orgId))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
   return {
-    orgId: row.orgId,
+    orgId: handle.orgId,
     version: row.version,
     state: row.state,
     clockOffset: Number(row.clockOffset),
@@ -41,15 +38,15 @@ export async function loadSandboxState(
  * a caller that lost the race reloads and never overwrites newer state.
  */
 export async function saveSandboxState(
-  handle: DbHandle,
-  row: SandboxStateRow,
+  handle: OrgDb,
+  row: Omit<SandboxStateRow, "orgId">,
   expectedVersion: number,
 ): Promise<boolean> {
   if (expectedVersion === 0) {
     const inserted = await handle.db
       .insert(sandboxState)
       .values({
-        orgId: row.orgId,
+        orgId: handle.orgId,
         version: row.version,
         state: row.state,
         clockOffset: row.clockOffset,
@@ -66,7 +63,7 @@ export async function saveSandboxState(
       clockOffset: row.clockOffset,
       updatedAt: new Date(),
     })
-    .where(and(eq(sandboxState.orgId, row.orgId), eq(sandboxState.version, expectedVersion)))
+    .where(and(eq(sandboxState.orgId, handle.orgId), eq(sandboxState.version, expectedVersion)))
     .returning({ orgId: sandboxState.orgId });
   return updated.length > 0;
 }

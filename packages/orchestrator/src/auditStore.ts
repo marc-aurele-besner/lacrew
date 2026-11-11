@@ -5,10 +5,12 @@
  */
 
 import {
+  assertValidOrgId,
   auditEventsBetween,
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
+  DEFAULT_ORG_ID,
   deleteSandboxAuditEvents,
   getDatabaseUrl,
   insertAuditEvent,
@@ -99,17 +101,19 @@ export function createMemoryAuditStore(): AuditStore {
  */
 export function createPgAuditStore(options: {
   db: DbHandle;
+  orgId: string;
   chainId?: number;
   ledger?: Ledger;
 }): AuditStore {
   const db = () => options.db;
   const { chainId, ledger = "chain" } = options;
-  const scope = chainId === undefined ? { ledger } : { chainId, ledger };
+  const orgId = assertValidOrgId(options.orgId);
+  const scope = chainId === undefined ? { orgId, ledger } : { orgId, chainId, ledger };
   const toEvent = (row: Awaited<ReturnType<typeof recentAuditEvents>>[number]): ProtocolEvent => ({
     type: row.type as ProtocolEvent["type"],
     at: row.at,
     ...(row.chainId == null ? {} : { chainId: row.chainId }),
-    ...(row.orgId ? { orgId: row.orgId } : {}),
+    ...(row.orgId && row.orgId !== DEFAULT_ORG_ID ? { orgId: row.orgId } : {}),
     ...(row.ledger === "sandbox" ? { ledger: "sandbox" as const } : {}),
     payload: row.payload,
   });
@@ -120,6 +124,7 @@ export function createPgAuditStore(options: {
       try {
         await insertAuditEvent(db(), {
           ...event,
+          orgId,
           chainId: event.chainId ?? chainId ?? null,
           ledger: event.ledger ?? ledger,
         });
@@ -180,7 +185,7 @@ export function createPgAuditStore(options: {
     clearSandbox: async () => {
       // Not swallowed: a reset that left the old simulation's trail behind
       // would show it under the new one, and the caller has to be told.
-      await deleteSandboxAuditEvents(db());
+      await deleteSandboxAuditEvents(db(), orgId);
     },
     // The pool belongs to whoever injected it, and is closed there.
     close: async () => {},
@@ -188,8 +193,12 @@ export function createPgAuditStore(options: {
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createAuditStoreFromEnv(chainId?: number, ledger: Ledger = "chain"): AuditStore {
+export function createAuditStoreFromEnv(
+  orgId: string,
+  chainId?: number,
+  ledger: Ledger = "chain",
+): AuditStore {
   return getDatabaseUrl()
-    ? createPgAuditStore({ db: sharedDb(), chainId, ledger })
+    ? createPgAuditStore({ db: sharedDb(), orgId, chainId, ledger })
     : createMemoryAuditStore();
 }

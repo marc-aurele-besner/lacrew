@@ -17,6 +17,36 @@ export interface DbHandle {
   close: () => Promise<void>;
 }
 
+/** The org a single-org orchestrator stores everything under. */
+export const DEFAULT_ORG_ID = "default";
+
+/**
+ * An org id is a short lowercase slug. It reaches SQL only as a bound value,
+ * but it also names a URL path segment, so anything else is refused outright.
+ */
+export function assertValidOrgId(orgId: string): string {
+  if (!/^[a-z0-9_-]{1,64}$/.test(orgId)) {
+    throw new Error(`org id must match [a-z0-9_-]{1,64}; got ${JSON.stringify(orgId)}`);
+  }
+  return orgId;
+}
+
+/**
+ * A handle bound to one org. Every query helper outside the audit trail takes
+ * one of these, stamps `orgId` on what it writes and filters by it on every
+ * read, update and delete, so a caller cannot reach another org's rows by
+ * forgetting a predicate.
+ */
+export interface OrgDb {
+  db: LacrewDb;
+  orgId: string;
+}
+
+/** Bind `handle` to one org. Throws on an id that is not a valid org id. */
+export function orgDb(handle: DbHandle, orgId: string): OrgDb {
+  return { db: handle.db, orgId: assertValidOrgId(orgId) };
+}
+
 export function getDatabaseUrl(): string | undefined {
   const url = process.env.DATABASE_URL?.trim();
   return url || undefined;

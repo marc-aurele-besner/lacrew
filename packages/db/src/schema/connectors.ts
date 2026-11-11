@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, primaryKey, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 /**
  * Connector write policy (F2.24): the mode a write route runs in, and the
@@ -11,6 +11,8 @@ import { index, jsonb, pgTable, text, timestamp, unique } from "drizzle-orm/pg-c
 export const connectorWriteModes = pgTable(
   "orchestrator_connector_modes",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** `workspace`, `crew:<address>`, or `agent:<address>`. */
     scopeKey: text("scope_key").notNull(),
     scope: jsonb("scope").notNull().$type<Record<string, unknown>>(),
@@ -19,14 +21,16 @@ export const connectorWriteModes = pgTable(
     mode: text("mode").notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [unique("connector_modes_scope_route").on(table.scopeKey, table.route)],
+  (table) => [unique("connector_modes_scope_route").on(table.orgId, table.scopeKey, table.route)],
 );
 
 export const connectorAsks = pgTable(
   "orchestrator_connector_asks",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     /** Deterministic: run + principal + route + request fingerprint. */
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     connector: text("connector").notNull(),
     route: text("route").notNull(),
     method: text("method").notNull(),
@@ -55,7 +59,8 @@ export const connectorAsks = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
-    index("connector_asks_question_idx").on(table.questionId),
-    index("connector_asks_status_idx").on(table.status),
+    primaryKey({ columns: [table.orgId, table.id] }),
+    index("connector_asks_question_idx").on(table.orgId, table.questionId),
+    index("connector_asks_status_idx").on(table.orgId, table.status),
   ],
 );

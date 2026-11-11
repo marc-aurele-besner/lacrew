@@ -2,7 +2,7 @@
 
 import { and, desc, eq, gte, inArray, lt, notLike, sql } from "drizzle-orm";
 import { inferenceBudgets, inferenceUsage, inferenceUsageEvents } from "./schema/budgets.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface InferenceBudgetRow {
   scopeKey: string;
@@ -68,10 +68,7 @@ function rowToBudget(row: typeof inferenceBudgets.$inferSelect): InferenceBudget
   };
 }
 
-export async function upsertInferenceBudget(
-  handle: DbHandle,
-  row: InferenceBudgetRow,
-): Promise<void> {
+export async function upsertInferenceBudget(handle: OrgDb, row: InferenceBudgetRow): Promise<void> {
   const values = {
     scopeKey: row.scopeKey,
     crewId: row.crewId,
@@ -89,27 +86,35 @@ export async function upsertInferenceBudget(
   };
   await handle.db
     .insert(inferenceBudgets)
-    .values(values)
-    .onConflictDoUpdate({ target: inferenceBudgets.scopeKey, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({
+      target: [inferenceBudgets.orgId, inferenceBudgets.scopeKey],
+      set: values,
+    });
 }
 
-export async function deleteInferenceBudget(handle: DbHandle, scopeKey: string): Promise<void> {
-  await handle.db.delete(inferenceBudgets).where(eq(inferenceBudgets.scopeKey, scopeKey));
+export async function deleteInferenceBudget(handle: OrgDb, scopeKey: string): Promise<void> {
+  await handle.db
+    .delete(inferenceBudgets)
+    .where(and(eq(inferenceBudgets.orgId, handle.orgId), eq(inferenceBudgets.scopeKey, scopeKey)));
 }
 
-export async function listInferenceBudgets(handle: DbHandle): Promise<InferenceBudgetRow[]> {
-  const rows = await handle.db.select().from(inferenceBudgets);
+export async function listInferenceBudgets(handle: OrgDb): Promise<InferenceBudgetRow[]> {
+  const rows = await handle.db
+    .select()
+    .from(inferenceBudgets)
+    .where(eq(inferenceBudgets.orgId, handle.orgId));
   return rows.map(rowToBudget);
 }
 
 export async function getInferenceBudget(
-  handle: DbHandle,
+  handle: OrgDb,
   scopeKey: string,
 ): Promise<InferenceBudgetRow | null> {
   const rows = await handle.db
     .select()
     .from(inferenceBudgets)
-    .where(eq(inferenceBudgets.scopeKey, scopeKey))
+    .where(and(eq(inferenceBudgets.orgId, handle.orgId), eq(inferenceBudgets.scopeKey, scopeKey)))
     .limit(1);
   const row = rows[0];
   return row ? rowToBudget(row) : null;
@@ -125,7 +130,7 @@ export async function getInferenceBudget(
  * decision is made on a number no other writer can have replaced in between.
  */
 export async function addInferenceUsage(
-  handle: DbHandle,
+  handle: OrgDb,
   row: {
     scopeKey: string;
     periodKey: string;
@@ -139,6 +144,7 @@ export async function addInferenceUsage(
   const [updated] = await handle.db
     .insert(inferenceUsage)
     .values({
+      orgId: handle.orgId,
       scopeKey: row.scopeKey,
       periodKey: row.periodKey,
       inputTokens: row.inputTokens,
@@ -149,7 +155,7 @@ export async function addInferenceUsage(
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [inferenceUsage.scopeKey, inferenceUsage.periodKey],
+      target: [inferenceUsage.orgId, inferenceUsage.scopeKey, inferenceUsage.periodKey],
       set: {
         inputTokens: sql`${inferenceUsage.inputTokens} + ${row.inputTokens}`,
         outputTokens: sql`${inferenceUsage.outputTokens} + ${row.outputTokens}`,
@@ -182,14 +188,20 @@ function usageFromRow(row: typeof inferenceUsage.$inferSelect): InferenceUsageRo
 }
 
 export async function getInferenceUsage(
-  handle: DbHandle,
+  handle: OrgDb,
   scopeKey: string,
   periodKey: string,
 ): Promise<InferenceUsageRow | null> {
   const rows = await handle.db
     .select()
     .from(inferenceUsage)
-    .where(and(eq(inferenceUsage.scopeKey, scopeKey), eq(inferenceUsage.periodKey, periodKey)))
+    .where(
+      and(
+        eq(inferenceUsage.orgId, handle.orgId),
+        eq(inferenceUsage.scopeKey, scopeKey),
+        eq(inferenceUsage.periodKey, periodKey),
+      ),
+    )
     .limit(1);
   const row = rows[0];
   return row ? usageFromRow(row) : null;
@@ -201,7 +213,7 @@ export async function getInferenceUsage(
  * under two replicas notifies its humans once.
  */
 export async function claimInferenceAlert(
-  handle: DbHandle,
+  handle: OrgDb,
   row: { scopeKey: string; periodKey: string; from: string; to: string },
 ): Promise<boolean> {
   const updated = await handle.db
@@ -209,6 +221,7 @@ export async function claimInferenceAlert(
     .set({ alertedState: row.to })
     .where(
       and(
+        eq(inferenceUsage.orgId, handle.orgId),
         eq(inferenceUsage.scopeKey, row.scopeKey),
         eq(inferenceUsage.periodKey, row.periodKey),
         eq(inferenceUsage.alertedState, row.from),
@@ -219,10 +232,11 @@ export async function claimInferenceAlert(
 }
 
 export async function insertInferenceUsageEvent(
-  handle: DbHandle,
+  handle: OrgDb,
   row: InferenceUsageEventRow,
 ): Promise<void> {
   await handle.db.insert(inferenceUsageEvents).values({
+    orgId: handle.orgId,
     scopeKey: row.scopeKey,
     periodKey: row.periodKey,
     model: row.model,
@@ -239,7 +253,7 @@ export async function insertInferenceUsageEvent(
 }
 
 export async function recentInferenceUsageEvents(
-  handle: DbHandle,
+  handle: OrgDb,
   limit: number,
   scopeKey?: string,
   periodKey?: string,
@@ -248,8 +262,10 @@ export async function recentInferenceUsageEvents(
     ...(scopeKey ? [eq(inferenceUsageEvents.scopeKey, scopeKey)] : []),
     ...(periodKey ? [eq(inferenceUsageEvents.periodKey, periodKey)] : []),
   ];
-  const base = handle.db.select().from(inferenceUsageEvents);
-  const rows = await (filters.length ? base.where(and(...filters)) : base)
+  const rows = await handle.db
+    .select()
+    .from(inferenceUsageEvents)
+    .where(and(eq(inferenceUsageEvents.orgId, handle.orgId), ...filters))
     .orderBy(desc(inferenceUsageEvents.at))
     .limit(limit);
   return rows.map((row) => ({
@@ -278,7 +294,7 @@ export async function recentInferenceUsageEvents(
  * keys it intends to fold, and folds each one separately.
  */
 export async function inferenceUsageEventsBetween(
-  handle: DbHandle,
+  handle: OrgDb,
   scopeKeys: readonly string[],
   fromIso: string,
   toIso: string,
@@ -290,6 +306,7 @@ export async function inferenceUsageEventsBetween(
     .from(inferenceUsageEvents)
     .where(
       and(
+        eq(inferenceUsageEvents.orgId, handle.orgId),
         inArray(inferenceUsageEvents.scopeKey, [...scopeKeys]),
         gte(inferenceUsageEvents.at, new Date(fromIso)),
         lt(inferenceUsageEvents.at, new Date(toIso)),
@@ -325,7 +342,7 @@ export async function inferenceUsageEventsBetween(
  * nothing.
  */
 export async function inferenceUsageEventsForRuns(
-  handle: DbHandle,
+  handle: OrgDb,
   runIds: readonly string[],
   limit: number,
 ): Promise<InferenceUsageEventRow[]> {
@@ -335,6 +352,7 @@ export async function inferenceUsageEventsForRuns(
     .from(inferenceUsageEvents)
     .where(
       and(
+        eq(inferenceUsageEvents.orgId, handle.orgId),
         inArray(inferenceUsageEvents.runId, [...runIds]),
         notLike(inferenceUsageEvents.scopeKey, "%/agent:%"),
       ),
@@ -358,9 +376,11 @@ export async function inferenceUsageEventsForRuns(
 }
 
 export async function pruneInferenceUsageEvents(
-  handle: DbHandle,
+  handle: OrgDb,
   days = EVENT_RETENTION_DAYS,
 ): Promise<void> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  await handle.db.delete(inferenceUsageEvents).where(lt(inferenceUsageEvents.at, cutoff));
+  await handle.db
+    .delete(inferenceUsageEvents)
+    .where(and(eq(inferenceUsageEvents.orgId, handle.orgId), lt(inferenceUsageEvents.at, cutoff)));
 }

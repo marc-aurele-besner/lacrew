@@ -8,7 +8,7 @@ import {
   flowRuns,
   humanGates,
 } from "./schema/flows.js";
-import type { DbHandle } from "./client.js";
+import type { OrgDb } from "./client.js";
 
 export interface FlowDefinitionRow {
   id: string;
@@ -29,13 +29,11 @@ export interface FlowRunRow {
   result: Record<string, unknown>;
 }
 
-export async function upsertFlowDefinition(
-  handle: DbHandle,
-  row: FlowDefinitionRow,
-): Promise<void> {
+export async function upsertFlowDefinition(handle: OrgDb, row: FlowDefinitionRow): Promise<void> {
   await handle.db
     .insert(flowDefinitions)
     .values({
+      orgId: handle.orgId,
       id: row.id,
       name: row.name,
       definition: row.definition,
@@ -44,7 +42,7 @@ export async function upsertFlowDefinition(
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: flowDefinitions.id,
+      target: [flowDefinitions.orgId, flowDefinitions.id],
       set: {
         name: row.name,
         definition: row.definition,
@@ -56,13 +54,13 @@ export async function upsertFlowDefinition(
 }
 
 export async function getFlowDefinition(
-  handle: DbHandle,
+  handle: OrgDb,
   id: string,
 ): Promise<FlowDefinitionRow | null> {
   const rows = await handle.db
     .select()
     .from(flowDefinitions)
-    .where(eq(flowDefinitions.id, id))
+    .where(and(eq(flowDefinitions.orgId, handle.orgId), eq(flowDefinitions.id, id)))
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -75,14 +73,17 @@ export async function getFlowDefinition(
   };
 }
 
-export async function deleteFlowDefinition(handle: DbHandle, id: string): Promise<void> {
-  await handle.db.delete(flowDefinitions).where(eq(flowDefinitions.id, id));
+export async function deleteFlowDefinition(handle: OrgDb, id: string): Promise<void> {
+  await handle.db
+    .delete(flowDefinitions)
+    .where(and(eq(flowDefinitions.orgId, handle.orgId), eq(flowDefinitions.id, id)));
 }
 
-export async function listFlowDefinitions(handle: DbHandle): Promise<FlowDefinitionRow[]> {
+export async function listFlowDefinitions(handle: OrgDb): Promise<FlowDefinitionRow[]> {
   const rows = await handle.db
     .select()
     .from(flowDefinitions)
+    .where(eq(flowDefinitions.orgId, handle.orgId))
     .orderBy(desc(flowDefinitions.updatedAt));
   return rows.map((row) => ({
     id: row.id,
@@ -102,7 +103,7 @@ export async function listFlowDefinitions(handle: DbHandle): Promise<FlowDefinit
  * replaces the row — leaving the first one would report a merge that has since
  * happened as still waiting on a human.
  */
-export async function insertFlowRun(handle: DbHandle, row: FlowRunRow): Promise<void> {
+export async function insertFlowRun(handle: OrgDb, row: FlowRunRow): Promise<void> {
   const values = {
     runId: row.runId,
     flowId: row.flowId,
@@ -114,9 +115,9 @@ export async function insertFlowRun(handle: DbHandle, row: FlowRunRow): Promise<
   };
   await handle.db
     .insert(flowRuns)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: flowRuns.runId,
+      target: [flowRuns.orgId, flowRuns.runId],
       set: { status: values.status, finishedAt: values.finishedAt, result: values.result },
     });
 }
@@ -183,7 +184,7 @@ function toRunState(row: typeof flowRunState.$inferSelect): FlowRunStateRow {
  * restating it, and would clear it by simply not knowing it.
  */
 export async function upsertFlowRunState(
-  handle: DbHandle,
+  handle: OrgDb,
   row: Omit<FlowRunStateRow, "updatedAt" | "request">,
 ): Promise<void> {
   const values = {
@@ -203,9 +204,9 @@ export async function upsertFlowRunState(
   };
   await handle.db
     .insert(flowRunState)
-    .values(values)
+    .values({ orgId: handle.orgId, ...values })
     .onConflictDoUpdate({
-      target: flowRunState.runId,
+      target: [flowRunState.orgId, flowRunState.runId],
       set: {
         flowId: values.flowId,
         status: values.status,
@@ -229,7 +230,7 @@ export async function upsertFlowRunState(
  * refuses at the table.
  */
 export async function getChildFlowRunState(
-  handle: DbHandle,
+  handle: OrgDb,
   parentRunId: string,
   parentStepId: string,
 ): Promise<FlowRunStateRow | null> {
@@ -237,7 +238,11 @@ export async function getChildFlowRunState(
     .select()
     .from(flowRunState)
     .where(
-      and(eq(flowRunState.parentRunId, parentRunId), eq(flowRunState.parentStepId, parentStepId)),
+      and(
+        eq(flowRunState.orgId, handle.orgId),
+        eq(flowRunState.parentRunId, parentRunId),
+        eq(flowRunState.parentStepId, parentStepId),
+      ),
     )
     .limit(1);
   const row = rows[0];
@@ -246,13 +251,13 @@ export async function getChildFlowRunState(
 
 /** Every run one parent delegated, oldest first — the cancel cascade reads this. */
 export async function listChildFlowRunStates(
-  handle: DbHandle,
+  handle: OrgDb,
   parentRunId: string,
 ): Promise<FlowRunStateRow[]> {
   const rows = await handle.db
     .select()
     .from(flowRunState)
-    .where(eq(flowRunState.parentRunId, parentRunId))
+    .where(and(eq(flowRunState.orgId, handle.orgId), eq(flowRunState.parentRunId, parentRunId)))
     .orderBy(flowRunState.startedAt);
   return rows.map(toRunState);
 }
@@ -267,13 +272,19 @@ export async function listChildFlowRunStates(
  * UPDATE matches gets the row, everyone else gets null and does nothing.
  */
 export async function claimWaitingFlowRun(
-  handle: DbHandle,
+  handle: OrgDb,
   runId: string,
 ): Promise<FlowRunStateRow | null> {
   const rows = await handle.db
     .update(flowRunState)
     .set({ status: "running", request: null, updatedAt: new Date() })
-    .where(and(eq(flowRunState.runId, runId), eq(flowRunState.status, "waiting")))
+    .where(
+      and(
+        eq(flowRunState.orgId, handle.orgId),
+        eq(flowRunState.runId, runId),
+        eq(flowRunState.status, "waiting"),
+      ),
+    )
     .returning();
   const row = rows[0];
   return row ? toRunState(row) : null;
@@ -281,36 +292,36 @@ export async function claimWaitingFlowRun(
 
 /** Set or clear the open attempt without disturbing the rest of the row. */
 export async function setFlowRunAttempt(
-  handle: DbHandle,
+  handle: OrgDb,
   runId: string,
   attempt: Record<string, unknown> | null,
 ): Promise<void> {
   await handle.db
     .update(flowRunState)
     .set({ attempt, updatedAt: new Date() })
-    .where(eq(flowRunState.runId, runId));
+    .where(and(eq(flowRunState.orgId, handle.orgId), eq(flowRunState.runId, runId)));
 }
 
 /** Record an operator's pause / cancel request, or clear it once honoured. */
 export async function setFlowRunRequest(
-  handle: DbHandle,
+  handle: OrgDb,
   runId: string,
   request: string | null,
 ): Promise<void> {
   await handle.db
     .update(flowRunState)
     .set({ request, updatedAt: new Date() })
-    .where(eq(flowRunState.runId, runId));
+    .where(and(eq(flowRunState.orgId, handle.orgId), eq(flowRunState.runId, runId)));
 }
 
 export async function getFlowRunState(
-  handle: DbHandle,
+  handle: OrgDb,
   runId: string,
 ): Promise<FlowRunStateRow | null> {
   const rows = await handle.db
     .select()
     .from(flowRunState)
-    .where(eq(flowRunState.runId, runId))
+    .where(and(eq(flowRunState.orgId, handle.orgId), eq(flowRunState.runId, runId)))
     .limit(1);
   const row = rows[0];
   return row ? toRunState(row) : null;
@@ -318,14 +329,14 @@ export async function getFlowRunState(
 
 /** Every run in one of the given lifecycle states, oldest first. */
 export async function listFlowRunStates(
-  handle: DbHandle,
+  handle: OrgDb,
   statuses: string[],
 ): Promise<FlowRunStateRow[]> {
   if (statuses.length === 0) return [];
   const rows = await handle.db
     .select()
     .from(flowRunState)
-    .where(inArray(flowRunState.status, statuses))
+    .where(and(eq(flowRunState.orgId, handle.orgId), inArray(flowRunState.status, statuses)))
     .orderBy(flowRunState.startedAt);
   return rows.map(toRunState);
 }
@@ -339,7 +350,7 @@ export async function listFlowRunStates(
  * this feature exists to make impossible.
  */
 export async function recordFlowCheckpoint(
-  handle: DbHandle,
+  handle: OrgDb,
   checkpoint: FlowCheckpointRow,
   run: Omit<FlowRunStateRow, "updatedAt" | "request">,
 ): Promise<void> {
@@ -347,6 +358,7 @@ export async function recordFlowCheckpoint(
     await tx
       .insert(flowCheckpoints)
       .values({
+        orgId: handle.orgId,
         runId: checkpoint.runId,
         seq: checkpoint.seq,
         flowId: checkpoint.flowId,
@@ -358,7 +370,7 @@ export async function recordFlowCheckpoint(
         at: new Date(checkpoint.at),
       })
       .onConflictDoUpdate({
-        target: [flowCheckpoints.runId, flowCheckpoints.seq],
+        target: [flowCheckpoints.orgId, flowCheckpoints.runId, flowCheckpoints.seq],
         set: {
           stepId: checkpoint.stepId,
           nextStepId: checkpoint.nextStepId ?? null,
@@ -371,6 +383,7 @@ export async function recordFlowCheckpoint(
     await tx
       .insert(flowRunState)
       .values({
+        orgId: handle.orgId,
         runId: run.runId,
         flowId: run.flowId,
         status: run.status,
@@ -384,7 +397,7 @@ export async function recordFlowCheckpoint(
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
-        target: flowRunState.runId,
+        target: [flowRunState.orgId, flowRunState.runId],
         set: {
           status: run.status,
           cursor: run.cursor ?? null,
@@ -399,13 +412,13 @@ export async function recordFlowCheckpoint(
 
 /** The checkpoint trail of one run, oldest → newest. */
 export async function listFlowCheckpoints(
-  handle: DbHandle,
+  handle: OrgDb,
   runId: string,
 ): Promise<FlowCheckpointRow[]> {
   const rows = await handle.db
     .select()
     .from(flowCheckpoints)
-    .where(eq(flowCheckpoints.runId, runId))
+    .where(and(eq(flowCheckpoints.orgId, handle.orgId), eq(flowCheckpoints.runId, runId)))
     .orderBy(flowCheckpoints.seq);
   return rows.map((row) => ({
     runId: row.runId,
@@ -429,11 +442,12 @@ export async function listFlowCheckpoints(
  * a human is not garbage, and deciding when it has waited too long is a policy
  * question, not a storage one.
  */
-export async function pruneFlowRunState(handle: DbHandle, before: Date): Promise<number> {
+export async function pruneFlowRunState(handle: OrgDb, before: Date): Promise<number> {
   const rows = await handle.db
     .delete(flowRunState)
     .where(
       and(
+        eq(flowRunState.orgId, handle.orgId),
         inArray(flowRunState.status, ["completed", "error", "cancelled", "max_steps"]),
         lt(flowRunState.updatedAt, before),
       ),
@@ -441,9 +455,12 @@ export async function pruneFlowRunState(handle: DbHandle, before: Date): Promise
     .returning({ runId: flowRunState.runId });
   if (rows.length > 0) {
     await handle.db.delete(flowCheckpoints).where(
-      inArray(
-        flowCheckpoints.runId,
-        rows.map((r) => r.runId),
+      and(
+        eq(flowCheckpoints.orgId, handle.orgId),
+        inArray(
+          flowCheckpoints.runId,
+          rows.map((r) => r.runId),
+        ),
       ),
     );
   }
@@ -451,18 +468,28 @@ export async function pruneFlowRunState(handle: DbHandle, before: Date): Promise
 }
 
 /** Runs that were mid-write when their process died: status running, attempt open. */
-export async function listCrashedFlowWrites(handle: DbHandle): Promise<FlowRunStateRow[]> {
+export async function listCrashedFlowWrites(handle: OrgDb): Promise<FlowRunStateRow[]> {
   const rows = await handle.db
     .select()
     .from(flowRunState)
-    .where(and(eq(flowRunState.status, "running"), isNotNull(flowRunState.attempt)))
+    .where(
+      and(
+        eq(flowRunState.orgId, handle.orgId),
+        eq(flowRunState.status, "running"),
+        isNotNull(flowRunState.attempt),
+      ),
+    )
     .orderBy(flowRunState.startedAt);
   return rows.map(toRunState);
 }
 
 /** One finished run by id; null while it is still in flight. */
-export async function getFlowRun(handle: DbHandle, runId: string): Promise<FlowRunRow | null> {
-  const rows = await handle.db.select().from(flowRuns).where(eq(flowRuns.runId, runId)).limit(1);
+export async function getFlowRun(handle: OrgDb, runId: string): Promise<FlowRunRow | null> {
+  const rows = await handle.db
+    .select()
+    .from(flowRuns)
+    .where(and(eq(flowRuns.orgId, handle.orgId), eq(flowRuns.runId, runId)))
+    .limit(1);
   const row = rows[0];
   if (!row) return null;
   return {
@@ -477,10 +504,11 @@ export async function getFlowRun(handle: DbHandle, runId: string): Promise<FlowR
 }
 
 /** Most recent runs, newest → oldest. */
-export async function recentFlowRuns(handle: DbHandle, limit: number): Promise<FlowRunRow[]> {
+export async function recentFlowRuns(handle: OrgDb, limit: number): Promise<FlowRunRow[]> {
   const rows = await handle.db
     .select()
     .from(flowRuns)
+    .where(eq(flowRuns.orgId, handle.orgId))
     .orderBy(desc(flowRuns.startedAt), desc(flowRuns.id))
     .limit(limit);
   return rows.map((row) => ({
@@ -515,7 +543,7 @@ export interface HumanGateRow {
   resolvedAt?: string | null;
 }
 
-export async function upsertHumanGate(handle: DbHandle, row: HumanGateRow): Promise<void> {
+export async function upsertHumanGate(handle: OrgDb, row: HumanGateRow): Promise<void> {
   const values = {
     id: row.id,
     flowId: row.flowId ?? null,
@@ -538,8 +566,8 @@ export async function upsertHumanGate(handle: DbHandle, row: HumanGateRow): Prom
   };
   await handle.db
     .insert(humanGates)
-    .values(values)
-    .onConflictDoUpdate({ target: humanGates.id, set: values });
+    .values({ orgId: handle.orgId, ...values })
+    .onConflictDoUpdate({ target: [humanGates.orgId, humanGates.id], set: values });
 }
 
 /**
@@ -549,10 +577,11 @@ export async function upsertHumanGate(handle: DbHandle, row: HumanGateRow): Prom
  * already acted on is what stops a restart from replaying the released branch,
  * so dropping them at hydration would reopen exactly the hole the id closes.
  */
-export async function recentHumanGates(handle: DbHandle, limit: number): Promise<HumanGateRow[]> {
+export async function recentHumanGates(handle: OrgDb, limit: number): Promise<HumanGateRow[]> {
   const rows = await handle.db
     .select()
     .from(humanGates)
+    .where(eq(humanGates.orgId, handle.orgId))
     .orderBy(desc(humanGates.createdAt))
     .limit(limit);
   return rows.map((row) => ({

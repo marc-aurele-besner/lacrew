@@ -20,6 +20,7 @@ import {
   recentWebhookDeliveries,
   settleWebhookDelivery,
   upsertWebhookTrigger,
+  orgDb,
   type DbHandle,
   type WebhookDeliveryRow,
   type WebhookTriggerRow,
@@ -137,8 +138,9 @@ export function createMemoryWebhookStore(): WebhookStore {
   };
 }
 
-export function createPgWebhookStore(options: { db: DbHandle }): WebhookStore {
-  const db = () => options.db;
+export function createPgWebhookStore(options: { db: DbHandle; orgId: string }): WebhookStore {
+  const scoped = orgDb(options.db, options.orgId);
+  const db = () => scoped;
   const warn = (op: string, err: unknown) =>
     console.error(`[@lacrew/orchestrator] webhook ${op} failed:`, err);
 
@@ -206,6 +208,8 @@ export function createPgWebhookStore(options: { db: DbHandle }): WebhookStore {
 }
 
 /** Postgres when DATABASE_URL is set, memory otherwise. */
-export function createWebhookStoreFromEnv(): WebhookStore {
-  return getDatabaseUrl() ? createPgWebhookStore({ db: sharedDb() }) : createMemoryWebhookStore();
+export function createWebhookStoreFromEnv(orgId: string): WebhookStore {
+  return getDatabaseUrl()
+    ? createPgWebhookStore({ db: sharedDb(), orgId })
+    : createMemoryWebhookStore();
 }

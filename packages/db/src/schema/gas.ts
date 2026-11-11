@@ -3,6 +3,7 @@ import {
   integer,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -28,6 +29,8 @@ import {
 export const txGas = pgTable(
   "orchestrator_tx_gas",
   {
+    /** The org this row belongs to. Every read and write is scoped by it. */
+    orgId: text("org_id").notNull().default("default"),
     id: serial("id").primaryKey(),
     /** EIP-155 chain id the transaction was sent on. */
     chainId: integer("chain_id").notNull(),
@@ -68,7 +71,12 @@ export const txGas = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("tx_gas_chain_tx_op_idx").on(table.chainId, table.txHash, table.userOpHash),
-    index("tx_gas_chain_at_idx").on(table.chainId, table.at),
+    uniqueIndex("tx_gas_chain_tx_op_idx").on(
+      table.orgId,
+      table.chainId,
+      table.txHash,
+      table.userOpHash,
+    ),
+    index("tx_gas_chain_at_idx").on(table.orgId, table.chainId, table.at),
   ],
 );
