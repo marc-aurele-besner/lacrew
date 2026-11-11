@@ -360,7 +360,41 @@ export {
   type AuditStore,
 } from "./auditStore.js";
 export { closeSharedDb, sharedDb } from "./dbPool.js";
-export { createOrgWorld, type OrgConfig, type OrgWorld, type OrgWorldShared } from "./orgWorld.js";
+export {
+  createOrgWorld,
+  createUnavailableOrgWorld,
+  type OrgConfig,
+  type OrgWorld,
+  type OrgWorldShared,
+} from "./orgWorld.js";
+export {
+  createMemoryOrgDirectory,
+  createOrgDirectoryFromEnv,
+  createPgOrgDirectory,
+  isOrgId,
+  isOrgMode,
+  isProvisioned,
+  ORG_ID_PATTERN,
+  ORG_MODES,
+  sandboxRootFor,
+  sandboxRootOf,
+  type OrgDirectory,
+  type OrgMode,
+  type OrgRecord,
+} from "./orgDirectory.js";
+export {
+  buildOrgWorld,
+  createMultiOrgHost,
+  DEFAULT_ORG_IDLE_MS,
+  multiOrgSettings,
+  orgEnvironment,
+  SERVED_ORG_MODES,
+  type MultiOrgHost,
+  type MultiOrgOptions,
+  type MultiOrgSetting,
+  type OrgStores,
+  type OrgWorldContext,
+} from "./multiOrgApp.js";
 export {
   createGasStoreFromEnv,
   createMemoryGasStore,

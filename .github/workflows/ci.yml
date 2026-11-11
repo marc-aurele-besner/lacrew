@@ -178,3 +178,4 @@ jobs:
           pnpm --filter @lacrew/orchestrator exec node --import tsx --test
           src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts
           src/gasStore.test.ts src/sandboxLedger.test.ts src/orgScope.test.ts
+          src/multiOrg.test.ts

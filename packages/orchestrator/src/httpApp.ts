@@ -65,7 +65,12 @@ import {
 import { autoExecuteEnabled } from "./governanceSweep.js";
 import { connectorPresets, presetPolicyTargetKey } from "./connectorPresets.js";
 import { maskRpcUrl, parseWatchlist } from "./walletWatchlist.js";
-import { checkMcpEgress, checkMcpEgressResolves, loadMcpEgressPolicyFromEnv } from "./mcpEgress.js";
+import {
+  checkMcpEgress,
+  checkMcpEgressResolves,
+  loadMcpEgressPolicyFromEnv,
+  type McpEgressPolicy,
+} from "./mcpEgress.js";
 import type { ConnectorRegistry } from "./connectors.js";
 import type { ConnectorAsksSurface } from "./connectorAsks.js";
 import type { EvalRunnerSurface } from "./evalRunner.js";
@@ -182,6 +187,18 @@ export interface OrchestratorAppOptions {
   /** Live DB reachability (checked once on boot). */
   isDbReady: () => boolean;
   isDbConfigured: () => boolean;
+  /**
+   * Fields added to `GET /health`, read on every call. A process serving many
+   * orgs uses it to say which org this is and what it is not given.
+   */
+  healthExtra?: () => Record<string, unknown>;
+  /**
+   * The perimeter a caller-supplied URL is checked against. Defaults to the
+   * process environment's; a process serving many orgs passes each org's own.
+   */
+  mcpEgress?: McpEgressPolicy;
+  /** Whether due governance proposals are executed unprompted. Defaults to `LACREW_AUTO_EXECUTE`. */
+  autoExecute?: boolean;
 }
 
 /** JSON response with bigint-safe serialization (matches SDK return shapes). */
@@ -525,6 +542,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     const conflictsBefore = sandbox?.conflicts ?? 0;
     await next();
     if (sandbox && c.req.method !== "GET") {
+      // Before the answer leaves: what the simulator did in this call is in
+      // the stored trail, not only in this process's memory.
+      await runtime.settleSandboxTrail();
       await sandbox.flush();
       if (sandbox.conflicts !== conflictsBefore) {
         c.res = jsonBig(
@@ -635,8 +655,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
         : { configured: 0, store: null },
       auth: { required: Boolean(authToken) },
       audit: { persisted: options.isDbReady() },
-      governance: { autoExecute: autoExecuteEnabled() },
+      governance: { autoExecute: options.autoExecute ?? autoExecuteEnabled() },
       runtimeStore: runtime.runtimeStoreName,
+      ...options.healthExtra?.(),
     }),
   );
 
@@ -3711,7 +3732,7 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // egress like any MCP server's and goes through the same perimeter check:
     // on a hosted pool that is the allowlist plus a refusal of private ranges,
     // which keeps a settings change from pointing the worker at its own network.
-    const egress = loadMcpEgressPolicyFromEnv();
+    const egress = options.mcpEgress ?? loadMcpEgressPolicyFromEnv();
     for (const chain of parsed.value) {
       if (!chain.rpcUrl) continue;
       const target = { transport: "http" as const, url: chain.rpcUrl };
@@ -3926,6 +3947,8 @@ export function createUnavailableApp(options: {
   isDbConfigured: () => boolean;
   authToken?: string;
   corsOrigins?: ReadonlySet<string>;
+  /** Fields added to `GET /health`, read on every call. */
+  healthExtra?: () => Record<string, unknown>;
 }): Hono {
   const app = new Hono();
   const jsonBig = sendJson;
@@ -3958,6 +3981,7 @@ export function createUnavailableApp(options: {
       chainId: null,
       chain: { reachable: false, reason: options.reason, detail: options.detail },
       db: { configured: options.isDbConfigured(), ready: options.isDbReady() },
+      ...options.healthExtra?.(),
     }),
   );
 

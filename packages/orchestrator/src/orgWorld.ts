@@ -38,7 +38,7 @@ import { connectorPricesFromEnv, createPnl } from "./pnl.js";
 import { ancestorsOf } from "./flowScope.js";
 import type { OrgNode } from "@lacrew/core";
 import { autoExecuteEnabled } from "./governanceSweep.js";
-import { createOrchestratorApp } from "./httpApp.js";
+import { createOrchestratorApp, createUnavailableApp } from "./httpApp.js";
 import { createRootAuthSurface, readRootAuthConfig } from "./rootAuth.js";
 import {
   createSafeApprovalSurface,
@@ -56,6 +56,11 @@ export interface OrgConfig {
    * dual-control seeds, root authorization, egress policy and timeouts.
    */
   env: NodeJS.ProcessEnv;
+  /**
+   * Fields added to the org's `GET /health`. A process serving many orgs says
+   * here which org this is and which process-wide settings it is not given.
+   */
+  health?: () => Record<string, unknown>;
 }
 
 /** What every org in the process shares. */
@@ -73,7 +78,8 @@ export interface OrgWorldShared {
 export interface OrgWorld {
   readonly orgId: string;
   readonly app: Hono;
-  readonly runtime: CrewRuntime;
+  /** Null for an org that has no ledger to run on yet: its app says why. */
+  readonly runtime: CrewRuntime | null;
   /** The scheduled epoch: stream allowances, then run epoch-triggered flows. */
   onEpoch(): Promise<unknown>;
   onTick(): Promise<unknown>;
@@ -81,6 +87,13 @@ export interface OrgWorld {
   onFlowCron(): Promise<unknown>;
   /** Run one accepted webhook delivery. */
   onWebhook(data: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Whether the minute sweep has anything to do for this org: a cron flow, an
+   * enabled heartbeat, a run parked or in flight, a question still waiting for
+   * its answer or its timeout. A world with none of these can be let go and
+   * rebuilt from the store when the org is next addressed.
+   */
+  hasScheduledWork(): Promise<boolean>;
   /** Release what this org holds open. The shared queue and pool are not its to close. */
   close(): Promise<void>;
 }
@@ -444,6 +457,9 @@ export async function createOrgWorld(
     authToken,
     isDbReady: shared.isDbReady,
     isDbConfigured: shared.isDbConfigured,
+    mcpEgress,
+    autoExecute: autoExecuteEnabled(env),
+    ...(config.health ? { healthExtra: config.health } : {}),
   });
 
   if (runtime.sandbox) {
@@ -732,10 +748,17 @@ export async function createOrgWorld(
         console.error("[@lacrew/orchestrator] scheduled epoch failed:", err);
       }
       await flows.runTriggered("epoch");
+      await runtime.settleSandboxTrail();
       return result;
     },
     onTick: async () => runtime.tick(),
-    onWebhook: async (data) => webhooks.deliver(data as unknown as WebhookJob),
+    onWebhook: async (data) => {
+      try {
+        return await webhooks.deliver(data as unknown as WebhookJob);
+      } finally {
+        await runtime.settleSandboxTrail();
+      }
+    },
     onFlowCron: async () => {
       const result = await flows.runCronDue();
       // Ask-mode writes that nobody answered (F2.24). Rides the same minute
@@ -824,10 +847,59 @@ export async function createOrgWorld(
     app,
     runtime,
     ...handlers,
+    onFlowCron: async () => {
+      try {
+        return await handlers.onFlowCron();
+      } finally {
+        await runtime.settleSandboxTrail();
+      }
+    },
+    hasScheduledWork: async () =>
+      heartbeats.list().some((heartbeat) => heartbeat.enabled) ||
+      connectorAsks.list().some((ask) => ask.status === "pending") ||
+      humanGates.list().some((gate) => gate.status === "pending") ||
+      dualControl.reviews().some((review) => review.status === "pending") ||
+      (await flows.list()).some((flow) => flow.trigger === "cron") ||
+      (await flows.openRuns()).length > 0,
     close: async () => {
+      // Everything this org raised is in its stores before it is let go of.
+      await runtime.drain();
       // Stdio servers are child processes this orchestrator started; leaving them
       // running after a redeploy is a slow leak of third-party binaries.
       await externalMcp?.close();
     },
+  };
+}
+
+/**
+ * The world of an org that has no ledger to run on.
+ *
+ * It still answers: `/health` says which org this is and why nothing else is
+ * served, and every data route answers 503 with the same reason. It never
+ * answers with an empty org, which would be a claim about the organisation
+ * rather than about this process.
+ */
+export function createUnavailableOrgWorld(
+  orgId: string,
+  unavailable: { reason: string; detail: string; health?: () => Record<string, unknown> },
+  shared: Pick<OrgWorldShared, "authToken" | "isDbReady" | "isDbConfigured">,
+): OrgWorld {
+  return {
+    orgId,
+    app: createUnavailableApp({
+      reason: unavailable.reason,
+      detail: unavailable.detail,
+      isDbReady: shared.isDbReady,
+      isDbConfigured: shared.isDbConfigured,
+      ...(shared.authToken ? { authToken: shared.authToken } : {}),
+      ...(unavailable.health ? { healthExtra: unavailable.health } : {}),
+    }),
+    runtime: null,
+    onEpoch: async () => undefined,
+    onTick: async () => undefined,
+    onFlowCron: async () => undefined,
+    onWebhook: async () => undefined,
+    hasScheduledWork: async () => false,
+    close: async () => {},
   };
 }
