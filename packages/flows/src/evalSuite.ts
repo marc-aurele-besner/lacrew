@@ -647,7 +647,7 @@ const scenarios: FlowEvalScenario[] = [
   {
     id: "defi-desk/oversized-trade-escalates",
     describe:
-      "A trade above the executor's clip size escalates to the risk manager onchain: the run writes the memo they will read and never files a receipt for a trade that did not happen.",
+      "A trade above the executor's clip size escalates to the risk manager: the run writes the memo they will read and never files a receipt for a trade that did not happen.",
     flow: "desk-execute-trade",
     blueprint: "defi-desk",
     asAgent: "executor",

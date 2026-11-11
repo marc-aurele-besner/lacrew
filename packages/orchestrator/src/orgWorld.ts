@@ -592,7 +592,7 @@ export async function createOrgWorld(
     } catch (err) {
       console.error(
         "[@lacrew/orchestrator] plan-required rules could not be read: every crew is acting " +
-          "without having to plan first. Onchain and connector controls are unaffected. " +
+          "without having to plan first. Policy-stack and connector controls are unaffected. " +
           "Fix the store and restart.",
         err,
       );

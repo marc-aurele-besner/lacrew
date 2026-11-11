@@ -41,6 +41,29 @@ test("clears every step once the whole path is wired", () => {
   assert.deepEqual(crewChecklistProgress(steps), { done: 7, total: 7 });
 });
 
+/*
+  A sandbox is live, and it is not a chain. The step is done on either, and
+  says which one answers, so a simulated run is never reported as a mined one.
+*/
+test("the orchestrator step names the ledger a live runtime answers from", () => {
+  const detailFor = (runtime: CrewChecklistFacts["runtime"]) => {
+    const orchestrator = step(crewChecklist(ready({ runtime })), "orchestrator");
+    assert.equal(orchestrator.state, "done");
+    return orchestrator.detail;
+  };
+  assert.equal(
+    detailFor({ live: true, ledger: "sandbox" }),
+    "Running in the sandbox (simulated, no network).",
+  );
+  assert.equal(detailFor({ live: true, ledger: "chain" }), "Running against a chain.");
+  // A caller that does not know the ledger claims neither.
+  for (const runtime of [{ live: true }, { live: true, ledger: null }]) {
+    const detail = detailFor(runtime);
+    assert.equal(detail, "Serving live runs.");
+    assert.doesNotMatch(detail, /chain|sandbox/i);
+  }
+});
+
 test("an unset model key blocks, and the refusal names it", () => {
   const steps = crewChecklist(ready({ model: { configured: false } }));
   assert.equal(step(steps, "model").state, "blocked");

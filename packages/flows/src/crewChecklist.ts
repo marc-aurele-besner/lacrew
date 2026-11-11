@@ -62,10 +62,16 @@ export type CrewCheck = {
  * module turns on.
  */
 export type CrewChecklistFacts = {
-  /** Seats on this crew's chart, and how many hold an account the chain minted. */
+  /** Seats on this crew's chart, and how many hold an account the ledger minted. */
   seats: { total: number; withAccount: number };
-  /** Whether the runtime is serving live runs, and its own words when it is not. */
-  runtime: { live: boolean; detail?: string } | null;
+  /**
+   * Whether the runtime is serving live runs, and its own words when it is not.
+   *
+   * `ledger` is what a live runtime answers from, as its `/health` reports it:
+   * a chain, or the sandbox simulator that reaches no network. Omitted or null
+   * means the caller does not know, and the step then names neither.
+   */
+  runtime: { live: boolean; ledger?: "chain" | "sandbox" | null; detail?: string } | null;
   /** Whether a model provider key resolves. Null when the report could not be read. */
   model: { configured: boolean } | null;
   /** Connectors the orchestrator has registered, with whether their credentials resolve. */
@@ -157,7 +163,14 @@ function orchestratorStep(facts: CrewChecklistFacts): CrewCheck {
     return {
       id: "orchestrator",
       title: "Orchestrator",
-      detail: "Running against a chain.",
+      // A sandbox is live and is not a chain: saying which one answers keeps a
+      // simulated run from being read as a mined one.
+      detail:
+        facts.runtime.ledger === "sandbox"
+          ? "Running in the sandbox (simulated, no network)."
+          : facts.runtime.ledger === "chain"
+            ? "Running against a chain."
+            : "Serving live runs.",
       state: "done",
     };
   }
