@@ -19,7 +19,7 @@ import {
   listAssetStacks,
   resolveAssetStack,
   isTestChain,
-  sandboxVerdict,
+  faucetVerdict,
 } from "./constants.js";
 import type { AssetStack, ChainAddresses } from "./types.js";
 
@@ -253,7 +253,7 @@ describe("known chains and stablecoins", () => {
   });
 });
 
-describe("sandboxVerdict", () => {
+describe("faucetVerdict", () => {
   const mock = "0x00000000000000000000000000000000000000A1" as const;
   const other = "0x00000000000000000000000000000000000000B2" as const;
   const zero = "0x0000000000000000000000000000000000000000" as const;
@@ -267,59 +267,59 @@ describe("sandboxVerdict", () => {
     }
   });
 
-  it("is a sandbox on a test chain whose spend token is the MockUSDC", () => {
+  it("has a faucet on a test chain whose spend token is the MockUSDC", () => {
     for (const chainId of [ANVIL_CHAIN_ID, SEPOLIA_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID]) {
-      assert.deepEqual(sandboxVerdict({ chainId, spendToken: mock, mockToken: mock }), {
-        sandbox: true,
+      assert.deepEqual(faucetVerdict({ chainId, spendToken: mock, mockToken: mock }), {
+        available: true,
       });
     }
   });
 
   it("compares the two addresses case-insensitively", () => {
     assert.deepEqual(
-      sandboxVerdict({
+      faucetVerdict({
         chainId: ANVIL_CHAIN_ID,
         spendToken: mock.toLowerCase() as `0x${string}`,
         mockToken: mock,
       }),
-      { sandbox: true },
+      { available: true },
     );
   });
 
   it("refuses a mainnet id even with a MockUSDC address set and spent", () => {
     for (const chainId of [MAINNET_CHAIN_ID, BASE_CHAIN_ID, POLYGON_CHAIN_ID]) {
-      assert.deepEqual(sandboxVerdict({ chainId, spendToken: mock, mockToken: mock }), {
-        sandbox: false,
+      assert.deepEqual(faucetVerdict({ chainId, spendToken: mock, mockToken: mock }), {
+        available: false,
         reason: "not_test_chain",
       });
     }
   });
 
   it("refuses a chain id it cannot name", () => {
-    assert.deepEqual(sandboxVerdict({ chainId: 424242, spendToken: mock, mockToken: mock }), {
-      sandbox: false,
+    assert.deepEqual(faucetVerdict({ chainId: 424242, spendToken: mock, mockToken: mock }), {
+      available: false,
       reason: "not_test_chain",
     });
   });
 
   it("refuses a test chain with no MockUSDC in the address book", () => {
-    assert.deepEqual(sandboxVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: other }), {
-      sandbox: false,
+    assert.deepEqual(faucetVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: other }), {
+      available: false,
       reason: "no_mock_token",
     });
     assert.deepEqual(
-      sandboxVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: zero, mockToken: zero }),
-      { sandbox: false, reason: "no_mock_token" },
+      faucetVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: zero, mockToken: zero }),
+      { available: false, reason: "no_mock_token" },
     );
   });
 
   it("refuses a test chain whose stack spends a different token", () => {
     assert.deepEqual(
-      sandboxVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: other, mockToken: mock }),
-      { sandbox: false, reason: "spend_token_not_mock" },
+      faucetVerdict({ chainId: SEPOLIA_CHAIN_ID, spendToken: other, mockToken: mock }),
+      { available: false, reason: "spend_token_not_mock" },
     );
-    assert.deepEqual(sandboxVerdict({ chainId: SEPOLIA_CHAIN_ID, mockToken: mock }), {
-      sandbox: false,
+    assert.deepEqual(faucetVerdict({ chainId: SEPOLIA_CHAIN_ID, mockToken: mock }), {
+      available: false,
       reason: "spend_token_not_mock",
     });
   });
