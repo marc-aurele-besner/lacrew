@@ -67,6 +67,10 @@ contract GovernanceModule {
 
     uint256 public nextProposalId = 1;
     mapping(uint256 => Proposal) public proposals;
+    /// @notice Human-seat no-weight per proposal: the only weight that counts against
+    ///         a high-tier proposal, as `yesHumanVotes` is the only weight that counts
+    ///         for one. Kept beside the struct so the `proposals` getter keeps its shape.
+    mapping(uint256 => uint256) public noHumanVotes;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
     /// @notice Role-weighted seat power. Zero means the address cannot vote.
     mapping(address => uint256) public votingPower;
@@ -129,6 +133,7 @@ contract GovernanceModule {
     event UnanimityFastPathUpdated(bool enabled);
 
     error ProposalNotActive(uint256 proposalId);
+    error ProposalNotFound(uint256 proposalId);
     error AlreadyVoted(uint256 proposalId, address voter);
     error NoVotingPower(address voter);
     error QuorumNotMet(uint256 proposalId);
@@ -364,6 +369,9 @@ contract GovernanceModule {
             }
         } else {
             p.noVotes += weight;
+            if (seatRole[msg.sender] == SeatRole.Human) {
+                noHumanVotes[proposalId] += weight;
+            }
         }
         emit Voted(proposalId, msg.sender, support, weight);
     }
@@ -376,6 +384,10 @@ contract GovernanceModule {
         bool humanSeat = votingPower[msg.sender] > 0 && seatRole[msg.sender] == SeatRole.Human;
         if (!humanSeat && !_rootMayAct()) revert NotHumanSeat(msg.sender);
         Proposal storage p = proposals[proposalId];
+        // An unused id reads as an Active zero struct. `propose` never stores a zero
+        // target, so that is what tells a real proposal from an empty slot; a veto
+        // written to an empty slot would be overwritten by the proposal that takes it.
+        if (p.target == address(0)) revert ProposalNotFound(proposalId);
         if (p.state != ProposalState.Active) revert ProposalNotActive(proposalId);
         p.state = ProposalState.Vetoed;
         emit ProposalVetoed(proposalId, msg.sender);
@@ -383,6 +395,11 @@ contract GovernanceModule {
 
     /// @notice Execute a proposal that has met the tier's effective quorum (and, for
     ///         high tier, the timelock — unless every human seat has already voted yes).
+    /// @dev Once the voting deadline has passed, a proposal with more weight against
+    ///      than for is closed as Defeated instead. Each tier is defeated by the same
+    ///      electorate that can pass it: all seats on low tier, human seats only on
+    ///      high tier. Agent seats review a high-tier proposal; their weight neither
+    ///      defeats one the humans backed nor rescues one the humans voted down.
     function execute(uint256 proposalId) external {
         Proposal storage p = proposals[proposalId];
         if (p.state != ProposalState.Active) revert ProposalNotActive(proposalId);
@@ -396,7 +413,10 @@ contract GovernanceModule {
             revert QuorumNotMet(proposalId);
         }
 
-        if (block.timestamp > p.deadline && p.noVotes > p.yesVotes) {
+        bool outvoted = p.tier == Tier.High
+            ? noHumanVotes[proposalId] > p.yesHumanVotes
+            : p.noVotes > p.yesVotes;
+        if (block.timestamp > p.deadline && outvoted) {
             p.state = ProposalState.Defeated;
             emit ProposalDefeated(proposalId);
             return;
