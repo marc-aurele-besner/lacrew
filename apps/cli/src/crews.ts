@@ -333,6 +333,8 @@ async function putJson<T>(args: string[], path: string, body: unknown): Promise<
 type HealthProbe = {
   mode?: string;
   mocked?: boolean;
+  /** `chain`, `sandbox`, or null for the test client. Absent from an older orchestrator. */
+  ledger?: string | null;
   chainId?: number;
   model?: { provider?: string };
 };
@@ -460,7 +462,15 @@ async function probeFacts(
       },
       runtime: health
         ? health.mode !== "mock" && health.mocked !== true
-          ? { live: true }
+          ? {
+              live: true,
+              ledger:
+                health.ledger === "sandbox" || health.mode === "sandbox"
+                  ? "sandbox"
+                  : health.ledger === "chain" || health.mode === "onchain"
+                    ? "chain"
+                    : null,
+            }
           : {
               live: false,
               detail:
