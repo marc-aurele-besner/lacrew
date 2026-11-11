@@ -46,6 +46,25 @@ import { createSandboxRuntime } from "./runtime.js";
 import { createRuntimeStoreFromEnv, type RuntimeStore } from "./runtimeStore.js";
 import { createSandboxStateStoreFromEnv, type SandboxStateStore } from "./sandboxLedger.js";
 
+/**
+ * The request an org's app is handed: the incoming one, addressed to `url`.
+ *
+ * Each part is named. The node adapter hands over a lightweight stand-in for a
+ * `Request`, and a runtime that reads its init through `Request`'s own getters
+ * (Node 26 reads `duplex` that way) refuses a stand-in passed whole. The body
+ * is the incoming stream itself, unread, so the org's app is its one reader;
+ * `duplex` is what a streamed body requires.
+ */
+export function forwardedRequest(url: URL, incoming: Request): Request {
+  const body = incoming.method === "GET" || incoming.method === "HEAD" ? null : incoming.body;
+  return new Request(url, {
+    method: incoming.method,
+    headers: incoming.headers,
+    signal: incoming.signal,
+    ...(body ? { body, duplex: "half" } : {}),
+  } as RequestInit);
+}
+
 /** The modes this build can run an org in. A chain org is registered but not served yet. */
 export const SERVED_ORG_MODES: readonly OrgMode[] = ["sandbox"];
 
@@ -812,7 +831,7 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     try {
       return await withWorld(
         org,
-        async (world) => world.app.fetch(new Request(url, c.req.raw)),
+        async (world) => world.app.fetch(forwardedRequest(url, c.req.raw)),
         true,
       );
     } catch (err) {
