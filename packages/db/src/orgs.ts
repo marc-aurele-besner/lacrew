@@ -1,6 +1,6 @@
 /** Query helpers for the org directory (keeps Drizzle inside @lacrew/db). */
 
-import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, getTableName, isNull, sql } from "drizzle-orm";
 import { PgTable, type PgColumn } from "drizzle-orm/pg-core";
 import { assertValidOrgId, type DbHandle } from "./client.js";
 import * as schema from "./schema/index.js";
@@ -13,6 +13,12 @@ export interface OrgRow {
   chainId: number | null;
   addresses: Record<string, string> | null;
   seats: Record<string, string> | null;
+  /** The org's own epoch cron; null when it runs on the operator's default. */
+  epochCron: string | null;
+  /** ISO time the next scheduled epoch is due, on the org's own clock. */
+  epochNextAt: string | null;
+  /** ISO time the next scheduled epoch is due, on the wall clock. */
+  epochDueAt: string | null;
   /** ISO timestamp the org was first registered at. */
   createdAt: string;
 }
@@ -24,6 +30,9 @@ function toOrg(row: typeof orgs.$inferSelect): OrgRow {
     chainId: row.chainId,
     addresses: row.addresses,
     seats: row.seats,
+    epochCron: row.epochCron,
+    epochNextAt: row.epochNextAt?.toISOString() ?? null,
+    epochDueAt: row.epochDueAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -71,6 +80,40 @@ export async function upsertOrg(
     .returning({ ...getTableColumns(orgs), created: sql<boolean>`(xmax = 0)` });
   const { created, ...row } = rows[0]!;
   return { org: toOrg(row), created };
+}
+
+/**
+ * Write an org's epoch cadence: its cron (left as it is when not given) and
+ * when its next epoch is due, on its own clock and on the wall clock.
+ *
+ * With `ifNextAt`, the write lands only while the stored `epochNextAt` is
+ * still that value. That is how one due epoch is claimed: of any number of
+ * callers that read the same due time, one moves it on and runs the epoch.
+ * Returns the row as stored, or null when the org is not registered or the
+ * stored time had already moved.
+ */
+export async function setOrgEpoch(
+  handle: DbHandle,
+  orgId: string,
+  change: { cron?: string | null; nextAt: string | null; dueAt: string | null },
+  ifNextAt?: string | null,
+): Promise<OrgRow | null> {
+  const held =
+    ifNextAt === undefined
+      ? undefined
+      : ifNextAt === null
+        ? isNull(orgs.epochNextAt)
+        : eq(orgs.epochNextAt, new Date(ifNextAt));
+  const rows = await handle.db
+    .update(orgs)
+    .set({
+      ...(change.cron === undefined ? {} : { epochCron: change.cron }),
+      epochNextAt: change.nextAt === null ? null : new Date(change.nextAt),
+      epochDueAt: change.dueAt === null ? null : new Date(change.dueAt),
+    })
+    .where(and(eq(orgs.orgId, orgId), held))
+    .returning();
+  return rows[0] ? toOrg(rows[0]) : null;
 }
 
 /**
