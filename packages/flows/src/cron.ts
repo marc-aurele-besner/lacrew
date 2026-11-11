@@ -72,6 +72,46 @@ export function cronMatches(expr: string, date: Date): boolean {
   );
 }
 
+/** How far ahead `nextCronAfter` looks: far enough for a 29 February schedule. */
+const NEXT_CRON_HORIZON_DAYS = 366 * 8;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The first instant strictly after `after` the expression matches (UTC, on a
+ * whole minute), or null when it does not parse or never fires (`0 0 31 2 *`).
+ *
+ * Reads the fields the way `cronMatches` does, so a schedule's next time and
+ * the minute it is matched at are always the same minute.
+ */
+export function nextCronAfter(expr: string, after: Date): Date | null {
+  const sets = parseCron(expr);
+  if (!sets || Number.isNaN(after.getTime())) return null;
+  const [minute, hour, dom, month, dow] = sets;
+  const minutes = [...minute!].sort((a, b) => a - b);
+  const hours = [...hour!].sort((a, b) => a - b);
+  const earliest = Math.floor(after.getTime() / 60_000) * 60_000 + 60_000;
+  const firstDay = Math.floor(earliest / DAY_MS) * DAY_MS;
+  for (let i = 0; i <= NEXT_CRON_HORIZON_DAYS; i += 1) {
+    const dayStart = firstDay + i * DAY_MS;
+    const day = new Date(dayStart);
+    if (
+      !month!.has(day.getUTCMonth() + 1) ||
+      !dom!.has(day.getUTCDate()) ||
+      !dow!.has(day.getUTCDay())
+    ) {
+      continue;
+    }
+    for (const h of hours) {
+      for (const m of minutes) {
+        const at = dayStart + h * 3_600_000 + m * 60_000;
+        if (at >= earliest) return new Date(at);
+      }
+    }
+  }
+  return null;
+}
+
 /** Wall-clock fields of an instant in one IANA zone. */
 export type ZonedParts = {
   minute: number;
