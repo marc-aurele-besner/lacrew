@@ -179,49 +179,88 @@ export const spendScenarios: Scenario[] = [
     });
   }),
 
-  scenario("an unknown or inactive agent cannot propose", (b) => {
-    b.crew();
-    b.proposeReverts("NodeNotFound", "stranger", "stranger", "target", 1n, "OrgRegistry");
-    const held = b.escalate("worker", "worker", "target", 75n * USDC);
-    b.call("root", "@registry", "setActive", ["worker", false]);
-    b.proposeReverts("InactiveAgent", "worker", "worker", "target", 1n);
-    b.expect({ nodes: { worker: { active: false } } });
-    // Deactivation stops new proposals only: what the agent raised before can still be approved.
-    b.resolve("manager", held, true);
-    b.expect({
-      intents: { [held]: { resolved: true, approved: true } },
-      allowance: { worker: 125n * USDC },
-    });
-    b.call("root", "@registry", "setActive", ["worker", true]);
-    b.allow("worker", "worker", "target", 1n);
-  }),
+  scenario(
+    "an unknown or inactive agent cannot propose, and its pending intent cannot be approved",
+    (b) => {
+      b.crew();
+      b.proposeReverts("NodeNotFound", "stranger", "stranger", "target", 1n, "OrgRegistry");
+      const held = b.escalate("worker", "worker", "target", 75n * USDC);
+      const dropped = b.escalate("worker", "worker", "target", 80n * USDC);
+      b.call("root", "@registry", "setActive", ["worker", false]);
+      b.proposeReverts("InactiveAgent", "worker", "worker", "target", 1n);
+      b.expect({ nodes: { worker: { active: false } } });
+      // Deactivation reaches what the agent raised before: it can be rejected, not approved.
+      b.reverts("InactiveAgent", "manager", "@router", "resolve", [BigInt(held), true]);
+      b.resolve("manager", dropped, false, { events: ["IntentResolved"] });
+      b.expect({
+        intents: {
+          [held]: { resolved: false, awaiting: "manager" },
+          [dropped]: { resolved: true, approved: false },
+        },
+        allowance: { worker: 200n * USDC },
+        balance: { target: 0n },
+      });
+      // Reactivated, the agent proposes again and its pending intent can be approved.
+      b.call("root", "@registry", "setActive", ["worker", true]);
+      b.allow("worker", "worker", "target", 1n);
+      b.resolve("manager", held, true);
+      b.expect({
+        intents: { [held]: { resolved: true, approved: true } },
+        allowance: { worker: 125n * USDC - 1n },
+      });
 
-  scenario("a deactivated approver still resolves; a removed one cannot climb", (b) => {
-    // `resolve` checks the sender against `awaitingApprover` and nothing else.
-    b.crew();
-    b.call("root", "@streamer", "runNextEpoch");
-    const first = b.escalate("worker", "worker", "target", 75n * USDC);
-    b.call("root", "@registry", "setActive", ["manager", false]);
-    b.resolve("manager", first, true);
-    b.expect({ intents: { [first]: { resolved: true, approved: true } } });
+      // An agent removed from the tree is the same case: reject only.
+      const orphan = b.escalate("worker", "worker", "target", 75n * USDC);
+      b.call("root", "@registry", "removeNode", ["worker"]);
+      b.reverts("InactiveAgent", "manager", "@router", "resolve", [BigInt(orphan), true]);
+      b.resolve("manager", orphan, false);
+      b.expect({ intents: { [orphan]: { resolved: true, approved: false } }, pending: [] });
+    },
+  ),
 
-    const second = b.escalate("worker", "worker", "target", 250n * USDC);
-    b.call("root", "@registry", "removeNode", ["manager"]);
-    // Its policy escalates, and escalating reads the approver's own node.
-    b.reverts(
-      "NodeNotFound",
-      "manager",
-      "@router",
-      "resolve",
-      [BigInt(second), true],
-      "OrgRegistry",
-    );
-    b.resolve("manager", second, false);
-    b.expect({
-      intents: { [second]: { resolved: true, approved: false } },
-      nodes: { manager: null, worker: { parent: "root" } },
-    });
-  }),
+  scenario(
+    "an inactive or removed approver resolves nothing; the root resolves in its place",
+    (b) => {
+      b.crew();
+      b.call("root", "@streamer", "runNextEpoch");
+      const first = b.escalate("worker", "worker", "target", 75n * USDC);
+      const second = b.escalate("worker", "worker", "target", 250n * USDC);
+      const third = b.escalate("worker", "worker", "target", 60n * USDC);
+      // While the approver is active the root has no shortcut.
+      b.reverts("NotAwaitingApprover", "root", "@router", "resolve", [BigInt(first), true]);
+
+      b.call("root", "@registry", "setActive", ["manager", false]);
+      b.reverts("InactiveApprover", "manager", "@router", "resolve", [BigInt(first), true]);
+      b.reverts("InactiveApprover", "manager", "@router", "resolve", [BigInt(first), false]);
+      // Only the root stands in.
+      b.reverts("NotAwaitingApprover", "stranger", "@router", "resolve", [BigInt(first), true]);
+      b.reverts("NotAwaitingApprover", "worker", "@router", "resolve", [BigInt(first), false]);
+      b.resolve("root", first, true, {
+        events: ["Transfer", "AllowanceSpent", "ActionExecuted", "IntentResolved"],
+      });
+      b.expect({
+        intents: { [first]: { resolved: true, approved: true, awaiting: "manager" } },
+        allowance: { worker: 325n * USDC },
+      });
+
+      // Removed from the tree, the approver is gone for good; the intent is not stranded.
+      b.call("root", "@registry", "removeNode", ["manager"]);
+      b.reverts("InactiveApprover", "manager", "@router", "resolve", [BigInt(second), true]);
+      b.reverts("InactiveApprover", "manager", "@router", "resolve", [BigInt(second), false]);
+      b.resolve("root", second, true);
+      b.resolve("root", third, false);
+      b.expect({
+        intents: {
+          [second]: { resolved: true, approved: true },
+          [third]: { resolved: true, approved: false },
+        },
+        pending: [],
+        nodes: { manager: null, worker: { parent: "root" } },
+        allowance: { worker: 75n * USDC },
+        balance: { target: 325n * USDC },
+      });
+    },
+  ),
 
   scenario("the contracts that trust the router are refused as targets", (b) => {
     b.crew();

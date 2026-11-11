@@ -130,6 +130,8 @@ export const treasuryScenarios: Scenario[] = [
     b.call("root", "@treasury", "streamAllowance", ["worker", 60n * USDC, 7n], {
       events: ["AllowanceStreamed"],
     });
+    // Nothing is booked to the zero address: it could never be spent.
+    b.reverts("ZeroAddress", "root", "@treasury", "streamAllowance", ["zero", 1n, 8n]);
     b.reverts("InsufficientTreasury", "root", "@treasury", "streamAllowance", [
       "worker",
       41n * USDC,

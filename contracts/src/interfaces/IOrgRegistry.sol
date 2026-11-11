@@ -18,6 +18,9 @@ interface IOrgRegistry {
         bool active;
     }
 
+    /// @notice The org's single root node. It can be neither deactivated nor removed.
+    function root() external view returns (address);
+
     /// @notice Returns node metadata for `account`.
     function getNode(address account) external view returns (Node memory node);
 

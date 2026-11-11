@@ -16,6 +16,19 @@ LaCrew splits decisions into two regimes and refuses to confuse them.
 - **Low tier** — execute as soon as all-seat yes-weight meets the effective quorum (no timelock).
 - **High tier** — treasury-touching or policy-touching. Voting deadline + timelock (`eta`, default 1 day); any funded human seat may **`veto`** before execute. When **all** human voting weight has voted yes, execution skips the timelock (`unanimityFastPath`, default on) — the delay protects humans who have not weighed in, and unanimity means there are none left.
 
+## Defeat
+
+After the voting deadline, `execute` closes a proposal with more weight against than for as `Defeated` instead of running it. Each tier is defeated by the electorate that can pass it:
+
+| Tier | Passes on                               | Defeated when (after the deadline) |
+| ---- | --------------------------------------- | ---------------------------------- |
+| Low  | all-seat yes-weight meets the quorum    | `noVotes > yesVotes`               |
+| High | human yes-weight meets the human quorum | `noHumanVotes > yesHumanVotes`     |
+
+Agent seats may vote on a high-tier proposal, and their weight shows in `yesVotes` / `noVotes`, but it decides nothing there: it cannot defeat a proposal the humans backed, and it cannot rescue one the humans voted down.
+
+`veto` needs a proposal that exists. Vetoing an id nobody has proposed yet reverts with `ProposalNotFound`.
+
 ## Execution
 
 Proposals bind `target` + `calldata`. On `execute`, the module calls `target.call(data)` after quorum (and high-tier eta or human unanimity). OrgRegistry / Treasury accept mutations from the governor address after bootstrap `setGovernor`. Proposals may target the GovernanceModule itself to retune quorums, weights, or timing — but only at High tier, so agent seats can never re-weight the electorate through a low-tier vote.

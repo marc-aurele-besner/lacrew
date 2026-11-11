@@ -173,16 +173,14 @@ describe("kernel OrgRegistry", () => {
     assert.deepEqual(sim.eventNames(mark), []);
   });
 
-  it("stores the zero address as a node that can never be read back", () => {
-    // addNode has no zero-address check: the slot is written, but a node whose
-    // account is zero reads as absent, so it can be added again and again.
+  it("refuses the zero address as a node", () => {
+    // A node whose account is zero would read as absent while still listed as a child.
     const sim = registry();
-    sim.send(ROOT, (ctx) => orgRegistry.addNode(ctx, ZERO_ADDRESS, 2, ROOT));
+    sim.reverts("ZeroAddress", ROOT, (ctx) => orgRegistry.addNode(ctx, ZERO_ADDRESS, 2, ROOT));
     sim.reverts("NodeNotFound", ROOT, (ctx) => orgRegistry.getNode(ctx, ZERO_ADDRESS));
-    sim.send(ROOT, (ctx) => orgRegistry.addNode(ctx, ZERO_ADDRESS, 2, ROOT));
     assert.deepEqual(
       sim.read((ctx) => orgRegistry.getChildren(ctx, ROOT)),
-      [ZERO_ADDRESS, ZERO_ADDRESS],
+      [],
     );
   });
 });

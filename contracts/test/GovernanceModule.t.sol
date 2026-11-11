@@ -668,4 +668,119 @@ contract GovernanceModuleTest is Test {
 
         assertEq(registry.getNode(worker).parent, root);
     }
+
+    function _highTierHire(string memory label) internal returns (uint256 id, address worker) {
+        worker = makeAddr(label);
+        id = gov.propose(
+            GovernanceModule.Tier.High,
+            address(registry),
+            abi.encodeCall(OrgRegistry.addNode, (worker, IOrgRegistry.NodeKind.WorkerAgent, root))
+        );
+    }
+
+    function _warpPastEta(uint256 id) internal {
+        (, , , , , , , , , uint256 eta, ) = gov.proposals(id);
+        vm.warp(eta + 1);
+    }
+
+    function _stateOf(uint256 id) internal view returns (GovernanceModule.ProposalState state) {
+        (, , , , , , , , , , state) = gov.proposals(id);
+    }
+
+    /// Agent yes-weight never passes a high-tier proposal, so agent no-weight must
+    /// not be able to defeat one the humans backed.
+    function test_highTierAgentNoWeightCannotDefeatHumanYes() public {
+        vm.prank(root);
+        gov.setVotingPower(agent, 5, GovernanceModule.SeatRole.Agent);
+        (uint256 id, address worker) = _highTierHire("agent-no-cannot-defeat");
+
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.prank(agent);
+        gov.vote(id, false);
+
+        _warpPastEta(id);
+        gov.execute(id);
+
+        assertEq(uint8(_stateOf(id)), uint8(GovernanceModule.ProposalState.Executed));
+        assertEq(registry.getNode(worker).account, worker);
+        assertEq(gov.noHumanVotes(id), 0);
+    }
+
+    function test_highTierHumanNoMajorityDefeats() public {
+        (uint256 id, address worker) = _highTierHire("human-no-defeats");
+
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(root);
+        gov.vote(id, false);
+
+        _warpPastEta(id);
+        gov.execute(id);
+
+        assertEq(uint8(_stateOf(id)), uint8(GovernanceModule.ProposalState.Defeated));
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.NodeNotFound.selector, worker));
+        registry.getNode(worker);
+    }
+
+    /// The same rule from the other side: agent yes-weight cannot rescue a
+    /// high-tier proposal that the humans voted down.
+    function test_highTierAgentYesWeightCannotRescueHumanNo() public {
+        vm.prank(root);
+        gov.setVotingPower(agent, 5, GovernanceModule.SeatRole.Agent);
+        (uint256 id, address worker) = _highTierHire("agent-yes-cannot-rescue");
+
+        vm.prank(voter1);
+        gov.vote(id, true);
+        vm.prank(root);
+        gov.vote(id, false);
+        vm.prank(agent);
+        gov.vote(id, true);
+
+        _warpPastEta(id);
+        gov.execute(id);
+
+        assertEq(uint8(_stateOf(id)), uint8(GovernanceModule.ProposalState.Defeated));
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.NodeNotFound.selector, worker));
+        registry.getNode(worker);
+    }
+
+    /// Low tier is an all-seat vote on both sides, agent no-weight included.
+    function test_lowTierAgentNoWeightStillDefeats() public {
+        vm.prank(root);
+        gov.setVotingPower(agent, 5, GovernanceModule.SeatRole.Agent);
+        address worker = makeAddr("low-tier-agent-no");
+        uint256 id = gov.propose(
+            GovernanceModule.Tier.Low,
+            address(registry),
+            abi.encodeCall(OrgRegistry.addNode, (worker, IOrgRegistry.NodeKind.WorkerAgent, root))
+        );
+
+        vm.prank(root);
+        gov.vote(id, true);
+        vm.prank(agent);
+        gov.vote(id, false);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        gov.execute(id);
+        assertEq(uint8(_stateOf(id)), uint8(GovernanceModule.ProposalState.Defeated));
+    }
+
+    /// A veto recorded against an id nobody has proposed yet would be silently
+    /// overwritten by the proposal that later takes the id.
+    function test_vetoRevertsForAProposalThatDoesNotExist() public {
+        uint256 next = gov.nextProposalId();
+        vm.prank(root);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.ProposalNotFound.selector, next));
+        gov.veto(next);
+        vm.prank(root);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceModule.ProposalNotFound.selector, 0));
+        gov.veto(0);
+
+        (uint256 id, ) = _highTierHire("veto-after-create");
+        assertEq(id, next);
+        vm.prank(root);
+        gov.veto(id);
+        assertEq(uint8(_stateOf(id)), uint8(GovernanceModule.ProposalState.Vetoed));
+    }
 }

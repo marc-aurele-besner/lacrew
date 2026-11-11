@@ -74,8 +74,12 @@ contract OrgRegistry is IOrgRegistry {
     }
 
     /// @notice Add a child node under `parent`.
+    /// @dev The zero address is how an empty slot reads, so it can never be a node:
+    ///      one stored there would be invisible to `getNode` and `removeNode` while
+    ///      still listed among its parent's children.
     function addNode(address account, NodeKind kind, address parent) external {
         _authorize();
+        if (account == address(0)) revert ZeroAddress();
         if (_nodes[account].account != address(0)) revert NodeAlreadyExists(account);
         if (_nodes[parent].account == address(0)) revert InvalidParent(parent);
 

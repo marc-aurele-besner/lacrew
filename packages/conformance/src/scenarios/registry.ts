@@ -70,14 +70,15 @@ export const registryScenarios: Scenario[] = [
     b.call("root", "@registry", "removeNode", ["target"]);
   }),
 
-  scenario("the zero address can be added as a node the tree then cannot read", (b) => {
-    // addNode has no zero-address check; getNode treats a zero account as absent.
-    b.call("root", "@registry", "addNode", ["zero", KIND.worker, "root"], {
-      events: ["NodeAdded"],
-    });
-    b.expect({ treeUnreadable: true });
-    b.call("root", "@registry", "addNode", ["zero", KIND.worker, "root"]);
+  scenario("the zero address is never a node, a parent or a place to move a node", (b) => {
+    b.reverts("ZeroAddress", "root", "@registry", "addNode", ["zero", KIND.worker, "root"]);
+    b.reverts("InvalidParent", "root", "@registry", "addNode", ["worker", KIND.worker, "zero"]);
+    b.call("root", "@registry", "addNode", ["worker", KIND.worker, "root"]);
+    b.reverts("InvalidParent", "root", "@registry", "reparent", ["worker", "zero"]);
+    b.reverts("NodeNotFound", "root", "@registry", "reparent", ["zero", "root"]);
     b.reverts("NodeNotFound", "root", "@registry", "removeNode", ["zero"]);
+    b.reverts("NodeNotFound", "root", "@registry", "setActive", ["zero", false]);
+    b.expect({ tree: ["root", "worker"] });
   }),
 
   scenario("a router wired to an address with no code reverts without an error", (b) => {

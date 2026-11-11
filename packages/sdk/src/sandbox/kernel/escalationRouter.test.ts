@@ -435,21 +435,52 @@ describe("kernel EscalationRouter: resolve", () => {
     assert.equal(intent(sim, 1n).resolved, false);
   });
 
-  it("a deactivated approver can still resolve what already awaits it", () => {
-    // resolve checks the sender against awaitingApprover and nothing else.
+  it("a deactivated approver resolves nothing until it is active again", () => {
     const sim = pending(75n * USDC);
     sim.send(ROOT, (ctx) => orgRegistry.setActive(ctx, MANAGER, false));
+    const err = sim.reverts("InactiveApprover", MANAGER, resolve(1n, true));
+    assert.deepEqual(err.args, { approver: MANAGER });
+    sim.reverts("InactiveApprover", MANAGER, resolve(1n, false));
+    sim.send(ROOT, (ctx) => orgRegistry.setActive(ctx, MANAGER, true));
     sim.send(MANAGER, resolve(1n, true));
     assert.equal(intent(sim, 1n).approved, true);
   });
 
-  it("a removed approver cannot climb: its escalation has no node to read", () => {
+  it("the root resolves in place of a deactivated or removed approver, and nobody else", () => {
     const sim = crewOrg();
     secondEpoch(sim);
+    sim.send(WORKER, propose(75n * USDC));
     sim.send(WORKER, propose(250n * USDC));
+    sim.send(ROOT, (ctx) => orgRegistry.setActive(ctx, MANAGER, false));
+    sim.reverts("NotAwaitingApprover", STRANGER, resolve(1n, true));
+    sim.reverts("NotAwaitingApprover", WORKER, resolve(1n, false));
+    sim.send(ROOT, resolve(1n, true));
+    assert.equal(intent(sim, 1n).approved, true);
+    assert.equal(balanceOf(sim, TARGET), 75n * USDC);
+
     sim.send(ROOT, (ctx) => orgRegistry.removeNode(ctx, MANAGER));
-    sim.reverts("NodeNotFound", MANAGER, resolve(1n, true));
+    sim.reverts("InactiveApprover", MANAGER, resolve(2n, true));
+    sim.reverts("InactiveApprover", MANAGER, resolve(2n, false));
+    sim.send(ROOT, resolve(2n, true));
+    assert.equal(intent(sim, 2n).approved, true);
+    assert.equal(balanceOf(sim, TARGET), 325n * USDC);
+  });
+
+  it("an intent whose agent is deactivated or removed can be rejected but not approved", () => {
+    const sim = pending(75n * USDC);
+    sim.send(WORKER, propose(80n * USDC));
+    sim.send(ROOT, (ctx) => orgRegistry.setActive(ctx, WORKER, false));
+    const err = sim.reverts("InactiveAgent", MANAGER, resolve(1n, true));
+    assert.deepEqual(err.args, { agent: WORKER });
+    assert.equal(allowanceOf(sim, WORKER), 200n * USDC);
     sim.send(MANAGER, resolve(1n, false));
+    assert.equal(intent(sim, 1n).resolved, true);
+    assert.equal(intent(sim, 1n).approved, false);
+
+    sim.send(ROOT, (ctx) => orgRegistry.removeNode(ctx, WORKER));
+    sim.reverts("InactiveAgent", MANAGER, resolve(2n, true));
+    sim.send(MANAGER, resolve(2n, false));
+    assert.equal(balanceOf(sim, TARGET), 0n);
   });
 });
 

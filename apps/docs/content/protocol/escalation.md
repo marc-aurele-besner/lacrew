@@ -39,4 +39,18 @@ Worker proposes action
 3. Approver `ESCALATE` → `awaitingApprover` climbs to the parent (`IntentEscalated`)
 4. Human root approval finalizes even when still over soft caps (mocked root authority)
 
+## When the tree changes under a pending intent
+
+Authority to resolve belongs to nodes that are in the tree and active at the moment `resolve` is called.
+
+| Situation                                       | What `resolve` does                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Awaiting approver deactivated or removed        | The approver can neither approve nor reject (`InactiveApprover`)                                 |
+| Intent awaiting an inactive or removed approver | The org root resolves in its place, approve or reject. Nobody else can (`NotAwaitingApprover`)   |
+| Awaiting approver still active                  | Only that approver resolves; the root has no shortcut and waits for the intent to climb          |
+| Proposing agent deactivated or removed          | Approval reverts (`InactiveAgent`) at every step of the climb; rejection still closes the intent |
+| Approver or agent reactivated                   | Back to normal: the approver resolves, the agent's intent can be approved                        |
+
+The root is the single stand-in because it is the one node that can be neither deactivated nor removed, and because a removed approver has no parent left to fall back on. A fired agent's pending spend never executes; reject it to clear it from the queue.
+
 Per-agent caps live on `SpendCapPolicy.setAgentCap`. `propose` must be signed by a valid `SessionRegistry` key (or the agent address). Structured scope checks and AA execution are still TODO.

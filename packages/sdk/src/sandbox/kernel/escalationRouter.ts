@@ -187,14 +187,23 @@ export function propose(
   return { intentId, verdict };
 }
 
-/** The awaiting approver approves or rejects a pending intent. */
+/**
+ * Approve or reject a pending intent. Only a node that is in the tree and
+ * active resolves; the org root stands in for an awaiting approver that is
+ * inactive or removed; and an approval needs the proposing agent to still be
+ * active, while a rejection does not.
+ */
 export function resolve(ctx: Ctx, intentId: bigint, approved: boolean): void {
   const state = ctx.world.escalationRouter;
   const self = ctx.world.addresses.escalationRouter;
   const intent = state.intents[intentId.toString()];
   if (!intent || intent.agent === ZERO_ADDRESS) throw new SimRevert("IntentNotFound", { intentId });
   if (intent.resolved) throw new SimRevert("IntentAlreadyResolved", { intentId });
-  if (ctx.sender !== intent.awaitingApprover) {
+  const awaiting = intent.awaitingApprover;
+  if (ctx.sender === awaiting) {
+    if (!isActiveNode(ctx, awaiting))
+      throw new SimRevert("InactiveApprover", { approver: awaiting });
+  } else if (ctx.sender !== registryRoot(ctx) || isActiveNode(ctx, awaiting)) {
     throw new SimRevert("NotAwaitingApprover", { caller: ctx.sender });
   }
 
@@ -204,6 +213,9 @@ export function resolve(ctx: Ctx, intentId: bigint, approved: boolean): void {
     emit(ctx, self, CONTRACT, "IntentResolved", { intentId, approved: false });
     return;
   }
+
+  if (!isActiveNode(ctx, intent.agent))
+    throw new SimRevert("InactiveAgent", { agent: intent.agent });
 
   const verdict = policies.check(
     ctx,
@@ -365,6 +377,27 @@ function readNode(ctx: Ctx, account: Address): orgRegistry.OrgNodeState {
     throw new SimRevert(EVM_REVERT);
   }
   return orgRegistry.getNode(ctx, account);
+}
+
+/** `orgRegistry.root()`, under the same condition as `readNode`. */
+function registryRoot(ctx: Ctx): Address {
+  if (ctx.world.escalationRouter.orgRegistry !== ctx.world.addresses.orgRegistry) {
+    throw new SimRevert(EVM_REVERT);
+  }
+  return ctx.world.orgRegistry.root;
+}
+
+/**
+ * In the tree and active. A removed node reads as inactive, as the contract's
+ * `try` around `getNode` makes it; a registry with no code still reverts,
+ * because that failure happens before the call a `try` can catch.
+ */
+function isActiveNode(ctx: Ctx, account: Address): boolean {
+  if (ctx.world.escalationRouter.orgRegistry !== ctx.world.addresses.orgRegistry) {
+    throw new SimRevert(EVM_REVERT);
+  }
+  const node = ctx.world.orgRegistry.nodes[account];
+  return node !== undefined && node.account !== ZERO_ADDRESS && node.active;
 }
 
 /** A wired session registry that is not the simulated one has no `keyLimits` to answer. */

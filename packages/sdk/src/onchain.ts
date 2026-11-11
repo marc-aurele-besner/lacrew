@@ -1163,7 +1163,10 @@ export class OnchainLacrewClient implements ProtocolClient {
       : ((await this.getOrgTree()).map((n) => n.account) as `0x${string}`[]);
 
     const out: SessionKey[] = [];
-    const nowSec = Math.floor(Date.now() / 1000);
+    // The registry judges expiry against block time, so this does too: the
+    // local clock can disagree with the chain's (a test chain that has been
+    // warped, a machine that has drifted). Read once, on the first session.
+    let nowSec: number | undefined;
 
     for (const a of agents) {
       const ids = (await this.publicClient.readContract({
@@ -1205,6 +1208,7 @@ export class OnchainLacrewClient implements ProtocolClient {
         ] = row;
         if (!exists) continue;
         const expiresAtSec = Number(expiresAtRaw);
+        nowSec ??= Number((await this.publicClient.getBlock()).timestamp);
         // Rate lives in its own mapping, not the Session struct — one more read.
         const rl = (await this.publicClient.readContract({
           address: addr,
@@ -2506,12 +2510,22 @@ export class OnchainLacrewClient implements ProtocolClient {
   }
 
   private async readProposal(id: bigint): Promise<GovernanceProposal> {
-    const row = (await this.publicClient.readContract({
-      address: this.addresses.governanceModule,
-      abi: governanceModuleAbi,
-      functionName: "proposals",
-      args: [id],
-    })) as readonly [
+    // The human no-tally lives in its own mapping, beside the proposal struct.
+    const [rawRow, noHumanVotes] = await Promise.all([
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "proposals",
+        args: [id],
+      }),
+      this.publicClient.readContract({
+        address: this.addresses.governanceModule,
+        abi: governanceModuleAbi,
+        functionName: "noHumanVotes",
+        args: [id],
+      }),
+    ]);
+    const row = rawRow as readonly [
       `0x${string}`,
       number,
       `0x${string}`,
@@ -2534,6 +2548,7 @@ export class OnchainLacrewClient implements ProtocolClient {
       yesVotes: Number(row[5]),
       noVotes: Number(row[6]),
       yesHumanVotes: Number(row[7]),
+      noHumanVotes: Number(noHumanVotes),
       deadline: Number(row[8]),
       eta: Number(row[9]),
       state: STATE_FROM[row[10]] ?? "active",

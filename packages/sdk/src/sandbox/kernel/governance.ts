@@ -49,6 +49,11 @@ export interface GovernanceState {
   nextProposalId: bigint;
   /** Keyed by proposal id as a decimal string. */
   proposals: Record<string, ProposalRecord>;
+  /**
+   * Human-seat no-weight by proposal id: what counts against a high-tier
+   * proposal. Optional because a world saved before it existed has none.
+   */
+  noHumanVotes?: Record<string, bigint>;
   hasVoted: Record<string, Record<Address, boolean>>;
   votingPower: Record<Address, bigint>;
   seatRole: Record<Address, number>;
@@ -67,6 +72,7 @@ export function blankGovernance(): GovernanceState {
     humanRoot: ZERO_ADDRESS,
     nextProposalId: 1n,
     proposals: {},
+    noHumanVotes: {},
     hasVoted: {},
     votingPower: {},
     seatRole: {},
@@ -108,6 +114,11 @@ function proposalRef(state: GovernanceState, proposalId: bigint): ProposalRecord
 /** `proposals(id)`. */
 export function proposals(ctx: Ctx, proposalId: bigint): ProposalRecord {
   return { ...(ctx.world.governance.proposals[proposalId.toString()] ?? blankProposal()) };
+}
+
+/** `noHumanVotes(id)`. */
+export function noHumanVotes(ctx: Ctx, proposalId: bigint): bigint {
+  return ctx.world.governance.noHumanVotes?.[proposalId.toString()] ?? 0n;
 }
 
 export function hasVoted(ctx: Ctx, proposalId: bigint, voter: Address): boolean {
@@ -356,6 +367,11 @@ export function vote(ctx: Ctx, proposalId: bigint, support: boolean): void {
     }
   } else {
     p.noVotes = checkedAdd(p.noVotes, weight);
+    if (roleOf(state, ctx.sender) === SeatRole.Human) {
+      const tally = (state.noHumanVotes ??= {});
+      const key = proposalId.toString();
+      tally[key] = checkedAdd(tally[key] ?? 0n, weight);
+    }
   }
   emit(ctx, ctx.world.addresses.governanceModule, CONTRACT, "Voted", {
     proposalId,
@@ -369,7 +385,9 @@ export function veto(ctx: Ctx, proposalId: bigint): void {
   const state = ctx.world.governance;
   const humanSeat = powerOf(state, ctx.sender) > 0n && roleOf(state, ctx.sender) === SeatRole.Human;
   if (!humanSeat && !rootMayAct(ctx)) throw new SimRevert("NotHumanSeat", { caller: ctx.sender });
-  const p = proposalRef(state, proposalId);
+  // An unused id reads as the zero struct; `propose` never stores a zero target.
+  const p = state.proposals[proposalId.toString()];
+  if (!p || p.target === ZERO_ADDRESS) throw new SimRevert("ProposalNotFound", { proposalId });
   if (p.state !== ProposalState.Active) throw new SimRevert("ProposalNotActive", { proposalId });
   p.state = ProposalState.Vetoed;
   emit(ctx, ctx.world.addresses.governanceModule, CONTRACT, "ProposalVetoed", {
@@ -395,7 +413,10 @@ export function execute(ctx: Ctx, proposalId: bigint): void {
     throw new SimRevert("QuorumNotMet", { proposalId });
   }
 
-  if (ctx.now > p.deadline && p.noVotes > p.yesVotes) {
+  // Each tier is defeated by the electorate that can pass it: human seats alone on high tier.
+  const outvoted =
+    p.tier === Tier.High ? noHumanVotes(ctx, proposalId) > p.yesHumanVotes : p.noVotes > p.yesVotes;
+  if (ctx.now > p.deadline && outvoted) {
     p.state = ProposalState.Defeated;
     emit(ctx, self, CONTRACT, "ProposalDefeated", { proposalId });
     return;

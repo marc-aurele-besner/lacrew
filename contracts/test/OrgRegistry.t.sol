@@ -117,4 +117,28 @@ contract OrgRegistryTest is Test {
         registry.reparent(manager, worker);
         vm.stopPrank();
     }
+
+    /// A zero-address node reads as "no node" everywhere (`getNode`, `removeNode`),
+    /// so one that got in could never be taken out again.
+    function test_addNodeRejectsZeroAddress() public {
+        vm.prank(root);
+        vm.expectRevert(OrgRegistry.ZeroAddress.selector);
+        registry.addNode(address(0), IOrgRegistry.NodeKind.WorkerAgent, root);
+
+        assertEq(registry.getChildren(root).length, 0);
+    }
+
+    function test_zeroAddressIsNeverAParentOrAReparentTarget() public {
+        address worker = makeAddr("worker");
+        vm.startPrank(root);
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.InvalidParent.selector, address(0)));
+        registry.addNode(worker, IOrgRegistry.NodeKind.WorkerAgent, address(0));
+
+        registry.addNode(worker, IOrgRegistry.NodeKind.WorkerAgent, root);
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.InvalidParent.selector, address(0)));
+        registry.reparent(worker, address(0));
+        vm.expectRevert(abi.encodeWithSelector(OrgRegistry.NodeNotFound.selector, address(0)));
+        registry.reparent(address(0), root);
+        vm.stopPrank();
+    }
 }

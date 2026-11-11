@@ -105,6 +105,10 @@ function setActive(address account, bool active) external;
 
 Events: `NodeAdded`, `NodeRemoved`, `NodeReparented`, `NodeActiveUpdated`.
 
+The zero address is never a node: `addNode` rejects it (`ZeroAddress`), and it
+is refused as a parent (`InvalidParent`). It is how an empty slot reads, so a
+node stored there could be neither read nor removed.
+
 ### 3.1 Multi-human orgs — one tree, several humans
 
 An org with two or more humans (agency partners, a club, a community-funded
@@ -146,6 +150,15 @@ Events: `GrantUpdated`, `EpochRun(epoch, recipientCount)`. The treasury
 implements `ITreasurySpender.spendAllowance(node, amount, to)` for the
 router's finalize path.
 
+`Treasury.streamAllowance` is called by the governor or the bound streamer.
+The deployer may stream directly only while neither is bound: binding a
+streamer (`setStreamer`) is exclusive, so a treasury has one source of
+allowance and the grant schedule is the whole account of what nodes are paid.
+Until a governor is bound the deployer still holds `setStreamer`, and
+`setStreamer(address(0))` returns it to direct streaming. Allowance is never
+booked to the zero address (`ZeroAddress`): it could not be spent and would
+stay reserved.
+
 ### 4.1 Multi-asset orgs
 
 A `Treasury` binds one immutable ERC-20. An org funds N assets by deploying
@@ -185,6 +198,25 @@ finalized actions are charged against the window.
   (`IntentEscalated`) toward the human root. `resolve(id, false)` closes it.
 - **DENY** → `propose` reverts; nothing is created.
 
+**Who may resolve.** Authority over a pending intent belongs to nodes that are
+in the tree and active when `resolve` is called, not to whoever held the seat
+when the intent was created:
+
+- The awaiting approver resolves only while it is an active node. Deactivated
+  (`setActive(false)`) or removed, it can neither approve nor reject
+  (`InactiveApprover`); reactivated, it resolves again.
+- An intent awaiting an inactive or removed approver is not stranded: the org
+  root (`OrgRegistry.root`, which can be neither deactivated nor removed)
+  resolves in its place, under the root's own policy and reserved authority. The
+  root is the single stand-in because a removed approver has no parent left to
+  fall back on. While the approver is active the root has no shortcut
+  (`NotAwaitingApprover`): the intent reaches it by climbing.
+- Approval requires the proposing agent to still be an active node
+  (`InactiveAgent`), at every step of the climb. A deactivated or fired agent's
+  pending spend therefore never executes; rejecting it stays possible, and is
+  how such an intent is closed. Reactivating the agent makes it approvable
+  again.
+
 Session gating: `propose` requires a valid `SessionRegistry` key for
 `agent`, with `value <= maxValue` and, when pinned, `target == allowedTarget`.
 
@@ -202,7 +234,23 @@ Quorum voting over structure, budgets, and policy upgrades. Two tiers:
 
 Seats are role-weighted (`SeatRole.Human | Agent`); agent seats carry review
 authority but human seats hold final say on high tier. Any funded Human seat
-may veto.
+may veto a proposal that exists; `veto` of an id no proposal holds reverts
+(`ProposalNotFound`).
+
+**Defeat.** Once the voting deadline has passed, `execute` closes a proposal
+with more weight against than for as `Defeated` instead of running it. Each
+tier is defeated by the electorate that can pass it:
+
+| Tier | Passes on                         | Defeated when (after the deadline) |
+| ---- | --------------------------------- | ---------------------------------- |
+| Low  | `yesVotes >= quorumYes`           | `noVotes > yesVotes`               |
+| High | `yesHumanVotes >= quorumHumanYes` | `noHumanVotes > yesHumanVotes`     |
+
+Agent seats may vote on a high-tier proposal and their weight is recorded in
+`yesVotes` / `noVotes`, but it decides nothing there: it cannot defeat a
+proposal the humans backed, and it cannot rescue one the humans voted down.
+`noHumanVotes(proposalId)` is a getter of its own, beside the `proposals`
+struct.
 
 ```solidity
 function propose(Tier tier, address target, bytes calldata data) external returns (uint256);
