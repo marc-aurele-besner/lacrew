@@ -10,6 +10,8 @@ import {SessionScopes} from "./SessionScopes.sol";
 
 /// @title EscalationRouter
 /// @notice Creates pending intents when a policy returns ESCALATE; parents approve upward.
+///         Only active nodes resolve, and only for agents that are still active; the
+///         org root covers an approver that has been deactivated or removed.
 /// @dev On ALLOW (propose or final resolve), optionally spends allowance and calls `target`.
 ///      When `sessionRegistry` is set, `propose` must be signed by a valid session key for `agent`
 ///      (or by `agent` itself for future AA EOAs).
@@ -67,6 +69,7 @@ contract EscalationRouter {
     error UnexpectedVerdict(Verdict verdict);
     error NoApprover(address agent);
     error InactiveAgent(address agent);
+    error InactiveApprover(address approver);
     error NotAuthorized(address caller);
     error InvalidSession(address agent, address key);
     error SessionValueExceeded(address agent, uint256 value, uint256 maxValue);
@@ -182,12 +185,34 @@ contract EscalationRouter {
         emit IntentCreated(intentId, agent, agentNode.parent);
     }
 
-    /// @notice Parent approves or rejects a pending intent.
+    /// @notice Approve or reject a pending intent.
+    /// @dev Authority to resolve belongs to nodes that are in the tree and active now,
+    ///      not to whoever held the seat when the intent was created:
+    ///
+    ///      - The awaiting approver resolves, and only while it is an active node.
+    ///        Deactivated or removed, it can neither approve nor reject
+    ///        (`InactiveApprover`).
+    ///      - An intent awaiting an inactive or removed approver is not stranded: the
+    ///        org root (`orgRegistry.root()`, which can be neither deactivated nor
+    ///        removed) resolves in its place, under the root's own policy and reserved
+    ///        authority. The root is the one stand-in because a removed approver has no
+    ///        parent left to fall back on, and one rule for both cases keeps the path
+    ///        predictable. While the approver is active the root has no shortcut: it
+    ///        waits for the intent to climb like any other ancestor.
+    ///      - Approval requires the proposing agent to still be an active node
+    ///        (`InactiveAgent`), at every step of the climb, so a deactivated or fired
+    ///        agent's pending spend can never execute. Rejection stays open, which is
+    ///        how such an intent is closed.
     function resolve(uint256 intentId, bool approved) external {
         Intent storage intent = intents[intentId];
         if (intent.agent == address(0)) revert IntentNotFound(intentId);
         if (intent.resolved) revert IntentAlreadyResolved(intentId);
-        if (msg.sender != intent.awaitingApprover) revert NotAwaitingApprover(msg.sender);
+        address awaiting = intent.awaitingApprover;
+        if (msg.sender == awaiting) {
+            if (!_isActiveNode(awaiting)) revert InactiveApprover(awaiting);
+        } else if (msg.sender != orgRegistry.root() || _isActiveNode(awaiting)) {
+            revert NotAwaitingApprover(msg.sender);
+        }
 
         if (!approved) {
             intent.resolved = true;
@@ -195,6 +220,8 @@ contract EscalationRouter {
             emit IntentResolved(intentId, false);
             return;
         }
+
+        if (!_isActiveNode(intent.agent)) revert InactiveAgent(intent.agent);
 
         Verdict verdict =
             _policyFor(msg.sender).check(msg.sender, intent.target, intent.value, intent.data);
@@ -218,8 +245,8 @@ contract EscalationRouter {
         if (approver.parent == address(0) || approver.kind == IOrgRegistry.NodeKind.HumanRoot) {
             // Root reserved authority finalizes. A passkey root arrives here as
             // its own Safe: msg.sender is the Safe, and the credential authorized
-            // this call through Safe.execTransaction, so the binding this comment
-            // once deferred is the sender check on line 180 (F2.6 / F1.3).
+            // this call through Safe.execTransaction, so the binding is the sender
+            // check at the top of this function (F2.6 / F1.3).
             intent.resolved = true;
             intent.approved = true;
             _finalizeAction(intent.agent, intent.target, intent.value, intent.data);
@@ -313,6 +340,16 @@ contract EscalationRouter {
                 || target == address(rateRecorderOf[agent])
         ) {
             revert ProtectedTarget(target);
+        }
+    }
+
+    /// @dev In the tree and active. `getNode` reverts for an account with no node,
+    ///      which is how a removed node reads; that is an answer here, not a failure.
+    function _isActiveNode(address account) private view returns (bool) {
+        try orgRegistry.getNode(account) returns (IOrgRegistry.Node memory node) {
+            return node.active;
+        } catch {
+            return false;
         }
     }
 
