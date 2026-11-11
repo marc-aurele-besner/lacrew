@@ -10,6 +10,7 @@ import {
   countAuditEventsByAgent,
   countAuditEventsByDay,
   countAuditEventsByType,
+  deleteKeyedAuditEvents,
   deleteSandboxAuditEvents,
   getDatabaseUrl,
   insertAuditEvent,
@@ -19,10 +20,25 @@ import {
 import { sharedDb } from "./dbPool.js";
 import type { Ledger, ProtocolEvent } from "@lacrew/core";
 
+/** How one event is identified in the store, when it must not be stored twice. */
+export interface AuditAppendOptions {
+  /**
+   * Store the event at most once: a second append under the same key and
+   * index is dropped. The key names the fact; the index tells apart several
+   * events that share it.
+   */
+  identity?: { key: string; index: number };
+  /**
+   * This event is the fuller record of the fact stored under this key: every
+   * event appended with that identity is removed before this one is written.
+   */
+  supersedes?: string;
+}
+
 export interface AuditStore {
   readonly name: string;
   /** Persist one event; must never throw into the caller's flow. */
-  append(event: ProtocolEvent): Promise<void>;
+  append(event: ProtocolEvent, options?: AuditAppendOptions): Promise<void>;
   /** Most recent events, oldest → newest (ready to replay into the ring). */
   recent(limit: number): Promise<ProtocolEvent[]>;
   /**
@@ -118,13 +134,24 @@ export function createPgAuditStore(options: {
 
   return {
     name: "postgres",
-    append: async (event) => {
+    append: async (event, options) => {
       try {
+        const eventLedger = event.ledger ?? ledger;
+        if (options?.supersedes) {
+          await deleteKeyedAuditEvents(db(), {
+            orgId,
+            ledger: eventLedger,
+            eventKey: options.supersedes,
+          });
+        }
         await insertAuditEvent(db(), {
           ...event,
           orgId,
           chainId: event.chainId ?? chainId ?? null,
-          ledger: event.ledger ?? ledger,
+          ledger: eventLedger,
+          ...(options?.identity
+            ? { eventKey: options.identity.key, eventIndex: options.identity.index }
+            : {}),
         });
       } catch (err) {
         console.error("[@lacrew/orchestrator] audit append failed:", err);

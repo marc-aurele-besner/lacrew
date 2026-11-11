@@ -352,6 +352,54 @@ describe("multi-org host: the contract", () => {
     }
   });
 
+  it("answers an unauthenticated hook delivery the same for no org and for no trigger", async () => {
+    const h = await harness();
+    try {
+      const orgId = await register(h, "hooks");
+      const chain = `hooks-chain-${tag()}`;
+      await h.call("PUT", `/orgs/${chain}`, { body: { mode: "testnet" } });
+      const ghost = `ghost-${tag()}`;
+      const hook = `hook_${tag()}`;
+      // A registered org with no such trigger is the answer every other must match.
+      const deliveries: Array<[string, Parameters<Harness["call"]>[2]]> = [
+        ["a JSON body", { raw: "{}", token: null }],
+        ["no body", { token: null }],
+        [
+          "a body that is not JSON",
+          { raw: "x", token: null, headers: { "content-type": "text/plain" } },
+        ],
+        ["a wrong token", { raw: "{}", token: "not-the-token" }],
+      ];
+      for (const [what, options] of deliveries) {
+        const known = await h.call("POST", `/o/${orgId}/hooks/${hook}`, options);
+        assert.equal(known.status, 404, `${what}: ${known.text}`);
+        assert.deepEqual(known.body, { error: "webhook_trigger_not_found" }, what);
+        for (const [who, path] of [
+          ["an org nobody registered", `/o/${ghost}/hooks/${hook}`],
+          ["a chain org that is not served", `/o/${chain}/hooks/${hook}`],
+          ["an id no org can have", `/o/Not_An_Id!/hooks/${hook}`],
+          ["a path that does not decode", `/o/${orgId}/hooks/%E0%A4%A`],
+          ["a path below a trigger", `/o/${orgId}/hooks/${hook}/more`],
+        ] as const) {
+          const res = await h.call("POST", path, options);
+          assert.equal(res.status, known.status, `${what}, ${who}: ${res.text}`);
+          assert.equal(res.text, known.text, `${what}, ${who}`);
+        }
+      }
+      assert.ok(!h.host.loaded().includes(ghost), "and addressing an org does not create it");
+
+      // With the token the caller is the control plane, and is told which it was.
+      const named = await h.call("POST", `/o/${ghost}/hooks/${hook}`, { body: {} });
+      assert.equal(named.status, 404);
+      assert.equal(named.body.error, "org_not_found");
+      const missing = await h.call("POST", `/o/${orgId}/hooks/${hook}`, { body: {} });
+      assert.equal(missing.status, 404);
+      assert.equal(missing.body.error, "webhook_trigger_not_found");
+    } finally {
+      await h.close();
+    }
+  });
+
   it("reports an org's mode, ledger and chain on its own health", async () => {
     const h = await harness({ env: { LACREW_CONNECTORS: "[]", LACREW_ROOT_AUTH: "wallet" } });
     try {

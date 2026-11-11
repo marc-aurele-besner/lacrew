@@ -781,8 +781,32 @@ export function createMultiOrgHost(options: MultiOrgOptions): MultiOrgHost {
     // token. The org's own app verifies that signature and refuses an unsigned
     // delivery; everything else under an org, its health included, needs the token.
     const isHookDelivery = c.req.method === "POST" && rest.startsWith("/hooks/");
-    if (!isHookDelivery && !authorized(c)) return sendJson(c, { error: "unauthorized" }, 401);
+    const hasToken = authorized(c);
+    if (!isHookDelivery && !hasToken) return sendJson(c, { error: "unauthorized" }, 401);
     const org = isOrgId(orgId) ? await lookup(orgId) : null;
+    if (isHookDelivery && !hasToken) {
+      // Whoever sends a delivery without the token has proved nothing yet, and
+      // is told nothing about which orgs exist: an org that is not registered,
+      // one this process cannot serve, and a registered org with no such
+      // trigger all answer the same, before anything else about the request
+      // is looked at. Only a delivery to a trigger that exists goes further.
+      let known = false;
+      if (org && SERVED_ORG_MODES.includes(org.mode)) {
+        try {
+          // A path that does not decode names no trigger.
+          const triggerId = decodeURIComponent(rest.slice("/hooks/".length));
+          known =
+            triggerId !== "" &&
+            !triggerId.includes("/") &&
+            (await withWorld(org, (world) => world.hasWebhookTrigger(triggerId), false));
+        } catch (err) {
+          // Answered like every other miss: a different answer here would say
+          // the org exists. The producer retries; the operator reads this line.
+          console.error(`[@lacrew/orchestrator] org ${orgId}: hook lookup failed:`, err);
+        }
+      }
+      if (!known) return sendJson(c, { error: "webhook_trigger_not_found" }, 404);
+    }
     if (!org) return sendJson(c, { error: "org_not_found" }, 404);
     url.pathname = rest;
     try {

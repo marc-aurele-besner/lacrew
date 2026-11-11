@@ -43,6 +43,14 @@ export const auditEvents = pgTable(
      * nothing mined). Sandbox rows never count toward a usage meter.
      */
     ledger: text("ledger").notNull().default("chain"),
+    /**
+     * Identity of an event that must be stored at most once, with its place
+     * among the events sharing that key. Set on a simulator's own events (the
+     * simulator instance, its transaction and the event type); null on every
+     * other row, and nulls never conflict.
+     */
+    eventKey: text("event_key"),
+    eventIndex: integer("event_index"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -54,6 +62,12 @@ export const auditEvents = pgTable(
       table.chainId,
       table.txHash,
       table.logIndex,
+    ),
+    uniqueIndex("audit_events_key_idx").on(
+      table.orgId,
+      table.ledger,
+      table.eventKey,
+      table.eventIndex,
     ),
   ],
 );

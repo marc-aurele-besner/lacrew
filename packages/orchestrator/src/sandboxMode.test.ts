@@ -792,6 +792,92 @@ describe("sandbox persistence", () => {
     assert.equal(stored.length, before.length, "and stores nothing twice");
   });
 
+  it("records each fact once when a read settles the trail in the middle of a write", async () => {
+    // A store that keeps what it is given under the identity it is given, as
+    // Postgres does: an identity is stored once, and a record that supersedes
+    // a key removes what was stored under it.
+    let rows: Array<{ event: ProtocolEvent; key?: string; index?: number }> = [];
+    let replaced = 0;
+    const auditStore: AuditStore = {
+      ...createMemoryAuditStore(),
+      append: async (event, options) => {
+        if (options?.supersedes) {
+          const before = rows.length;
+          rows = rows.filter((row) => row.key !== options.supersedes);
+          replaced += before - rows.length;
+        }
+        const identity = options?.identity;
+        if (identity && rows.some((r) => r.key === identity.key && r.index === identity.index)) {
+          return;
+        }
+        rows.push({ event, ...(identity ? identity : {}) });
+      },
+      recent: async (limit) => rows.slice(-limit).map((row) => row.event),
+    };
+    const runtime = createSandboxRuntime({ auditStore });
+    await runtime.hydrateSandbox();
+
+    // The race, made certain: after every simulator transaction commits and
+    // before the runtime records its own account of it, the trail is read.
+    const client = runtime.sandbox!.client as unknown as Record<string, unknown>;
+    const methods = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(client) as object);
+    let races = 0;
+    for (const [name, descriptor] of Object.entries(methods)) {
+      // Methods only: reading an accessor here would call it on the prototype.
+      const method: unknown = descriptor.value;
+      if (name === "constructor" || typeof method !== "function") continue;
+      if (/^(get|read|simulate|check|list|as$)/.test(name)) continue;
+      client[name] = (...args: unknown[]) => {
+        const out = (method as (...a: unknown[]) => unknown).apply(client, args);
+        if (!(out instanceof Promise)) return out;
+        return out.then(async (value) => {
+          races += 1;
+          await runtime.audit();
+          return value;
+        });
+      };
+    }
+
+    const api = appFor(runtime);
+    const { worker } = await hiredAndFunded(api);
+    const spent = await spend(api, worker, USDC(10));
+    assert.equal(spent.body.result.verdict, "ALLOW", JSON.stringify(spent.body));
+    assert.ok(races > 5, "reads ran inside the writes");
+
+    const trail = (await api.get("/audit")).body.events as Json[];
+    // What the runtime records itself appears once per simulated transaction,
+    // although the simulator's copy of each was recorded first.
+    for (const type of [
+      "ProposalCreated",
+      "ProposalVoted",
+      "ProposalExecuted",
+      "AllowanceStreamed",
+      "AllowanceSpent",
+    ]) {
+      const seen = trail.filter((e) => e.type === type).map((e) => e.payload.simTxId);
+      assert.ok(seen.length > 0, type);
+      assert.equal(new Set(seen).size, seen.length, `${type} once per simulated transaction`);
+    }
+    assert.ok(replaced > 0, "the simulator's copies were replaced, in the store too");
+    // What only the simulator knows is still there, once.
+    assert.equal(trail.filter((e) => e.type === "TreasuryDeposit").length, 1);
+    assert.equal(trail.filter((e) => e.type === "ActionExecuted").length, 1);
+
+    await runtime.drain();
+    const key = (e: Json | ProtocolEvent) =>
+      `${e.type}:${String(e.payload.simTxId ?? "")}:${String(e.payload.seq)}`;
+    assert.deepEqual(rows.map((row) => key(row.event)).sort(), trail.map(key).sort());
+
+    // Settling again, and storing a simulator event again, change nothing.
+    const stored = rows.length;
+    await runtime.settleSandboxTrail();
+    const copy = rows.find((row) => row.key !== undefined)!;
+    await auditStore.append(copy.event, { identity: { key: copy.key!, index: copy.index! } });
+    await runtime.drain();
+    assert.equal(rows.length, stored);
+    assert.equal(((await api.get("/audit")).body.events as Json[]).length, trail.length);
+  });
+
   it("writes through on every committed call, one version each", async () => {
     const store = createMemorySandboxStateStore();
     const runtime = createSandboxRuntime({ store });

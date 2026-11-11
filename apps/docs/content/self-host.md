@@ -608,7 +608,18 @@ An org id is 1 to 64 of `a-z`, `0-9`, `_` and `-`. Errors:
 - `401 unauthorized`: no token, or a wrong one. Without the token a registered
   org and an unknown one answer the same.
 - `404 org_not_found`: the org is not registered. Addressing an org never
-  creates it; only `PUT /orgs/:id` does.
+  creates it; only `PUT /orgs/:id` does. Only a caller with the token is told
+  this.
+- `404 webhook_trigger_not_found`: what a hook delivery without the token gets
+  whenever there is no such trigger to deliver to, and the body is exactly
+  `{ "error": "webhook_trigger_not_found" }` in every such case: the org is not
+  registered, it is a chain org this process does not serve, its id is not one
+  an org can have, or it is registered and has no trigger by that id. A
+  producer holds a trigger's secret and not the operator's token, so it is
+  answered before its content type, size or signature is looked at, and it
+  cannot use this route to learn which orgs exist. If the lookup itself fails
+  (the org's world could not be built) the answer is the same 404 and the
+  cause is logged.
 - `400 invalid_org_id` / `400 invalid_mode`: a registration that names neither.
 - `503 org_unavailable`: the org's world could not be built (the detail says why).
 
@@ -660,6 +671,10 @@ Shared (one value for every org):
   its own. See "Each org's epoch cadence" below. `EPOCH_INTERVAL_MS` is not
   used in this mode.
 - `LACREW_SESSION_KEY` (sealing), timeouts, size limits and session defaults.
+  One key seals every org's stored secrets, and each sealed value is bound to
+  its org: the org id is authenticated with the ciphertext, so a sealed session
+  key, webhook secret or MCP credential copied onto another org's row does not
+  open there.
 
 ### Each org's epoch cadence
 
@@ -1419,20 +1434,22 @@ docker run --rm -p 8788:8788 lacrew-orchestrator
 2. After pulling: `pnpm install && pnpm build && pnpm db:migrate` (and `pnpm --filter @lacrew.xyz/tenancy db:migrate` when running the cloud API).
 3. Re-run `lacrew deploy --anvil` (or Sepolia) only when contract ABIs change; sync with `pnpm --filter @lacrew/core sync-abis`.
 4. Orchestrator HTTP is additive (`/health` fields grow; old clients ignore unknowns).
+5. Sealed secrets are bound to their org from envelope version 2 on, and version 1 envelopes are no longer read. After upgrading across that change: session keys re-issue themselves on the next propose; rotate each webhook trigger's secret (`POST /flows/triggers/rotate`), whose deliveries until then answer `503 webhook_secret_unreadable`; and set each external MCP credential again (`PUT /mcp/secrets`).
 
 ## Troubleshooting
 
-| Symptom                                          | Check                                                                                                                              |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health` → `mode: "mock"`                   | Set `ANVIL_RPC` + `PRIVATE_KEY`; ensure Anvil is up and `31337.json` exists                                                        |
-| `queue.provider` not `pg-boss`                   | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate                                                                   |
-| `EADDRINUSE :8788`                               | Another orchestrator still running — kill the old process after `tsx` reloads                                                      |
-| Propose reverts / no session                     | `POST /boot` first; confirm SessionRegistry grants for the worker                                                                  |
-| `401 unauthorized`                               | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env)      |
-| `415 content_type_must_be_json`                  | A mutating request carried a body without `content-type: application/json` — set the header (browsers: see HTTP auth)              |
-| `webhook_sealing_unavailable` on trigger create  | `DATABASE_URL` set without `LACREW_SESSION_KEY` — generate one with `openssl rand -base64 32` and restart                          |
-| Webhook delivery `401 webhook_signature_invalid` | Signature computed over re-serialized JSON; sign the exact bytes sent, and check the scheme matches how the trigger was registered |
-| Cloud API `notification_prefs` missing           | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate`                                               |
+| Symptom                                          | Check                                                                                                                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health` → `mode: "mock"`                   | Set `ANVIL_RPC` + `PRIVATE_KEY`; ensure Anvil is up and `31337.json` exists                                                                                                               |
+| `queue.provider` not `pg-boss`                   | `DATABASE_URL` unset or Postgres down; `pnpm db:up` then migrate                                                                                                                          |
+| `EADDRINUSE :8788`                               | Another orchestrator still running — kill the old process after `tsx` reloads                                                                                                             |
+| Propose reverts / no session                     | `POST /boot` first; confirm SessionRegistry grants for the worker                                                                                                                         |
+| `401 unauthorized`                               | `LACREW_ORCH_TOKEN` set on the orchestrator — send `Authorization: Bearer <token>` (cloud API and examples read the same env)                                                             |
+| `415 content_type_must_be_json`                  | A mutating request carried a body without `content-type: application/json` — set the header (browsers: see HTTP auth)                                                                     |
+| Webhook delivery `503 webhook_secret_unreadable` | The stored secret does not open: `LACREW_SESSION_KEY` changed without `LACREW_SESSION_KEY_PREVIOUS`, or it was sealed before secrets were bound to their org. Rotate the trigger's secret |
+| `webhook_sealing_unavailable` on trigger create  | `DATABASE_URL` set without `LACREW_SESSION_KEY` — generate one with `openssl rand -base64 32` and restart                                                                                 |
+| Webhook delivery `401 webhook_signature_invalid` | Signature computed over re-serialized JSON; sign the exact bytes sent, and check the scheme matches how the trigger was registered                                                        |
+| Cloud API `notification_prefs` missing           | API now auto-migrates on boot; or run `pnpm --filter @lacrew.xyz/tenancy db:migrate`                                                                                                      |
 
 ## Cloud pairing (lacrew.xyz)
 

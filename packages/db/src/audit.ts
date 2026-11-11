@@ -18,6 +18,12 @@ export interface AuditEventRow {
   logIndex?: number | null;
   /** `chain` when absent. A `sandbox` row is a simulated event; nothing was mined. */
   ledger?: AuditLedger | null;
+  /**
+   * Identity of an event that must be stored at most once: a second insert
+   * under the same (org, ledger, key, index) is skipped. Never read back.
+   */
+  eventKey?: string | null;
+  eventIndex?: number | null;
 }
 
 /** Which ledger an audit row belongs to. */
@@ -51,8 +57,13 @@ function chainScope(options?: AuditReadOptions): SQL | undefined {
   );
 }
 
+/**
+ * Insert one event. An event that carries an `eventKey` is stored at most
+ * once: a row already there under the same (org, ledger, key, index) stands
+ * and this one is skipped.
+ */
 export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): Promise<void> {
-  await handle.db.insert(auditEvents).values({
+  const insert = handle.db.insert(auditEvents).values({
     type: event.type,
     at: new Date(event.at),
     orgId: event.orgId ?? DEFAULT_ORG_ID,
@@ -61,7 +72,29 @@ export async function insertAuditEvent(handle: DbHandle, event: AuditEventRow): 
     txHash: event.txHash ?? null,
     logIndex: event.logIndex ?? null,
     ledger: event.ledger ?? "chain",
+    eventKey: event.eventKey ?? null,
+    eventIndex: event.eventKey == null ? null : (event.eventIndex ?? 0),
   });
+  await (event.eventKey == null ? insert : insert.onConflictDoNothing());
+}
+
+/**
+ * Delete every event of one org and ledger stored under `eventKey`. Called
+ * when a fuller record of the same fact is about to be written in their place.
+ */
+export async function deleteKeyedAuditEvents(
+  handle: DbHandle,
+  scope: { orgId: string; ledger: AuditLedger; eventKey: string },
+): Promise<void> {
+  await handle.db
+    .delete(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.orgId, scope.orgId),
+        eq(auditEvents.ledger, scope.ledger),
+        eq(auditEvents.eventKey, scope.eventKey),
+      ),
+    );
 }
 
 /**

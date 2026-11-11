@@ -99,6 +99,8 @@ export interface OrgWorld {
   onFlowCron(): Promise<unknown>;
   /** Run one accepted webhook delivery. */
   onWebhook(data: Record<string, unknown>): Promise<unknown>;
+  /** Whether this org has a webhook trigger with this id. */
+  hasWebhookTrigger(triggerId: string): Promise<boolean>;
   /**
    * Whether the minute sweep has anything to do for this org: a cron flow, an
    * enabled heartbeat, a run parked or in flight, a question still waiting for
@@ -259,6 +261,7 @@ export async function createOrgWorld(
   // Sealed credentials for attached servers (F2.30). Built before the registry
   // because a `secret` auth resolves through it at call time.
   const mcpSecrets = createMcpSecrets({
+    orgId,
     store: runtime.store,
     onEvent: (event) => runtime.recordAudit(event),
   });
@@ -875,6 +878,7 @@ export async function createOrgWorld(
     runtime,
     ...handlers,
     onEpochDue: async () => (epochCadence ? epochCadence.runIfDue() : { ran: false }),
+    hasWebhookTrigger: (triggerId) => webhooks.exists(triggerId),
     onFlowCron: async () => {
       try {
         return await handlers.onFlowCron();
@@ -928,6 +932,7 @@ export function createUnavailableOrgWorld(
     onTick: async () => undefined,
     onFlowCron: async () => undefined,
     onWebhook: async () => undefined,
+    hasWebhookTrigger: async () => false,
     hasScheduledWork: async () => false,
     close: async () => {},
   };
