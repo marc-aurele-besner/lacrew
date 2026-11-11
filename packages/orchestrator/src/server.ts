@@ -368,6 +368,14 @@ async function main(): Promise<void> {
   // (F2.6). A bad LACREW_ROOT_AUTH value stops boot: starting anyway would
   // leave those routes ungated on a deployment whose operator plainly meant to
   // gate them.
+  if (runtime.sandbox && process.env.LACREW_ROOT_AUTH?.trim()) {
+    // Said rather than silently dropped: an operator who configured a root
+    // proof should know this mode never asks for it.
+    console.warn(
+      "[@lacrew/orchestrator] LACREW_ROOT_AUTH is ignored in sandbox mode: no signature is verified, " +
+        "and whoever may call this orchestrator stands in for the root.",
+    );
+  }
   const rootChallengeTtl = Number(process.env.LACREW_ROOT_CHALLENGE_TTL_SEC ?? "");
   const rootAuth = createRootAuthSurface({
     config: readRootAuthConfig(),
@@ -456,6 +464,24 @@ async function main(): Promise<void> {
     } catch (err) {
       console.error("[@lacrew/orchestrator] migrations failed:", err);
       dbReady = false;
+    }
+  }
+  if (runtime.sandbox) {
+    // Resume the stored simulation before anything reads or writes it. After
+    // migrations, because the state table is one of them.
+    try {
+      const resumed = await runtime.hydrateSandbox();
+      console.log(
+        `[@lacrew/orchestrator] sandbox ${resumed ? "resumed" : "started from genesis"} ` +
+          `(version ${runtime.sandbox.version}, state in ${runtime.sandbox.storeName})`,
+      );
+    } catch (err) {
+      // Not fatal and not hidden: the simulator serves a fresh genesis, its
+      // first write loses the version check to the stored row and adopts it.
+      console.error(
+        "[@lacrew/orchestrator] sandbox state could not be read; serving a fresh genesis until the store answers:",
+        err,
+      );
     }
   }
   if (dbReady) {
@@ -845,6 +871,12 @@ async function main(): Promise<void> {
           ` db=${dbReady ? "ready" : getDatabaseUrl() ? "unreachable" : "off"}` +
           ` migrations=${migrationsRan ? "ok" : "skipped"}`,
       );
+      if (runtime.sandbox) {
+        console.log(
+          "[@lacrew/orchestrator] SANDBOX: no chain. The org's rules are simulated in this process " +
+            "and enforced by no contract; nothing here was or will be mined.",
+        );
+      }
     },
     { ...(host ? { host } : {}) },
   );
