@@ -42,6 +42,7 @@ describe("SDK public surface", () => {
   it("still exports the onchain client and pure helpers", () => {
     // The flip side: moving the mock must not have taken the real client with it.
     assert.equal(typeof root.createOnchainClient, "function");
+    assert.equal(typeof root.deployOrg, "function");
     assert.equal(typeof root.simulateIntentAction, "function");
     assert.equal(typeof root.checkClientPolicy, "function");
   });
