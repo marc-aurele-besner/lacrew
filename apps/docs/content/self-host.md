@@ -346,19 +346,19 @@ how many were recorded.
 - A relayed approval that fails gas estimation. That is the usual way a bad
   approval fails, nothing is broadcast, and nothing was paid.
 
-### Sandbox play money
+### Test-chain faucet (play money)
 
-| Endpoint               | What it does                                                                                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /sandbox`         | Whether this deployment is a sandbox, the play-money token, the fixed top-up amount, and the cooldown. `sandbox: false` carries a stable `reason`                                                |
-| `POST /sandbox/top-up` | Body `{ "account": "0x…" }`. Credits the fixed amount to the Treasury or an active org node. Refusals: `not_sandbox` 409, `invalid_account` 400, `account_not_in_org` 403, `faucet_cooldown` 429 |
+| Endpoint              | What it does                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /faucet`         | Whether this deployment has a play-money faucet, the token, the fixed top-up amount, and the cooldown. `available: false` carries a stable `reason`                                                     |
+| `POST /faucet/top-up` | Body `{ "account": "0x…" }`. Credits the fixed amount to the Treasury or an active org node. Refusals: `faucet_unavailable` 409, `invalid_account` 400, `account_not_in_org` 403, `faucet_cooldown` 429 |
 
 Play money is `MockUSDC`: a mock token with no value, minted on a test chain so a
-new org can run real flows before funding anything. A deployment is a sandbox
+new org can run real flows before funding anything. A deployment has a faucet
 only when its chain is local Anvil or a named testnet **and** its Treasury's own
 `token()` is the deployment's `MockUSDC`; both routes' answers follow from that,
-and the top-up refuses on any non-sandbox deployment — a mainnet chain id is
-never a sandbox, whatever `LACREW_MOCK_USDC` says. A top-up is not an approval
+and the top-up refuses on any other deployment — a mainnet chain id never has
+a faucet, whatever `LACREW_MOCK_USDC` says. A top-up is not an approval
 and changes no allowance, cap, or policy: spending play money goes through the
 same onchain stack as any other spend. The amount is the contract's
 `FAUCET_AMOUNT` (100 mUSDC) and cannot be chosen by the caller. When the
