@@ -29,6 +29,13 @@ export type {
 } from "./protocolClient.js";
 export { deployOrg, type DeployOrgOptions, type DeployedOrg } from "./deployOrg.js";
 export { checkClientPolicy, defaultMockPolicy, type ClientPolicyConfig } from "./policy.js";
+export {
+  POLICY_DENIED_ERROR,
+  PolicyDeniedError,
+  describePolicyDenial,
+  policyDenialOf,
+  type DenyingModule,
+} from "./policyDenial.js";
 export type { ResolveResult } from "./types.js";
 export {
   approveIntent,

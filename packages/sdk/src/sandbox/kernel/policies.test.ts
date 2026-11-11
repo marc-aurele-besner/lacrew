@@ -246,6 +246,25 @@ describe("kernel PolicyStack", () => {
     assert.equal(check(sim, stack([wl, inner]), 51n), Verdict.ESCALATE);
   });
 
+  it("names the member behind a DENY, in check order, and nothing when none denies", () => {
+    const { sim, wl, cap, stack } = stackWorld();
+    // 80 000 seconds into the day at T0: the window is shut.
+    const shut = deploy(sim, (ctx, a) => policies.deployTimeWindowPolicy(ctx, a, 0n, 3_600n));
+    const denying = (module: Address, value = 0n) =>
+      sim.read((ctx) => policies.denyingModule(ctx, module, WORKER, TARGET, value, "0x"));
+
+    assert.equal(denying(wl), wl);
+    assert.equal(denying(cap, 51n), null, "an ESCALATE is not a DENY");
+    assert.equal(denying(stack([cap, wl]), 51n), wl);
+    assert.equal(denying(stack([shut, wl])), shut, "the first to deny is the answer");
+    assert.equal(denying(stack([wl, shut])), wl);
+    assert.equal(denying(stack([cap, stack([cap, shut])])), shut, "a nested stack is looked into");
+
+    sim.send(ADMIN, (ctx) => policies.setAllowed(ctx, wl, TARGET, true));
+    assert.equal(denying(stack([wl, cap]), 51n), null);
+    assert.equal(denying(stack([wl, shut])), shut);
+  });
+
   it("reverts without an error when a member, or the module itself, has no code", () => {
     const { sim, cap, stack } = stackWorld();
     const s = stack([cap, NOT_A_MODULE]);

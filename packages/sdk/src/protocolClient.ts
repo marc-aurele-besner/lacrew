@@ -21,6 +21,7 @@ import type {
   Intent,
   NodePolicyStack,
   OrgNode,
+  PolicyDenial,
   ProtocolEvent,
   SessionKey,
   TreasuryBalance,
@@ -114,6 +115,17 @@ export interface ProtocolClient {
     data?: Hex;
     policyModule?: Address;
   }): Promise<Verdict>;
+  /**
+   * Which module of the agent's stack denies this action, asked now: the first
+   * that answers DENY on its own, in `check()` order. Null when none does.
+   * A denied `proposeIntent` carries this answer already (`policyDenialOf`).
+   */
+  explainDenial(input: {
+    agent: Address;
+    target: Address;
+    value: bigint;
+    data?: Hex;
+  }): Promise<PolicyDenial | null>;
   getNodePolicies(opts?: { nodes?: Address[]; asset?: string }): Promise<NodePolicyStack[]>;
   /** `SpendCapPolicy.capOf`; undefined when no SpendCapPolicy exists. */
   capOf(agent: Address): Promise<bigint | undefined>;

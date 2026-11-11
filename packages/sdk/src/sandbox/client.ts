@@ -31,6 +31,7 @@ import {
   type Intent,
   type NodePolicyStack,
   type OrgNode,
+  type PolicyDenial,
   type PolicyModuleInfo,
   type ProtocolEvent,
   type SessionKey,
@@ -45,6 +46,7 @@ import type {
   SessionKeyLimits,
   WriteRef,
 } from "../protocolClient.js";
+import { POLICY_DENIED_ERROR, describePolicyDenial } from "../policyDenial.js";
 import { SandboxNeedsChainError, abiEnv, callByAddress, type CallOutcome } from "./calldata.js";
 import {
   MAX_UINT256,
@@ -503,9 +505,26 @@ export class SandboxLacrewClient implements ProtocolClient {
     account?: Account | { address: Address };
   }): Promise<{ intentId: string; verdict: Verdict; simTxId: string }> {
     const sender = addr(input.account?.address ?? this.account);
-    const { result, simTxId: id } = this.commit(sender, (ctx) =>
-      escalationRouter.propose(ctx, input.agent, input.target, input.value, input.data ?? "0x"),
-    );
+    let committed: {
+      result: ReturnType<typeof escalationRouter.propose>;
+      simTxId: string;
+    };
+    try {
+      committed = this.commit(sender, (ctx) =>
+        escalationRouter.propose(ctx, input.agent, input.target, input.value, input.data ?? "0x"),
+      );
+    } catch (err) {
+      if (err instanceof SimRevert && err.errorName === POLICY_DENIED_ERROR) {
+        // The same revert, by the same name, with the module that denied
+        // beside the contract's own argument.
+        throw new SimRevert(err.errorName, {
+          ...err.args,
+          denial: await this.explainDenial(input),
+        });
+      }
+      throw err;
+    }
+    const { result, simTxId: id } = committed;
     return {
       intentId: result.intentId.toString(),
       verdict: VERDICT_FROM[result.verdict] ?? "ESCALATE",
@@ -583,6 +602,40 @@ export class SandboxLacrewClient implements ProtocolClient {
       policies.check(ctx, module, input.agent, input.target, input.value, input.data ?? "0x"),
     );
     return VERDICT_FROM[verdict] ?? "DENY";
+  }
+
+  async explainDenial(input: {
+    agent: Address;
+    target: Address;
+    value: bigint;
+    data?: Hex;
+  }): Promise<PolicyDenial | null> {
+    return this.read((ctx) => {
+      const router = ctx.world.escalationRouter;
+      const agent = addr(input.agent);
+      const target = addr(input.target);
+      const bound = router.policyOf[agent] ?? ZERO_ADDRESS;
+      const policy = bound !== ZERO_ADDRESS ? bound : router.policy;
+      if (policy === ZERO_ADDRESS) return null;
+      const denying = policies.denyingModule(
+        ctx,
+        policy,
+        agent,
+        target,
+        input.value,
+        input.data ?? "0x",
+      );
+      if (!denying) return null;
+      const info = this.describePolicyModule(ctx, denying, agent, 0);
+      return describePolicyDenial({
+        address: denying,
+        kind: info.kind,
+        target,
+        ...(info.startSecondOfDay !== undefined ? { startSecondOfDay: info.startSecondOfDay } : {}),
+        ...(info.endSecondOfDay !== undefined ? { endSecondOfDay: info.endSecondOfDay } : {}),
+        nowSec: Number(ctx.now),
+      });
+    });
   }
 
   async getNodePolicies(

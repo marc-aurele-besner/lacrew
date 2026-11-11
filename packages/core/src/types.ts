@@ -137,6 +137,29 @@ export interface EpochGrant {
   amount: string;
 }
 
+/**
+ * One node's allowance as a caller budgets against it: what the Treasury would
+ * let it spend right now, beside what a payroll run streams into it. Amounts
+ * are the asset's base units as exact strings, like `EpochGrant.amount`.
+ */
+export interface AllowanceStatus {
+  account: `0x${string}`;
+  /** The asset these amounts are denominated in. */
+  token: `0x${string}`;
+  /**
+   * The Treasury's `allowanceBalance` for the node: the most it can still
+   * spend before the next payroll run adds to it. Null when the ledger gave no
+   * balance for this account (a grant recipient that is not in the org tree).
+   */
+  remaining: string | null;
+  /** Per-epoch grant on the asset's EpochStreamer; "0" when none is set. */
+  grant: string;
+  /** Per-call ceiling (`Allowance.cap`); null when no SpendCapPolicy is enforced. */
+  cap: string | null;
+  /** The streamer's current epoch; null alongside a null `remaining`. */
+  epoch: number | null;
+}
+
 /** Human-readable preflight of the agent's intended action (PRD F1.16). */
 export type IntentSimulation = {
   status: "ok" | "warning" | "revert";
@@ -717,6 +740,38 @@ export interface NodePolicyStack {
    * single-element list when the bound module is not a stack.
    */
   modules: PolicyModuleInfo[];
+}
+
+/**
+ * Why a module said DENY, as a caller can branch on it.
+ *
+ * `policy_denied` is every module whose rule cannot be named: a kind the read
+ * does not recognise, or a stack none of whose members denies on its own.
+ */
+export type PolicyDenialReason = "target_not_allowlisted" | "outside_time_window" | "policy_denied";
+
+/**
+ * The policy module that denied a propose, and the rule it applied.
+ *
+ * `EscalationRouter.propose` reverts with `UnexpectedVerdict(DENY)` and names
+ * no module. This is that module, found by asking each member of the agent's
+ * stack on its own, in `check()` order: the first to answer DENY.
+ */
+export interface PolicyDenial {
+  /** The denying module's address. */
+  module: `0x${string}`;
+  kind: PolicyModuleKind;
+  reason: PolicyDenialReason;
+  /** One sentence for a person, saying the same thing as `reason`. */
+  detail: string;
+  /** whitelist: the target that is not on the allowlist. */
+  target?: `0x${string}`;
+  /** time_window: daily UTC window start, in seconds of day. */
+  startSecondOfDay?: number;
+  /** time_window: daily UTC window end (exclusive), in seconds of day. */
+  endSecondOfDay?: number;
+  /** time_window: the ledger's own second of day when the module was asked. */
+  secondOfDay?: number;
 }
 
 export interface ChainAddresses {

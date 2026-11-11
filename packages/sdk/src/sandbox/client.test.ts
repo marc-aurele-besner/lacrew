@@ -10,6 +10,7 @@ import {
   treasuryAbi,
 } from "@lacrew/core";
 
+import { policyDenialOf } from "../policyDenial.js";
 import type { ProtocolClient } from "../protocolClient.js";
 import {
   SandboxNeedsChainError,
@@ -822,5 +823,86 @@ describe("sandbox client: what needs a chain", () => {
       SandboxNeedsChainError,
     );
     assert.equal(commits.length, 0);
+  });
+});
+
+describe("sandbox client: a denied propose names its rule", () => {
+  const denied = async (run: Promise<unknown>) => {
+    const err = await run.then(
+      () => assert.fail("the propose was not denied"),
+      (caught: unknown) => caught,
+    );
+    assert.ok(revertsWith("UnexpectedVerdict")(err), String(err));
+    return policyDenialOf(err);
+  };
+
+  it("names the allowlist and the target it does not hold", async () => {
+    const { client } = sandbox();
+    await crew(client);
+    const input = { agent: WORKER, target: STRANGER, value: 1n };
+    const denial = await denied(client.as(WORKER).proposeIntent(input));
+    assert.deepEqual(denial, {
+      module: client.addresses.whitelistPolicy,
+      kind: "whitelist",
+      reason: "target_not_allowlisted",
+      detail: `Target ${STRANGER} is not on the allowlist.`,
+      target: STRANGER,
+    });
+    // The same answer without proposing, and none for an action nothing denies.
+    assert.deepEqual(await client.explainDenial(input), denial);
+    assert.equal(await client.explainDenial({ ...input, target: TARGET }), null);
+    assert.equal(
+      await client.explainDenial({ ...input, target: TARGET, value: 75n * USDC }),
+      null,
+      "an escalation is not a denial",
+    );
+  });
+
+  it("names the time window of the node's own stack, and the clock it was asked at", async () => {
+    const { client, clock } = sandbox();
+    await crew(client);
+    // T0 is 80 000 seconds into its UTC day; the window is the day's first hour.
+    const window = await client.deployTimeWindowPolicy({
+      startSecondOfDay: 0,
+      endSecondOfDay: 3_600,
+    });
+    const stack = await client.deployPolicyStack([
+      client.addresses.whitelistPolicy!,
+      window.address,
+    ]);
+    await pass(client, client.proposeSetNodePolicy({ node: WORKER, policyModule: stack.address }));
+    const worker = client.as(WORKER);
+
+    const secondOfDay = clock.now() % DAY;
+    const denial = await denied(worker.proposeIntent({ agent: WORKER, target: TARGET, value: 1n }));
+    assert.equal(denial?.module, window.address);
+    assert.equal(denial?.kind, "time_window");
+    assert.equal(denial?.reason, "outside_time_window");
+    assert.deepEqual(
+      [denial?.startSecondOfDay, denial?.endSecondOfDay, denial?.secondOfDay],
+      [0, 3_600, secondOfDay],
+    );
+    assert.match(denial!.detail, /^Outside the allowed time window \(00:00-01:00 UTC; /);
+
+    // Both rules refuse this one; the first in check order is the one named.
+    const both = await denied(worker.proposeIntent({ agent: WORKER, target: STRANGER, value: 1n }));
+    assert.equal(both?.reason, "target_not_allowlisted");
+
+    // Inside the window nothing denies, and the propose goes through.
+    clock.advance(DAY - secondOfDay + 60);
+    assert.equal(await client.explainDenial({ agent: WORKER, target: TARGET, value: 1n }), null);
+    const allowed = await worker.proposeIntent({ agent: WORKER, target: TARGET, value: 1n });
+    assert.equal(allowed.verdict, "ALLOW");
+  });
+
+  it("leaves every other revert as it was", async () => {
+    const { client } = sandbox();
+    await crew(client);
+    const err = await client
+      .as(STRANGER)
+      .proposeIntent({ agent: WORKER, target: TARGET, value: 1n })
+      .catch((caught: unknown) => caught);
+    assert.ok(revertsWith("InvalidSession")(err));
+    assert.equal(policyDenialOf(err), undefined);
   });
 });
