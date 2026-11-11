@@ -119,16 +119,84 @@ pnpm --filter @lacrew/orchestrator dev
 Every read answers from the chain (or the persisted trail) — mock mode serves
 `[]`, never fixtures; the unavailable app answers 503, never an empty org:
 
-| Endpoint                 | What it reads                                                                                                                                                                                                                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /policies`          | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router)                                                                                                                                    |
-| `GET /usage`             | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total                                                                                                           |
-| `GET /usage/daily`       | The same counts per UTC day over `[from, to)` (`?from=`, `?to=` ISO; default the 30 days up to now, at most 92 days). Every day in the window is present, empty when quiet. `?by=agent` groups by the event's `agent` instead (`null` for events that name none). `complete: false` as on `/usage` |
-| `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                                                                                                             |
-| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                                                                                                           |
-| `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                                                                                                         |
-| `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                   |
-| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                     |
+| Endpoint                 | What it reads                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /policies`          | Per-node policy stacks: the module the router binds per node, each module's kind and enforced params (`?node=`, `?asset=` for a non-primary stack's own router)                                                                                                                                                                                                                                                                                   |
+| `GET /usage`             | Operation counts by audit-event type for a period (`?since=`, default the current UTC month). `complete: false` flags a memory-bounded ring — a partial count is never served as a total                                                                                                                                                                                                                                                          |
+| `GET /usage/daily`       | The same counts per UTC day over `[from, to)` (`?from=`, `?to=` ISO; default the 30 days up to now, at most 92 days). Every day in the window is present, empty when quiet. `?by=agent` groups by the event's `agent` instead (`null` for events that name none). `complete: false` as on `/usage` Each day (and each agent row) also carries `gasFeeWei` and `gasTxCount` — see [gas cost](#gas-cost); `gasComplete` is `complete` for those two |
+| `GET /audit`             | The audit trail, newest first. Each event carries `chainId`, the EIP-155 id of the chain it happened on — the one `/health` reports for this orchestrator's own events. Absent on an event that reached the trail without one, and on a runtime with no chain                                                                                                                                                                                     |
+| `GET /assets`            | The asset stacks the org can budget in (primary first)                                                                                                                                                                                                                                                                                                                                                                                            |
+| `GET /governance/grants` | Per-epoch grants on an asset's EpochStreamer (`?asset=`)                                                                                                                                                                                                                                                                                                                                                                                          |
+| `GET /treasury/balances` | Real per-asset holdings from each Treasury                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `GET /agents/balances`   | What each node's own account holds — native float plus one row per address-book ERC-20 — grouped by chain. Distinct from allowances: this is the balance _in_ the account, not what the Treasury reserved for it                                                                                                                                                                                                                                  |
+| `GET /wallets/watchlist` | Chains and tokens balances are read on, RPC credentials masked                                                                                                                                                                                                                                                                                                                                                                                    |
+
+### Gas cost
+
+Every transaction the orchestrator sends is recorded with what it cost, read
+off its receipt: `gasUsed`, `effectiveGasPrice`, and the fee in wei
+(`gasUsed × effectiveGasPrice`, plus the L1 data fee on an OP-stack chain such
+as Base), with the chain id, the paying account, and what the transaction was
+for. Amounts are decimal strings everywhere — a fee in wei does not fit a JSON
+number. With `DATABASE_URL` set the rows live in `orchestrator_tx_gas`, one per
+`(chain_id, tx_hash)`; without it the last 5,000 are kept in memory.
+
+`GET /usage/daily` serves the sums:
+
+```json
+{
+  "from": "2026-03-01T00:00:00.000Z",
+  "to": "2026-03-03T00:00:00.000Z",
+  "days": [
+    {
+      "day": "2026-03-01",
+      "counts": { "IntentCreated": 2 },
+      "gasFeeWei": "412000000000000",
+      "gasTxCount": 3
+    },
+    { "day": "2026-03-02", "counts": {}, "gasFeeWei": "0", "gasTxCount": 0 }
+  ],
+  "complete": true,
+  "gasComplete": true,
+  "store": "postgres",
+  "mode": "onchain"
+}
+```
+
+`gasFeeWei` is the summed fee of the transactions sent that UTC day (bucketed
+by when the receipt was read) and `gasTxCount` is how many of them had a fee.
+A receipt with no effective gas price has an unknown fee: its gas used is
+stored, and it adds to neither figure rather than counting as zero. With
+`?by=agent`, each `agents` row carries the same two fields. A transaction is
+listed under the agent named by the audit event that carries its hash
+(`payload.agent` beside `payload.txHash`); transactions no such event names an
+agent for — a session key's gas stipend, a token approve, a policy deploy —
+are summed under `agent: null`, so the rows add up to the window's total.
+`gasComplete: false` means the in-memory ring answered, as `complete: false`
+does for the counts.
+
+What is recorded: every write through the orchestrator's SDK client — propose
+(with the root key or a session key), resolve, session issue / revoke and the
+session key's gas stipend, governance propose / vote / veto / execute, epoch
+runs, policy-module deploys, marketplace listing / purchase / withdraw and the
+approve before a purchase, delegation redemptions, sandbox top-ups — and the
+root Safe's approval when this orchestrator's relayer broadcasts it. A
+transaction that reverted is recorded too; it was still paid for.
+
+What is not, because the orchestrator does not send it and never sees a
+receipt as the payer:
+
+- A root-Safe approval broadcast from the approver's own wallet and reported
+  through `POST /intents/confirm`.
+- Anything an agent's own wallet sends through a wallet adapter (AgentKit,
+  GOAT, a Safe or smart account acting for itself), including user operations
+  submitted to a bundler.
+- Transactions sent by other processes — `lacrew deploy`, the CLI's own
+  client, the root-Safe deployment relayer.
+
+Also missing: a relayed root-Safe approval that reverts (the relay refuses
+without handing back a receipt), and a transaction that was broadcast but
+whose receipt never arrived.
 
 ### Sandbox play money
 
@@ -233,7 +301,8 @@ pnpm --filter @lacrew/orchestrator dev
 ```
 
 With `DATABASE_URL` set the orchestrator persists its restart-surviving state:
-audit events (`orchestrator_audit_events`), flow definitions + runs
+audit events (`orchestrator_audit_events`), the gas each sent transaction cost
+(`orchestrator_tx_gas` — see [gas cost](#gas-cost)), flow definitions + runs
 (`orchestrator_flows` / `orchestrator_flow_runs`), in-flight run state and its
 checkpoints (`orchestrator_flow_run_state` /
 `orchestrator_flow_checkpoints` — what lets a run pause, survive a restart, and
@@ -256,7 +325,8 @@ migrated database and the store tests stop skipping:
 ```bash
 DATABASE_URL=postgres://lacrew:lacrew@localhost:5432/lacrew \
   pnpm --filter @lacrew/orchestrator exec node --import tsx --test \
-  src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts
+  src/crewBindings.test.ts src/auditStore.test.ts src/runtimeStore.test.ts \
+  src/gasStore.test.ts
 ```
 
 ### More than one orchestrator per database
