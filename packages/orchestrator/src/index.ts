@@ -360,6 +360,7 @@ export {
   type AuditStore,
 } from "./auditStore.js";
 export { closeSharedDb, sharedDb } from "./dbPool.js";
+export { createOrgWorld, type OrgConfig, type OrgWorld, type OrgWorldShared } from "./orgWorld.js";
 export {
   createGasStoreFromEnv,
   createMemoryGasStore,
