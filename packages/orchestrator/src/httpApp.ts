@@ -390,7 +390,11 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
       input.approved,
       input.safeApproval.safeAddress,
       input.authorizedBy,
-      async () => sent.txHash,
+      async () => {
+        // The relayer key is this orchestrator's own, so this is its gas.
+        await runtime.recordSentTransaction(sent.txHash, "safe resolve relay");
+        return sent.txHash;
+      },
     );
     return jsonBig(c, {
       ...result,
@@ -2617,7 +2621,9 @@ export function createOrchestratorApp(options: OrchestratorAppOptions): Hono {
     // can chart them (?by=agent groups by the payload's agent instead). `to`
     // defaults to now and `from` to 30 days before `to`; the window is capped
     // so one request cannot ask for an unbounded scan. `complete` carries the
-    // same promise as on /usage.
+    // same promise as on /usage. Each row also carries what the transactions
+    // this orchestrator sent cost: `gasFeeWei` (summed, a decimal string) and
+    // `gasTxCount` (how many had a fee); `gasComplete` is `complete` for those.
     const toParam = c.req.query("to") || undefined;
     const fromParam = c.req.query("from") || undefined;
     const by = c.req.query("by") || undefined;

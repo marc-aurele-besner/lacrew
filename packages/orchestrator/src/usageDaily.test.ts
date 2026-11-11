@@ -8,6 +8,9 @@ import { CrewRuntime } from "./runtime.js";
 const ALICE = "0x1111111111111111111111111111111111111111";
 const BOB_CHECKSUMMED = "0xAbCdEfabcdefABCDEFabcdefabcdefABCDEFabcd";
 
+/** What a row carries when no transaction was sent: these tests are about the counts. */
+const NO_GAS = { gasFeeWei: "0", gasTxCount: 0 };
+
 function event(type: ProtocolEvent["type"], at: string, agent?: string): ProtocolEvent {
   return { type, at, payload: agent ? { agent } : {} };
 }
@@ -43,8 +46,8 @@ describe("CrewRuntime.usageDaily", () => {
     ]);
     const usage = await runtime.usageDaily("2026-03-01T00:00:00.000Z", "2026-03-03T00:00:00.000Z");
     assert.deepEqual(usage.days, [
-      { day: "2026-03-01", counts: { ActionExecuted: 1 } },
-      { day: "2026-03-02", counts: { ActionExecuted: 1, IntentCreated: 1 } },
+      { day: "2026-03-01", counts: { ActionExecuted: 1 }, ...NO_GAS },
+      { day: "2026-03-02", counts: { ActionExecuted: 1, IntentCreated: 1 }, ...NO_GAS },
     ]);
     // The ring answered: a bounded count must never read as a period total.
     assert.equal(usage.complete, false);
@@ -58,8 +61,8 @@ describe("CrewRuntime.usageDaily", () => {
     const runtime = await ringRuntime([event("ActionExecuted", "2026-03-01T23:30:00.000-05:00")]);
     const usage = await runtime.usageDaily("2026-03-01T00:00:00.000Z", "2026-03-03T00:00:00.000Z");
     assert.deepEqual(usage.days, [
-      { day: "2026-03-01", counts: {} },
-      { day: "2026-03-02", counts: { ActionExecuted: 1 } },
+      { day: "2026-03-01", counts: {}, ...NO_GAS },
+      { day: "2026-03-02", counts: { ActionExecuted: 1 }, ...NO_GAS },
     ]);
   });
 
@@ -71,18 +74,18 @@ describe("CrewRuntime.usageDaily", () => {
     ]);
     const usage = await runtime.usageDaily("2026-03-01T00:00:00.000Z", "2026-03-02T00:00:00.000Z");
     // A `to` on a midnight does not open a bucket for the day it starts.
-    assert.deepEqual(usage.days, [{ day: "2026-03-01", counts: { ActionExecuted: 1 } }]);
+    assert.deepEqual(usage.days, [{ day: "2026-03-01", counts: { ActionExecuted: 1 }, ...NO_GAS }]);
   });
 
   it("zero-fills every day the window touches, including partial edge days", async () => {
     const runtime = await ringRuntime([event("IntentCreated", "2026-03-03T08:00:00.000Z")]);
     const usage = await runtime.usageDaily("2026-03-01T18:00:00.000Z", "2026-03-05T06:00:00.000Z");
     assert.deepEqual(usage.days, [
-      { day: "2026-03-01", counts: {} },
-      { day: "2026-03-02", counts: {} },
-      { day: "2026-03-03", counts: { IntentCreated: 1 } },
-      { day: "2026-03-04", counts: {} },
-      { day: "2026-03-05", counts: {} },
+      { day: "2026-03-01", counts: {}, ...NO_GAS },
+      { day: "2026-03-02", counts: {}, ...NO_GAS },
+      { day: "2026-03-03", counts: { IntentCreated: 1 }, ...NO_GAS },
+      { day: "2026-03-04", counts: {}, ...NO_GAS },
+      { day: "2026-03-05", counts: {}, ...NO_GAS },
     ]);
   });
 
@@ -95,9 +98,9 @@ describe("CrewRuntime.usageDaily", () => {
     });
     const usage = await runtime.usageDaily("2026-03-01T00:00:00.000Z", "2026-03-04T00:00:00.000Z");
     assert.deepEqual(usage.days, [
-      { day: "2026-03-01", counts: {} },
-      { day: "2026-03-02", counts: { ActionExecuted: 7, IntentCreated: 2 } },
-      { day: "2026-03-03", counts: {} },
+      { day: "2026-03-01", counts: {}, ...NO_GAS },
+      { day: "2026-03-02", counts: { ActionExecuted: 7, IntentCreated: 2 }, ...NO_GAS },
+      { day: "2026-03-03", counts: {}, ...NO_GAS },
     ]);
     assert.equal(usage.complete, true);
     assert.equal(usage.store, "postgres");
@@ -120,9 +123,9 @@ describe("CrewRuntime.usageByAgent", () => {
       "2026-03-02T00:00:00.000Z",
     );
     assert.deepEqual(usage.agents, [
-      { agent: ALICE, counts: { IntentCreated: 1 } },
-      { agent: BOB_CHECKSUMMED.toLowerCase(), counts: { ActionExecuted: 2 } },
-      { agent: null, counts: { SessionIssued: 1 } },
+      { agent: ALICE, counts: { IntentCreated: 1 }, ...NO_GAS },
+      { agent: BOB_CHECKSUMMED.toLowerCase(), counts: { ActionExecuted: 2 }, ...NO_GAS },
+      { agent: null, counts: { SessionIssued: 1 }, ...NO_GAS },
     ]);
     assert.equal(usage.complete, false);
     assert.equal(usage.store, "memory");
@@ -141,8 +144,8 @@ describe("CrewRuntime.usageByAgent", () => {
       "2026-03-02T00:00:00.000Z",
     );
     assert.deepEqual(usage.agents, [
-      { agent: ALICE, counts: { ActionExecuted: 4, IntentCreated: 1 } },
-      { agent: null, counts: { SessionIssued: 3 } },
+      { agent: ALICE, counts: { ActionExecuted: 4, IntentCreated: 1 }, ...NO_GAS },
+      { agent: null, counts: { SessionIssued: 3 }, ...NO_GAS },
     ]);
     assert.equal(usage.complete, true);
     assert.equal(usage.store, "postgres");
