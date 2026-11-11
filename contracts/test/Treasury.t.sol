@@ -78,4 +78,34 @@ contract TreasuryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(Treasury.NotSpender.selector, address(this)));
         treasury.spendAllowance(worker, 1 * ONE, recipient);
     }
+
+    /// Allowance booked to the zero address is reserved for a node that can never
+    /// propose, so it would leave the liquid balance for good.
+    function test_streamAllowanceRejectsZeroNode() public {
+        treasury.deposit(100 * ONE);
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        treasury.streamAllowance(address(0), 10 * ONE, 1);
+
+        assertEq(treasury.totalReserved(), 0);
+        assertEq(treasury.liquidBalance(), 100 * ONE);
+    }
+
+    /// Binding a streamer hands it the streaming role outright: the deployer's own
+    /// bootstrap `streamAllowance` ends there, and comes back only by unbinding.
+    function test_bindingAStreamerEndsTheDeployersDirectStreaming() public {
+        address streamer = makeAddr("streamer");
+        treasury.deposit(100 * ONE);
+        treasury.streamAllowance(worker, 10 * ONE, 1);
+
+        treasury.setStreamer(streamer);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.NotAuthorized.selector, address(this)));
+        treasury.streamAllowance(worker, 10 * ONE, 2);
+
+        vm.prank(streamer);
+        treasury.streamAllowance(worker, 10 * ONE, 2);
+
+        treasury.setStreamer(address(0));
+        treasury.streamAllowance(worker, 10 * ONE, 3);
+        assertEq(treasury.allowanceBalance(worker), 30 * ONE);
+    }
 }

@@ -56,6 +56,17 @@ contract Treasury is ITreasurySpender {
         emit GovernorUpdated(governor_);
     }
 
+    /// @notice Bind (or, with the zero address, unbind) the epoch job that may call
+    ///         `streamAllowance`.
+    /// @dev Binding a streamer is exclusive on purpose. The deployer's own
+    ///      `streamAllowance` is a bootstrap convenience for a treasury with no payroll
+    ///      wired; once a streamer is bound, allowances come from the schedule and the
+    ///      deployer stops streaming directly, even while no governor is set. That
+    ///      keeps one source of allowance per treasury, so the streamer's grant
+    ///      schedule is the whole account of what nodes are paid. The deployer still
+    ///      holds this setter until a governor is bound, so `setStreamer(address(0))`
+    ///      returns it to direct streaming: exclusivity is a routing rule, not a
+    ///      revocation of bootstrap authority.
     function setStreamer(address streamer_) external {
         _onlyGovernorOrBootstrap();
         streamer = streamer_;
@@ -77,13 +88,17 @@ contract Treasury is ITreasurySpender {
     }
 
     /// @notice Allocate unreserved treasury balance to `node` for an epoch.
-    /// @dev Governor or streamer; the deployer while neither is bound.
+    /// @dev Governor or streamer; the deployer only while neither is bound (see
+    ///      `setStreamer` for why a bound streamer displaces the deployer).
     function streamAllowance(address node, uint256 amount, uint64 epoch) external {
         if (governor != address(0) || streamer != address(0)) {
             if (msg.sender != governor && msg.sender != streamer) revert NotAuthorized(msg.sender);
         } else if (msg.sender != deployer) {
             revert NotAuthorized(msg.sender);
         }
+        // Allowance booked to the zero address could never be spent: it would stay
+        // reserved, out of the liquid balance, for good.
+        if (node == address(0)) revert ZeroAddress();
         uint256 liquid = liquidBalance();
         if (liquid < amount) revert InsufficientTreasury(amount, liquid);
 
