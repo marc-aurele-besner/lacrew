@@ -262,7 +262,9 @@ export class LacrewClient {
 
   /**
    * Approve or reject a pending intent.
-   * Mirrors onchain EscalationRouter: re-check policy as the approver; climb on ESCALATE.
+   * Mirrors onchain EscalationRouter: only an active approver resolves, the root
+   * stands in for one that is inactive, an inactive agent's intent can only be
+   * rejected; then re-check policy as the approver and climb on ESCALATE.
    * TODO: Call EscalationRouter.resolve onchain.
    */
   async resolveIntent(
@@ -277,8 +279,26 @@ export class LacrewClient {
     if (!intent) throw new Error(`Intent not found: ${intentId}`);
     if (intent.resolved) throw new Error(`Intent already resolved: ${intentId}`);
 
-    const actingApprover = (approver ?? intent.awaitingApprover) as `0x${string}` | null;
+    const nodeOf = (account: string) =>
+      this.nodes.find((n) => n.account.toLowerCase() === account.toLowerCase());
+    const awaiting = intent.awaitingApprover;
+    // Mocked: a seat the fixtures do not model is taken as active.
+    const awaitingInactive = awaiting ? nodeOf(awaiting)?.active === false : false;
+    const root = this.nodes.find((n) => n.kind === "human_root")?.account ?? null;
+    const actingApprover = (approver ?? (awaitingInactive ? root : awaiting)) as
+      `0x${string}` | null;
     if (!actingApprover) throw new Error(`No awaiting approver for ${intentId}`);
+    if (awaiting && awaitingInactive) {
+      if (actingApprover.toLowerCase() === awaiting.toLowerCase()) {
+        throw new Error(`InactiveApprover: ${awaiting}`);
+      }
+      if (actingApprover.toLowerCase() !== root?.toLowerCase()) {
+        throw new Error(`NotAwaitingApprover: ${actingApprover}`);
+      }
+    }
+    if (approved && nodeOf(intent.agent)?.active === false) {
+      throw new Error(`InactiveAgent: ${intent.agent}`);
+    }
 
     if (!approved) {
       intent.resolved = true;
@@ -423,6 +443,7 @@ export class LacrewClient {
       yesVotes: 0,
       noVotes: 0,
       yesHumanVotes: 0,
+      noHumanVotes: 0,
       deadline: Math.floor(Date.now() / 1000) + 3 * 24 * 3600,
       eta: 0,
       state: "active",
@@ -644,6 +665,7 @@ export class LacrewClient {
       proposal.yesHumanVotes = (proposal.yesHumanVotes ?? 0) + 2;
     } else {
       proposal.noVotes += 2;
+      proposal.noHumanVotes = (proposal.noHumanVotes ?? 0) + 2;
     }
     this.audit.push({
       type: "ProposalVoted",
@@ -681,6 +703,22 @@ export class LacrewClient {
     const quorum =
       proposal.yesVotes >= 2 && (proposal.tier === "low" || (proposal.yesHumanVotes ?? 0) >= 1);
     if (!quorum) throw new Error(`Quorum not met for ${proposalId}`);
+
+    // Each tier is defeated by the electorate that can pass it: human seats
+    // alone on high tier, every seat on low tier.
+    const outvoted =
+      proposal.tier === "high"
+        ? (proposal.noHumanVotes ?? 0) > (proposal.yesHumanVotes ?? 0)
+        : proposal.noVotes > proposal.yesVotes;
+    if (Math.floor(Date.now() / 1000) > proposal.deadline && outvoted) {
+      proposal.state = "defeated";
+      this.audit.push({
+        type: "ProposalDefeated",
+        at: new Date().toISOString(),
+        payload: { proposalId },
+      });
+      return { proposal: { ...proposal } };
+    }
 
     const action = this.proposalActions.get(proposalId);
     if (action?.kind === "hire") {

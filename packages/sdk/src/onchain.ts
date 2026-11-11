@@ -871,21 +871,55 @@ export class OnchainLacrewClient implements ProtocolClient {
   /**
    * Who a dry-run of this approval must come from.
    *
-   * `resolve` reverts for any sender that is not the intent's
-   * `awaitingApprover`, so simulating as the resolver key reports "reverted"
+   * `resolve` reverts for any sender that is not the seat the router accepts
+   * (`resolverSeat`), so simulating as the resolver key reports "reverted"
    * for every intent that has climbed past that seat — a warning about the
    * caller's own authority, dressed as a warning about the spend, shown at
    * exactly the moment somebody is deciding whether to allow it. Falls back to
-   * the resolver when the intent cannot be read, which is the old behaviour and
-   * no worse than it was.
+   * the resolver key when the intent cannot be read.
    */
   private async simulationSender(intentId: string): Promise<`0x${string}` | null> {
     const fallback = this.resolverWalletClient?.account?.address ?? null;
     try {
       const intent = await this.readIntent(BigInt(intentId));
-      return intent.awaitingApprover ?? fallback;
+      return (await this.resolverSeat(intent.awaitingApprover)) ?? fallback;
     } catch {
       return fallback;
+    }
+  }
+
+  /**
+   * The seat whose `resolve` the router accepts for an intent awaiting
+   * `awaiting`: that approver while it is an active node, and the org root in
+   * its place once it has been deactivated or removed.
+   */
+  private async resolverSeat(awaiting: `0x${string}` | null): Promise<`0x${string}` | null> {
+    if (!awaiting) return null;
+    if (await this.isActiveNode(awaiting)) return awaiting;
+    return (await this.publicClient.readContract({
+      address: this.addresses.orgRegistry,
+      abi: orgRegistryAbi,
+      functionName: "root",
+    })) as `0x${string}`;
+  }
+
+  /** In the tree and active. `getNode` reverts for a removed node; that is an answer. */
+  private async isActiveNode(account: `0x${string}`): Promise<boolean> {
+    try {
+      const node = (await this.publicClient.readContract({
+        address: this.addresses.orgRegistry,
+        abi: orgRegistryAbi,
+        functionName: "getNode",
+        args: [account],
+      })) as { active: boolean };
+      return node.active;
+    } catch (err) {
+      const revert =
+        err instanceof BaseError
+          ? err.walk((e) => e instanceof ContractFunctionRevertedError)
+          : null;
+      if (revert instanceof ContractFunctionRevertedError) return false;
+      throw err;
     }
   }
 
@@ -942,9 +976,15 @@ export class OnchainLacrewClient implements ProtocolClient {
     } catch {
       return null;
     }
-    // The seat the chain is waiting on, not whichever key this client holds:
+    // The seat the chain accepts, not whichever key this client holds:
     // simulated from anyone else the resolve reverts and nothing is measured.
-    const sender = intent.awaitingApprover ?? this.resolverWalletClient?.account?.address ?? null;
+    let seat: `0x${string}` | null;
+    try {
+      seat = await this.resolverSeat(intent.awaitingApprover);
+    } catch {
+      return null;
+    }
+    const sender = seat ?? this.resolverWalletClient?.account?.address ?? null;
     if (!sender) return null;
 
     const stacks = listAssetStacks(this.addresses).filter((s) => isPresent(s.token));
@@ -1115,10 +1155,11 @@ export class OnchainLacrewClient implements ProtocolClient {
   }
 
   /**
-   * Settle a pending intent as the seat the chain is waiting on.
+   * Settle a pending intent as the seat the chain accepts.
    *
-   * `EscalationRouter.resolve` reverts for any sender that is not the intent's
-   * `awaitingApprover`, so the signer is chosen rather than assumed: this
+   * `EscalationRouter.resolve` reverts for any sender but the intent's
+   * `awaitingApprover` while that node is active, and for any sender but the
+   * org root once it is not, so the signer is chosen rather than assumed: this
    * client may hold a manager key, a root key, or both, and always signing with
    * the resolver key made every approval a manager's — reverting where the
    * waiter was the root, and silently passing as the root wherever the two
@@ -1135,7 +1176,8 @@ export class OnchainLacrewClient implements ProtocolClient {
     approver?: `0x${string}`,
   ): Promise<OnchainResolveResult> {
     const id = BigInt(intentId);
-    const waiting = approver ?? (await this.readIntent(id)).awaitingApprover;
+    const waiting =
+      approver ?? (await this.resolverSeat((await this.readIntent(id)).awaitingApprover));
     const wallet = waiting ? this.walletFor(waiting) : this.requireResolverWallet();
     const hash = await wallet.writeContract({
       address: this.addresses.escalationRouter,

@@ -514,8 +514,20 @@ export class SandboxLacrewClient implements ProtocolClient {
   }
 
   /**
-   * Settle a pending intent as `approver`, or as the seat the intent awaits.
-   * No key decides who may: the kernel refuses any sender but that seat.
+   * The seat whose `resolve` the kernel accepts for an intent awaiting
+   * `awaiting`: that approver while it is an active node, and the org root in
+   * its place once it has been deactivated or removed.
+   */
+  private resolverSeat(ctx: Ctx, awaiting: Address | null): Address | null {
+    if (!awaiting) return null;
+    const node = ctx.world.orgRegistry.nodes[addr(awaiting)];
+    if (node !== undefined && node.account !== ZERO_ADDRESS && node.active) return awaiting;
+    return ctx.world.orgRegistry.root;
+  }
+
+  /**
+   * Settle a pending intent as `approver`, or as the seat the kernel accepts
+   * for it. No key decides who may: the kernel refuses any other sender.
    */
   async resolveIntent(
     intentId: string,
@@ -523,7 +535,9 @@ export class SandboxLacrewClient implements ProtocolClient {
     approver?: Address,
   ): Promise<ProtocolResolveResult & { simTxId: string }> {
     const id = BigInt(intentId);
-    const waiting = approver ?? this.read((ctx) => this.readIntent(ctx, id)).awaitingApprover;
+    const waiting =
+      approver ??
+      this.read((ctx) => this.resolverSeat(ctx, this.readIntent(ctx, id).awaitingApprover));
     const sender = addr(waiting ?? this.resolverAccount);
     const { simTxId: txId } = this.commit(sender, (ctx) =>
       escalationRouter.resolve(ctx, id, approved),
@@ -539,7 +553,9 @@ export class SandboxLacrewClient implements ProtocolClient {
   async simulateResolveApproval(intentId: string): Promise<{ ok: boolean; reason?: string }> {
     const id = BigInt(intentId);
     try {
-      const sender = this.read((ctx) => this.readIntent(ctx, id)).awaitingApprover;
+      const sender = this.read((ctx) =>
+        this.resolverSeat(ctx, this.readIntent(ctx, id).awaitingApprover),
+      );
       this.read((ctx) => escalationRouter.resolve(ctx, id, true), sender ?? this.resolverAccount);
       return { ok: true };
     } catch (err) {

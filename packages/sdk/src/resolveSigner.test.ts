@@ -13,9 +13,16 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { custom, encodeAbiParameters, recoverTransactionAddress, type Hex } from "viem";
+import {
+  custom,
+  encodeAbiParameters,
+  encodeFunctionResult,
+  recoverTransactionAddress,
+  toFunctionSelector,
+  type Hex,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { ANVIL_CHAIN_ID, getAddresses } from "@lacrew/core";
+import { ANVIL_CHAIN_ID, getAddresses, orgRegistryAbi } from "@lacrew/core";
 import { createOnchainClient } from "./onchain.js";
 
 /** Anvil accounts 0, 1 and 2 — signing only; nothing is broadcast. */
@@ -30,8 +37,14 @@ const STRANGER = "0x00000000000000000000000000000000000000ff" as `0x${string}`;
 const WORKER = "0x3333333333333333333333333333333333333333" as `0x${string}`;
 const TARGET = "0x4444444444444444444444444444444444444444" as `0x${string}`;
 
+const GET_NODE = toFunctionSelector("getNode(address)");
+const REGISTRY_ROOT = toFunctionSelector("root()");
+
+/** How the registry answers for the awaiting approver's seat. */
+type Seat = "active" | "inactive" | "removed";
+
 /** Answers just enough JSON-RPC to sign and "land" one transaction. */
-function stubChain(awaitingApprover: `0x${string}`) {
+function stubChain(awaitingApprover: `0x${string}`, seat: Seat = "active") {
   const intentRow = encodeAbiParameters(
     [
       { type: "address" },
@@ -45,7 +58,7 @@ function stubChain(awaitingApprover: `0x${string}`) {
     [WORKER, TARGET, 75n * 10n ** 6n, "0x", awaitingApprover, true, true],
   );
   const transport = custom({
-    async request({ method }: { method: string }) {
+    async request({ method, params }: { method: string; params?: unknown }) {
       switch (method) {
         case "eth_chainId":
           return `0x${ANVIL_CHAIN_ID.toString(16)}`;
@@ -80,8 +93,33 @@ function stubChain(awaitingApprover: `0x${string}`) {
             contractAddress: null,
             logsBloom: "0x" + "00".repeat(256),
           };
-        case "eth_call":
+        case "eth_call": {
+          const data = (params as Array<{ data?: Hex }>)[0]?.data ?? "0x";
+          if (data.startsWith(REGISTRY_ROOT)) {
+            return encodeFunctionResult({
+              abi: orgRegistryAbi,
+              functionName: "root",
+              result: ROOT.address,
+            });
+          }
+          if (data.startsWith(GET_NODE)) {
+            // A removed node has no row: the registry reverts NodeNotFound.
+            if (seat === "removed") {
+              throw Object.assign(new Error("execution reverted"), { code: 3, data: "0x" });
+            }
+            return encodeFunctionResult({
+              abi: orgRegistryAbi,
+              functionName: "getNode",
+              result: {
+                account: awaitingApprover,
+                kind: 1,
+                parent: ROOT.address,
+                active: seat === "active",
+              },
+            });
+          }
           return intentRow;
+        }
         default:
           throw new Error(`unstubbed rpc: ${method}`);
       }
@@ -95,8 +133,8 @@ async function senderOf(raw: Hex): Promise<`0x${string}`> {
   return recoverTransactionAddress({ serializedTransaction: raw as never });
 }
 
-function clientFor(awaitingApprover: `0x${string}`) {
-  const transport = stubChain(awaitingApprover);
+function clientFor(awaitingApprover: `0x${string}`, seat: Seat = "active") {
+  const transport = stubChain(awaitingApprover, seat);
   const sent: Hex[] = [];
   // Wrap the transport so the raw transaction is captured on its way out.
   const capturing = custom({
@@ -138,6 +176,25 @@ describe("resolveIntent signs as the seat the chain is waiting on", () => {
     const { client, sent } = clientFor(ROOT.address);
     await client.resolveIntent("7", true);
     assert.equal((await senderOf(sent[0]!)).toLowerCase(), ROOT.address.toLowerCase());
+  });
+
+  it("signs as the root when the awaiting approver has been deactivated", async () => {
+    const { client, sent } = clientFor(MANAGER.address, "inactive");
+    await client.resolveIntent("7", true);
+    // The manager key is held, and the router would revert it InactiveApprover.
+    assert.equal((await senderOf(sent[0]!)).toLowerCase(), ROOT.address.toLowerCase());
+  });
+
+  it("signs as the root when the awaiting approver has been removed", async () => {
+    const { client, sent } = clientFor(MANAGER.address, "removed");
+    await client.resolveIntent("7", false);
+    assert.equal((await senderOf(sent[0]!)).toLowerCase(), ROOT.address.toLowerCase());
+  });
+
+  it("gives the root no shortcut while the awaiting approver is active", async () => {
+    const { client, sent } = clientFor(MANAGER.address, "active");
+    await client.resolveIntent("7", true);
+    assert.equal((await senderOf(sent[0]!)).toLowerCase(), MANAGER.address.toLowerCase());
   });
 
   it("refuses by name when it holds no key for the approver, and broadcasts nothing", async () => {
