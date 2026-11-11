@@ -246,6 +246,20 @@ async function checkState(
       `${where}: verdict for ${want.agent} -> ${want.target} of ${want.value}`,
     );
   }
+  for (const want of expected.denials ?? []) {
+    const what = `${where}: denial of ${want.agent} -> ${want.target} of ${want.value}`;
+    const denial = await client.explainDenial({
+      agent: at(want.agent),
+      target: at(want.target),
+      value: want.value,
+    });
+    if (want.by === null) {
+      assert.equal(denial, null, what);
+      continue;
+    }
+    assert.equal(denial?.module.toLowerCase(), at(want.by), what);
+    if (want.reason !== undefined) assert.equal(denial?.reason, want.reason, what);
+  }
 }
 
 /** Accounts whose token balance a snapshot records, by the ref they go by. */

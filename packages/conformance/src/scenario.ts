@@ -81,6 +81,17 @@ export interface StateExpectation {
     verdict: string;
     module?: Ref;
   }>;
+  /**
+   * The module a client names for a denied action (`explainDenial`): `by` is
+   * that module, or null when nothing in the agent's stack denies.
+   */
+  denials?: Array<{
+    agent: Ref;
+    target: Ref;
+    value: bigint;
+    by: Ref | null;
+    reason?: string;
+  }>;
   governance?: { humanSeatCount?: bigint; quorumYes?: bigint; unanimityFastPath?: boolean };
   /**
    * Seconds into the UTC day the clock stands at. Pins the step count a

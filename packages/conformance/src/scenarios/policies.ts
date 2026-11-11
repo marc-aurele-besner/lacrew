@@ -62,6 +62,16 @@ export const policyScenarios: Scenario[] = [
             module: "@managerStack",
           },
         ],
+        denials: [
+          {
+            agent: "worker",
+            target: "target",
+            value: 1n,
+            by: "@timeWindow",
+            reason: "outside_time_window",
+          },
+          { agent: "manager", target: "target", value: 1n, by: null },
+        ],
       });
       // The next day: 80 999 is still outside, 81 000 is the start.
       b.warp(DAY - 22);
@@ -136,6 +146,17 @@ export const policyScenarios: Scenario[] = [
         { agent: "manager", target: "target", value: 0n, verdict: "ALLOW", module: "@spendCap" },
         { agent: "worker", target: "target", value: 0n, verdict: "ALLOW", module: "@whitelist" },
         { agent: "worker", target: "target2", value: 0n, verdict: "DENY", module: "@whitelist" },
+      ],
+      denials: [
+        {
+          agent: "worker",
+          target: "target2",
+          value: 0n,
+          by: "@whitelist",
+          reason: "target_not_allowlisted",
+        },
+        // Over the cap is an escalation, which no module denies.
+        { agent: "worker", target: "target", value: 8n, by: null },
       ],
     });
 
