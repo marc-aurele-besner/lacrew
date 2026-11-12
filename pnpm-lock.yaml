@@ -374,7 +374,7 @@ importers:
     devDependencies:
       '@coinbase/cdp-sdk':
         specifier: ^1.54.0
-        version: 1.61.0(debug@4.4.3)(typescript@7.0.2)
+        version: 1.62.0(debug@4.4.3)(typescript@7.0.2)
       '@types/node':
         specifier: ^26.1.1
         version: 26.6.6
@@ -699,8 +699,8 @@ packages:
   '@cfworker/json-schema@4.1.6':
     resolution: {integrity: sha512-YzVGTHXf4bzlyAL5KAvHYCdNbbt6zM5cYkAgxqxQPDQM6aZ4ShIIN5yJ+6q7YeonnevxT8k/LmD2tJi/jOiKkg==}
 
-  '@coinbase/cdp-sdk@1.61.0':
-    resolution: {integrity: sha512-qXzdw0vlELyKrN6R2fHbZLZhAKESAocrsLRegjTnDRL0NuIhPqrjwEmqU7l7xetpQPLVrCAXPVC4rsxYifxPNA==}
+  '@coinbase/cdp-sdk@1.62.0':
+    resolution: {integrity: sha512-i25CM7YkheI4bIUUfdEl1ZFl8OhPtlr6HsOULSSPrOOetEEIo6KC81vr3RmrhejwYLzC9GSbVbfxy2pxgjPIXQ==}
     peerDependencies:
       '@x402/core': ^2.29.0
       '@x402/evm': ^2.29.0
@@ -4483,7 +4483,7 @@ snapshots:
 
   '@cfworker/json-schema@4.1.6': {}
 
-  '@coinbase/cdp-sdk@1.61.0(debug@4.4.3)(typescript@7.0.2)':
+  '@coinbase/cdp-sdk@1.62.0(debug@4.4.3)(typescript@7.0.2)':
     dependencies:
       '@solana-program/system': 0.16.0(@solana/kit@8.6.0(typescript@7.0.2))
       '@solana-program/token': 0.16.1(@solana/kit@8.6.0(typescript@7.0.2))
