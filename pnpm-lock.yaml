@@ -192,7 +192,7 @@ importers:
         version: link:../../packages/sdk
       viem:
         specifier: ^2.31.7
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -269,7 +269,7 @@ importers:
         version: link:../../packages/x402
       viem:
         specifier: ^2.55.2
-        version: 2.57.18(typescript@5.9.3)(zod@4.6.7)
+        version: 2.57.19(typescript@5.9.3)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
@@ -395,11 +395,11 @@ importers:
         version: link:../../core
       viem:
         specifier: ^2.21.0
-        version: 2.57.18(typescript@7.0.2)(zod@3.25.76)
+        version: 2.57.19(typescript@7.0.2)(zod@3.25.76)
     devDependencies:
       '@goat-sdk/wallet-viem':
         specifier: 0.3.0
-        version: 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.57.18(typescript@7.0.2)(zod@3.25.76))
+        version: 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.57.19(typescript@7.0.2)(zod@3.25.76))
       '@types/node':
         specifier: ^26.1.1
         version: 26.6.6
@@ -420,11 +420,11 @@ importers:
         version: link:../../core
       viem:
         specifier: ^2.21.0
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@metamask/smart-accounts-kit':
         specifier: ^2.0.0
-        version: 2.0.0(typescript@7.0.2)(viem@2.57.18(typescript@7.0.2)(zod@4.6.7))(zod@4.6.7)
+        version: 2.0.0(typescript@7.0.2)(viem@2.57.19(typescript@7.0.2)(zod@4.6.7))(zod@4.6.7)
       '@types/node':
         specifier: ^26.1.1
         version: 26.6.6
@@ -476,7 +476,7 @@ importers:
         version: 3.0.14
       viem:
         specifier: ^2.21.0
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@safe-global/protocol-kit':
         specifier: ^8.0.4
@@ -501,7 +501,7 @@ importers:
         version: link:../sdk
       viem:
         specifier: ^2.55.2
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -569,7 +569,7 @@ importers:
         version: link:../db
       viem:
         specifier: ^2.31.7
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -621,7 +621,7 @@ importers:
         version: 12.38.2(@opentelemetry/api@1.9.1)
       viem:
         specifier: ^2.55.2
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@noble/curves':
         specifier: ^2.0.0
@@ -643,7 +643,7 @@ importers:
         version: link:../core
       viem:
         specifier: ^2.55.2
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -659,7 +659,7 @@ importers:
     dependencies:
       viem:
         specifier: ^2.21.0
-        version: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+        version: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.0.0
@@ -4363,8 +4363,8 @@ packages:
       typescript:
         optional: true
 
-  viem@2.57.18:
-    resolution: {integrity: sha512-D/nbOPgsHnbZLtsJOsbKzuhsncww1YogB3JNbCBKe9JR8DTSpVGstguRqty5HgoA0WR+UNRcgM98pwBHJlTqSg==}
+  viem@2.57.19:
+    resolution: {integrity: sha512-ULAHSwef42oL1reV41Os40iR34PF9BFNIX/RBapHLAJL1X6VmrgQikS4q4ulZ7/8GqlFLqrRI5GoNms3hcxsHw==}
     peerDependencies:
       mppx: '>=0.17.0'
       typescript: '>=5.0.4'
@@ -4495,7 +4495,7 @@ snapshots:
       jose: 6.2.10
       md5: 2.3.0
       uncrypto: 0.1.3
-      viem: 2.57.18(typescript@7.0.2)(zod@3.25.76)
+      viem: 2.57.19(typescript@7.0.2)(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
@@ -4819,11 +4819,11 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@goat-sdk/wallet-viem@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.57.18(typescript@7.0.2)(zod@3.25.76))':
+  '@goat-sdk/wallet-viem@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(@goat-sdk/wallet-evm@0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2))(viem@2.57.19(typescript@7.0.2)(zod@3.25.76))':
     dependencies:
       '@goat-sdk/core': 0.5.0(zod@3.25.76)
       '@goat-sdk/wallet-evm': 0.3.0(@goat-sdk/core@0.5.0(zod@3.25.76))(typescript@7.0.2)
-      viem: 2.57.18(typescript@7.0.2)(zod@3.25.76)
+      viem: 2.57.19(typescript@7.0.2)(zod@3.25.76)
 
   '@hono/node-server@2.1.7(hono@4.13.18)':
     dependencies:
@@ -5027,7 +5027,7 @@ snapshots:
 
   '@metamask/delegation-deployments@2.0.0': {}
 
-  '@metamask/smart-accounts-kit@2.0.0(typescript@7.0.2)(viem@2.57.18(typescript@7.0.2)(zod@4.6.7))(zod@4.6.7)':
+  '@metamask/smart-accounts-kit@2.0.0(typescript@7.0.2)(viem@2.57.19(typescript@7.0.2)(zod@4.6.7))(zod@4.6.7)':
     dependencies:
       '@metamask/7715-permission-types': 2.0.0
       '@metamask/delegation-abis': 2.0.0
@@ -5036,7 +5036,7 @@ snapshots:
       '@metamask/utils': 11.11.0
       openapi-fetch: 0.13.8
       ox: 0.8.1(typescript@7.0.2)(zod@4.6.7)
-      viem: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+      viem: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
       - typescript
@@ -5493,7 +5493,7 @@ snapshots:
       '@safe-global/types-kit': 4.0.1(typescript@7.0.2)(zod@4.6.7)
       abitype: 1.3.0(typescript@7.0.2)(zod@4.6.7)
       semver: 7.8.5
-      viem: 2.57.18(typescript@7.0.2)(zod@4.6.7)
+      viem: 2.57.19(typescript@7.0.2)(zod@4.6.7)
     optionalDependencies:
       '@noble/curves': 1.9.7
       '@peculiar/asn1-schema': 2.9.4
@@ -8287,7 +8287,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  viem@2.57.18(typescript@5.9.3)(zod@4.6.7):
+  viem@2.57.19(typescript@5.9.3)(zod@4.6.7):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
@@ -8304,7 +8304,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  viem@2.57.18(typescript@7.0.2)(zod@3.25.76):
+  viem@2.57.19(typescript@7.0.2)(zod@3.25.76):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
@@ -8321,7 +8321,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  viem@2.57.18(typescript@7.0.2)(zod@4.6.7):
+  viem@2.57.19(typescript@7.0.2)(zod@4.6.7):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
